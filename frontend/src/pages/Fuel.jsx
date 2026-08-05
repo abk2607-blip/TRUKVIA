@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, fmtCurrency, fmtDate } from "@/api";
 import { toast } from "sonner";
-import { Plus, Trash2, X, Fuel as FuelIcon, TrendingUp } from "lucide-react";
+import { Plus, Trash2, X, Fuel as FuelIcon, TrendingUp, UploadCloud } from "lucide-react";
 
 const EMPTY = {
   date: new Date().toISOString().slice(0, 10),
@@ -15,6 +15,9 @@ export default function Fuel() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(EMPTY);
+  const [dragOver, setDragOver] = useState(false);
+  const [bulkResult, setBulkResult] = useState(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
 
   const { data: entries = [] } = useQuery({
     queryKey: ["fuel"],
@@ -57,6 +60,23 @@ export default function Fuel() {
   const openNew = () => { setForm(EMPTY); setOpen(true); };
   const liveAmt = (Number(form.litres) || 0) * (Number(form.rate_per_litre) || 0);
 
+  const bulkUpload = async (files) => {
+    if (!files || files.length === 0) return;
+    setBulkBusy(true);
+    setBulkResult(null);
+    try {
+      const fd = new FormData();
+      Array.from(files).forEach((f) => fd.append("files", f));
+      const { data } = await api.post("/files/bulk-upload?category=fuel_bill", fd, { headers: { "Content-Type": "multipart/form-data" } });
+      setBulkResult(data);
+      toast.success(`${data.uploaded} of ${data.total} uploaded`);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Bulk upload failed");
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-6" data-testid="fuel-page">
       <header className="flex items-end justify-between border-b border-zinc-200 pb-4">
@@ -71,6 +91,43 @@ export default function Fuel() {
           <Plus size={14} /> New Fill
         </button>
       </header>
+
+      <section
+        data-testid="fuel-bulk-dropzone"
+        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+        onDragLeave={() => setDragOver(false)}
+        onDrop={(e) => { e.preventDefault(); setDragOver(false); bulkUpload(e.dataTransfer.files); }}
+        className={`border-2 border-dashed rounded-sm p-6 text-center transition-colors ${dragOver ? "border-zinc-950 bg-amber-50" : "border-zinc-300 bg-white"}`}
+      >
+        <UploadCloud size={28} className="mx-auto text-zinc-400" />
+        <div className="mt-2 text-sm font-semibold">Drag &amp; drop fuel bill photos here</div>
+        <div className="text-xs text-zinc-500 mt-1">
+          File name pattern <span className="font-mono">AP16TA1234_2026-02-05_hp.jpg</span> auto-tags vehicle and date.
+        </div>
+        <label className="inline-flex items-center gap-2 mt-3 px-3 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm cursor-pointer hover:bg-zinc-800">
+          {bulkBusy ? "Uploading..." : "Or Choose Files"}
+          <input data-testid="fuel-bulk-input" type="file" multiple accept="image/*,application/pdf" disabled={bulkBusy} onChange={(e) => bulkUpload(e.target.files)} className="hidden" />
+        </label>
+        {bulkResult && (
+          <div className="mt-4 text-left max-w-2xl mx-auto" data-testid="bulk-result">
+            <div className="text-xs font-bold uppercase tracking-wider mb-2">Result — {bulkResult.uploaded}/{bulkResult.total} uploaded</div>
+            <div className="max-h-48 overflow-y-auto border border-zinc-200 rounded-sm">
+              <table className="w-full text-xs">
+                <tbody>
+                  {bulkResult.results.map((r, i) => (
+                    <tr key={i} className="border-t border-zinc-100">
+                      <td className="px-3 py-1.5 truncate">{r.filename}</td>
+                      <td className="px-3 py-1.5 text-xs text-zinc-500">{r.tags?.vehicle_number || "—"}</td>
+                      <td className="px-3 py-1.5 text-xs text-zinc-500">{r.tags?.date || "—"}</td>
+                      <td className={`px-3 py-1.5 text-xs ${r.ok ? "text-emerald-700" : "text-rose-700"}`}>{r.ok ? "OK" : r.error}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+      </section>
 
       {summary?.by_vehicle?.length > 0 && (
         <section className="border border-zinc-200 bg-white rounded-sm">

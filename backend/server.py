@@ -1484,6 +1484,80 @@ async def upload_file(
     doc.pop("_id", None); doc.pop("user_id", None)
     return doc
 
+@api.get("/files/usage")
+async def file_usage(user=Depends(get_current_user)):
+    docs = await db.files.find({"user_id": user["user_id"], "is_deleted": False}, {"_id": 0, "size": 1, "category": 1}).to_list(5000)
+    total = sum(int(d.get("size", 0) or 0) for d in docs)
+    by_cat = {}
+    for d in docs:
+        c = d.get("category", "general")
+        by_cat[c] = by_cat.get(c, 0) + int(d.get("size", 0) or 0)
+    limit = 500 * 1024 * 1024  # 500MB soft cap
+    return {
+        "total_bytes": total,
+        "limit_bytes": limit,
+        "pct": round(min(100, total / limit * 100), 2) if limit else 0,
+        "file_count": len(docs),
+        "by_category": by_cat,
+    }
+
+@api.post("/files/bulk-upload")
+async def bulk_upload(
+    files: List[UploadFile] = File(...),
+    category: str = "general",
+    user=Depends(get_current_user),
+):
+    """Upload multiple files. Auto-tag vehicle_number and date from filename pattern
+    like 'AP16TA1234_2026-02-05_anything.jpg' or 'AP16TA1234-2026-02-05.png'."""
+    import re
+    results = []
+    veh_re = re.compile(r"([A-Z]{2}[-\s]?\d{1,2}[-\s]?[A-Z]{1,3}[-\s]?\d{1,4})", re.IGNORECASE)
+    date_re = re.compile(r"(20\d{2}[-_/.](?:0[1-9]|1[0-2])[-_/.](?:0[1-9]|[12]\d|3[01]))")
+
+    for f in files:
+        try:
+            data = await f.read()
+            if len(data) > 10 * 1024 * 1024:
+                results.append({"filename": f.filename, "ok": False, "error": "> 10MB"})
+                continue
+            fname = f.filename or ""
+            ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else "bin"
+            path = f"{APP_NAME}/uploads/{user['user_id']}/{uuid.uuid4().hex}.{ext}"
+            ctype = f.content_type or mime_for(fname)
+            result = put_object(path, data, ctype)
+
+            # Auto-tag
+            veh_match = veh_re.search(fname.upper())
+            dt_match = date_re.search(fname)
+            linked_id = ""
+            linked_type = ""
+            tags = {}
+            if veh_match:
+                vno = re.sub(r"[-\s]", "", veh_match.group(1)).upper()
+                v = await db.vehicles.find_one({"vehicle_number": vno, "user_id": user["user_id"]}, {"_id": 0})
+                if v:
+                    linked_type = "vehicle"; linked_id = v["id"]
+                tags["vehicle_number"] = vno
+            if dt_match:
+                tags["date"] = dt_match.group(1).replace("_", "-").replace(".", "-").replace("/", "-")
+
+            ref_doc = FileRef(
+                storage_path=result["path"],
+                original_filename=fname,
+                content_type=ctype,
+                size=result.get("size", len(data)),
+                category=category,
+                linked_type=linked_type,
+                linked_id=linked_id,
+            ).model_dump()
+            ref_doc["user_id"] = user["user_id"]
+            ref_doc["tags"] = tags
+            await db.files.insert_one(ref_doc)
+            results.append({"filename": fname, "ok": True, "id": ref_doc["id"], "tags": tags, "linked_id": linked_id})
+        except Exception as e:
+            results.append({"filename": f.filename, "ok": False, "error": str(e)})
+    return {"results": results, "uploaded": sum(1 for r in results if r["ok"]), "total": len(results)}
+
 @api.get("/files")
 async def list_files(
     category: Optional[str] = None,
@@ -1523,6 +1597,45 @@ async def delete_file(fid: str, user=Depends(get_current_user)):
     if r.matched_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
     return {"ok": True}
+
+async def _next_lr_number(user_id: str) -> str:
+    company = await db.companies.find_one({"user_id": user_id}, {"_id": 0})
+    prefix = "LR"
+    seq = 1
+    if company:
+        prefix = company.get("lr_prefix") or "LR"
+        seq = int(company.get("next_lr_number") or 1)
+    fy = now_utc()
+    yr = fy.year % 100
+    yr_next = (fy.year + 1) % 100
+    fy_str = f"{yr:02d}-{yr_next:02d}" if fy.month >= 4 else f"{yr-1:02d}-{yr:02d}"
+    num = f"{prefix}/{fy_str}/{seq:05d}"
+    await db.companies.update_one(
+        {"user_id": user_id},
+        {"$set": {"next_lr_number": seq + 1}},
+        upsert=True,
+    )
+    return num
+
+@api.get("/trips/{tid}/lr")
+async def trip_lr_pdf(tid: str, user=Depends(get_current_user)):
+    from pdf_generator import build_lr_pdf
+    trip = await db.trips.find_one({"id": tid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    # Auto-assign lr_number if missing
+    if not trip.get("lr_number"):
+        lr_num = await _next_lr_number(user["user_id"])
+        await db.trips.update_one({"id": tid, "user_id": user["user_id"]}, {"$set": {"lr_number": lr_num}})
+        trip["lr_number"] = lr_num
+    customer = await db.customers.find_one({"id": trip["customer_id"], "user_id": user["user_id"]}, {"_id": 0}) or {}
+    company = await db.companies.find_one({"user_id": user["user_id"]}, {"_id": 0}) or {}
+    pdf_bytes = build_lr_pdf(company, customer, trip)
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{trip["lr_number"].replace("/", "_")}.pdf"'},
+    )
 
 # ==================== Health ====================
 

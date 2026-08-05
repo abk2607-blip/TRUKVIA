@@ -1,0 +1,43 @@
+{
+  "summary": "Backend-only iter5 testing. Added /app/backend/tests/test_iter5_features.py (11 tests) covering LR PDF generation + auto-numbering (%PDF- header, size>3000, format LR/YY-YY/NNNNN, stable on regen, increments for new trip, company.next_lr_number persistence), storage usage endpoint (shape+growth by_category), bulk file upload with filename auto-tagging (vehicle_number+date regex, empty tags for unmatched, linked to existing vehicle), inline attachments on Trip and Vehicle via /files/upload with linked_type+linked_id (list filter verified), and pincode fields on Company/Customer flowing into /trips/{id}/ewaybill (fromPincode=500032, toPincode=560001). Result: 11/11 iter5 PASS, 88/89 full suite PASS (only known legacy failure backend_test.py::test_01_company_defaults — stale company state; carried since iter2, non-blocking).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/files/upload", "issue": "category/linked_type/linked_id parameters are bound as query params (FastAPI default for scalars in signature), NOT form fields. Passing them via multipart form data (data=) silently defaults to '' / 'general'. Callers must use ?category=&linked_type=&linked_id= in URL. Docs/frontend integration should be aware — recommend either accepting Form(...) fields or documenting the query-only contract."},
+      {"endpoint": "GET /api/trips/{tid}", "issue": "No single-trip GET endpoint (returns 405). Only list+filter available. Not blocking iter5 but inconsistent with /vehicles/{id} pattern and forces clients to list-all + filter."},
+      {"endpoint": "GET /api/company (backend_test.py::test_01_company_defaults)", "issue": "Same legacy stale-state assertion carry-over from iter2/3/4."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter5_features.py",
+    "/app/test_reports/pytest/iter5_results.xml",
+    "/app/test_reports/pytest/all_iter5.xml"
+  ],
+  "action_items": [
+    "Consider adding GET /api/trips/{tid} for symmetry with other CRUD resources.",
+    "Convert /files/upload scalar params to Form(...) so multipart POSTs with data= work, OR clearly document that category/linked_type/linked_id must be sent as query string.",
+    "Address recurring backend_test.py::test_01_company_defaults stale-state failure — either reset db.companies for test user in a session-scoped fixture or relax the assertion."
+  ],
+  "critical_code_review_comments": [
+    "server.py grew to 1667 lines — still exceeds 700-line threshold. Splitting into routers (files, lr, reports, ewaybill, trips, invoices) is increasingly urgent.",
+    "_next_lr_number(): the update is not atomic — reads company doc, computes seq, then updates. Two concurrent LR generations for the same user could both read seq=N and both stamp LR/YY-YY/00000N. Use $inc with findOneAndUpdate(returnDocument=AFTER) for atomicity.",
+    "_next_lr_number(): financial-year cutover always uses now_utc() at moment of first call — but if trip.date is in a different FY, the LR FY string won't match the trip's operational FY. Consider passing trip.date to derive FY, and reset seq when FY rolls over.",
+    "Bulk-upload category/linked_id: category is applied uniformly; linked_id is only auto-computed. There is no way to pass a manual linked_id in bulk-upload. OK for MVP but consider a per-file linked_type override if UI needs it.",
+    "bulk-upload filename regex '([A-Z]{2}[-\\s]?\\d{1,2}[-\\s]?[A-Z]{1,3}[-\\s]?\\d{1,4})' is case-insensitive but strips only '-' and whitespace via re.sub — dot separators (common in scans like 'AP.16.TA.1234') are not normalized. Minor.",
+    "date regex accepts 20\\d{2} — will accept '2099-01-01' as a valid tag date. Optional sanity clamp to <= current year + N.",
+    "/files/upload: category/linked_type/linked_id are declared as function-defaulted scalars → FastAPI infers Query params. Multipart form clients calling with data={...} will silently get defaults. Should be Form(...) to accept both.",
+    "/files/usage: pct rounded to 2 dp but limit is hardcoded to 500MB — consider reading from company/user config for tenant-tunable quotas.",
+    "LR PDF Telugu glyphs: as noted, reportlab + Helvetica cannot render Telugu — the PDF is bytes-valid but Telugu terms will not render. Long-term fix: register a Unicode Telugu font (Noto Sans Telugu) via pdfmetrics.registerFont and set that font in the paragraph style for TE terms.",
+    "Company model: only lr_prefix + next_lr_number stored, no way to reset per FY. If prefix or numbering scheme needs to be per-FY, model needs (fy_str, next_seq) pair.",
+    "MongoDB _id properly excluded across all new endpoints (verified via response inspection). Good."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter5_features.py (new — 11 tests)"],
+  "success_rate": {"backend": "100% on iter5 (11/11); 88/89 full suite (1 known legacy failure)", "frontend": "not tested (backend-only request)"},
+  "test_credentials": "session_token='test_session_bitumen_2026' (Bearer). /api/auth/me verified 200.",
+  "seed_data_creation": "TEST_-prefixed customers/trips/vehicles/files created per class and cleaned via teardown_class. TestLRGeneration + TestPincodeInEwayBill call PUT /api/company setting state=Telangana, pincode=500032 — this persists (matches iter4's pattern which had left state=Andhra Pradesh). Iter5 leaves state=Telangana; iter4's GSTR-1 tests still pass because they reset state to Andhra Pradesh in their own setup_class.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All iter5 endpoints verified end-to-end: GET /api/trips/{tid}/lr returns application/pdf %PDF- ~3000-5000 bytes, auto-assigns trip.lr_number in LR/YY-YY/NNNNN format, second call returns same lr_number (idempotent), new trips increment company.next_lr_number. GET /api/files/usage returns {total_bytes,limit_bytes=524288000,pct,file_count,by_category}. POST /api/files/bulk-upload?category=X with multipart files list auto-parses vehicle_number (regex, dashes/spaces stripped, uppercase) and date (20YY-MM-DD variants) into per-file tags dict and auto-links to existing vehicle. POST /api/files/upload with linked_type & linked_id as QUERY params (not form data) creates trip/vehicle attachments; GET /api/files?linked_type=&linked_id= filters correctly. Company/Customer pincode fields save and flow into ewaybill fromPincode/toPincode as integers. Known limitations: no GET /api/trips/{tid} (405), Telugu glyphs unrendered in LR PDF (typography), _next_lr_number is not atomic. Legacy backend_test.py::test_01_company_defaults continues to fail (stale-state; not a product bug).",
+  "rca of the issue": "No new bugs found. Two minor discoveries during test-writing: (1) /files/upload's category/linked_type/linked_id are declared as function scalars → FastAPI treats them as Query params; passing them in multipart `data=` binds nothing. Fixed test by using `params=`. Reported as minor action item — recommend Form(...) declaration for form-data compatibility. (2) No GET /api/trips/{tid}; used list + filter in tests."
+}

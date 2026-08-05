@@ -1,8 +1,8 @@
 import React from "react";
 import { useQuery } from "@tanstack/react-query";
-import { api, fmtCurrency, fmtDate } from "@/api";
+import { api, API, fmtCurrency, fmtDate } from "@/api";
 import { Link } from "react-router-dom";
-import { Plus, CheckCircle2, Clock, Download } from "lucide-react";
+import { Plus, CheckCircle2, Clock, Download, FileText } from "lucide-react";
 
 const downloadEwayBill = async (tripId) => {
   const { api: ax } = await import("@/api");
@@ -91,6 +91,16 @@ export default function Trips() {
                     )}
                   </td>
                   <td className="px-3 py-2 text-right whitespace-nowrap">
+                    <a
+                      data-testid={`lr-${t.id}`}
+                      href={`${API}/trips/${t.id}/lr`}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-zinc-200 rounded-sm hover:bg-zinc-950 hover:text-white mr-1"
+                      title="Download LR PDF"
+                    >
+                      <FileText size={11} /> LR
+                    </a>
                     <button
                       data-testid={`ewaybill-${t.id}`}
                       onClick={() => downloadEwayBill(t.id)}

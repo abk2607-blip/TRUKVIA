@@ -1,9 +1,10 @@
 import React, { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, fmtCurrency } from "@/api";
+import { api, API, fmtCurrency } from "@/api";
 import { toast } from "sonner";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, FileText } from "lucide-react";
+import FileAttachments from "@/components/FileAttachments";
 
 const EMPTY = {
   customer_id: "",
@@ -11,12 +12,15 @@ const EMPTY = {
   vehicle_number: "",
   driver_id: "",
   driver_name: "",
+  driver_mobile: "",
   product_id: "",
   load_details: "Bitumen VG 40",
   hsn_sac: "",
   tons: 0,
   from_location: "",
   to_location: "",
+  from_pincode: "",
+  to_pincode: "",
   freight_mode: "per_ton",
   rate_per_ton: 0,
   fixed_amount: 0,
@@ -24,6 +28,16 @@ const EMPTY = {
   rate_per_km_per_ton: 0,
   expenses: { diesel: 0, toll: 0, batta: 0, repair: 0, other: 0 },
   notes: "",
+  lr_number: "",
+  lr_time: "",
+  consignor_name: "",
+  consignor_address: "",
+  consignee_site_location: "",
+  consignee_site_contact: "",
+  external_invoice_no: "",
+  gross_weight: 0,
+  tare_weight: 0,
+  seal_numbers: "",
 };
 
 export default function TripForm() {
@@ -57,6 +71,8 @@ export default function TripForm() {
         fixed_amount: Number(form.fixed_amount),
         round_trip_kms: Number(form.round_trip_kms),
         rate_per_km_per_ton: Number(form.rate_per_km_per_ton),
+        gross_weight: Number(form.gross_weight || 0),
+        tare_weight: Number(form.tare_weight || 0),
         expenses: Object.fromEntries(Object.entries(form.expenses).map(([k, v]) => [k, Number(v || 0)])),
       };
       if (isEdit) return (await api.put(`/trips/${id}`, payload)).data;
@@ -268,6 +284,61 @@ export default function TripForm() {
             </div>
           </div>
         </Section>
+
+        <Section title="LR / Lorry Receipt (Optional)">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <Field label="LR Number (auto)">
+              <input data-testid="trip-lr-number" value={form.lr_number} onChange={(e) => setForm({ ...form, lr_number: e.target.value })} className={inputCls} placeholder="Auto-generated on download" />
+            </Field>
+            <Field label="LR Time">
+              <input data-testid="trip-lr-time" type="time" value={form.lr_time} onChange={(e) => setForm({ ...form, lr_time: e.target.value })} className={inputCls} />
+            </Field>
+            <Field label="External Invoice # (BPCL/HPCL)">
+              <input data-testid="trip-ext-invoice" value={form.external_invoice_no} onChange={(e) => setForm({ ...form, external_invoice_no: e.target.value })} className={inputCls} placeholder="MUM-26-27-00220" />
+            </Field>
+            <Field label="Consignor Name">
+              <input data-testid="trip-consignor" value={form.consignor_name} onChange={(e) => setForm({ ...form, consignor_name: e.target.value })} className={inputCls} placeholder="BPCL - Mumbai" />
+            </Field>
+            <Field label="Consignee Site Location">
+              <input data-testid="trip-site-loc" value={form.consignee_site_location} onChange={(e) => setForm({ ...form, consignee_site_location: e.target.value })} className={inputCls} />
+            </Field>
+            <Field label="Site Contact Person">
+              <input data-testid="trip-site-contact" value={form.consignee_site_contact} onChange={(e) => setForm({ ...form, consignee_site_contact: e.target.value })} className={inputCls} placeholder="Name & phone" />
+            </Field>
+            <Field label="Gross Wt (MT)">
+              <input data-testid="trip-gross-wt" type="number" step="0.001" min="0" value={form.gross_weight} onChange={(e) => setForm({ ...form, gross_weight: e.target.value })} className={inputCls} />
+            </Field>
+            <Field label="Tare Wt (MT)">
+              <input data-testid="trip-tare-wt" type="number" step="0.001" min="0" value={form.tare_weight} onChange={(e) => setForm({ ...form, tare_weight: e.target.value })} className={inputCls} />
+            </Field>
+            <Field label="Seal Numbers">
+              <input data-testid="trip-seal" value={form.seal_numbers} onChange={(e) => setForm({ ...form, seal_numbers: e.target.value })} className={inputCls} placeholder="SL-001, SL-002" />
+            </Field>
+            <Field label="Driver Mobile">
+              <input data-testid="trip-driver-mobile" value={form.driver_mobile} onChange={(e) => setForm({ ...form, driver_mobile: e.target.value })} className={inputCls} placeholder="98xxxxxxxx" />
+            </Field>
+            <Field label="From Pincode">
+              <input data-testid="trip-from-pin" value={form.from_pincode} onChange={(e) => setForm({ ...form, from_pincode: e.target.value })} className={inputCls} />
+            </Field>
+            <Field label="To Pincode">
+              <input data-testid="trip-to-pin" value={form.to_pincode} onChange={(e) => setForm({ ...form, to_pincode: e.target.value })} className={inputCls} />
+            </Field>
+          </div>
+          {isEdit && (
+            <div className="mt-4">
+              <a data-testid="download-lr-btn" href={`${API}/trips/${id}/lr`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-3 py-2 text-xs uppercase tracking-wider font-semibold bg-zinc-950 text-white rounded-sm hover:bg-zinc-800">
+                <FileText size={14} /> Download LR PDF
+              </a>
+              <span className="ml-2 text-xs text-zinc-500">Auto-assigns an LR number on first download.</span>
+            </div>
+          )}
+        </Section>
+
+        {isEdit && (
+          <Section title="Attachments · LR proof / Weighbridge slip">
+            <FileAttachments linkedType="trip" linkedId={id} category="trip_attachment" title="Trip Files" />
+          </Section>
+        )}
 
         <Section title="గమనికలు · Notes">
           <textarea data-testid="trip-notes" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={inputCls} />

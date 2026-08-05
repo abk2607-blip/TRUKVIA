@@ -37,9 +37,14 @@ export default function Files() {
     queryFn: async () => (await api.get("/files")).data,
   });
 
+  const { data: usage } = useQuery({
+    queryKey: ["file-usage"],
+    queryFn: async () => (await api.get("/files/usage")).data,
+  });
+
   const del = useMutation({
     mutationFn: async (id) => (await api.delete(`/files/${id}`)).data,
-    onSuccess: () => { toast.success("Deleted"); qc.invalidateQueries({ queryKey: ["files"] }); },
+    onSuccess: () => { toast.success("Deleted"); qc.invalidateQueries({ queryKey: ["files"] }); qc.invalidateQueries({ queryKey: ["file-usage"] }); },
   });
 
   const onUpload = async (e) => {
@@ -55,6 +60,7 @@ export default function Files() {
       });
       toast.success("Uploaded");
       qc.invalidateQueries({ queryKey: ["files"] });
+      qc.invalidateQueries({ queryKey: ["file-usage"] });
     } catch (err) {
       toast.error(err?.response?.data?.detail || "Upload failed");
     } finally {
@@ -84,6 +90,34 @@ export default function Files() {
           </h1>
         </div>
       </header>
+
+      {usage && (
+        <section className="border border-zinc-200 bg-white rounded-sm p-5" data-testid="storage-usage">
+          <div className="flex items-center justify-between mb-2">
+            <div className="text-sm font-bold uppercase tracking-wider">Storage Usage</div>
+            <div className="text-xs text-zinc-500 font-mono">{usage.file_count} file(s)</div>
+          </div>
+          <div className="text-xs text-zinc-600 mb-2 font-mono">
+            {fmtSize(usage.total_bytes)} of {fmtSize(usage.limit_bytes)} ({usage.pct}%)
+          </div>
+          <div className="w-full h-3 bg-zinc-100 rounded-sm overflow-hidden">
+            <div
+              data-testid="usage-bar"
+              className={`h-full transition-all ${usage.pct >= 80 ? "bg-rose-600" : usage.pct >= 60 ? "bg-amber-500" : "bg-emerald-600"}`}
+              style={{ width: `${Math.min(100, usage.pct)}%` }}
+            />
+          </div>
+          {Object.keys(usage.by_category || {}).length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2 text-[10px] uppercase tracking-wider">
+              {Object.entries(usage.by_category).map(([k, v]) => (
+                <span key={k} className="border border-zinc-200 px-2 py-0.5 rounded-sm">
+                  {k}: <span className="font-mono">{fmtSize(v)}</span>
+                </span>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="border border-zinc-200 bg-white rounded-sm p-5">
         <div className="text-sm font-bold uppercase tracking-wider mb-3">Upload New File</div>

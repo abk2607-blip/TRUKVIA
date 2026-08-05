@@ -3,9 +3,10 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api";
 import { toast } from "sonner";
 import { Plus, Pencil, Trash2, X, Truck, AlertTriangle, CheckCircle2 } from "lucide-react";
+import FileAttachments from "@/components/FileAttachments";
 
 const EMPTY = {
-  vehicle_number: "", owner_name: "", make_model: "", capacity_tons: 0,
+  vehicle_number: "", owner_name: "", owner_phone: "", make_model: "", capacity_tons: 0,
   rc_expiry: "", fc_expiry: "", insurance_expiry: "", permit_expiry: "", puc_expiry: "",
   notes: "",
 };
@@ -126,6 +127,7 @@ export default function Vehicles() {
             <form onSubmit={(e) => { e.preventDefault(); save.mutate(); }} className="p-5 grid grid-cols-1 md:grid-cols-2 gap-3">
               <F label="Vehicle Number *"><input data-testid="vehicle-number" required value={form.vehicle_number} onChange={(e) => setForm({ ...form, vehicle_number: e.target.value.toUpperCase() })} className={ic} placeholder="AP16TA1234" /></F>
               <F label="Owner Name"><input data-testid="vehicle-owner" value={form.owner_name} onChange={(e) => setForm({ ...form, owner_name: e.target.value })} className={ic} /></F>
+              <F label="Owner Phone"><input data-testid="vehicle-owner-phone" value={form.owner_phone} onChange={(e) => setForm({ ...form, owner_phone: e.target.value })} className={ic} placeholder="For renewal reminders" /></F>
               <F label="Make/Model"><input data-testid="vehicle-model" value={form.make_model} onChange={(e) => setForm({ ...form, make_model: e.target.value })} className={ic} placeholder="Tata LPT 3118" /></F>
               <F label="Capacity (Tons)"><input data-testid="vehicle-capacity" type="number" step="0.1" min="0" value={form.capacity_tons} onChange={(e) => setForm({ ...form, capacity_tons: e.target.value })} className={ic} /></F>
               {DOCS.map(([field, label]) => (
@@ -136,6 +138,12 @@ export default function Vehicles() {
               <div className="md:col-span-2">
                 <F label="Notes"><textarea rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={ic} /></F>
               </div>
+              {editing && (
+                <div className="md:col-span-2">
+                  <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500 block mb-1">Document Scans (RC / FC / Insurance)</label>
+                  <FileAttachments linkedType="vehicle" linkedId={editing.id} category="vehicle_doc" title="Vehicle Documents" />
+                </div>
+              )}
               <div className="md:col-span-2 flex justify-end gap-2 pt-2">
                 <button type="button" onClick={() => setOpen(false)} className="px-4 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm">Cancel</button>
                 <button data-testid="save-vehicle-btn" type="submit" disabled={save.isPending} className="px-4 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 disabled:opacity-50">
