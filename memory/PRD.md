@@ -45,6 +45,11 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - [x] **Profit & Loss** for any date range with per-customer breakdown
 - [x] **Balance Sheet** (simplified) — assets/equity as-of any date
 - [x] Iteration 3 tests: 22/22 new passing
+- [x] **Vehicle Master** with RC/FC/Insurance/Permit/PUC expiry tracking + Dashboard alerts (30-day window)
+- [x] **Fuel Log** with per-fill entries and per-vehicle km/L computed from odometer
+- [x] **GSTR-1 Monthly Report** with B2B/B2C split, per-state POS breakdown, CSV export
+- [x] **E-Way Bill JSON** per trip — schema-compliant with state-code mapping, intra/inter-state detection
+- [x] Iteration 4 tests: 15/15 new passing (77/78 overall)
 
 ## Backlog (P1)
 - [ ] Drivers & Vehicles master (currently free-text)
