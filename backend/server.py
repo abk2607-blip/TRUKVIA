@@ -237,6 +237,33 @@ class Invoice(BaseModel):
     notes: str = ""
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
 
+# Simple RBAC: role -> permissions
+ROLE_PERMISSIONS = {
+    "owner": {"edit_trip", "delete_trip", "edit_invoice", "delete_invoice", "edit_master", "delete_master", "manage_users"},
+    "accountant": {"edit_trip", "edit_invoice", "edit_master"},
+    "viewer": set(),
+}
+
+class TeamMember(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("tm_"))
+    owner_user_id: str          # the owner's user_id
+    email: str
+    name: str = ""
+    role: Literal["owner", "accountant", "viewer"] = "accountant"
+    active: bool = True
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+
+def _has_perm(user: dict, perm: str) -> bool:
+    role = user.get("effective_role") or "owner"
+    return perm in ROLE_PERMISSIONS.get(role, set())
+
+def require_perm(perm: str):
+    async def _check(user=Depends(get_current_user)):
+        if not _has_perm(user, perm):
+            raise HTTPException(status_code=403, detail=f"Missing permission: {perm}")
+        return user
+    return _check
+
 # ==================== Auth ====================
 
 async def get_current_user(request: Request):
@@ -264,6 +291,17 @@ async def get_current_user(request: Request):
     user = await db.users.find_one({"user_id": session["user_id"]}, {"_id": 0})
     if not user:
         raise HTTPException(status_code=401, detail="User not found")
+    # RBAC: if this user's email is registered as a team member of another owner, scope data to that owner
+    tm = await db.team_members.find_one({"email": user["email"], "active": True}, {"_id": 0})
+    if tm and tm.get("owner_user_id") and tm["owner_user_id"] != user["user_id"]:
+        user = dict(user)
+        user["user_id"] = tm["owner_user_id"]  # data scope = owner
+        user["effective_role"] = tm.get("role", "accountant")
+        user["is_staff"] = True
+    else:
+        user = dict(user)
+        user["effective_role"] = "owner"
+        user["is_staff"] = False
     return user
 
 @api.post("/auth/session")
@@ -517,6 +555,8 @@ async def update_trip(tid: str, payload: Trip, user=Depends(get_current_user)):
 
 @api.delete("/trips/{tid}")
 async def delete_trip(tid: str, reason: str = "", user=Depends(get_current_user)):
+    if not _has_perm(user, "delete_trip"):
+        raise HTTPException(status_code=403, detail="Missing permission: delete_trip")
     if not (reason or "").strip():
         raise HTTPException(status_code=400, detail="Reason for deletion is required")
     existing = await db.trips.find_one({"id": tid, "user_id": user["user_id"]}, {"_id": 0})
@@ -675,10 +715,31 @@ async def update_invoice(iid: str, payload: InvoiceUpdateRequest, user=Depends(g
     changes = _diff_dict(existing, {**existing, **updates}, list(updates.keys()))
     await _log_audit(user, "invoice", "update", entity_id=iid, entity_ref=existing.get("invoice_number", ""), reason=payload.reason, changes=changes)
     updated = await db.invoices.find_one({"id": iid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
+    # Auto-save PDF snapshot to storage (best-effort, non-blocking on failure)
+    try:
+        customer = await db.customers.find_one({"id": updated["customer_id"], "user_id": user["user_id"]}, {"_id": 0}) or {}
+        company = await db.companies.find_one({"user_id": user["user_id"]}, {"_id": 0}) or {}
+        trip_docs = await db.trips.find({"user_id": user["user_id"], "id": {"$in": updated["trip_ids"]}}, {"_id": 0}).to_list(500)
+        trip_docs.sort(key=lambda t: t.get("date", ""))
+        pdf_bytes = build_invoice_pdf(company, customer, updated, trip_docs)
+        snap_path = f"{APP_NAME}/uploads/{user['user_id']}/{uuid.uuid4().hex}.pdf"
+        put_object(snap_path, pdf_bytes, "application/pdf")
+        ref = FileRef(
+            storage_path=snap_path,
+            original_filename=f"{updated['invoice_number'].replace('/', '_')}_snapshot_{now_utc().date().isoformat()}.pdf",
+            content_type="application/pdf", size=len(pdf_bytes),
+            category="invoice_snapshot", linked_type="invoice", linked_id=iid,
+        ).model_dump()
+        ref["user_id"] = user["user_id"]
+        await db.files.insert_one(ref)
+    except Exception as e:
+        logger.warning(f"invoice snapshot failed: {e}")
     return updated
 
 @api.delete("/invoices/{iid}")
 async def delete_invoice(iid: str, reason: str = "", user=Depends(get_current_user)):
+    if not _has_perm(user, "delete_invoice"):
+        raise HTTPException(status_code=403, detail="Missing permission: delete_invoice")
     if not (reason or "").strip():
         raise HTTPException(status_code=400, detail="Reason for deletion is required")
     doc = await db.invoices.find_one({"id": iid, "user_id": user["user_id"]}, {"_id": 0})
@@ -1809,6 +1870,100 @@ async def list_audit_logs(
         q["timestamp"] = rng
     docs = await db.audit_logs.find(q, {"_id": 0, "user_id": 0}).sort("timestamp", -1).to_list(min(int(limit), 500))
     return docs
+
+# ==================== Team Members ====================
+
+@api.get("/team")
+async def list_team(user=Depends(get_current_user)):
+    if user.get("is_staff"):
+        raise HTTPException(status_code=403, detail="Only owner can view team")
+    docs = await db.team_members.find({"owner_user_id": user["user_id"]}, {"_id": 0}).to_list(200)
+    return docs
+
+@api.post("/team")
+async def add_team_member(payload: TeamMember, user=Depends(get_current_user)):
+    if user.get("is_staff"):
+        raise HTTPException(status_code=403, detail="Only owner can add team")
+    payload.owner_user_id = user["user_id"]
+    payload.email = payload.email.strip().lower()
+    if payload.role == "owner":
+        payload.role = "accountant"  # never elevate to owner via API
+    existing = await db.team_members.find_one({"owner_user_id": user["user_id"], "email": payload.email})
+    if existing:
+        raise HTTPException(status_code=400, detail="Member already exists")
+    doc = payload.model_dump()
+    await db.team_members.insert_one(doc)
+    doc.pop("_id", None)
+    await _log_audit(user, "team", "create", entity_id=doc["id"], entity_ref=doc["email"])
+    return doc
+
+@api.put("/team/{tid}")
+async def update_team_member(tid: str, payload: TeamMember, user=Depends(get_current_user)):
+    if user.get("is_staff"):
+        raise HTTPException(status_code=403, detail="Only owner")
+    existing = await db.team_members.find_one({"id": tid, "owner_user_id": user["user_id"]}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Not found")
+    payload.id = tid
+    payload.owner_user_id = user["user_id"]
+    if payload.role == "owner":
+        payload.role = "accountant"
+    doc = payload.model_dump()
+    await db.team_members.update_one({"id": tid, "owner_user_id": user["user_id"]}, {"$set": doc})
+    await _log_audit(user, "team", "update", entity_id=tid, entity_ref=doc["email"])
+    return doc
+
+@api.delete("/team/{tid}")
+async def delete_team_member(tid: str, user=Depends(get_current_user)):
+    if user.get("is_staff"):
+        raise HTTPException(status_code=403, detail="Only owner")
+    doc = await db.team_members.find_one({"id": tid, "owner_user_id": user["user_id"]}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Not found")
+    await db.team_members.delete_one({"id": tid, "owner_user_id": user["user_id"]})
+    await _log_audit(user, "team", "delete", entity_id=tid, entity_ref=doc.get("email", ""), reason="removed")
+    return {"ok": True}
+
+@api.get("/team/me")
+async def team_me(user=Depends(get_current_user)):
+    return {
+        "email": user.get("email"),
+        "name": user.get("name"),
+        "role": user.get("effective_role"),
+        "is_staff": user.get("is_staff", False),
+        "permissions": sorted(list(ROLE_PERMISSIONS.get(user.get("effective_role", "owner"), set()))),
+    }
+
+# ==================== Supplier P&L Report ====================
+
+@api.get("/reports/supplier-pl")
+async def report_supplier_pl(start: Optional[str] = None, end: Optional[str] = None, user=Depends(get_current_user)):
+    uid = user["user_id"]
+    trips = await db.trips.find({"user_id": uid, "vehicle_type": "supplier"}, {"_id": 0, "user_id": 0}).to_list(5000)
+    trips = [t for t in trips if _in_range(t.get("date", ""), start, end)]
+    by = {}
+    for t in trips:
+        name = (t.get("supplier_name") or "—").strip() or "—"
+        s = by.setdefault(name, {"supplier_name": name, "trips": 0, "tons": 0.0, "customer_freight": 0.0, "supplier_freight": 0.0, "profit": 0.0, "margin_pct": 0.0})
+        s["trips"] += 1
+        s["tons"] += float(t.get("tons", 0))
+        s["customer_freight"] += float(t.get("freight_amount", 0))
+        s["supplier_freight"] += float(t.get("supplier_freight", 0))
+    total = {"trips": 0, "tons": 0.0, "customer_freight": 0.0, "supplier_freight": 0.0, "profit": 0.0}
+    for s in by.values():
+        s["profit"] = round(s["customer_freight"] - s["supplier_freight"], 2)
+        s["margin_pct"] = round((s["profit"] / s["customer_freight"] * 100.0), 2) if s["customer_freight"] > 0 else 0.0
+        for k in ("tons", "customer_freight", "supplier_freight"):
+            s[k] = round(s[k], 2)
+        total["trips"] += s["trips"]; total["tons"] += s["tons"]
+        total["customer_freight"] += s["customer_freight"]; total["supplier_freight"] += s["supplier_freight"]; total["profit"] += s["profit"]
+    for k in ("tons", "customer_freight", "supplier_freight", "profit"):
+        total[k] = round(total[k], 2)
+    return {
+        "period": {"start": start, "end": end},
+        "suppliers": sorted(by.values(), key=lambda x: -x["profit"]),
+        "totals": total,
+    }
 
 # ==================== Health ====================
 

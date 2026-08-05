@@ -2,11 +2,12 @@ import React, { useState } from "react";
 import { NavLink, Routes, Route, Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api, API, fmtCurrency, fmtDate } from "@/api";
-import { FileText, TrendingUp, Scale, Download, Landmark } from "lucide-react";
+import { FileText, TrendingUp, Scale, Download, Landmark, Handshake } from "lucide-react";
 
 const tabs = [
   { to: "ledger", te: "లెడ్జర్", en: "Ledger", icon: FileText, testid: "tab-ledger" },
   { to: "pl", te: "లాభ-నష్టం", en: "P&L", icon: TrendingUp, testid: "tab-pl" },
+  { to: "supplier-pl", te: "సప్లయర్ P&L", en: "Supplier P&L", icon: Handshake, testid: "tab-supplier-pl" },
   { to: "balance-sheet", te: "బ్యాలెన్స్ షీట్", en: "Balance Sheet", icon: Scale, testid: "tab-balance-sheet" },
   { to: "gstr1", te: "GSTR-1", en: "GSTR-1", icon: Landmark, testid: "tab-gstr1" },
 ];
@@ -44,9 +45,90 @@ export default function Reports() {
         <Route index element={<Navigate to="ledger" replace />} />
         <Route path="ledger" element={<LedgerReport />} />
         <Route path="pl" element={<PLReport />} />
+        <Route path="supplier-pl" element={<SupplierPLReport />} />
         <Route path="balance-sheet" element={<BalanceSheetReport />} />
         <Route path="gstr1" element={<GSTR1Report />} />
       </Routes>
+    </div>
+  );
+}
+
+/* ------------------ Supplier P&L ------------------ */
+function SupplierPLReport() {
+  const today = new Date();
+  const firstDay = new Date(today.getFullYear(), today.getMonth(), 1).toISOString().slice(0, 10);
+  const [start, setStart] = useState(firstDay);
+  const [end, setEnd] = useState(today.toISOString().slice(0, 10));
+
+  const { data, refetch, isFetching } = useQuery({
+    queryKey: ["supplier-pl", start, end],
+    queryFn: async () => (await api.get("/reports/supplier-pl", { params: { start, end } })).data,
+  });
+
+  return (
+    <div className="space-y-4" data-testid="supplier-pl-tab">
+      <div className="border border-zinc-200 bg-white rounded-sm p-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+        <FieldWrap label="From"><input data-testid="spl-start" type="date" value={start} onChange={(e) => setStart(e.target.value)} className={ic} /></FieldWrap>
+        <FieldWrap label="To"><input data-testid="spl-end" type="date" value={end} onChange={(e) => setEnd(e.target.value)} className={ic} /></FieldWrap>
+        <div className="flex items-end">
+          <button data-testid="run-spl-btn" onClick={() => refetch()} disabled={isFetching} className="w-full px-3 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm hover:bg-zinc-800">
+            {isFetching ? "Running..." : "Refresh"}
+          </button>
+        </div>
+      </div>
+
+      {data && (
+        <div className="border border-zinc-200 bg-white rounded-sm" data-testid="spl-result">
+          <div className="px-5 py-3 border-b border-zinc-200 text-sm font-bold uppercase tracking-wider flex items-center justify-between">
+            <span>Supplier Profitability</span>
+            <span className="text-xs text-zinc-500 font-normal">
+              {data.totals.trips} trips · Profit: <span className="font-bold text-emerald-800">{fmtCurrency(data.totals.profit)}</span>
+            </span>
+          </div>
+          <table className="w-full text-sm">
+            <thead className="bg-zinc-50 text-[10px] uppercase tracking-wider text-zinc-500">
+              <tr>
+                <th className="text-left px-4 py-2">Supplier</th>
+                <th className="text-right px-4 py-2">Trips</th>
+                <th className="text-right px-4 py-2">Tons</th>
+                <th className="text-right px-4 py-2">Customer Freight</th>
+                <th className="text-right px-4 py-2">Supplier Freight</th>
+                <th className="text-right px-4 py-2">Profit</th>
+                <th className="text-right px-4 py-2">Margin %</th>
+              </tr>
+            </thead>
+            <tbody className="font-mono">
+              {(data.suppliers || []).map((s) => (
+                <tr key={s.supplier_name} className="border-t border-zinc-100">
+                  <td className="px-4 py-2 font-semibold">{s.supplier_name}</td>
+                  <td className="px-4 py-2 text-right">{s.trips}</td>
+                  <td className="px-4 py-2 text-right">{s.tons.toFixed(2)}</td>
+                  <td className="px-4 py-2 text-right">{fmtCurrency(s.customer_freight)}</td>
+                  <td className="px-4 py-2 text-right text-rose-700">{fmtCurrency(s.supplier_freight)}</td>
+                  <td className={`px-4 py-2 text-right font-bold ${s.profit >= 0 ? "text-emerald-800" : "text-rose-800"}`}>{fmtCurrency(s.profit)}</td>
+                  <td className="px-4 py-2 text-right">{s.margin_pct}%</td>
+                </tr>
+              ))}
+              {(data.suppliers || []).length === 0 && (
+                <tr><td colSpan={7} className="px-4 py-10 text-center text-zinc-400 text-sm">No supplier trips in this period.</td></tr>
+              )}
+            </tbody>
+            {(data.suppliers || []).length > 0 && (
+              <tfoot>
+                <tr className="bg-amber-50 border-t-2 border-zinc-950">
+                  <td className="px-4 py-2 font-bold">TOTAL</td>
+                  <td className="px-4 py-2 text-right font-bold">{data.totals.trips}</td>
+                  <td className="px-4 py-2 text-right font-bold">{data.totals.tons.toFixed(2)}</td>
+                  <td className="px-4 py-2 text-right font-bold">{fmtCurrency(data.totals.customer_freight)}</td>
+                  <td className="px-4 py-2 text-right font-bold">{fmtCurrency(data.totals.supplier_freight)}</td>
+                  <td className="px-4 py-2 text-right font-bold text-emerald-800">{fmtCurrency(data.totals.profit)}</td>
+                  <td className="px-4 py-2 text-right"></td>
+                </tr>
+              </tfoot>
+            )}
+          </table>
+        </div>
+      )}
     </div>
   );
 }
