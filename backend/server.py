@@ -495,10 +495,13 @@ async def update_trip(tid: str, payload: Trip, user=Depends(get_current_user)):
     if not existing:
         raise HTTPException(status_code=404, detail="Trip not found")
     payload.id = tid
-    if not payload.vehicle_id and payload.vehicle_number:
+    if payload.vehicle_number:
         v = await db.vehicles.find_one({"vehicle_number": payload.vehicle_number.upper(), "user_id": user["user_id"]}, {"_id": 0})
         if v:
             payload.vehicle_id = v["id"]
+            payload.vehicle_type = v.get("vehicle_type", "own")
+            if payload.vehicle_type == "supplier" and not payload.supplier_name:
+                payload.supplier_name = v.get("supplier_name", "")
     payload = _compute_trip(payload)
     doc = payload.model_dump()
     doc["user_id"] = user["user_id"]
@@ -646,11 +649,6 @@ async def create_invoice(payload: InvoiceCreateRequest, user=Depends(get_current
     return doc
 
 class InvoiceUpdateRequest(BaseModel):
-    invoice_date: Optional[str] = None
-    gst_type: Optional[Literal["cgst_sgst", "igst"]] = None
-    rcm: Optional[bool] = None
-    notes: Optional[str] = None
-    reason: str = ""
     invoice_date: Optional[str] = None
     gst_type: Optional[Literal["cgst_sgst", "igst"]] = None
     rcm: Optional[bool] = None

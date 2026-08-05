@@ -49,7 +49,15 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - [x] **Fuel Log** with per-fill entries and per-vehicle km/L computed from odometer
 - [x] **GSTR-1 Monthly Report** with B2B/B2C split, per-state POS breakdown, CSV export
 - [x] **E-Way Bill JSON** per trip — schema-compliant with state-code mapping, intra/inter-state detection
-- [x] Iteration 4 tests: 15/15 new passing (77/78 overall)
+- [x] **LR Redesigned** — Telugu removed, English-only professional layout with new fields (Customer Invoice, Waybill, Purchased At, Invoice Value)
+- [x] **Trip optional fields** — customer_invoice_no, customer_purchased_at, invoice_value, waybill_no auto-flow to LR + Invoice
+- [x] **Extra Trip Expense/Recovery** — diesel from customer (qty×rate=amount recovery), shortage qty+amount (deduction), cash advance, firewood, other (with desc). Auto-affects profit and net_settlement
+- [x] **Supplier (Hired) Vehicle** — vehicle_type='own'|'supplier' with supplier_name/contact/mobile/remarks. Trip auto-populates from master. supplier_freight editable. Profit = customer_freight - supplier_freight for supplier trips
+- [x] **Trip Edit After Invoicing** — cascade recomputes linked invoice via `_recompute_invoice`
+- [x] **Invoice Edit** — `PUT /invoices/{id}` with mandatory reason; recomputes on GST/RCM change
+- [x] **Delete with Reason** — Trip & Invoice DELETE both require `?reason=` (400 otherwise)
+- [x] **Audit Trail** — full audit_logs collection + `/api/audit-logs` filterable by module/action/entity/date; new sidebar page. All create/update/delete of trips & invoices logged
+- [x] Iter6 tests: 17/17 backend passing (64/65 across whole suite)
 - [x] **File & Media Storage** integration via Emergent Object Storage — upload/list/preview/download/soft-delete with categories (vehicle_doc, fuel_bill, lr_proof, trip_attachment); new **Files** page in sidebar. Storage bucket per user (`bitumen-accounting/uploads/{user_id}/`). Max 10MB per file. Tested end-to-end via curl.
 - [x] **LR / Consignment Note PDF** generation with auto-numbering (`LR/YY-YY/NNNNN`), bilingual English + Telugu terms & conditions (Noto Sans Telugu font), inline font-switching, all fields matching real GC format (BPCL/HPCL style). Tests: 11/11 iter5 backend passing.
 - [x] **Inline File Attachments** on Trip (LR proofs, weighbridge slips) and Vehicle (RC/FC/Insurance scans) via `FileAttachments` component
