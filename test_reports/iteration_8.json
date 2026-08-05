@@ -1,0 +1,27 @@
+{
+  "summary": "Iteration 8 e2e testing of 6 new features: Trip Sheet edit auto-recalc invoice, Trip View page, supplier freight detailed calculation + supplier profit formula (Customer − (Supplier − Advance)), Supplier P&L report columns/totals, /reports/pl now includes supplier_net_payable, and 2-page LR PDF (details on page 1, T&C only on page 2). All 8 backend pytest cases pass. Frontend UI checks confirm View/Edit buttons on Trips list, TripView page renders all required sections with correct amounts, invoiced-edit-warning banner visible, TripForm supplier detailed fields present, and Supplier P&L table has all 10 required columns.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter8_features.py",
+    "/app/test_reports/pytest/iter8_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is 2034 lines — well above 700 line guideline; consider splitting into routers per resource (trips.py, invoices.py, reports.py) for maintainability.",
+    "_compute_trip supplier branch: when supplier_freight_mode='per_ton' with supplier_rate_per_ton==0, supplier_freight is preserved (good), but if user later switches mode via UI without clearing rate, edge cases may occur — currently correct because the else-if guards on >0.",
+    "GET /reports/pl uses trip.total_expense which already contains (supplier_freight − supplier_advance) for supplier trips; the 'supplier_net_payable' label in the response is slightly misleading — it equals (supplier_freight − supplier_advance), NOT (supplier_freight − supplier_advance − other_recoveries). Consider renaming to supplier_cost or documenting.",
+    "PUT /api/trips/{id} does not enforce delete_trip/edit_trip permission checks for staff users editing an invoiced trip — worth reviewing RBAC coverage on this newly enabled path.",
+    "Frontend Reports.jsx SupplierPLReport uses default date range = first-of-current-month to today; no way to see historical supplier profits by default. Consider defaulting to current FY or last 90 days."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter8_features.py (new)"
+  ],
+  "success_rate": {"backend": "100% (8/8)", "frontend": "100% (all UI assertions confirmed via screenshots)"},
+  "test_credentials": "session_token=test_session_bitumen_2026 (Bearer), user_id=test-user-bitumen — seeded and verified.",
+  "seed_data_creation": "All test data created via API with TEST_ prefix and cleaned up in test fixtures/finally blocks. UI test also created a customer + supplier trip + invoice, then deleted them.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Backend tests: /app/backend/tests/test_iter8_features.py covers compute (per_ton/fixed/manual/own), invoice auto-recompute on edit, supplier-pl aggregation & totals, /reports/pl supplier_net_payable field, and LR PDF 2-page split validated with PyMuPDF (fitz). Frontend Reports has NESTED routes: use /reports/supplier-pl directly, /reports/pl, etc. — do not just click the tab and expect Run button (Ledger's Run button is only for Ledger). TripView renders currency as '₹ 20,000.00' with commas — search using raw substring '20,000' or numeric parse rather than '20000'.",
+  "rca of the issue": "No unresolved issues. All 6 requested features verified end-to-end."
+}

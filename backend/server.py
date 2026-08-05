@@ -110,6 +110,19 @@ class Trip(BaseModel):
     vehicle_type: Literal["own", "supplier"] = "own"
     supplier_name: str = ""
     supplier_freight: float = 0.0
+    # Supplier freight detailed calculation (mirrors customer billing)
+    supplier_freight_mode: Literal["per_ton", "fixed"] = "per_ton"
+    supplier_rate_per_ton: float = 0.0
+    supplier_fixed_amount: float = 0.0
+    supplier_round_trip_kms: float = 0.0
+    supplier_rate_per_km_per_ton: float = 0.0
+    supplier_loading_point: str = ""
+    supplier_unloading_point: str = ""
+    supplier_material: str = ""
+    supplier_quantity: float = 0.0
+    supplier_advance: float = 0.0
+    supplier_other_recoveries: float = 0.0
+    supplier_net_payable: float = 0.0
     driver_id: Optional[str] = None
     driver_name: str = ""
     driver_mobile: str = ""
@@ -489,9 +502,24 @@ def _compute_trip(t: Trip) -> Trip:
     # Diesel recovery reduces our cost (but never below 0)
     own_expense_net = max(own_expense - e.diesel_from_customer_amount, 0)
     if t.vehicle_type == "supplier":
-        t.total_expense = round(t.supplier_freight, 2)
+        # Auto-compute supplier freight from detailed inputs when available
+        sup_qty = t.supplier_quantity if t.supplier_quantity > 0 else t.tons
+        if t.supplier_freight_mode == "per_ton" and t.supplier_rate_per_ton > 0:
+            t.supplier_freight = round(sup_qty * t.supplier_rate_per_ton, 2)
+        elif t.supplier_freight_mode == "fixed":
+            if t.supplier_round_trip_kms > 0 and t.supplier_rate_per_km_per_ton > 0:
+                t.supplier_freight = round(sup_qty * t.supplier_round_trip_kms * t.supplier_rate_per_km_per_ton, 2)
+            elif t.supplier_fixed_amount > 0:
+                t.supplier_freight = round(t.supplier_fixed_amount, 2)
+        # else keep manually entered supplier_freight
+        # Net payable = freight − advance − other recoveries (for settlement)
+        t.supplier_net_payable = round(t.supplier_freight - t.supplier_advance - t.supplier_other_recoveries, 2)
+        # Profit formula (as per user spec): Customer Freight − (Supplier Freight − Supplier Advance)
+        # total_expense reflects the supplier cost portion after advance
+        t.total_expense = round(t.supplier_freight - t.supplier_advance, 2)
     else:
         t.total_expense = round(own_expense_net, 2)
+        t.supplier_net_payable = 0.0
     # Net revenue after shortage deduction
     net_freight = t.freight_amount - e.shortage_amount
     t.profit = round(net_freight - t.total_expense, 2)
@@ -1251,7 +1279,8 @@ async def report_profit_loss(
     batta = round(sum((t.get("expenses") or {}).get("batta", 0) for t in trips), 2)
     repair = round(sum((t.get("expenses") or {}).get("repair", 0) for t in trips), 2)
     other = round(sum((t.get("expenses") or {}).get("other", 0) for t in trips), 2)
-    total_expense = round(diesel + toll + batta + repair + other, 2)
+    supplier_cost = round(sum(t.get("total_expense", 0) if t.get("vehicle_type") == "supplier" else 0 for t in trips), 2)
+    total_expense = round(sum(t.get("total_expense", 0) for t in trips), 2)
     net_profit = round(revenue - total_expense, 2)
     margin = round((net_profit / revenue * 100.0), 2) if revenue > 0 else 0.0
 
@@ -1277,6 +1306,7 @@ async def report_profit_loss(
         "revenue": revenue,
         "expenses": {
             "diesel": diesel, "toll": toll, "batta": batta, "repair": repair, "other": other,
+            "supplier_net_payable": supplier_cost,
             "total": total_expense,
         },
         "net_profit": net_profit,
@@ -1944,20 +1974,29 @@ async def report_supplier_pl(start: Optional[str] = None, end: Optional[str] = N
     by = {}
     for t in trips:
         name = (t.get("supplier_name") or "—").strip() or "—"
-        s = by.setdefault(name, {"supplier_name": name, "trips": 0, "tons": 0.0, "customer_freight": 0.0, "supplier_freight": 0.0, "profit": 0.0, "margin_pct": 0.0})
+        s = by.setdefault(name, {"supplier_name": name, "trips": 0, "tons": 0.0, "customer_freight": 0.0,
+                                  "supplier_freight": 0.0, "supplier_advance": 0.0, "supplier_other_recoveries": 0.0,
+                                  "net_payable": 0.0, "profit": 0.0, "margin_pct": 0.0})
         s["trips"] += 1
         s["tons"] += float(t.get("tons", 0))
         s["customer_freight"] += float(t.get("freight_amount", 0))
         s["supplier_freight"] += float(t.get("supplier_freight", 0))
-    total = {"trips": 0, "tons": 0.0, "customer_freight": 0.0, "supplier_freight": 0.0, "profit": 0.0}
+        s["supplier_advance"] += float(t.get("supplier_advance", 0))
+        s["supplier_other_recoveries"] += float(t.get("supplier_other_recoveries", 0))
+    total = {"trips": 0, "tons": 0.0, "customer_freight": 0.0, "supplier_freight": 0.0,
+             "supplier_advance": 0.0, "supplier_other_recoveries": 0.0, "net_payable": 0.0, "profit": 0.0}
     for s in by.values():
-        s["profit"] = round(s["customer_freight"] - s["supplier_freight"], 2)
+        s["net_payable"] = round(s["supplier_freight"] - s["supplier_advance"] - s["supplier_other_recoveries"], 2)
+        # Profit = Customer Freight - (Supplier Freight - Supplier Advance)
+        s["profit"] = round(s["customer_freight"] - (s["supplier_freight"] - s["supplier_advance"]), 2)
         s["margin_pct"] = round((s["profit"] / s["customer_freight"] * 100.0), 2) if s["customer_freight"] > 0 else 0.0
-        for k in ("tons", "customer_freight", "supplier_freight"):
+        for k in ("tons", "customer_freight", "supplier_freight", "supplier_advance", "supplier_other_recoveries"):
             s[k] = round(s[k], 2)
         total["trips"] += s["trips"]; total["tons"] += s["tons"]
-        total["customer_freight"] += s["customer_freight"]; total["supplier_freight"] += s["supplier_freight"]; total["profit"] += s["profit"]
-    for k in ("tons", "customer_freight", "supplier_freight", "profit"):
+        total["customer_freight"] += s["customer_freight"]; total["supplier_freight"] += s["supplier_freight"]
+        total["supplier_advance"] += s["supplier_advance"]; total["supplier_other_recoveries"] += s["supplier_other_recoveries"]
+        total["net_payable"] += s["net_payable"]; total["profit"] += s["profit"]
+    for k in ("tons", "customer_freight", "supplier_freight", "supplier_advance", "supplier_other_recoveries", "net_payable", "profit"):
         total[k] = round(total[k], 2)
     return {
         "period": {"start": start, "end": end},

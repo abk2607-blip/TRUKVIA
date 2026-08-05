@@ -12,7 +12,7 @@ from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer, KeepTogether, Image,
+    SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer, KeepTogether, Image, PageBreak,
 )
 
 # Register Noto Sans Telugu for Unicode rendering (LR terms, invoice labels)
@@ -558,6 +558,34 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
     ]))
     story.append(driver_tbl)
 
+    # Freight Details block
+    freight_mode = trip.get("freight_mode", "per_ton")
+    if freight_mode == "per_ton":
+        freight_calc = f"{_fmt(trip.get('tons', 0))} MT × ₹ {_fmt(trip.get('rate_per_ton', 0))} / MT"
+    elif trip.get("round_trip_kms", 0) and trip.get("rate_per_km_per_ton", 0):
+        freight_calc = f"{_fmt(trip.get('tons', 0))} MT × {_fmt(trip.get('round_trip_kms', 0))} km × ₹ {_fmt(trip.get('rate_per_km_per_ton', 0))}"
+    else:
+        freight_calc = f"Fixed ₹ {_fmt(trip.get('fixed_amount', 0))}"
+    freight_rows = [
+        [Paragraph("<b>Freight Basis</b>", styles["LRSmallBold"]),
+         freight_calc,
+         Paragraph("<b>Freight Amount</b>", styles["LRSmallBold"]),
+         f"₹ {_fmt(trip.get('freight_amount', 0))}"],
+        [Paragraph("<b>From</b>", styles["LRSmallBold"]),
+         trip.get("from_location", "—") + (f" ({trip.get('from_pincode')})" if trip.get("from_pincode") else ""),
+         Paragraph("<b>To</b>", styles["LRSmallBold"]),
+         trip.get("to_location", "—") + (f" ({trip.get('to_pincode')})" if trip.get("to_pincode") else "")],
+    ]
+    freight_tbl = Table(freight_rows, colWidths=[40 * mm, 55 * mm, 40 * mm, 55 * mm])
+    freight_tbl.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.black),
+        ("INNERGRID", (0, 0), (-1, -1), 0.4, colors.grey),
+        ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    story.append(freight_tbl)
+
     un_rows = [
         [Paragraph("<b>Unloading Details by Site Officials</b>", styles["LRSmallBold"])],
         ["Date of Arrival | Time | Date of Diversion | Date of Unloading | Date of Departure | Extra KM | Shortage/Excess | HSD at Plant | Advance at Plant | Seal Checked By"],
@@ -589,28 +617,60 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
     story.append(gst_box)
 
     story.append(Spacer(1, 4))
-    story.append(Paragraph("<b>TANKER UNLOADING PROCEDURES AT SITE TO BE FOLLOWED</b>", styles["LRSmallBold"]))
-    # Two-column English list for compactness
-    half = (len(LR_TERMS_EN) + 1) // 2
-    left_col = LR_TERMS_EN[:half]
-    right_col = LR_TERMS_EN[half:]
-    terms_rows = []
-    for i in range(max(len(left_col), len(right_col))):
-        left = f"{i+1}. {left_col[i]}" if i < len(left_col) else ""
-        right = f"{half + i + 1}. {right_col[i]}" if i < len(right_col) else ""
-        terms_rows.append([Paragraph(left, styles["LRSmall"]), Paragraph(right, styles["LRSmall"])])
-    terms_tbl = Table(terms_rows, colWidths=[95 * mm, 95 * mm])
-    terms_tbl.setStyle(TableStyle([
-        ("BOX", (0, 0), (-1, -1), 0.4, colors.grey),
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-        ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-    ]))
-    story.append(terms_tbl)
-
-    story.append(Spacer(1, 4))
     story.append(Paragraph(f"For <b>{company_name}</b>&nbsp;&nbsp;&nbsp;·&nbsp;&nbsp;&nbsp;Manager Signature &amp; Stamp", styles["LRSmall"]))
     story.append(Paragraph("<i>This document is computer generated and does not require signature or the Company's Seal.</i>", styles["LRSmall"]))
+
+    # ---------------- Page 2: Terms & Conditions ----------------
+    story.append(PageBreak())
+    tc_header_left = Paragraph(
+        f"<b>{company_name}</b><br/><font size='8'>{company.get('address','')}</font>",
+        styles["LRBody"],
+    )
+    tc_header_right = Paragraph(
+        f"<b>LR No.:</b> {trip.get('lr_number','—')}<br/><b>Date:</b> {trip.get('date','')}",
+        styles["LRBody"],
+    )
+    tc_header = Table([[tc_header_left, tc_header_right]], colWidths=[126 * mm, 64 * mm])
+    tc_header.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.6, colors.black),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    story.append(tc_header)
+    story.append(Spacer(1, 8))
+    tc_title = Paragraph(
+        "<b>TERMS &amp; CONDITIONS · TANKER UNLOADING PROCEDURES AT SITE</b>",
+        ParagraphStyle(name="TCTitle", fontName="Helvetica-Bold", fontSize=12, leading=15, alignment=1),
+    )
+    story.append(tc_title)
+    story.append(Spacer(1, 8))
+    tc_body_style = ParagraphStyle(name="TCBody", fontName="Helvetica", fontSize=10, leading=14, spaceAfter=4)
+    tc_rows = [[Paragraph(f"<b>{i+1}.</b> {t}", tc_body_style)] for i, t in enumerate(LR_TERMS_EN)]
+    tc_tbl = Table(tc_rows, colWidths=[190 * mm])
+    tc_tbl.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.black),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("ROWBACKGROUNDS", (0, 0), (-1, -1), [colors.white, colors.HexColor("#FAFAFA")]),
+    ]))
+    story.append(tc_tbl)
+    story.append(Spacer(1, 14))
+    ack_rows = [
+        ["Received the material as described above in good condition and agree to the Terms & Conditions overleaf."],
+        [""],
+        ["Consignee Signature & Stamp: ______________________________     Date: __________________"],
+    ]
+    ack_tbl = Table(ack_rows, colWidths=[190 * mm])
+    ack_tbl.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.black),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(ack_tbl)
+
     doc.build(story)
     return buf.getvalue()
 

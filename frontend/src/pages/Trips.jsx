@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, API, fmtCurrency, fmtDate } from "@/api";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { Plus, CheckCircle2, Clock, Download, FileText, Trash2 } from "lucide-react";
+import { Plus, CheckCircle2, Clock, Download, FileText, Trash2, Eye, Pencil } from "lucide-react";
 
 const downloadEwayBill = async (tripId) => {
   const { api: ax } = await import("@/api");
@@ -124,9 +124,18 @@ export default function Trips() {
                     >
                       <Download size={11} /> E-Way
                     </button>
-                    {t.status === "pending" && (
-                      <Link data-testid={`edit-trip-${t.id}`} to={`/trips/${t.id}/edit`} className="text-xs px-2 py-1 border border-zinc-200 rounded-sm hover:bg-zinc-950 hover:text-white">Edit</Link>
+                    {t.status === "pending" ? (
+                      <Link data-testid={`edit-trip-${t.id}`} to={`/trips/${t.id}/edit`} className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-zinc-200 rounded-sm hover:bg-zinc-950 hover:text-white mr-1" title="Edit">
+                        <Pencil size={11} /> Edit
+                      </Link>
+                    ) : (
+                      <Link data-testid={`edit-trip-${t.id}`} to={`/trips/${t.id}/edit`} className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-amber-300 text-amber-700 rounded-sm hover:bg-amber-50 mr-1" title="Edit (invoice will be recalculated)">
+                        <Pencil size={11} /> Edit*
+                      </Link>
                     )}
+                    <Link data-testid={`view-trip-${t.id}`} to={`/trips/${t.id}/view`} className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-zinc-200 rounded-sm hover:bg-zinc-950 hover:text-white mr-1" title="View details">
+                      <Eye size={11} /> View
+                    </Link>
                     <button
                       data-testid={`delete-trip-${t.id}`}
                       onClick={() => askDelete(t)}

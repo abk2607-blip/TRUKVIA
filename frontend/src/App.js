@@ -6,6 +6,7 @@ import AuthCallback from "@/pages/AuthCallback";
 import Dashboard from "@/pages/Dashboard";
 import Trips from "@/pages/Trips";
 import TripForm from "@/pages/TripForm";
+import TripView from "@/pages/TripView";
 import Customers from "@/pages/Customers";
 import Drivers from "@/pages/Drivers";
 import Products from "@/pages/Products";
@@ -49,6 +50,7 @@ function AppRouter() {
       <Route path="/trips/new" element={<Protected><TripForm /></Protected>} />
       <Route path="/trips/import" element={<Protected><TripImport /></Protected>} />
       <Route path="/trips/:id/edit" element={<Protected><TripForm /></Protected>} />
+      <Route path="/trips/:id/view" element={<Protected><TripView /></Protected>} />
       <Route path="/customers" element={<Protected><Customers /></Protected>} />
       <Route path="/drivers" element={<Protected><Drivers /></Protected>} />
       <Route path="/vehicles" element={<Protected><Vehicles /></Protected>} />

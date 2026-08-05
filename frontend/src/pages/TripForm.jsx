@@ -14,6 +14,18 @@ const EMPTY = {
   vehicle_type: "own",
   supplier_name: "",
   supplier_freight: 0,
+  supplier_freight_mode: "per_ton",
+  supplier_rate_per_ton: 0,
+  supplier_fixed_amount: 0,
+  supplier_round_trip_kms: 0,
+  supplier_rate_per_km_per_ton: 0,
+  supplier_loading_point: "",
+  supplier_unloading_point: "",
+  supplier_material: "",
+  supplier_quantity: 0,
+  supplier_advance: 0,
+  supplier_other_recoveries: 0,
+  supplier_net_payable: 0,
   driver_id: "",
   driver_name: "",
   driver_mobile: "",
@@ -85,6 +97,13 @@ export default function TripForm() {
         round_trip_kms: Number(form.round_trip_kms),
         rate_per_km_per_ton: Number(form.rate_per_km_per_ton),
         supplier_freight: Number(form.supplier_freight || 0),
+        supplier_rate_per_ton: Number(form.supplier_rate_per_ton || 0),
+        supplier_fixed_amount: Number(form.supplier_fixed_amount || 0),
+        supplier_round_trip_kms: Number(form.supplier_round_trip_kms || 0),
+        supplier_rate_per_km_per_ton: Number(form.supplier_rate_per_km_per_ton || 0),
+        supplier_quantity: Number(form.supplier_quantity || 0),
+        supplier_advance: Number(form.supplier_advance || 0),
+        supplier_other_recoveries: Number(form.supplier_other_recoveries || 0),
         invoice_value: Number(form.invoice_value || 0),
         gross_weight: Number(form.gross_weight || 0),
         tare_weight: Number(form.tare_weight || 0),
@@ -108,8 +127,23 @@ export default function TripForm() {
     : (Number(form.round_trip_kms || 0) > 0 && Number(form.rate_per_km_per_ton || 0) > 0)
       ? Number(form.tons || 0) * Number(form.round_trip_kms || 0) * Number(form.rate_per_km_per_ton || 0)
       : Number(form.fixed_amount || 0);
-  const totalExpense = Object.values(form.expenses).reduce((s, v) => s + Number(v || 0), 0);
+  const totalExpense = Object.entries(form.expenses).reduce((s, [k, v]) => s + (k === "other_desc" ? 0 : Number(v || 0)), 0);
   const profit = freight - totalExpense;
+
+  // Supplier live compute
+  const supQty = Number(form.supplier_quantity || 0) > 0 ? Number(form.supplier_quantity) : Number(form.tons || 0);
+  let supplierFreightLive = Number(form.supplier_freight || 0);
+  if (form.supplier_freight_mode === "per_ton" && Number(form.supplier_rate_per_ton || 0) > 0) {
+    supplierFreightLive = supQty * Number(form.supplier_rate_per_ton);
+  } else if (form.supplier_freight_mode === "fixed") {
+    if (Number(form.supplier_round_trip_kms || 0) > 0 && Number(form.supplier_rate_per_km_per_ton || 0) > 0) {
+      supplierFreightLive = supQty * Number(form.supplier_round_trip_kms) * Number(form.supplier_rate_per_km_per_ton);
+    } else if (Number(form.supplier_fixed_amount || 0) > 0) {
+      supplierFreightLive = Number(form.supplier_fixed_amount);
+    }
+  }
+  const supplierNetPayable = supplierFreightLive - Number(form.supplier_advance || 0) - Number(form.supplier_other_recoveries || 0);
+  const supplierProfit = freight - (supplierFreightLive - Number(form.supplier_advance || 0));
 
   const setExp = (k, v) => setForm({ ...form, expenses: { ...form.expenses, [k]: v } });
 
@@ -127,6 +161,14 @@ export default function TripForm() {
       </header>
 
       <form onSubmit={(e) => { e.preventDefault(); save.mutate(); }} className="space-y-6">
+        {isEdit && form.status === "invoiced" && (
+          <div data-testid="invoiced-edit-warning" className="border border-amber-300 bg-amber-50 rounded-sm p-4 text-sm">
+            <div className="font-bold text-amber-900 uppercase tracking-wider text-xs mb-1">⚠ Invoiced Trip</div>
+            <div className="text-amber-800">
+              This trip is linked to <span className="font-mono font-semibold">invoice #{trip?.invoice_id?.slice(-8) || "—"}</span>. Any changes here will automatically recalculate the linked invoice totals.
+            </div>
+          </div>
+        )}
         {/* Basic Details */}
         <Section title="వివరాలు · Trip Details">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -316,16 +358,65 @@ export default function TripForm() {
               <Field label="Supplier Name">
                 <input data-testid="trip-supplier-name" value={form.supplier_name} onChange={(e) => setForm({ ...form, supplier_name: e.target.value })} className={inputCls} />
               </Field>
-              <Field label="Supplier Freight (₹)">
-                <input data-testid="trip-supplier-freight" type="number" step="0.01" min="0" value={form.supplier_freight} onChange={(e) => setForm({ ...form, supplier_freight: e.target.value })} className={inputCls} />
+              <Field label="Loading Point">
+                <input data-testid="trip-supplier-loading" value={form.supplier_loading_point} onChange={(e) => setForm({ ...form, supplier_loading_point: e.target.value })} className={inputCls} placeholder="e.g. HPCL Kondapalli" />
               </Field>
-              <div className="flex items-end">
-                <div className="bg-emerald-50 border border-emerald-200 px-4 py-3 rounded-sm w-full text-right">
-                  <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">Est. Profit</div>
-                  <div className={`font-mono text-lg font-bold ${(freight - Number(form.supplier_freight || 0)) >= 0 ? "text-emerald-800" : "text-rose-800"}`}>
-                    {fmtCurrency((Number(form.tons || 0) * Number(form.rate_per_ton || 0) - Number(form.supplier_freight || 0)) || (freight - Number(form.supplier_freight || 0)))}
-                  </div>
-                </div>
+              <Field label="Unloading Point">
+                <input data-testid="trip-supplier-unloading" value={form.supplier_unloading_point} onChange={(e) => setForm({ ...form, supplier_unloading_point: e.target.value })} className={inputCls} placeholder="e.g. Vijayawada Site" />
+              </Field>
+              <Field label="Material">
+                <input data-testid="trip-supplier-material" value={form.supplier_material} onChange={(e) => setForm({ ...form, supplier_material: e.target.value })} className={inputCls} placeholder="Bitumen VG 40" />
+              </Field>
+              <Field label="Quantity (MT)">
+                <input data-testid="trip-supplier-qty" type="number" step="0.01" min="0" value={form.supplier_quantity} onChange={(e) => setForm({ ...form, supplier_quantity: e.target.value })} className={inputCls} placeholder="If empty, trip Tons used" />
+              </Field>
+              <Field label="Freight Mode">
+                <select data-testid="trip-supplier-mode" value={form.supplier_freight_mode} onChange={(e) => setForm({ ...form, supplier_freight_mode: e.target.value })} className={inputCls}>
+                  <option value="per_ton">Per Ton</option>
+                  <option value="fixed">Fixed / Round Trip</option>
+                </select>
+              </Field>
+              {form.supplier_freight_mode === "per_ton" ? (
+                <Field label="Supplier Rate / MT (₹)">
+                  <input data-testid="trip-supplier-rate" type="number" step="0.01" min="0" value={form.supplier_rate_per_ton} onChange={(e) => setForm({ ...form, supplier_rate_per_ton: e.target.value })} className={inputCls} />
+                </Field>
+              ) : (
+                <>
+                  <Field label="Distance (Round Trip KMs)">
+                    <input data-testid="trip-supplier-kms" type="number" step="0.01" min="0" value={form.supplier_round_trip_kms} onChange={(e) => setForm({ ...form, supplier_round_trip_kms: e.target.value })} className={inputCls} />
+                  </Field>
+                  <Field label="Rate (₹ / ton / km)">
+                    <input data-testid="trip-supplier-rate-km" type="number" step="0.01" min="0" value={form.supplier_rate_per_km_per_ton} onChange={(e) => setForm({ ...form, supplier_rate_per_km_per_ton: e.target.value })} className={inputCls} />
+                  </Field>
+                  <Field label="Fixed Amount (₹)">
+                    <input data-testid="trip-supplier-fixed" type="number" step="0.01" min="0" value={form.supplier_fixed_amount} onChange={(e) => setForm({ ...form, supplier_fixed_amount: e.target.value })} className={inputCls} placeholder="Used only if KMs/Rate = 0" />
+                  </Field>
+                </>
+              )}
+              <Field label="Supplier Freight (₹)">
+                <input data-testid="trip-supplier-freight" type="number" step="0.01" min="0" value={form.supplier_freight} onChange={(e) => setForm({ ...form, supplier_freight: e.target.value })} className={inputCls} placeholder="Auto-computed" />
+              </Field>
+              <Field label="Supplier Advance (₹)">
+                <input data-testid="trip-supplier-advance" type="number" step="0.01" min="0" value={form.supplier_advance} onChange={(e) => setForm({ ...form, supplier_advance: e.target.value })} className={inputCls} />
+              </Field>
+              <Field label="Other Recoveries (₹)">
+                <input data-testid="trip-supplier-recovery" type="number" step="0.01" min="0" value={form.supplier_other_recoveries} onChange={(e) => setForm({ ...form, supplier_other_recoveries: e.target.value })} className={inputCls} placeholder="Damages, shortage etc." />
+              </Field>
+            </div>
+            <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+              <div className="border border-zinc-200 p-3 rounded-sm text-center">
+                <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">Supplier Freight (Live)</div>
+                <div className="font-mono text-lg font-bold">{fmtCurrency(supplierFreightLive)}</div>
+              </div>
+              <div className="border border-zinc-200 p-3 rounded-sm text-center">
+                <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">Net Payable to Supplier</div>
+                <div className="font-mono text-lg font-bold text-rose-700">{fmtCurrency(supplierNetPayable)}</div>
+                <div className="text-[10px] text-zinc-500 mt-1">Freight − Advance − Recoveries</div>
+              </div>
+              <div className={`border p-3 rounded-sm text-center ${supplierProfit >= 0 ? "border-emerald-300 bg-emerald-50" : "border-rose-300 bg-rose-50"}`}>
+                <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">Trip Profit</div>
+                <div className={`font-mono text-lg font-bold ${supplierProfit >= 0 ? "text-emerald-800" : "text-rose-800"}`}>{fmtCurrency(supplierProfit)}</div>
+                <div className="text-[10px] text-zinc-500 mt-1">Customer − (Supplier Freight − Advance)</div>
               </div>
             </div>
           </Section>
