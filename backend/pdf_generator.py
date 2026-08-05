@@ -558,33 +558,22 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
     ]))
     story.append(driver_tbl)
 
-    # Freight Details block
-    freight_mode = trip.get("freight_mode", "per_ton")
-    if freight_mode == "per_ton":
-        freight_calc = f"{_fmt(trip.get('tons', 0))} MT × ₹ {_fmt(trip.get('rate_per_ton', 0))} / MT"
-    elif trip.get("round_trip_kms", 0) and trip.get("rate_per_km_per_ton", 0):
-        freight_calc = f"{_fmt(trip.get('tons', 0))} MT × {_fmt(trip.get('round_trip_kms', 0))} km × ₹ {_fmt(trip.get('rate_per_km_per_ton', 0))}"
-    else:
-        freight_calc = f"Fixed ₹ {_fmt(trip.get('fixed_amount', 0))}"
-    freight_rows = [
-        [Paragraph("<b>Freight Basis</b>", styles["LRSmallBold"]),
-         freight_calc,
-         Paragraph("<b>Freight Amount</b>", styles["LRSmallBold"]),
-         f"₹ {_fmt(trip.get('freight_amount', 0))}"],
-        [Paragraph("<b>From</b>", styles["LRSmallBold"]),
-         trip.get("from_location", "—") + (f" ({trip.get('from_pincode')})" if trip.get("from_pincode") else ""),
-         Paragraph("<b>To</b>", styles["LRSmallBold"]),
-         trip.get("to_location", "—") + (f" ({trip.get('to_pincode')})" if trip.get("to_pincode") else "")],
-    ]
-    freight_tbl = Table(freight_rows, colWidths=[40 * mm, 55 * mm, 40 * mm, 55 * mm])
-    freight_tbl.setStyle(TableStyle([
+    # From / To route block (freight amounts intentionally omitted from LR)
+    route_rows = [[
+        Paragraph("<b>From</b>", styles["LRSmallBold"]),
+        trip.get("from_location", "—") + (f" ({trip.get('from_pincode')})" if trip.get("from_pincode") else ""),
+        Paragraph("<b>To</b>", styles["LRSmallBold"]),
+        trip.get("to_location", "—") + (f" ({trip.get('to_pincode')})" if trip.get("to_pincode") else ""),
+    ]]
+    route_tbl = Table(route_rows, colWidths=[40 * mm, 55 * mm, 40 * mm, 55 * mm])
+    route_tbl.setStyle(TableStyle([
         ("BOX", (0, 0), (-1, -1), 0.5, colors.black),
         ("INNERGRID", (0, 0), (-1, -1), 0.4, colors.grey),
         ("FONTSIZE", (0, 0), (-1, -1), 8.5),
         ("LEFTPADDING", (0, 0), (-1, -1), 5),
         ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]))
-    story.append(freight_tbl)
+    story.append(route_tbl)
 
     un_rows = [
         [Paragraph("<b>Unloading Details by Site Officials</b>", styles["LRSmallBold"])],
