@@ -575,23 +575,55 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
     ]))
     story.append(route_tbl)
 
-    un_rows = [
-        [Paragraph("<b>Unloading Details by Site Officials</b>", styles["LRSmallBold"])],
-        ["Date of Arrival | Time | Date of Diversion | Date of Unloading | Date of Departure | Extra KM | Shortage/Excess | HSD at Plant | Advance at Plant | Seal Checked By"],
-        [""],
-        ["Site Entry Gate (Stamp / Date / Time / Signature)"],
-        [""],
+    # Unloading Details by Site Officials — column-wise (headers row + empty row to fill)
+    story.append(Spacer(1, 4))
+    story.append(Paragraph("<b>UNLOADING DETAILS BY SITE OFFICIALS</b>", styles["LRSmallBold"]))
+    un_headers = [
+        Paragraph("<b>Date of<br/>Arrival</b>", styles["LRSmall"]),
+        Paragraph("<b>Arrival<br/>Time</b>", styles["LRSmall"]),
+        Paragraph("<b>Unloading<br/>Start</b>", styles["LRSmall"]),
+        Paragraph("<b>Unloading<br/>End</b>", styles["LRSmall"]),
+        Paragraph("<b>Date of<br/>Departure</b>", styles["LRSmall"]),
+        Paragraph("<b>Extra<br/>KM</b>", styles["LRSmall"]),
+        Paragraph("<b>Shortage /<br/>Excess (MT)</b>", styles["LRSmall"]),
+        Paragraph("<b>Temp.<br/>(°C)</b>", styles["LRSmall"]),
+        Paragraph("<b>Seal<br/>Status</b>", styles["LRSmall"]),
+        Paragraph("<b>Remarks</b>", styles["LRSmall"]),
     ]
-    un_tbl = Table(un_rows, colWidths=[190 * mm])
+    col_widths = [18*mm, 15*mm, 18*mm, 18*mm, 20*mm, 14*mm, 22*mm, 14*mm, 16*mm, 35*mm]
+    un_tbl = Table([un_headers, [""] * len(un_headers)], colWidths=col_widths)
     un_tbl.setStyle(TableStyle([
         ("BOX", (0, 0), (-1, -1), 0.5, colors.black),
         ("INNERGRID", (0, 0), (-1, -1), 0.4, colors.grey),
-        ("FONTSIZE", (0, 0), (-1, -1), 7.5),
-        ("BACKGROUND", (0, 0), (0, 0), colors.HexColor("#F4F4F5")),
-        ("LEFTPADDING", (0, 0), (-1, -1), 5),
-        ("TOPPADDING", (0, 2), (-1, 2), 12), ("TOPPADDING", (0, 4), (-1, 4), 12),
+        ("FONTSIZE", (0, 0), (-1, -1), 7),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F4F4F5")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN", (0, 0), (-1, 0), "CENTER"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 1), (-1, 1), 18), ("BOTTOMPADDING", (0, 1), (-1, 1), 4),
     ]))
     story.append(un_tbl)
+
+    # Site officials signature strip (also column-wise)
+    sig_headers = [
+        Paragraph("<b>Site Officer Name</b>", styles["LRSmall"]),
+        Paragraph("<b>Designation</b>", styles["LRSmall"]),
+        Paragraph("<b>Mobile</b>", styles["LRSmall"]),
+        Paragraph("<b>Signature &amp; Stamp</b>", styles["LRSmall"]),
+        Paragraph("<b>Date &amp; Time</b>", styles["LRSmall"]),
+    ]
+    sig_tbl = Table([sig_headers, [""] * len(sig_headers)], colWidths=[45*mm, 30*mm, 30*mm, 55*mm, 30*mm])
+    sig_tbl.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.black),
+        ("INNERGRID", (0, 0), (-1, -1), 0.4, colors.grey),
+        ("FONTSIZE", (0, 0), (-1, -1), 7),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F4F4F5")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN", (0, 0), (-1, 0), "CENTER"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 3), ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING", (0, 1), (-1, 1), 22), ("BOTTOMPADDING", (0, 1), (-1, 1), 4),
+    ]))
+    story.append(sig_tbl)
 
     gst_decl = Paragraph(
         "<b>Declaration for exempt from registration under GST Act 2017:</b> GST is liable to be paid on reverse charge basis by recipient of such service under section 9(3) of the CGST Act. We are covered under Notification No. 5/2017-Central Tax dated 19.06.2017 issued by CBEC, GOI and hence not required to be registered under GST Law.",
