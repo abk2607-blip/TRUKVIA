@@ -1,0 +1,148 @@
+{
+  "theme": "light",
+  "archetype": "Swiss & High-Contrast (Industrial Transport Variant)",
+  "design_philosophy": "Functional beauty, heavy-duty reliability. The UI must feel like a precision instrument for a rugged industry (Bitumen transport). It leverages stark contrasts, technical grid borders, and dense but readable typography. Rejects playful aesthetics in favor of authoritative clarity.",
+  "typography": {
+    "headings": {
+      "font_family": "Chivo, 'Noto Sans Telugu', sans-serif",
+      "weights": ["400", "700", "900"],
+      "tracking": "tracking-tight",
+      "usage": "Strong, structural headings. Never use Inter."
+    },
+    "body": {
+      "font_family": "'IBM Plex Sans', 'Noto Sans Telugu', sans-serif",
+      "weights": ["400", "500"],
+      "tracking": "tracking-normal",
+      "usage": "Highly legible for dense accounting data."
+    },
+    "numbers_and_data": {
+      "font_family": "'IBM Plex Mono', monospace",
+      "usage": "Use for all currency (₹), tons, GSTINs, and vehicle numbers to ensure vertical alignment in tables."
+    },
+    "hierarchy_rules": {
+      "h1": "text-4xl sm:text-5xl font-black tracking-tighter text-zinc-950",
+      "h2": "text-2xl sm:text-3xl font-bold tracking-tight text-zinc-900",
+      "h3": "text-xl sm:text-2xl font-semibold text-zinc-800",
+      "body_text": "text-base text-zinc-700",
+      "labels": "text-xs font-bold uppercase tracking-[0.1em] text-zinc-500"
+    }
+  },
+  "colors": {
+    "background": {
+      "default": "#F4F4F5",
+      "paper": "#FFFFFF",
+      "header": "#FFFFFF"
+    },
+    "surface": {
+      "card": "#FFFFFF",
+      "table_header": "#FAFAFA",
+      "hover": "#F4F4F5"
+    },
+    "text": {
+      "primary": "#09090B",
+      "secondary": "#52525B",
+      "tertiary": "#A1A1AA",
+      "inverse": "#FFFFFF"
+    },
+    "brand_and_accents": {
+      "primary": "#09090B",
+      "primary_hover": "#27272A",
+      "transport_amber": "#F59E0B",
+      "transport_amber_light": "#FEF3C7",
+      "success": "#16A34A",
+      "danger": "#DC2626",
+      "info": "#2563EB"
+    },
+    "borders": {
+      "default": "#E4E4E7",
+      "focus": "#09090B"
+    }
+  },
+  "spacing_and_layouts": {
+    "philosophy": "Generous external margins with dense, highly structured internal data grids. The 'Technical Look' with grid borders.",
+    "container": "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8",
+    "dashboard_grid": "grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4",
+    "card_padding": "p-6",
+    "borders": "Use sharp edges (rounded-none or max rounded-sm). Rejects heavy shadows. Use 1px solid borders (border-zinc-200) for definition."
+  },
+  "component_rules": {
+    "buttons": "Sharp corners (rounded-none or rounded-sm). High contrast. Primary buttons are solid Zinc-950 with white text. Hover state must translate-y-[-1px] and increase shadow.",
+    "inputs": "Flat, 1px border. Focus state MUST have ring-2 ring-zinc-950 ring-offset-1. No floating labels, use explicit bilingual labels above inputs.",
+    "tables": "Dense rows. Grid borders (border-collapse, border-zinc-200 on cells). Header text is uppercase, tracking-wider, text-xs. Currency columns MUST be right-aligned.",
+    "cards": "Flat background, 1px subtle border, no shadow. Hover: Slight lift, subtle shadow.",
+    "navigation": "Solid background header with a hard bottom border. Never transparent. Visible navigation links.",
+    "modals": "Backdrop blur is permitted (backdrop-blur-sm bg-zinc-900/40), but the modal surface itself must be stark white and solid."
+  },
+  "bilingual_guidelines": {
+    "format": "Telugu (English)",
+    "example_labels": {
+      "dashboard": "డ్యాష్‌బోర్డ్ (Dashboard)",
+      "trips": "ట్రిప్స్ (Trips)",
+      "invoices": "ఇన్వాయిస్‌లు (Invoices)",
+      "customers": "కస్టమర్లు (Customers)",
+      "vehicles": "వాహనాలు (Vehicles)",
+      "settings": "సెట్టింగ్‌లు (Settings)",
+      "add_trip": "కొత్త ట్రిప్ (Add Trip)",
+      "freight_type": "ఫ్రైట్ విధానం (Freight Type)",
+      "per_ton": "టన్ను ప్రకారం (Per Ton)",
+      "fixed_rate": "ఒకే మొత్తం (Fixed Amount)"
+    },
+    "implementation": "Do not use translation libraries unless requested; hardcode the bilingual strings in the UI to ensure perfect contextual accuracy for the transport domain."
+  },
+  "page_layouts": {
+    "login": {
+      "type": "Split-Screen",
+      "left": "Immersive image of a highway transport truck. Overlay with deep black gradient (bg-black/40) and the company logo/title in white.",
+      "right": "Clean, stark white form area. High-contrast Google OAuth button. Focus on the core action."
+    },
+    "dashboard": {
+      "header": "Summary metrics using the Bento grid. Cards for Total Revenue, Total Expenses, Net Profit, and Pending Receivables.",
+      "body": "Two-column layout: 'Recent Trips' (table) on the left, 'Pending Customer Balances' (list) on the right."
+    },
+    "trips_entry": {
+      "form": "Multi-column grid for inputs. Date, Customer, Vehicle, Driver in one row. Load details (Tons, Route) in another. Freight calculation section must dynamically update based on the toggle (Per Ton vs Round Trip).",
+      "expenses": "Sub-section within the trip form for Diesel, Toll, Batta, and Repair. Auto-calculate Trip Profit at the bottom of the form."
+    },
+    "invoice_generation": {
+      "flow": "1. Select Customer -> 2. View all uninvoiced completed trips for that customer -> 3. Select trips via checkboxes -> 4. Generate Invoice.",
+      "preview": "Render an HTML preview of the final GST invoice (VBK Logistics style). Include standard GST elements: 5% RCM note, Company GSTIN, Customer GSTIN, Itemized trip lines, Bank Details."
+    }
+  },
+  "visual_enhancers": {
+    "icons": "Use 'lucide-react'. Stroke width 1.5. Clean, structural.",
+    "motion": "Minimal and functional. Hover transitions on buttons. Staggered fade-in for table rows. Do NOT use bouncy or springy animations.",
+    "textures": "Use subtle noise/grain on the login image overlay to give it a rugged, industrial feel."
+  },
+  "image_urls": {
+    "login_hero": {
+      "url": "https://images.unsplash.com/photo-1591768793355-74d04bb6608f?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODl8MHwxfHNlYXJjaHw0fHxoaWdod2F5JTIwdHJhbnNwb3J0JTIwdHJ1Y2t8ZW58MHx8fHwxNzg1OTE3MzU3fDA&ixlib=rb-4.1.0&q=85",
+      "description": "White and blue truck on road during daytime (Bitumen/Transport vibe)",
+      "placement": "Left half of the login screen"
+    },
+    "fallback_hero": {
+      "url": "https://images.unsplash.com/photo-1616432043562-3671ea2e5242?crop=entropy&cs=srgb&fm=jpg&ixid=M3w4NTYxODl8MHwxfHNlYXJjaHwyfHxoaWdod2F5JTIwdHJhbnNwb3J0JTIwdHJ1Y2t8ZW58MHx8fHwxNzg1OTE3MzU3fDA&ixlib=rb-4.1.0&q=85",
+      "description": "White freight truck passing",
+      "placement": "Alternative for login or landing page"
+    }
+  },
+  "instructions_to_main_agent": [
+    "FILES: You MUST use `.js` and `.jsx` extensions. DO NOT use `.tsx` or TypeScript.",
+    "STYLING: Use Tailwind CSS with the provided color hex codes and font families.",
+    "FONTS: Import 'Chivo', 'IBM Plex Sans', and 'IBM Plex Mono' from Google Fonts in index.html.",
+    "COMPONENTS: Use HTML/Tailwind for structural layout. Use Shadcn for complex interactives (Select, Dialog, DatePicker). Customize Shadcn to be flat, sharp (rounded-sm), and high-contrast.",
+    "TESTING: ALL interactive elements (buttons, inputs, rows) MUST have a `data-testid` attribute (e.g., data-testid='login-button', data-testid='trip-row-123').",
+    "ACCESSIBILITY: Ensure high contrast ratios (APCA/WCAG AA). Never use transparent backgrounds behind text unless heavily blurred.",
+    "BILINGUAL: Implement all UI labels as 'Telugu (English)'.",
+    "BUSINESS LOGIC: GST is 5% RCM (Reverse Charge Mechanism). The invoice must clearly display the freight amount and note that tax is payable by the recipient under RCM. Show CGST 2.5% + SGST 2.5% (or IGST 5%) visually but do not add it to the final invoice total if the transporter is not collecting it (as per standard Indian transport RCM rules, though clarify via UI). If adding to total, ensure it's explicitly marked.",
+    "PDF: Server-side PDF generation is requested. Ensure the frontend invoice preview exactly mirrors what the backend will print.",
+    "NO EMOJIS: Do not use AI emojis in the UI. Use Lucide icons only."
+  ],
+  "universal_guidelines_for_main_agent": [
+    "Avoid generic centered layouts. Use grid/bento layouts for dashboards.",
+    "Do not use dark colors as gradients.",
+    "Never apply universal transitions (e.g., transition: all). Target specific properties.",
+    "Create depth through border hierarchies, not just shadows.",
+    "Ensure input forms have clear boundaries and explicit bilingual labels.",
+    "Make sure currency values are mono-spaced and right-aligned."
+  ]
+}
