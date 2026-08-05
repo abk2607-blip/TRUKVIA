@@ -63,6 +63,15 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - [x] **Inline File Attachments** on Trip (LR proofs, weighbridge slips) and Vehicle (RC/FC/Insurance scans) via `FileAttachments` component
 - [x] **Bulk Photo Import** on Fuel page — drag-and-drop many files; filename regex auto-tags vehicle_number + date, auto-links to matching vehicle
 - [x] **Storage Usage Bar** on Files page (500 MB soft cap, per-category breakdown)
+- [x] **Multi-User Team Roles** — Owner/Staff with granular permissions (Feb 2026)
+- [x] **Supplier P&L Report** — supplier-wise trips/tons/freight/profit/margin with date filter
+- [x] **Invoice Print Snapshot** — auto-save PDF to Files on print
+- [x] **Trip Sheet Edit After Invoice** — invoiced trips remain editable; changes auto-recompute linked invoice (with amber warning banner + audit log)
+- [x] **Trip View Page** (`/trips/:id/view`) — read-only comprehensive view with Customer, Vehicle, Driver, Load & Route, Customer Freight, Supplier Freight & Settlement, Expenses, Invoice, LR/Weighbridge, Attachments
+- [x] **Detailed Supplier Freight** — loading_point / unloading_point / material / quantity / freight_mode / rate / kms / rate_per_km_per_ton / fixed_amount / advance / other_recoveries / net_payable auto-computed
+- [x] **Supplier Profit Formula** — `Profit = Customer Freight − (Supplier Freight − Supplier Advance)` reflected in trip profit, Supplier P&L, MIS Dashboard, P&L report
+- [x] **LR PDF Split into 2 Pages** — Page 1 all operational details (LR#, consignor/consignee, vehicle, driver, material, freight, waybill); Page 2 Terms & Conditions only with acknowledgement block
+- [x] Iter8 tests: 8/8 backend + all frontend UI checks passing
 
 ## Backlog (P1)
 - [ ] Drivers & Vehicles master (currently free-text)
