@@ -668,6 +668,8 @@ async def trip_import(file: UploadFile = File(...), user=Depends(get_current_use
     df.columns = [str(c).strip().lower() for c in df.columns]
     customers = await db.customers.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(2000)
     cust_by_name = {c["name"].strip().lower(): c["id"] for c in customers}
+    drivers = await db.drivers.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(1000)
+    driver_by_name = {d["name"].strip().lower(): d["id"] for d in drivers}
 
     inserted = 0
     errors = []
@@ -705,6 +707,7 @@ async def trip_import(file: UploadFile = File(...), user=Depends(get_current_use
                 customer_id=cid,
                 date=date_str,
                 vehicle_number=str(r.get("vehicle_number") or "").strip().upper(),
+                driver_id=driver_by_name.get(str(r.get("driver_name") or "").strip().lower()),
                 driver_name=str(r.get("driver_name") or "").strip(),
                 load_details=str(r.get("load_details") or "Bitumen VG 40").strip(),
                 tons=numf(r.get("tons")),

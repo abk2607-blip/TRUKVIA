@@ -32,7 +32,12 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - [x] Invoice deletion releases trips
 - [x] Dashboard with KPIs, receivables list, recent trips
 - [x] Bilingual (Telugu + English) sidebar & labels
-- [x] Backend test suite (19/19 passing)
+- [x] Backend test suite (19/19 passing baseline)
+- [x] **Drivers master** with per-driver trips/tons/batta stats
+- [x] **WhatsApp Send** invoice — one-tap share via `share_token` + public PDF endpoint
+- [x] **Payment reminders** on dashboard — WhatsApp nudge per pending customer, overdue badge (15+ days)
+- [x] **Trip Import Excel/CSV** — template download + bulk upload with row-level errors
+- [x] Iteration 2 tests: 22/22 new + 18/19 legacy passing
 
 ## Backlog (P1)
 - [ ] Drivers & Vehicles master (currently free-text)
