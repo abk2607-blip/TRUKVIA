@@ -1,0 +1,31 @@
+{
+  "summary": "Backend-only testing for Bitumen Transport Accounting. Seeded MongoDB session (user_id=test-user-bitumen, session_token=test_session_bitumen_2026) and ran 19 pytest tests across auth, company settings, customers CRUD, trips CRUD with freight computation (per_ton & fixed), invoice creation (cgst_sgst RCM & IGST non-RCM), invoice locking, payments accumulation, PDF generation, invoice deletion release, and dashboard. All 19 tests pass (100%).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "FIXED: POST /api/customers, /api/trips, /api/invoices returned 500 due to Mongo ObjectId leaking into response (motor's insert_one mutates the dict in-place adding _id). Added doc.pop('_id', None) after insert_one for all three endpoints in server.py.",
+    "Minor: _next_invoice_number increments next_invoice_number even when creating the first invoice for a user (upserts a companies doc with only that field, missing other defaults). Not blocking but may cause company doc to exist with partial data if invoice is created before company settings are saved. Consider using $setOnInsert for defaults.",
+    "Minor: get_current_user tries datetime.fromisoformat on expires_at; if a legacy session was stored with non-iso format it would 500. Acceptable given seed pattern.",
+    "Minor: create_session sets samesite='none' with secure=True which is correct for cross-site cookies, but no CSRF protection is added. OAuth flow only, low risk.",
+    "Minor: No pagination on list endpoints (customers.to_list(1000), trips.to_list(2000), invoices.to_list(1000)). Fine for MVP scale."
+  ],
+  "updated_files": [
+    "/app/backend/server.py (added doc.pop('_id', None) in customers/trips/invoices POST handlers)",
+    "/app/backend/tests/backend_test.py (new comprehensive pytest suite)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "not tested"},
+  "test_credentials": "MongoDB seeded: user_id='test-user-bitumen', session_token='test_session_bitumen_2026'. Use Authorization: Bearer test_session_bitumen_2026.",
+  "seed_data_creation": "Seeded users + user_sessions doc for test-user-bitumen. Test suite creates/deletes its own customers, trips, invoices scoped to this user.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Backend fully passing. Test file at /app/backend/tests/backend_test.py works with the repo's fixed pytest.ini (-n 2 --dist loadscope). Stateful flow is packed into TestFullFlow class so loadscope keeps it on one worker. If re-running, cleanup Mongo data for user_id='test-user-bitumen' first (companies/customers/trips/invoices collections) to avoid subtotal/receivables assertions being affected by leftover data.",
+  "rca of the issue": "POST /customers,/trips,/invoices returned 500 with 'ObjectId object is not iterable'. RCA: motor's insert_one() mutates the passed dict in-place, appending Mongo-generated ObjectId under '_id'. The handlers popped 'user_id' but not '_id', so FastAPI tried to serialize the ObjectId and crashed. Fix: pop '_id' after insert. Verified with re-run of full test suite (19/19 passing)."
+}

@@ -1,55 +1,59 @@
-import { useEffect } from "react";
-import "@/App.css";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import axios from "axios";
-import { HOME } from "@/constants/testIds";
+import React from "react";
+import { Routes, Route, Navigate, useLocation } from "react-router-dom";
+import { AuthProvider, useAuth } from "@/context/AuthContext";
+import Login from "@/pages/Login";
+import AuthCallback from "@/pages/AuthCallback";
+import Dashboard from "@/pages/Dashboard";
+import Trips from "@/pages/Trips";
+import TripForm from "@/pages/TripForm";
+import Customers from "@/pages/Customers";
+import Invoices from "@/pages/Invoices";
+import InvoiceCreate from "@/pages/InvoiceCreate";
+import InvoiceView from "@/pages/InvoiceView";
+import Settings from "@/pages/Settings";
+import Layout from "@/components/Layout";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
-const API = `${BACKEND_URL}/api`;
+function Protected({ children }) {
+  const { user, loading } = useAuth();
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-screen text-zinc-500" data-testid="loading-screen">
+        Loading...
+      </div>
+    );
+  }
+  if (!user) return <Navigate to="/" replace />;
+  return <Layout>{children}</Layout>;
+}
 
-const Home = () => {
-  const helloWorldApi = async () => {
-    try {
-      const response = await axios.get(`${API}/`);
-      console.log(response.data.message);
-    } catch (e) {
-      console.error(e, `errored out requesting / api`);
-    }
-  };
-
-  useEffect(() => {
-    helloWorldApi();
-  }, []);
-
+function AppRouter() {
+  const location = useLocation();
+  // Detect OAuth callback synchronously during render (before ProtectedRoute)
+  if (location.hash?.includes("session_id=")) {
+    return <AuthCallback />;
+  }
   return (
-    <div>
-      <header className="App-header">
-        <a
-          data-testid={HOME.emergentLink}
-          className="App-link"
-          href="https://emergent.sh"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <img src="https://avatars.githubusercontent.com/in/1201222?s=120&u=2686cf91179bbafbc7a71bfbc43004cf9ae1acea&v=4" />
-        </a>
-        <p className="mt-5">Building something incredible ~!</p>
-      </header>
-    </div>
+    <Routes>
+      <Route path="/" element={<Login />} />
+      <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />
+      <Route path="/trips" element={<Protected><Trips /></Protected>} />
+      <Route path="/trips/new" element={<Protected><TripForm /></Protected>} />
+      <Route path="/trips/:id/edit" element={<Protected><TripForm /></Protected>} />
+      <Route path="/customers" element={<Protected><Customers /></Protected>} />
+      <Route path="/invoices" element={<Protected><Invoices /></Protected>} />
+      <Route path="/invoices/new" element={<Protected><InvoiceCreate /></Protected>} />
+      <Route path="/invoices/:id" element={<Protected><InvoiceView /></Protected>} />
+      <Route path="/settings" element={<Protected><Settings /></Protected>} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
-};
+}
 
 function App() {
   return (
-    <div className="App">
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Home />}>
-            <Route index element={<Home />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
-    </div>
+    <AuthProvider>
+      <AppRouter />
+    </AuthProvider>
   );
 }
 
