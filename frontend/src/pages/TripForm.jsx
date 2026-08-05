@@ -36,6 +36,7 @@ export default function TripForm() {
   const { data: customers = [] } = useQuery({ queryKey: ["customers"], queryFn: async () => (await api.get("/customers")).data });
   const { data: drivers = [] } = useQuery({ queryKey: ["drivers"], queryFn: async () => (await api.get("/drivers")).data });
   const { data: products = [] } = useQuery({ queryKey: ["products"], queryFn: async () => (await api.get("/products")).data });
+  const { data: vehicles = [] } = useQuery({ queryKey: ["vehicles"], queryFn: async () => (await api.get("/vehicles")).data });
 
   const { data: trip } = useQuery({
     queryKey: ["trip", id],
@@ -108,7 +109,25 @@ export default function TripForm() {
               </select>
             </Field>
             <Field label="Vehicle No · వాహనం" required>
-              <input data-testid="trip-vehicle" required value={form.vehicle_number} onChange={(e) => setForm({ ...form, vehicle_number: e.target.value.toUpperCase() })} className={inputCls} placeholder="AP16TA1234" />
+              {vehicles.length > 0 ? (
+                <>
+                  <select
+                    data-testid="trip-vehicle-select"
+                    value={vehicles.find((v) => v.vehicle_number === form.vehicle_number)?.id || ""}
+                    onChange={(e) => {
+                      const v = vehicles.find((x) => x.id === e.target.value);
+                      setForm({ ...form, vehicle_number: v ? v.vehicle_number : "" });
+                    }}
+                    className={inputCls}
+                  >
+                    <option value="">-- Select from Master --</option>
+                    {vehicles.map((v) => <option key={v.id} value={v.id}>{v.vehicle_number}{v.owner_name ? ` · ${v.owner_name}` : ""}</option>)}
+                  </select>
+                  <input data-testid="trip-vehicle" required value={form.vehicle_number} onChange={(e) => setForm({ ...form, vehicle_number: e.target.value.toUpperCase() })} className={`${inputCls} mt-1`} placeholder="Or type: AP16TA1234" />
+                </>
+              ) : (
+                <input data-testid="trip-vehicle" required value={form.vehicle_number} onChange={(e) => setForm({ ...form, vehicle_number: e.target.value.toUpperCase() })} className={inputCls} placeholder="AP16TA1234" />
+              )}
             </Field>
             <Field label="Driver · డ్రైవర్">
               <select

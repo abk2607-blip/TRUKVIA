@@ -2,7 +2,23 @@ import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, fmtCurrency, fmtDate } from "@/api";
 import { Link } from "react-router-dom";
-import { Plus, CheckCircle2, Clock } from "lucide-react";
+import { Plus, CheckCircle2, Clock, Download } from "lucide-react";
+
+const downloadEwayBill = async (tripId) => {
+  const { api: ax } = await import("@/api");
+  try {
+    const { data } = await ax.get(`/trips/${tripId}/ewaybill`);
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `ewaybill_${tripId}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  } catch (e) {
+    console.error(e);
+  }
+};
 
 export default function Trips() {
   const { data: trips = [] } = useQuery({ queryKey: ["trips"], queryFn: async () => (await api.get("/trips")).data });
@@ -74,7 +90,15 @@ export default function Trips() {
                       <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider bg-amber-50 text-amber-700 px-2 py-0.5 rounded-sm border border-amber-200"><Clock size={10} /> Pending</span>
                     )}
                   </td>
-                  <td className="px-3 py-2 text-right">
+                  <td className="px-3 py-2 text-right whitespace-nowrap">
+                    <button
+                      data-testid={`ewaybill-${t.id}`}
+                      onClick={() => downloadEwayBill(t.id)}
+                      className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-zinc-200 rounded-sm hover:bg-zinc-950 hover:text-white mr-1"
+                      title="Download E-Way Bill JSON"
+                    >
+                      <Download size={11} /> E-Way
+                    </button>
                     {t.status === "pending" && (
                       <Link data-testid={`edit-trip-${t.id}`} to={`/trips/${t.id}/edit`} className="text-xs px-2 py-1 border border-zinc-200 rounded-sm hover:bg-zinc-950 hover:text-white">Edit</Link>
                     )}

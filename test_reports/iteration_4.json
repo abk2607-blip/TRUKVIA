@@ -1,0 +1,40 @@
+{
+  "summary": "Backend-only iteration-4 testing. Added /app/backend/tests/test_iter4_features.py (15 tests) covering Vehicles CRUD with expiry alerts (rc/fc/insurance/permit/puc, 30-day expiring window, soonest_days), Fuel CRUD with auto-amount computation and per-vehicle summary with km/L (multi-fill km_run + single-fill zero case), GSTR-1 monthly report (B2B/B2C split, per-state POS aggregation, totals, month exclusion, invalid-month 400), E-Way Bill JSON (intrastate AP→AP with cgst 2.5+sgst 2.5, interstate AP→KA with igst 5.0, unknown state → toStateCode=0, vehicleNo/docNo/itemList checked), and Dashboard expiry_alerts. Result: 15/15 iter4 PASS, 77/78 full suite PASS (only known legacy stale-state failure backend_test.py::test_01_company_defaults — carried over from iter2/iter3, non-blocking).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/company (legacy test test_01_company_defaults)", "issue": "Same stale-state issue as iter2/iter3: expects empty company defaults but company doc persists across runs. Not a product bug."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter4_features.py",
+    "/app/test_reports/pytest/all_iter4.xml",
+    "/app/test_reports/pytest/iter4_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now 1424 lines — well past the 700-line threshold; strongly recommend splitting into routers/ modules (vehicles, fuel, reports/gstr1, ewaybill, invoices, trips, dashboard).",
+    "Fuel /api/fuel/summary km_per_litre divides by TOTAL litres including the first fill's litres; strictly this over-includes litres because the first fill's odometer is the starting point (litres consumed BEFORE that fill produced km_run=0). Iter4 spec explicitly documents this as an accepted MVP simplification. Consider excluding first-fill litres for accuracy when >=2 fills exist.",
+    "GSTR-1 by_state grouping uses r['state'] from the last-added row when creating a new bucket — if any earlier invoice for the same state_code has state='' but a later invoice for the same code has state='Andhra Pradesh', the bucket keeps the empty string. Minor; state_code is authoritative.",
+    "GSTR-1 place_of_supply builds '{sc}-{st}' which is unusual; the official format is typically '<state_code>-<State Name>' — string is fine for display but not standard for JSON GSTR-1 upload.",
+    "E-Way Bill hardcodes GST rates (2.5/2.5/0 intrastate, 0/0/5 interstate) matching invoice GST logic — but if the invoice associated with the trip has rcm=True, the eway payload still emits non-zero taxes; RCM eway bills should typically show taxes but mark transactionType/reverse-charge indicator. Currently no reverse_charge flag is emitted.",
+    "E-Way Bill /trips/{id}/ewaybill: fromPincode / toPincode are hardcoded to 0. E-way bill portal validation typically requires valid 6-digit pincodes; consider surfacing pincode fields on Company/Customer models.",
+    "E-Way Bill docNo falls back to trip['id'].replace('trip_', 'TRP-') when no invoice exists — while functional, this creates a doc reference that is not a valid printed document. Suggest either requiring an invoice for e-way generation, or auto-creating a proper LR/GR document number.",
+    "Vehicle expiry_stats: soonest_days uses min of ALL known dates including 'ok/far' — semantically fine, but for a dashboard 'urgent action' view you may want soonest expired/expiring only.",
+    "STATE_CODES map is complete for Indian states (35 entries) but lookup is case-insensitive lowercase only — trailing/leading whitespace handled via .strip() but common variants ('J&K', 'D&N Haveli') would miss. Consider adding common aliases.",
+    "No pagination on /api/vehicles /api/fuel — currently to_list(1000/2000/5000). Fine for MVP.",
+    "MongoDB _id is properly excluded across all iter4 endpoints (verified). Good.",
+    "test_iter3_features.py hardcodes BASE_URL default to '' — requires REACT_APP_BACKEND_URL to be exported to run outside supervisor context. Fixed similar issue in test_iter4_features.py by using preview URL as default (matches backend_test.py pattern)."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter4_features.py (new — 15 tests)"
+  ],
+  "success_rate": {"backend": "100% on iter4 (15/15); 77/78 combined full suite (1 known legacy stale-state failure)", "frontend": "not tested (backend-only request)"},
+  "test_credentials": "MongoDB session already seeded: user_id='test-user-bitumen', session_token='test_session_bitumen_2026'. /api/auth/me → 200 verified.",
+  "seed_data_creation": "Each test class creates its own TEST_-prefixed vehicles/fuel/customers/trips/invoices and cleans them up via teardown_class. GSTR-1 sets company state to Andhra Pradesh (persists to next iterations — matches earlier tests' expected state).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All iter4 endpoints verified end-to-end: /api/vehicles CRUD with alerts (expired/expiring/ok statuses, days_to_expiry, soonest_days); /api/fuel CRUD with auto-amount = litres*rate when amount==0; /api/fuel/summary with km_run and km_per_litre = km_run/total_litres; /api/reports/gstr1?month=YYYY-MM returns b2b/b2c/by_state/totals with correct 400 on invalid month and correct month exclusion; /api/trips/{id}/ewaybill returns intrastate (cgstRate=2.5, sgstRate=2.5) or interstate (igstRate=5.0), fromStateCode=37 (AP) toStateCode=29 (KA) verified, unknown state → toStateCode=0; /api/dashboard now returns expiry_alerts array. Only /app/backend/tests/backend_test.py::TestFullFlow::test_01_company_defaults still fails — known stale-state carry-over; not a product bug. Note: test_iter3_features.py fails if REACT_APP_BACKEND_URL env var isn't exported (empty default); run all suites with `export REACT_APP_BACKEND_URL=<url> && pytest ...` or fix its default like iter4 did.",
+  "rca of the issue": "No new bugs. Only legacy carry-over: backend_test.py::test_01_company_defaults asserts empty company defaults, but iter4 tests (and prior iter2/iter3) PUT /company with name='TEST Co' and state='Andhra Pradesh' which persists across runs. Fix suggestion (unchanged from iter3 report): (a) session-scoped fixture that clears db.companies for test user before the run, or (b) relax the assertion to only check response schema."
+}

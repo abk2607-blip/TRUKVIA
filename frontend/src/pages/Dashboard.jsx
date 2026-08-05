@@ -2,7 +2,7 @@ import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, fmtCurrency, fmtDate } from "@/api";
 import { Link } from "react-router-dom";
-import { TrendingUp, TrendingDown, Truck, FileText, Users, Wallet, ArrowUpRight, MessageCircle } from "lucide-react";
+import { TrendingUp, TrendingDown, Truck, FileText, Users, Wallet, ArrowUpRight, MessageCircle, AlertTriangle } from "lucide-react";
 
 export default function Dashboard() {
   const { data, isLoading } = useQuery({
@@ -62,6 +62,28 @@ export default function Dashboard() {
         <MiniStat testid="mini-customers" icon={Users} label="Customers" value={d.customer_count || 0} />
         <MiniStat testid="mini-received" icon={Wallet} label="Received" value={fmtCurrency(d.total_received)} />
       </div>
+
+      {/* Expiry alerts */}
+      {(d.expiry_alerts || []).length > 0 && (
+        <div className="border border-amber-300 bg-amber-50 rounded-sm p-4" data-testid="expiry-alerts">
+          <div className="flex items-center gap-2 mb-2 text-sm font-bold uppercase tracking-wider text-amber-900">
+            <AlertTriangle size={14} /> Vehicle Document Alerts
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+            {(d.expiry_alerts || []).slice(0, 9).map((a, i) => (
+              <div key={i} className={`border rounded-sm px-3 py-2 text-xs flex justify-between items-center ${a.status === "expired" ? "border-rose-300 bg-white" : "border-amber-300 bg-white"}`}>
+                <div>
+                  <span className="font-bold font-mono">{a.vehicle_number}</span>
+                  <span className="ml-2 text-zinc-600">{a.document}</span>
+                </div>
+                <div className={`font-mono ${a.status === "expired" ? "text-rose-700" : "text-amber-800"}`}>
+                  {a.status === "expired" ? `Expired ${Math.abs(a.days)}d ago` : `${a.days}d left`}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Two-column: recent trips + receivables */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

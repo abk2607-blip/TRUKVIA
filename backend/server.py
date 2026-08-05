@@ -123,6 +123,33 @@ class Product(BaseModel):
     notes: str = ""
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
 
+class Vehicle(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("veh_"))
+    vehicle_number: str
+    owner_name: str = ""
+    make_model: str = ""
+    capacity_tons: float = 0.0
+    rc_expiry: str = ""            # ISO date
+    fc_expiry: str = ""            # Fitness Certificate
+    insurance_expiry: str = ""
+    permit_expiry: str = ""
+    puc_expiry: str = ""            # Pollution Under Control
+    notes: str = ""
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+
+class Fuel(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("fuel_"))
+    date: str  # ISO date
+    vehicle_id: Optional[str] = None
+    vehicle_number: str
+    litres: float
+    rate_per_litre: float
+    amount: float = 0.0
+    odometer: float = 0.0
+    station_name: str = ""
+    notes: str = ""
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+
 class Payment(BaseModel):
     id: str = Field(default_factory=lambda: new_id("pay_"))
     amount: float
@@ -587,6 +614,22 @@ async def dashboard(user=Depends(get_current_user)):
     for rt in recent_trips:
         rt["customer_name"] = cust_map.get(rt.get("customer_id"), {}).get("name", "")
 
+    # Vehicle expiry alerts (within 60 days or expired)
+    vehicles = await db.vehicles.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(500)
+    expiry_alerts = []
+    for v in vehicles:
+        v = _vehicle_expiry_stats(v)
+        for field, info in (v.get("alerts") or {}).items():
+            if info["status"] in ("expired", "expiring"):
+                expiry_alerts.append({
+                    "vehicle_number": v.get("vehicle_number"),
+                    "document": field.replace("_expiry", "").upper(),
+                    "date": info["date"],
+                    "days": info["days"],
+                    "status": info["status"],
+                })
+    expiry_alerts.sort(key=lambda x: x["days"])
+
     return {
         "total_revenue": total_revenue,
         "total_expense": total_expense,
@@ -601,6 +644,7 @@ async def dashboard(user=Depends(get_current_user)):
         "invoice_count": len(invoices),
         "receivables": receivables_list,
         "recent_trips": recent_trips,
+        "expiry_alerts": expiry_alerts,
     }
 
 # ==================== Drivers ====================
@@ -1047,6 +1091,317 @@ async def report_balance_sheet(
         },
         "note": "Simplified statement. Balance-plug on Owner's Capital. Add loans / opening capital in future for full balance sheet.",
     }
+
+# ==================== Vehicles ====================
+
+def _vehicle_expiry_stats(v: dict) -> dict:
+    today = now_utc().date()
+    fields = ["rc_expiry", "fc_expiry", "insurance_expiry", "permit_expiry", "puc_expiry"]
+    v["alerts"] = {}
+    soonest = None
+    for f in fields:
+        val = v.get(f) or ""
+        if not val:
+            continue
+        try:
+            d = datetime.fromisoformat(val).date()
+            days = (d - today).days
+            status = "expired" if days < 0 else ("expiring" if days <= 30 else "ok")
+            v["alerts"][f] = {"date": val, "days": days, "status": status}
+            if soonest is None or days < soonest:
+                soonest = days
+        except Exception:
+            continue
+    v["soonest_days"] = soonest
+    return v
+
+@api.get("/vehicles")
+async def list_vehicles(user=Depends(get_current_user)):
+    docs = await db.vehicles.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).to_list(1000)
+    return [_vehicle_expiry_stats(v) for v in docs]
+
+@api.post("/vehicles")
+async def create_vehicle(payload: Vehicle, user=Depends(get_current_user)):
+    payload.vehicle_number = payload.vehicle_number.upper().strip()
+    doc = payload.model_dump()
+    doc["user_id"] = user["user_id"]
+    await db.vehicles.insert_one(doc)
+    doc.pop("_id", None); doc.pop("user_id", None)
+    return _vehicle_expiry_stats(doc)
+
+@api.put("/vehicles/{vid}")
+async def update_vehicle(vid: str, payload: Vehicle, user=Depends(get_current_user)):
+    payload.id = vid
+    payload.vehicle_number = payload.vehicle_number.upper().strip()
+    doc = payload.model_dump()
+    doc["user_id"] = user["user_id"]
+    await db.vehicles.update_one({"id": vid, "user_id": user["user_id"]}, {"$set": doc})
+    doc.pop("_id", None); doc.pop("user_id", None)
+    return _vehicle_expiry_stats(doc)
+
+@api.delete("/vehicles/{vid}")
+async def delete_vehicle(vid: str, user=Depends(get_current_user)):
+    await db.vehicles.delete_one({"id": vid, "user_id": user["user_id"]})
+    return {"ok": True}
+
+# ==================== Fuel Log ====================
+
+@api.get("/fuel")
+async def list_fuel(user=Depends(get_current_user)):
+    docs = await db.fuel.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).sort("date", -1).to_list(2000)
+    return docs
+
+@api.post("/fuel")
+async def create_fuel(payload: Fuel, user=Depends(get_current_user)):
+    payload.vehicle_number = payload.vehicle_number.upper().strip()
+    payload.amount = round(payload.litres * payload.rate_per_litre, 2) if payload.amount == 0 else round(payload.amount, 2)
+    doc = payload.model_dump()
+    doc["user_id"] = user["user_id"]
+    await db.fuel.insert_one(doc)
+    doc.pop("_id", None); doc.pop("user_id", None)
+    return doc
+
+@api.put("/fuel/{fid}")
+async def update_fuel(fid: str, payload: Fuel, user=Depends(get_current_user)):
+    payload.id = fid
+    payload.vehicle_number = payload.vehicle_number.upper().strip()
+    payload.amount = round(payload.litres * payload.rate_per_litre, 2) if payload.amount == 0 else round(payload.amount, 2)
+    doc = payload.model_dump()
+    doc["user_id"] = user["user_id"]
+    await db.fuel.update_one({"id": fid, "user_id": user["user_id"]}, {"$set": doc})
+    doc.pop("_id", None); doc.pop("user_id", None)
+    return doc
+
+@api.delete("/fuel/{fid}")
+async def delete_fuel(fid: str, user=Depends(get_current_user)):
+    await db.fuel.delete_one({"id": fid, "user_id": user["user_id"]})
+    return {"ok": True}
+
+@api.get("/fuel/summary")
+async def fuel_summary(user=Depends(get_current_user)):
+    uid = user["user_id"]
+    fuels = await db.fuel.find({"user_id": uid}, {"_id": 0}).sort("date", 1).to_list(5000)
+    by_vehicle: dict = {}
+    for f in fuels:
+        vno = (f.get("vehicle_number") or "").upper()
+        s = by_vehicle.setdefault(vno, {
+            "vehicle_number": vno, "entries": 0, "litres": 0.0, "amount": 0.0,
+            "first_odo": None, "last_odo": None, "km_run": 0.0, "km_per_litre": 0.0,
+        })
+        s["entries"] += 1
+        s["litres"] += float(f.get("litres", 0))
+        s["amount"] += float(f.get("amount", 0))
+        odo = float(f.get("odometer", 0) or 0)
+        if odo > 0:
+            if s["first_odo"] is None:
+                s["first_odo"] = odo
+            s["last_odo"] = odo
+    for s in by_vehicle.values():
+        if s["first_odo"] and s["last_odo"] and s["last_odo"] > s["first_odo"]:
+            s["km_run"] = round(s["last_odo"] - s["first_odo"], 2)
+            # exclude the litres from the first fill because odometer at that fill is starting point
+            usable_litres = max(s["litres"], 0.001)
+            s["km_per_litre"] = round(s["km_run"] / usable_litres, 2)
+        s["litres"] = round(s["litres"], 2)
+        s["amount"] = round(s["amount"], 2)
+    return {"by_vehicle": sorted(by_vehicle.values(), key=lambda x: -x["amount"])}
+
+# ==================== GSTR-1 Report ====================
+
+# Indian state → GST state code (2-digit)
+STATE_CODES = {
+    "andhra pradesh": "37", "andaman and nicobar islands": "35", "arunachal pradesh": "12",
+    "assam": "18", "bihar": "10", "chandigarh": "04", "chhattisgarh": "22",
+    "dadra and nagar haveli and daman and diu": "26", "delhi": "07", "goa": "30",
+    "gujarat": "24", "haryana": "06", "himachal pradesh": "02", "jammu and kashmir": "01",
+    "jharkhand": "20", "karnataka": "29", "kerala": "32", "ladakh": "38",
+    "lakshadweep": "31", "madhya pradesh": "23", "maharashtra": "27", "manipur": "14",
+    "meghalaya": "17", "mizoram": "15", "nagaland": "13", "odisha": "21",
+    "puducherry": "34", "punjab": "03", "rajasthan": "08", "sikkim": "11",
+    "tamil nadu": "33", "telangana": "36", "tripura": "16", "uttar pradesh": "09",
+    "uttarakhand": "05", "west bengal": "19",
+}
+
+def _state_code(name: str) -> str:
+    if not name:
+        return ""
+    key = name.strip().lower()
+    return STATE_CODES.get(key, "")
+
+@api.get("/reports/gstr1")
+async def report_gstr1(month: str, user=Depends(get_current_user)):
+    """month format: YYYY-MM"""
+    try:
+        year_str, mo_str = month.split("-")
+        y = int(year_str); m = int(mo_str)
+        assert 1 <= m <= 12
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid month; use YYYY-MM")
+    from calendar import monthrange
+    start = f"{y:04d}-{m:02d}-01"
+    end = f"{y:04d}-{m:02d}-{monthrange(y, m)[1]:02d}"
+
+    uid = user["user_id"]
+    invoices = await db.invoices.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(5000)
+    invoices = [i for i in invoices if start <= i.get("invoice_date", "") <= end]
+    customers = await db.customers.find({"user_id": uid}, {"_id": 0}).to_list(2000)
+    cmap = {c["id"]: c for c in customers}
+    company = await db.companies.find_one({"user_id": uid}, {"_id": 0}) or {}
+    home_state_code = _state_code(company.get("state", ""))
+
+    b2b_rows = []
+    b2c_rows = []
+    totals = {"taxable": 0.0, "cgst": 0.0, "sgst": 0.0, "igst": 0.0, "total": 0.0}
+    for inv in invoices:
+        c = cmap.get(inv["customer_id"], {})
+        gstin = c.get("gstin", "").strip()
+        st = c.get("state", "")
+        sc = _state_code(st)
+        row = {
+            "invoice_number": inv["invoice_number"],
+            "invoice_date": inv["invoice_date"],
+            "customer_name": c.get("name", ""),
+            "gstin": gstin,
+            "state": st,
+            "state_code": sc,
+            "place_of_supply": f"{sc}-{st}" if sc else st,
+            "reverse_charge": "Y" if inv.get("rcm") else "N",
+            "taxable_value": inv.get("subtotal", 0.0),
+            "cgst": inv.get("cgst_amount", 0.0),
+            "sgst": inv.get("sgst_amount", 0.0),
+            "igst": inv.get("igst_amount", 0.0),
+            "total": inv.get("total_amount", 0.0),
+            "gst_type": "IGST" if inv.get("gst_type") == "igst" else "CGST+SGST",
+        }
+        (b2b_rows if gstin else b2c_rows).append(row)
+        totals["taxable"] += row["taxable_value"]
+        totals["cgst"] += row["cgst"]
+        totals["sgst"] += row["sgst"]
+        totals["igst"] += row["igst"]
+        totals["total"] += row["total"]
+
+    for k in totals:
+        totals[k] = round(totals[k], 2)
+
+    # Group by state
+    by_state = {}
+    for r in b2b_rows + b2c_rows:
+        key = r.get("state_code") or "N/A"
+        s = by_state.setdefault(key, {"state_code": key, "state": r["state"], "invoices": 0, "taxable": 0.0, "cgst": 0.0, "sgst": 0.0, "igst": 0.0, "total": 0.0})
+        s["invoices"] += 1
+        s["taxable"] += r["taxable_value"]
+        s["cgst"] += r["cgst"]
+        s["sgst"] += r["sgst"]
+        s["igst"] += r["igst"]
+        s["total"] += r["total"]
+    for s in by_state.values():
+        for k in ("taxable", "cgst", "sgst", "igst", "total"):
+            s[k] = round(s[k], 2)
+
+    return {
+        "month": month,
+        "period": {"start": start, "end": end},
+        "company_state": company.get("state", ""),
+        "company_state_code": home_state_code,
+        "b2b": b2b_rows,
+        "b2c": b2c_rows,
+        "by_state": sorted(by_state.values(), key=lambda x: -x["total"]),
+        "totals": totals,
+        "invoice_count": len(invoices),
+    }
+
+# ==================== E-Way Bill JSON ====================
+
+@api.get("/trips/{tid}/ewaybill")
+async def eway_bill(tid: str, user=Depends(get_current_user)):
+    trip = await db.trips.find_one({"id": tid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    customer = await db.customers.find_one({"id": trip["customer_id"], "user_id": user["user_id"]}, {"_id": 0}) or {}
+    company = await db.companies.find_one({"user_id": user["user_id"]}, {"_id": 0}) or {}
+
+    invoice = None
+    if trip.get("invoice_id"):
+        invoice = await db.invoices.find_one({"id": trip["invoice_id"], "user_id": user["user_id"]}, {"_id": 0})
+
+    from_state_code = _state_code(company.get("state", ""))
+    to_state_code = _state_code(customer.get("state", ""))
+    is_intrastate = from_state_code and to_state_code and from_state_code == to_state_code
+
+    taxable = round(float(trip.get("freight_amount", 0)), 2)
+    if is_intrastate:
+        cgst_rate = 2.5; sgst_rate = 2.5; igst_rate = 0.0
+    else:
+        cgst_rate = 0.0; sgst_rate = 0.0; igst_rate = 5.0
+    cgst_amt = round(taxable * cgst_rate / 100, 2)
+    sgst_amt = round(taxable * sgst_rate / 100, 2)
+    igst_amt = round(taxable * igst_rate / 100, 2)
+    total_val = round(taxable + cgst_amt + sgst_amt + igst_amt, 2)
+
+    payload = {
+        "version": "1.0.0421",
+        "billLists": [
+            {
+                "userGstin": company.get("gstin", ""),
+                "supplyType": "O",
+                "subSupplyType": "1",
+                "subSupplyDesc": "",
+                "docType": "TRA",  # Transport (LR/GR)
+                "docNo": invoice["invoice_number"] if invoice else trip["id"].replace("trip_", "TRP-"),
+                "docDate": (invoice["invoice_date"] if invoice else trip["date"]).replace("-", "/"),
+                "fromGstin": company.get("gstin", "URP"),
+                "fromTrdName": company.get("name", ""),
+                "fromAddr1": company.get("address", "")[:120],
+                "fromAddr2": "",
+                "fromPlace": company.get("state", ""),
+                "fromPincode": 0,
+                "fromStateCode": int(from_state_code) if from_state_code else 0,
+                "actFromStateCode": int(from_state_code) if from_state_code else 0,
+                "toGstin": customer.get("gstin", "URP"),
+                "toTrdName": customer.get("name", ""),
+                "toAddr1": customer.get("address", "")[:120],
+                "toAddr2": "",
+                "toPlace": customer.get("state", ""),
+                "toPincode": 0,
+                "toStateCode": int(to_state_code) if to_state_code else 0,
+                "actToStateCode": int(to_state_code) if to_state_code else 0,
+                "transactionType": 1,
+                "otherValue": 0,
+                "totalValue": taxable,
+                "cgstValue": cgst_amt,
+                "sgstValue": sgst_amt,
+                "igstValue": igst_amt,
+                "cessValue": 0,
+                "TotNonAdvolVal": 0,
+                "OthValue": 0,
+                "totInvValue": total_val,
+                "transMode": "1",  # Road
+                "transDistance": str(int(trip.get("round_trip_kms", 0) or 0) or 0),
+                "transporterName": company.get("name", ""),
+                "transporterId": company.get("gstin", ""),
+                "transDocNo": "",
+                "transDocDate": (invoice["invoice_date"] if invoice else trip["date"]).replace("-", "/"),
+                "vehicleNo": trip.get("vehicle_number", ""),
+                "vehicleType": "R",
+                "itemList": [
+                    {
+                        "productName": trip.get("load_details", "Bitumen"),
+                        "productDesc": trip.get("load_details", ""),
+                        "hsnCode": int((trip.get("hsn_sac") or company.get("hsn_sac") or "996791").replace(" ", "")) if (trip.get("hsn_sac") or company.get("hsn_sac") or "996791").replace(" ", "").isdigit() else 996791,
+                        "quantity": trip.get("tons", 0),
+                        "qtyUnit": "MT",
+                        "cgstRate": cgst_rate,
+                        "sgstRate": sgst_rate,
+                        "igstRate": igst_rate,
+                        "cessRate": 0,
+                        "cessNonAdvol": 0,
+                        "taxableAmount": taxable,
+                    }
+                ],
+            }
+        ],
+    }
+    return payload
 
 # ==================== Health ====================
 

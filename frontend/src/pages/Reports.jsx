@@ -2,12 +2,13 @@ import React, { useState } from "react";
 import { NavLink, Routes, Route, Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api, API, fmtCurrency, fmtDate } from "@/api";
-import { FileText, TrendingUp, Scale, Download } from "lucide-react";
+import { FileText, TrendingUp, Scale, Download, Landmark } from "lucide-react";
 
 const tabs = [
   { to: "ledger", te: "లెడ్జర్", en: "Ledger", icon: FileText, testid: "tab-ledger" },
   { to: "pl", te: "లాభ-నష్టం", en: "P&L", icon: TrendingUp, testid: "tab-pl" },
   { to: "balance-sheet", te: "బ్యాలెన్స్ షీట్", en: "Balance Sheet", icon: Scale, testid: "tab-balance-sheet" },
+  { to: "gstr1", te: "GSTR-1", en: "GSTR-1", icon: Landmark, testid: "tab-gstr1" },
 ];
 
 export default function Reports() {
@@ -44,7 +45,170 @@ export default function Reports() {
         <Route path="ledger" element={<LedgerReport />} />
         <Route path="pl" element={<PLReport />} />
         <Route path="balance-sheet" element={<BalanceSheetReport />} />
+        <Route path="gstr1" element={<GSTR1Report />} />
       </Routes>
+    </div>
+  );
+}
+
+/* ------------------ GSTR-1 ------------------ */
+function GSTR1Report() {
+  const now = new Date();
+  const defaultMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const [month, setMonth] = useState(defaultMonth);
+
+  const { data, refetch, isFetching } = useQuery({
+    queryKey: ["gstr1", month],
+    queryFn: async () => (await api.get("/reports/gstr1", { params: { month } })).data,
+    enabled: Boolean(month),
+  });
+
+  const downloadCSV = () => {
+    if (!data) return;
+    const header = ["Type", "Invoice", "Date", "Customer", "GSTIN", "State", "State Code", "POS", "RCM", "Taxable", "CGST", "SGST", "IGST", "Total"];
+    const rows = [];
+    const push = (r, type) => rows.push([
+      type, r.invoice_number, r.invoice_date, r.customer_name, r.gstin, r.state, r.state_code, r.place_of_supply, r.reverse_charge,
+      r.taxable_value, r.cgst, r.sgst, r.igst, r.total,
+    ]);
+    (data.b2b || []).forEach((r) => push(r, "B2B"));
+    (data.b2c || []).forEach((r) => push(r, "B2C"));
+    const csv = [header, ...rows].map((row) => row.map((c) => `"${(c ?? "").toString().replace(/"/g, '""')}"`).join(",")).join("\n");
+    const blob = new Blob([csv], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `gstr1_${month}.csv`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <div className="space-y-4" data-testid="gstr1-tab">
+      <div className="border border-zinc-200 bg-white rounded-sm p-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+        <FieldWrap label="Month">
+          <input data-testid="gstr1-month" type="month" value={month} onChange={(e) => setMonth(e.target.value)} className={ic} />
+        </FieldWrap>
+        <div className="flex items-end gap-2">
+          <button data-testid="run-gstr1-btn" onClick={() => refetch()} disabled={isFetching} className="flex-1 px-3 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm hover:bg-zinc-800">
+            {isFetching ? "Running..." : "Refresh"}
+          </button>
+          {data && (
+            <button data-testid="gstr1-csv-btn" onClick={downloadCSV} className="p-2 border border-zinc-950 rounded-sm hover:bg-zinc-950 hover:text-white" title="Download CSV">
+              <Download size={16} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {data && (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3" data-testid="gstr1-totals">
+            <Kpi label="Invoices" value={data.invoice_count} />
+            <Kpi label="Taxable" value={fmtCurrency(data.totals.taxable)} />
+            <Kpi label="CGST" value={fmtCurrency(data.totals.cgst)} />
+            <Kpi label="SGST" value={fmtCurrency(data.totals.sgst)} />
+            <Kpi label="IGST" value={fmtCurrency(data.totals.igst)} />
+          </div>
+
+          <div className="border border-zinc-200 bg-white rounded-sm">
+            <div className="px-5 py-3 border-b border-zinc-200 text-sm font-bold uppercase tracking-wider">By State (POS)</div>
+            <table className="w-full text-sm">
+              <thead className="bg-zinc-50 text-[10px] uppercase tracking-wider text-zinc-500">
+                <tr>
+                  <th className="text-left px-4 py-2">State</th>
+                  <th className="text-left px-4 py-2">Code</th>
+                  <th className="text-right px-4 py-2">Invoices</th>
+                  <th className="text-right px-4 py-2">Taxable</th>
+                  <th className="text-right px-4 py-2">CGST</th>
+                  <th className="text-right px-4 py-2">SGST</th>
+                  <th className="text-right px-4 py-2">IGST</th>
+                  <th className="text-right px-4 py-2">Total</th>
+                </tr>
+              </thead>
+              <tbody className="font-mono">
+                {(data.by_state || []).map((s) => (
+                  <tr key={s.state_code} className="border-t border-zinc-100">
+                    <td className="px-4 py-2">{s.state || "—"}</td>
+                    <td className="px-4 py-2 font-semibold">{s.state_code}</td>
+                    <td className="px-4 py-2 text-right">{s.invoices}</td>
+                    <td className="px-4 py-2 text-right">{fmtCurrency(s.taxable)}</td>
+                    <td className="px-4 py-2 text-right">{fmtCurrency(s.cgst)}</td>
+                    <td className="px-4 py-2 text-right">{fmtCurrency(s.sgst)}</td>
+                    <td className="px-4 py-2 text-right">{fmtCurrency(s.igst)}</td>
+                    <td className="px-4 py-2 text-right font-bold">{fmtCurrency(s.total)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="border border-zinc-200 bg-white rounded-sm">
+            <div className="px-5 py-3 border-b border-zinc-200 text-sm font-bold uppercase tracking-wider">B2B Invoices ({(data.b2b || []).length})</div>
+            <div className="overflow-x-auto">
+              <GstTable rows={data.b2b || []} />
+            </div>
+          </div>
+
+          {(data.b2c || []).length > 0 && (
+            <div className="border border-zinc-200 bg-white rounded-sm">
+              <div className="px-5 py-3 border-b border-zinc-200 text-sm font-bold uppercase tracking-wider">B2C Invoices ({(data.b2c || []).length})</div>
+              <div className="overflow-x-auto">
+                <GstTable rows={data.b2c || []} />
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function GstTable({ rows }) {
+  return (
+    <table className="w-full text-sm">
+      <thead className="bg-zinc-50 text-[10px] uppercase tracking-wider text-zinc-500">
+        <tr>
+          <th className="text-left px-3 py-2">Invoice</th>
+          <th className="text-left px-3 py-2">Date</th>
+          <th className="text-left px-3 py-2">Customer</th>
+          <th className="text-left px-3 py-2">GSTIN</th>
+          <th className="text-left px-3 py-2">POS</th>
+          <th className="text-left px-3 py-2">RCM</th>
+          <th className="text-right px-3 py-2">Taxable</th>
+          <th className="text-right px-3 py-2">CGST</th>
+          <th className="text-right px-3 py-2">SGST</th>
+          <th className="text-right px-3 py-2">IGST</th>
+          <th className="text-right px-3 py-2">Total</th>
+        </tr>
+      </thead>
+      <tbody className="font-mono">
+        {rows.map((r) => (
+          <tr key={r.invoice_number} className="border-t border-zinc-100">
+            <td className="px-3 py-1.5 font-semibold text-xs">{r.invoice_number}</td>
+            <td className="px-3 py-1.5 text-xs">{r.invoice_date}</td>
+            <td className="px-3 py-1.5 text-xs">{r.customer_name}</td>
+            <td className="px-3 py-1.5 text-xs">{r.gstin || "—"}</td>
+            <td className="px-3 py-1.5 text-xs">{r.state_code || "—"}</td>
+            <td className="px-3 py-1.5 text-xs">{r.reverse_charge}</td>
+            <td className="px-3 py-1.5 text-right">{fmtCurrency(r.taxable_value)}</td>
+            <td className="px-3 py-1.5 text-right">{fmtCurrency(r.cgst)}</td>
+            <td className="px-3 py-1.5 text-right">{fmtCurrency(r.sgst)}</td>
+            <td className="px-3 py-1.5 text-right">{fmtCurrency(r.igst)}</td>
+            <td className="px-3 py-1.5 text-right font-bold">{fmtCurrency(r.total)}</td>
+          </tr>
+        ))}
+        {rows.length === 0 && (
+          <tr><td colSpan={11} className="px-4 py-6 text-center text-zinc-400 text-sm">No records.</td></tr>
+        )}
+      </tbody>
+    </table>
+  );
+}
+
+function Kpi({ label, value }) {
+  return (
+    <div className="border border-zinc-200 bg-white p-3 rounded-sm">
+      <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">{label}</div>
+      <div className="mt-1 font-mono text-base font-bold">{value}</div>
     </div>
   );
 }
