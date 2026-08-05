@@ -38,6 +38,13 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - [x] **Payment reminders** on dashboard — WhatsApp nudge per pending customer, overdue badge (15+ days)
 - [x] **Trip Import Excel/CSV** — template download + bulk upload with row-level errors
 - [x] Iteration 2 tests: 22/22 new + 18/19 legacy passing
+- [x] **Company Logo upload** (max 1MB image) — shown on invoice PDF top-left and HTML preview
+- [x] **Product master** with default rate + HSN; trip form product dropdown auto-fills load/HSN/rate
+- [x] **Round Trip freight** formula changed to: `Tons × Round Trip KMs × Rate/ton/km` (Lump-sum fallback preserved)
+- [x] **Ledger extraction** — customer-wise running balance with date filter + PDF export
+- [x] **Profit & Loss** for any date range with per-customer breakdown
+- [x] **Balance Sheet** (simplified) — assets/equity as-of any date
+- [x] Iteration 3 tests: 22/22 new passing
 
 ## Backlog (P1)
 - [ ] Drivers & Vehicles master (currently free-text)
