@@ -193,7 +193,7 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
     story.append(party_tbl)
 
     # --- Trip line items ---
-    header = ["#", "Date", "Vehicle No", "Load", "Route", "Tons", "Rate Mode", "Rate/KMs", "Freight (Rs)"]
+    header = ["#", "Date", "Vehicle No", "Load", "Route", "Cust Inv", "Tons", "Rate Mode", "Rate/KMs", "Freight (Rs)"]
     rows = [header]
     for idx, t in enumerate(trips, start=1):
         route = f"{t.get('from_location','')} → {t.get('to_location','')}"
@@ -214,20 +214,21 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
             t.get("vehicle_number", ""),
             t.get("load_details", ""),
             route,
+            t.get("customer_invoice_no", "") or t.get("waybill_no", "") or "—",
             _fmt(t.get("tons", 0)),
             mode,
             rate,
             _fmt(t.get("freight_amount", 0)),
         ])
 
-    items_tbl = Table(rows, colWidths=[8*mm, 20*mm, 22*mm, 26*mm, 40*mm, 14*mm, 18*mm, 18*mm, 20*mm], repeatRows=1)
+    items_tbl = Table(rows, colWidths=[8*mm, 20*mm, 20*mm, 22*mm, 34*mm, 20*mm, 12*mm, 16*mm, 18*mm, 16*mm], repeatRows=1)
     items_tbl.setStyle(TableStyle([
         ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F4F4F5")),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), 8),
-        ("ALIGN", (5, 1), (5, -1), "RIGHT"),
-        ("ALIGN", (7, 1), (8, -1), "RIGHT"),
+        ("FONTSIZE", (0, 0), (-1, -1), 7.5),
+        ("ALIGN", (6, 1), (6, -1), "RIGHT"),
+        ("ALIGN", (8, 1), (9, -1), "RIGHT"),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("LEFTPADDING", (0, 0), (-1, -1), 3),
         ("RIGHTPADDING", (0, 0), (-1, -1), 3),
@@ -476,7 +477,7 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
     else:
         header_left_widget = header_left
 
-    title_para = Paragraph(f"<b>GOODS CONSIGNMENT NOTE</b><br/><font size='7'>Lorry Receipt / <font name='{_TE_FONT}'>సరుకు రవాణా రసీదు</font></font>", styles["LRTitle"])
+    title_para = Paragraph("<b>GOODS CONSIGNMENT NOTE</b><br/><font size='7'>(Lorry Receipt)</font>", styles["LRTitle"])
     header_tbl = Table([[header_left_widget, title_para]], colWidths=[126 * mm, 64 * mm])
     header_tbl.setStyle(TableStyle([
         ("BOX", (0, 0), (-1, -1), 0.8, colors.black),
@@ -502,8 +503,8 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
     consignor_name = trip.get("consignor_name") or trip.get("from_location") or "—"
     site_loc = trip.get("consignee_site_location") or trip.get("to_location") or "—"
     party = [
-        [Paragraph(f"<b>Consignor</b> / <font name='{_TE_FONT}'>సరుకు పంపేవారు</font>", styles["LRSmallBold"]),
-         Paragraph(f"<b>Consignee (M/s)</b> / <font name='{_TE_FONT}'>సరుకు స్వీకర్త</font>", styles["LRSmallBold"])],
+        [Paragraph("<b>Consignor</b>", styles["LRSmallBold"]),
+         Paragraph("<b>Consignee (M/s)</b>", styles["LRSmallBold"])],
         [Paragraph(consignor_name, styles["LRBody"]),
          Paragraph(f"<b>{customer.get('name','')}</b><br/>{customer.get('address','')}<br/>GSTIN: {customer.get('gstin','—')} · Pincode: {customer.get('pincode','—')}", styles["LRBody"])],
         [Paragraph(f"<b>Site Location:</b> {site_loc}", styles["LRSmall"]),
@@ -522,13 +523,17 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
 
     net_wt = round(float(trip.get("gross_weight", 0) or 0) - float(trip.get("tare_weight", 0) or 0), 3) or float(trip.get("tons", 0) or 0)
     details_rows = [
-        [Paragraph(f"<b>Tanker No.</b> / <font name='{_TE_FONT}'>వాహనం</font>", styles["LRSmallBold"]), trip.get("vehicle_number", ""),
-         Paragraph(f"<b>Product</b> / <font name='{_TE_FONT}'>సరుకు</font>", styles["LRSmallBold"]), trip.get("load_details", "")],
-        [Paragraph(f"<b>Invoice No.</b> / <font name='{_TE_FONT}'>ఇన్వాయిస్</font>", styles["LRSmallBold"]), trip.get("external_invoice_no", "—"),
-         Paragraph(f"<b>Vehicle Seal No.</b> / <font name='{_TE_FONT}'>సీలు</font>", styles["LRSmallBold"]), trip.get("seal_numbers", "—")],
-        [Paragraph(f"<b>Gross Wt.</b> / <font name='{_TE_FONT}'>గ్రాస్</font>", styles["LRSmallBold"]), f"{_fmt(trip.get('gross_weight',0))} MT",
-         Paragraph(f"<b>Tare Wt.</b> / <font name='{_TE_FONT}'>టేర్</font>", styles["LRSmallBold"]), f"{_fmt(trip.get('tare_weight',0))} MT"],
-        [Paragraph(f"<b>Net Wt.</b> / <font name='{_TE_FONT}'>నెట్</font>", styles["LRSmallBold"]), f"{_fmt(net_wt)} MT",
+        [Paragraph("<b>Tanker No.</b>", styles["LRSmallBold"]), trip.get("vehicle_number", ""),
+         Paragraph("<b>Product</b>", styles["LRSmallBold"]), trip.get("load_details", "")],
+        [Paragraph("<b>Purchase Invoice</b>", styles["LRSmallBold"]), trip.get("external_invoice_no", "—"),
+         Paragraph("<b>Vehicle Seal No.</b>", styles["LRSmallBold"]), trip.get("seal_numbers", "—")],
+        [Paragraph("<b>Customer Invoice</b>", styles["LRSmallBold"]), trip.get("customer_invoice_no", "—"),
+         Paragraph("<b>Waybill No.</b>", styles["LRSmallBold"]), trip.get("waybill_no", "—")],
+        [Paragraph("<b>Purchased At</b>", styles["LRSmallBold"]), trip.get("customer_purchased_at", "—"),
+         Paragraph("<b>Invoice Value</b>", styles["LRSmallBold"]), f"₹ {_fmt(trip.get('invoice_value', 0))}" if trip.get("invoice_value") else "—"],
+        [Paragraph("<b>Gross Wt.</b>", styles["LRSmallBold"]), f"{_fmt(trip.get('gross_weight',0))} MT",
+         Paragraph("<b>Tare Wt.</b>", styles["LRSmallBold"]), f"{_fmt(trip.get('tare_weight',0))} MT"],
+        [Paragraph("<b>Net Wt.</b>", styles["LRSmallBold"]), f"{_fmt(net_wt)} MT",
          Paragraph("<b>Round Trip KMs</b>", styles["LRSmallBold"]), _fmt(trip.get("round_trip_kms", 0))],
     ]
     details_tbl = Table(details_rows, colWidths=[40 * mm, 55 * mm, 40 * mm, 55 * mm])
@@ -541,8 +546,8 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
     ]))
     story.append(details_tbl)
 
-    driver_rows = [[Paragraph(f"<b>Driver Name</b> / <font name='{_TE_FONT}'>డ్రైవర్</font>", styles["LRSmallBold"]), trip.get("driver_name", "—"),
-                    Paragraph(f"<b>Driver Mobile</b> / <font name='{_TE_FONT}'>మొబైల్</font>", styles["LRSmallBold"]), trip.get("driver_mobile", "—")]]
+    driver_rows = [[Paragraph("<b>Driver Name</b>", styles["LRSmallBold"]), trip.get("driver_name", "—"),
+                    Paragraph("<b>Driver Mobile</b>", styles["LRSmallBold"]), trip.get("driver_mobile", "—")]]
     driver_tbl = Table(driver_rows, colWidths=[40 * mm, 55 * mm, 40 * mm, 55 * mm])
     driver_tbl.setStyle(TableStyle([
         ("BOX", (0, 0), (-1, -1), 0.5, colors.black),
@@ -554,7 +559,7 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
     story.append(driver_tbl)
 
     un_rows = [
-        [Paragraph(f"<b>Unloading Details by Site Officials</b> / <font name='{_TE_FONT}'>అన్‌లోడింగ్ వివరాలు</font>", styles["LRSmallBold"])],
+        [Paragraph("<b>Unloading Details by Site Officials</b>", styles["LRSmallBold"])],
         ["Date of Arrival | Time | Date of Diversion | Date of Unloading | Date of Departure | Extra KM | Shortage/Excess | HSD at Plant | Advance at Plant | Seal Checked By"],
         [""],
         ["Site Entry Gate (Stamp / Date / Time / Signature)"],
@@ -584,18 +589,22 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
     story.append(gst_box)
 
     story.append(Spacer(1, 4))
-    story.append(Paragraph(f"<b>TANKER UNLOADING PROCEDURES AT SITE TO BE FOLLOWED</b> / <font name='{_TE_FONT}'>సైట్‌లో పాటించవలసిన విధానాలు</font>", styles["LRSmallBold"]))
-    terms_rows = [[Paragraph("<b>English</b>", styles["LRSmallBold"]), Paragraph(f"<font name='{_TE_FONT}'><b>తెలుగు</b></font>", styles["LRSmallBold"])]]
-    for en, te in zip(LR_TERMS_EN, LR_TERMS_TE):
-        terms_rows.append([Paragraph(en, styles["LRSmall"]), Paragraph(te, styles["LRTelugu"])])
+    story.append(Paragraph("<b>TANKER UNLOADING PROCEDURES AT SITE TO BE FOLLOWED</b>", styles["LRSmallBold"]))
+    # Two-column English list for compactness
+    half = (len(LR_TERMS_EN) + 1) // 2
+    left_col = LR_TERMS_EN[:half]
+    right_col = LR_TERMS_EN[half:]
+    terms_rows = []
+    for i in range(max(len(left_col), len(right_col))):
+        left = f"{i+1}. {left_col[i]}" if i < len(left_col) else ""
+        right = f"{half + i + 1}. {right_col[i]}" if i < len(right_col) else ""
+        terms_rows.append([Paragraph(left, styles["LRSmall"]), Paragraph(right, styles["LRSmall"])])
     terms_tbl = Table(terms_rows, colWidths=[95 * mm, 95 * mm])
     terms_tbl.setStyle(TableStyle([
         ("BOX", (0, 0), (-1, -1), 0.4, colors.grey),
-        ("INNERGRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#E4E4E7")),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F4F4F5")),
-        ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-        ("TOPPADDING", (0, 0), (-1, -1), 2), ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5), ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 3), ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
     ]))
     story.append(terms_tbl)
 

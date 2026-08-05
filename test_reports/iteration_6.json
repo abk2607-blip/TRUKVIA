@@ -1,0 +1,43 @@
+{
+  "summary": "Backend-only iter6 testing. Added /app/backend/tests/test_iter6_features.py (17 tests, all PASS) covering: (1) Trip DELETE requires ?reason (400 without, 200 with, audit log entry with snapshot & reason='cleanup'); (2) Trip DELETE cascade — deleting one of two invoiced trips recomputes invoice subtotal 20000→12000, total_amount/balance_due updated; (3) Trip PUT after invoicing — tons 20→30 with rate 1000 recomputes invoice subtotal to 30000, audit log records freight_amount change; (4) Invoice PUT requires reason (400 without), with reason+gst_type='igst' recomputes cgst=sgst=0, igst=500, total=10500; (5) Invoice DELETE requires reason, cleanup path creates audit log with reason='duplicate'; (6) Supplier vehicle CRUD (vehicle_type='supplier', supplier_name/contact/mobile/remarks persist) & trip using supplier vehicle auto-populates vehicle_type='supplier' and supplier_name from master, computes profit = freight(25000) - supplier_freight(18000) = 7000, total_expense=18000; (7) Diesel recovery: expenses.diesel=8000 + qty=50*rate=100 → diesel_from_customer_amount=5000, own_expense_net=3000, profit=22000 for freight=25000; (8) Shortage 500 reduces net_freight → profit=24500 for freight=25000; (9) Cash advance 10000 does not affect profit but reduces net_settlement; (10) Trip optional fields (customer_invoice_no, waybill_no, invoice_value, customer_purchased_at) persist and LR/Invoice PDFs > 3000 bytes with %PDF- header; (11) LR PDF contains no Telugu UTF-8 bytes (0xE0 0xB0 / 0xE0 0xB1 both = 0); (12) Audit log listing sorted desc by timestamp with module filter; (13) Backward compat — trips without new fields default vehicle_type='own', supplier_freight=0, profit unchanged. Full suite: 65/66 excluding pre-existing broken tests. Iter6: 17/17 PASS.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "InvoiceUpdateRequest model (server.py:648-658)", "issue": "Model fields (invoice_date, gst_type, rcm, notes, reason) are declared TWICE in the class body. Pydantic silently uses the second declaration; functionally OK but is a code smell / accidental duplication that should be cleaned up."},
+      {"endpoint": "POST /api/trips (create_trip)", "issue": "On create with vehicle_number matching a 'supplier' vehicle master, supplier_name is auto-populated but supplier_freight is NOT auto-set — callers must supply it explicitly. Confirmed working as designed by review spec; noted for frontend integration."},
+      {"endpoint": "PUT /api/trips/{tid} (update_trip)", "issue": "On update, vehicle_type is NOT re-derived from vehicle master (only on create is it set from vehicle lookup). If a user changes vehicle_number to a supplier vehicle via PUT, vehicle_type remains 'own'. Line 498-501 only sets vehicle_id, not vehicle_type/supplier_name. Consider mirroring the create-time logic."},
+      {"endpoint": "GET /api/audit-logs", "issue": "timestamp range query uses string comparison ('$gte'/'$lte' with ISO strings). Works for ISO-8601 but assumes timestamp field is stored as string — verify indexing strategy for scale."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter6_features.py",
+    "/app/test_reports/pytest/iter6_results.xml"
+  ],
+  "action_items": [
+    "Deduplicate InvoiceUpdateRequest field declarations (server.py:648-658).",
+    "Consider re-deriving vehicle_type/supplier_name on Trip PUT when vehicle_number changes, mirroring create logic.",
+    "Fix pre-existing test suite failures (test_iter3_features.py + backend_test.py) — they hardcode REACT_APP_BACKEND_URL='' fallback and fail when env var is not injected. iter5/iter6 tests use a hardcoded fallback URL and work.",
+    "Pre-existing iter4 stale-state failure: test_iter4_features.py::TestGSTR1::test_01_gstr1_totals_and_split expects 2 invoices but finds 3 due to leftover TEST data — needs teardown cleanup."
+  ],
+  "critical_code_review_comments": [
+    "server.py has grown to 1841 lines — well past the 700-line threshold. Iter6 added AuditLog + _log_audit + _diff_dict + _recompute_invoice + expanded _compute_trip. Splitting into routers (audit, trips, invoices, vehicles, files, reports) is now urgent to preserve maintainability.",
+    "Duplicated model fields in InvoiceUpdateRequest (lines 648-658) — 4 fields declared twice. Cleanup required.",
+    "_log_audit is fire-and-forget (try/except swallows exceptions with warning log). For a compliance/audit trail, silent failure is dangerous. Consider retry+alerting or transactional insert with the parent write.",
+    "Audit changes payload uses arbitrary dict shape ({'snapshot': {...}} on delete, plain diff on update). Standardize with an AuditChange schema so consumers/UI can render uniformly.",
+    "_recompute_invoice recomputes amount_paid from payments — good, keeps invariant. However it does not update invoice.status if balance_due becomes 0 (or reverts from paid to unpaid). Consider status re-derivation.",
+    "delete_invoice sets trips back to status='pending' and invoice_id=None — good. But no audit entries are logged for the child trip status flips. Consider logging cascade effects too.",
+    "_compute_trip: for supplier vehicles, total_expense = supplier_freight and own expenses (diesel/toll/batta/repair/other/firewood) are silently ignored. Correct per spec but the frontend should either disable those fields for supplier trips or show them as pass-through. Document clearly.",
+    "shortage_qty is captured but never used in computation — only shortage_amount is applied. Confirm whether shortage_qty should auto-compute shortage_amount analogous to diesel_from_customer_qty×rate.",
+    "GET /api/audit-logs 'limit' clamped to min(limit, 500) but no pagination cursor. For a growing audit trail, add skip/cursor pagination.",
+    "MongoDB _id properly excluded across audit-logs, invoice PUT/DELETE, trip PUT/DELETE responses. Good."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter6_features.py (new — 17 tests, all PASS)"],
+  "success_rate": {"backend": "100% on iter6 (17/17); iter2+iter4+iter5+iter6 = 64/65 (1 pre-existing iter4 stale-state failure); iter3+backend_test.py pre-existing broken due to env var handling", "frontend": "not tested (backend-only request)"},
+  "test_credentials": "Bearer test_session_bitumen_2026 (from /app/memory/test_credentials.md). /api/auth/me returned 200.",
+  "seed_data_creation": "TEST_iter6_-prefixed customers, trips (~10), 1 supplier vehicle (TS09SUP01), and multiple invoices created within test classes; all cleaned via teardown_class with ?reason=cleanup for trip/invoice DELETE. TestNewTripOptionalFieldsAndPDF sets company to state=Telangana pincode=500032; consistent with iter5 leftover state.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter6 fully verified: (a) Trip and Invoice DELETE both require ?reason= query param — return 400 'Reason for ... is required' without it; (b) Trip PUT recomputes linked invoice via _recompute_invoice when trip.invoice_id is set; (c) Invoice PUT accepts reason+optional invoice_date/gst_type/rcm/notes — recomputes only when gst_type or rcm changes; (d) Supplier vehicles: Vehicle.vehicle_type in {'own','supplier'}; on Trip CREATE, vehicle_type/supplier_name auto-populated from vehicle master lookup by vehicle_number (uppercased); (e) Trip.supplier_freight replaces own_expense computation for supplier vehicles — total_expense=supplier_freight, profit=freight-shortage-supplier_freight; (f) Recovery: diesel_from_customer_amount auto-computed from qty*rate if amount==0; reduces own_expense_net (floored at 0); (g) Deduction: shortage_amount subtracted from freight_amount before profit; (h) net_settlement = net_freight - total_expense - cash_advance_received (informational, does not affect profit); (i) Audit log fields: id, timestamp, user_id, module, action, entity_id, entity_ref, reason, changes (dict). GET /api/audit-logs supports module, action, entity_id, start, end filters + limit (capped 500), sorted desc by timestamp. Known nit: PUT trip does not re-derive vehicle_type from vehicle master, and InvoiceUpdateRequest has duplicated field declarations.",
+  "rca of the issue": "No new bugs found in iter6 feature scope. Two code-quality observations reported as minor: (1) InvoiceUpdateRequest duplicated field declarations at server.py:648-658 (Pydantic silently uses the last); (2) Trip PUT does not re-derive vehicle_type from vehicle master when vehicle_number is changed to a supplier vehicle — only Trip CREATE does. Neither affects the tested review scenarios."
+}

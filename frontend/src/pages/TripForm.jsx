@@ -10,6 +10,10 @@ const EMPTY = {
   customer_id: "",
   date: new Date().toISOString().slice(0, 10),
   vehicle_number: "",
+  vehicle_id: "",
+  vehicle_type: "own",
+  supplier_name: "",
+  supplier_freight: 0,
   driver_id: "",
   driver_name: "",
   driver_mobile: "",
@@ -26,7 +30,12 @@ const EMPTY = {
   fixed_amount: 0,
   round_trip_kms: 0,
   rate_per_km_per_ton: 0,
-  expenses: { diesel: 0, toll: 0, batta: 0, repair: 0, other: 0 },
+  expenses: {
+    diesel: 0, toll: 0, batta: 0, repair: 0, other: 0,
+    firewood: 0, other_desc: "",
+    diesel_from_customer_qty: 0, diesel_from_customer_rate: 0, diesel_from_customer_amount: 0,
+    shortage_qty: 0, shortage_amount: 0, cash_advance_received: 0,
+  },
   notes: "",
   lr_number: "",
   lr_time: "",
@@ -35,6 +44,10 @@ const EMPTY = {
   consignee_site_location: "",
   consignee_site_contact: "",
   external_invoice_no: "",
+  customer_invoice_no: "",
+  customer_purchased_at: "",
+  invoice_value: 0,
+  waybill_no: "",
   gross_weight: 0,
   tare_weight: 0,
   seal_numbers: "",
@@ -71,9 +84,11 @@ export default function TripForm() {
         fixed_amount: Number(form.fixed_amount),
         round_trip_kms: Number(form.round_trip_kms),
         rate_per_km_per_ton: Number(form.rate_per_km_per_ton),
+        supplier_freight: Number(form.supplier_freight || 0),
+        invoice_value: Number(form.invoice_value || 0),
         gross_weight: Number(form.gross_weight || 0),
         tare_weight: Number(form.tare_weight || 0),
-        expenses: Object.fromEntries(Object.entries(form.expenses).map(([k, v]) => [k, Number(v || 0)])),
+        expenses: Object.fromEntries(Object.entries(form.expenses).map(([k, v]) => [k, k === "other_desc" ? v : Number(v || 0)])),
       };
       if (isEdit) return (await api.put(`/trips/${id}`, payload)).data;
       return (await api.post("/trips", payload)).data;
@@ -132,12 +147,22 @@ export default function TripForm() {
                     value={vehicles.find((v) => v.vehicle_number === form.vehicle_number)?.id || ""}
                     onChange={(e) => {
                       const v = vehicles.find((x) => x.id === e.target.value);
-                      setForm({ ...form, vehicle_number: v ? v.vehicle_number : "" });
+                      if (v) {
+                        setForm({
+                          ...form,
+                          vehicle_id: v.id,
+                          vehicle_number: v.vehicle_number,
+                          vehicle_type: v.vehicle_type || "own",
+                          supplier_name: v.vehicle_type === "supplier" ? (v.supplier_name || "") : "",
+                        });
+                      } else {
+                        setForm({ ...form, vehicle_id: "", vehicle_number: "" });
+                      }
                     }}
                     className={inputCls}
                   >
                     <option value="">-- Select from Master --</option>
-                    {vehicles.map((v) => <option key={v.id} value={v.id}>{v.vehicle_number}{v.owner_name ? ` · ${v.owner_name}` : ""}</option>)}
+                    {vehicles.map((v) => <option key={v.id} value={v.id}>{v.vehicle_number}{v.vehicle_type === "supplier" ? " · Supplier" : ""}{v.owner_name ? ` · ${v.owner_name}` : ""}</option>)}
                   </select>
                   <input data-testid="trip-vehicle" required value={form.vehicle_number} onChange={(e) => setForm({ ...form, vehicle_number: e.target.value.toUpperCase() })} className={`${inputCls} mt-1`} placeholder="Or type: AP16TA1234" />
                 </>
@@ -285,6 +310,59 @@ export default function TripForm() {
           </div>
         </Section>
 
+        {form.vehicle_type === "supplier" && (
+          <Section title="Supplier Vehicle · సప్లయర్ వాహనం">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <Field label="Supplier Name">
+                <input data-testid="trip-supplier-name" value={form.supplier_name} onChange={(e) => setForm({ ...form, supplier_name: e.target.value })} className={inputCls} />
+              </Field>
+              <Field label="Supplier Freight (₹)">
+                <input data-testid="trip-supplier-freight" type="number" step="0.01" min="0" value={form.supplier_freight} onChange={(e) => setForm({ ...form, supplier_freight: e.target.value })} className={inputCls} />
+              </Field>
+              <div className="flex items-end">
+                <div className="bg-emerald-50 border border-emerald-200 px-4 py-3 rounded-sm w-full text-right">
+                  <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">Est. Profit</div>
+                  <div className={`font-mono text-lg font-bold ${(freight - Number(form.supplier_freight || 0)) >= 0 ? "text-emerald-800" : "text-rose-800"}`}>
+                    {fmtCurrency((Number(form.tons || 0) * Number(form.rate_per_ton || 0) - Number(form.supplier_freight || 0)) || (freight - Number(form.supplier_freight || 0)))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </Section>
+        )}
+
+        <Section title="Extra Recovery & Expenses (Optional)">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <Field label="Diesel from Customer — Qty (L)">
+              <input data-testid="trip-diesel-cust-qty" type="number" step="0.01" min="0" value={form.expenses.diesel_from_customer_qty} onChange={(e) => setExp("diesel_from_customer_qty", e.target.value)} className={inputCls} />
+            </Field>
+            <Field label="Diesel from Customer — Rate">
+              <input data-testid="trip-diesel-cust-rate" type="number" step="0.01" min="0" value={form.expenses.diesel_from_customer_rate} onChange={(e) => setExp("diesel_from_customer_rate", e.target.value)} className={inputCls} />
+            </Field>
+            <Field label="Diesel from Customer — Amount">
+              <input data-testid="trip-diesel-cust-amt" type="number" step="0.01" min="0" value={form.expenses.diesel_from_customer_amount || (Number(form.expenses.diesel_from_customer_qty) * Number(form.expenses.diesel_from_customer_rate)).toFixed(2)} onChange={(e) => setExp("diesel_from_customer_amount", e.target.value)} className={inputCls} />
+            </Field>
+            <Field label="Shortage Qty (MT/L)">
+              <input data-testid="trip-shortage-qty" type="number" step="0.01" min="0" value={form.expenses.shortage_qty} onChange={(e) => setExp("shortage_qty", e.target.value)} className={inputCls} />
+            </Field>
+            <Field label="Shortage Amount (₹)">
+              <input data-testid="trip-shortage-amt" type="number" step="0.01" min="0" value={form.expenses.shortage_amount} onChange={(e) => setExp("shortage_amount", e.target.value)} className={inputCls} />
+            </Field>
+            <Field label="Cash Advance Received">
+              <input data-testid="trip-cash-advance" type="number" step="0.01" min="0" value={form.expenses.cash_advance_received} onChange={(e) => setExp("cash_advance_received", e.target.value)} className={inputCls} />
+            </Field>
+            <Field label="Firewood Expense">
+              <input data-testid="trip-firewood" type="number" step="0.01" min="0" value={form.expenses.firewood} onChange={(e) => setExp("firewood", e.target.value)} className={inputCls} />
+            </Field>
+            <Field label="Other Expense Description">
+              <input data-testid="trip-other-desc" value={form.expenses.other_desc} onChange={(e) => setExp("other_desc", e.target.value)} className={inputCls} />
+            </Field>
+            <Field label="Other Expense Amount">
+              <input data-testid="trip-other-amt" type="number" step="0.01" min="0" value={form.expenses.other} onChange={(e) => setExp("other", e.target.value)} className={inputCls} />
+            </Field>
+          </div>
+        </Section>
+
         <Section title="LR / Lorry Receipt (Optional)">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <Field label="LR Number (auto)">
@@ -295,6 +373,18 @@ export default function TripForm() {
             </Field>
             <Field label="External Invoice # (BPCL/HPCL)">
               <input data-testid="trip-ext-invoice" value={form.external_invoice_no} onChange={(e) => setForm({ ...form, external_invoice_no: e.target.value })} className={inputCls} placeholder="MUM-26-27-00220" />
+            </Field>
+            <Field label="Customer Invoice #">
+              <input data-testid="trip-cust-invoice" value={form.customer_invoice_no} onChange={(e) => setForm({ ...form, customer_invoice_no: e.target.value })} className={inputCls} />
+            </Field>
+            <Field label="Customer Purchased At">
+              <input data-testid="trip-purchased-at" value={form.customer_purchased_at} onChange={(e) => setForm({ ...form, customer_purchased_at: e.target.value })} className={inputCls} placeholder="e.g. HPCL Kondapalli" />
+            </Field>
+            <Field label="Invoice Value (₹)">
+              <input data-testid="trip-invoice-value" type="number" step="0.01" min="0" value={form.invoice_value} onChange={(e) => setForm({ ...form, invoice_value: e.target.value })} className={inputCls} />
+            </Field>
+            <Field label="Waybill No.">
+              <input data-testid="trip-waybill" value={form.waybill_no} onChange={(e) => setForm({ ...form, waybill_no: e.target.value })} className={inputCls} />
             </Field>
             <Field label="Consignor Name">
               <input data-testid="trip-consignor" value={form.consignor_name} onChange={(e) => setForm({ ...form, consignor_name: e.target.value })} className={inputCls} placeholder="BPCL - Mumbai" />

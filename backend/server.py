@@ -83,6 +83,15 @@ class Expenses(BaseModel):
     batta: float = 0.0
     repair: float = 0.0
     other: float = 0.0
+    # Additional expenses / recoveries
+    firewood: float = 0.0
+    other_desc: str = ""
+    diesel_from_customer_qty: float = 0.0
+    diesel_from_customer_rate: float = 0.0
+    diesel_from_customer_amount: float = 0.0   # recovery (reduces our cost)
+    shortage_qty: float = 0.0
+    shortage_amount: float = 0.0               # deduction from freight
+    cash_advance_received: float = 0.0         # settlement only
 
 class Driver(BaseModel):
     id: str = Field(default_factory=lambda: new_id("drv_"))
@@ -97,6 +106,10 @@ class Trip(BaseModel):
     customer_id: str
     date: str  # ISO date
     vehicle_number: str
+    vehicle_id: Optional[str] = None
+    vehicle_type: Literal["own", "supplier"] = "own"
+    supplier_name: str = ""
+    supplier_freight: float = 0.0
     driver_id: Optional[str] = None
     driver_name: str = ""
     driver_mobile: str = ""
@@ -117,10 +130,11 @@ class Trip(BaseModel):
     expenses: Expenses = Field(default_factory=Expenses)
     total_expense: float = 0.0
     profit: float = 0.0
+    net_settlement: float = 0.0
     invoice_id: Optional[str] = None
     status: Literal["pending", "invoiced"] = "pending"
     notes: str = ""
-    # LR (Lorry Receipt / Consignment Note) fields
+    # LR / invoice reference fields
     lr_number: str = ""
     lr_time: str = ""
     consignor_name: str = ""
@@ -128,6 +142,10 @@ class Trip(BaseModel):
     consignee_site_location: str = ""
     consignee_site_contact: str = ""
     external_invoice_no: str = ""
+    customer_invoice_no: str = ""
+    customer_purchased_at: str = ""
+    invoice_value: float = 0.0
+    waybill_no: str = ""
     gross_weight: float = 0.0
     tare_weight: float = 0.0
     seal_numbers: str = ""
@@ -145,15 +163,20 @@ class Product(BaseModel):
 class Vehicle(BaseModel):
     id: str = Field(default_factory=lambda: new_id("veh_"))
     vehicle_number: str
+    vehicle_type: Literal["own", "supplier"] = "own"
     owner_name: str = ""
     owner_phone: str = ""
+    supplier_name: str = ""
+    supplier_contact_person: str = ""
+    supplier_mobile: str = ""
     make_model: str = ""
     capacity_tons: float = 0.0
-    rc_expiry: str = ""            # ISO date
-    fc_expiry: str = ""            # Fitness Certificate
+    rc_expiry: str = ""
+    fc_expiry: str = ""
     insurance_expiry: str = ""
     permit_expiry: str = ""
-    puc_expiry: str = ""            # Pollution Under Control
+    puc_expiry: str = ""
+    remarks: str = ""
     notes: str = ""
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
 
@@ -376,19 +399,66 @@ async def delete_customer(cid: str, user=Depends(get_current_user)):
 
 # ==================== Trips ====================
 
+class AuditLog(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("audit_"))
+    timestamp: str = Field(default_factory=lambda: now_utc().isoformat())
+    module: str                  # trip | invoice | customer | vehicle | driver | product | company | payment
+    action: str                  # create | update | delete
+    entity_id: str = ""
+    entity_ref: str = ""         # user-friendly name (invoice_number, vehicle_number, etc.)
+    reason: str = ""
+    changes: dict = Field(default_factory=dict)   # {field: {old, new}}
+    user_email: str = ""
+    user_name: str = ""
+
+async def _log_audit(user: dict, module: str, action: str, entity_id: str = "", entity_ref: str = "", reason: str = "", changes: Optional[dict] = None):
+    doc = AuditLog(
+        module=module, action=action,
+        entity_id=entity_id, entity_ref=entity_ref,
+        reason=reason, changes=changes or {},
+        user_email=user.get("email", ""), user_name=user.get("name", ""),
+    ).model_dump()
+    doc["user_id"] = user["user_id"]
+    try:
+        await db.audit_logs.insert_one(doc)
+    except Exception as e:
+        logger.warning(f"audit log failed: {e}")
+
+def _diff_dict(old: dict, new: dict, keys: Optional[list] = None) -> dict:
+    """Return {field: {old, new}} for keys where values differ."""
+    diff = {}
+    if keys is None:
+        keys = set(list(old.keys()) + list(new.keys()))
+    for k in keys:
+        if old.get(k) != new.get(k):
+            diff[k] = {"old": old.get(k), "new": new.get(k)}
+    return diff
+
 def _compute_trip(t: Trip) -> Trip:
     if t.freight_mode == "per_ton":
         t.freight_amount = round(t.tons * t.rate_per_ton, 2)
     else:
-        # Round trip: tons × round_trip_kms × rate_per_km_per_ton
-        # Backward-compat: fall back to fixed_amount if new fields are 0
         if t.round_trip_kms > 0 and t.rate_per_km_per_ton > 0:
             t.freight_amount = round(t.tons * t.round_trip_kms * t.rate_per_km_per_ton, 2)
         else:
             t.freight_amount = round(t.fixed_amount, 2)
     e = t.expenses
-    t.total_expense = round(e.diesel + e.toll + e.batta + e.repair + e.other, 2)
-    t.profit = round(t.freight_amount - t.total_expense, 2)
+    # Auto-compute diesel from customer amount
+    if e.diesel_from_customer_qty > 0 and e.diesel_from_customer_rate > 0 and e.diesel_from_customer_amount == 0:
+        e.diesel_from_customer_amount = round(e.diesel_from_customer_qty * e.diesel_from_customer_rate, 2)
+    # Own expense base
+    own_expense = e.diesel + e.toll + e.batta + e.repair + e.other + e.firewood
+    # Diesel recovery reduces our cost (but never below 0)
+    own_expense_net = max(own_expense - e.diesel_from_customer_amount, 0)
+    if t.vehicle_type == "supplier":
+        t.total_expense = round(t.supplier_freight, 2)
+    else:
+        t.total_expense = round(own_expense_net, 2)
+    # Net revenue after shortage deduction
+    net_freight = t.freight_amount - e.shortage_amount
+    t.profit = round(net_freight - t.total_expense, 2)
+    # Cash settlement to driver / from customer perspective (informational)
+    t.net_settlement = round(net_freight - t.total_expense - e.cash_advance_received, 2)
     return t
 
 @api.get("/trips")
@@ -403,12 +473,20 @@ async def list_trips(user=Depends(get_current_user), customer_id: Optional[str] 
 
 @api.post("/trips")
 async def create_trip(payload: Trip, user=Depends(get_current_user)):
+    if not payload.vehicle_id and payload.vehicle_number:
+        v = await db.vehicles.find_one({"vehicle_number": payload.vehicle_number.upper(), "user_id": user["user_id"]}, {"_id": 0})
+        if v:
+            payload.vehicle_id = v["id"]
+            payload.vehicle_type = v.get("vehicle_type", "own")
+            if payload.vehicle_type == "supplier":
+                payload.supplier_name = payload.supplier_name or v.get("supplier_name", "")
     payload = _compute_trip(payload)
     doc = payload.model_dump()
     doc["user_id"] = user["user_id"]
     await db.trips.insert_one(doc)
     doc.pop("user_id", None)
     doc.pop("_id", None)
+    await _log_audit(user, "trip", "create", entity_id=doc["id"], entity_ref=doc.get("vehicle_number", ""))
     return doc
 
 @api.put("/trips/{tid}")
@@ -416,25 +494,59 @@ async def update_trip(tid: str, payload: Trip, user=Depends(get_current_user)):
     existing = await db.trips.find_one({"id": tid, "user_id": user["user_id"]}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Trip not found")
-    if existing.get("status") == "invoiced":
-        raise HTTPException(status_code=400, detail="Cannot edit invoiced trip")
     payload.id = tid
+    if not payload.vehicle_id and payload.vehicle_number:
+        v = await db.vehicles.find_one({"vehicle_number": payload.vehicle_number.upper(), "user_id": user["user_id"]}, {"_id": 0})
+        if v:
+            payload.vehicle_id = v["id"]
     payload = _compute_trip(payload)
     doc = payload.model_dump()
     doc["user_id"] = user["user_id"]
+    doc["invoice_id"] = existing.get("invoice_id")
+    doc["status"] = existing.get("status", "pending")
     await db.trips.update_one({"id": tid, "user_id": user["user_id"]}, {"$set": doc})
+    if existing.get("invoice_id"):
+        await _recompute_invoice(existing["invoice_id"], user)
+    changes = _diff_dict(existing, doc, ["freight_amount", "tons", "rate_per_ton", "supplier_freight", "total_expense", "profit", "vehicle_number", "vehicle_type"])
+    await _log_audit(user, "trip", "update", entity_id=tid, entity_ref=doc.get("vehicle_number", ""), changes=changes)
     doc.pop("user_id", None)
     return doc
 
 @api.delete("/trips/{tid}")
-async def delete_trip(tid: str, user=Depends(get_current_user)):
+async def delete_trip(tid: str, reason: str = "", user=Depends(get_current_user)):
+    if not (reason or "").strip():
+        raise HTTPException(status_code=400, detail="Reason for deletion is required")
     existing = await db.trips.find_one({"id": tid, "user_id": user["user_id"]}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Trip not found")
-    if existing.get("status") == "invoiced":
-        raise HTTPException(status_code=400, detail="Cannot delete invoiced trip")
+    linked_invoice_id = existing.get("invoice_id")
     await db.trips.delete_one({"id": tid, "user_id": user["user_id"]})
-    return {"ok": True}
+    if linked_invoice_id:
+        await _recompute_invoice(linked_invoice_id, user)
+    await _log_audit(user, "trip", "delete", entity_id=tid, entity_ref=existing.get("vehicle_number", ""), reason=reason,
+                     changes={"snapshot": {k: existing.get(k) for k in ("date", "customer_id", "vehicle_number", "freight_amount", "invoice_id")}})
+    return {"ok": True, "linked_invoice_id": linked_invoice_id}
+
+async def _recompute_invoice(iid: str, user):
+    inv = await db.invoices.find_one({"id": iid, "user_id": user["user_id"]}, {"_id": 0})
+    if not inv:
+        return
+    trips = await db.trips.find({"user_id": user["user_id"], "id": {"$in": inv.get("trip_ids", [])}}, {"_id": 0}).to_list(500)
+    subtotal = round(sum(t.get("freight_amount", 0.0) for t in trips), 2)
+    gst_type = inv.get("gst_type", "cgst_sgst")
+    cgst = round(subtotal * 2.5 / 100, 2) if gst_type == "cgst_sgst" else 0.0
+    sgst = round(subtotal * 2.5 / 100, 2) if gst_type == "cgst_sgst" else 0.0
+    igst = round(subtotal * 5.0 / 100, 2) if gst_type == "igst" else 0.0
+    total_tax = round(cgst + sgst + igst, 2)
+    total_amount = round(subtotal if inv.get("rcm") else subtotal + total_tax, 2)
+    amount_paid = round(sum(p["amount"] for p in inv.get("payments", [])), 2)
+    balance_due = round(total_amount - amount_paid, 2)
+    await db.invoices.update_one(
+        {"id": iid, "user_id": user["user_id"]},
+        {"$set": {"subtotal": subtotal, "cgst_amount": cgst, "sgst_amount": sgst, "igst_amount": igst,
+                  "total_tax": total_tax, "total_amount": total_amount,
+                  "amount_paid": amount_paid, "balance_due": balance_due}},
+    )
 
 # ==================== Invoices ====================
 
@@ -530,10 +642,47 @@ async def create_invoice(payload: InvoiceCreateRequest, user=Depends(get_current
     )
     doc.pop("user_id", None)
     doc.pop("_id", None)
+    await _log_audit(user, "invoice", "create", entity_id=inv.id, entity_ref=invoice_number)
     return doc
 
+class InvoiceUpdateRequest(BaseModel):
+    invoice_date: Optional[str] = None
+    gst_type: Optional[Literal["cgst_sgst", "igst"]] = None
+    rcm: Optional[bool] = None
+    notes: Optional[str] = None
+    reason: str = ""
+    invoice_date: Optional[str] = None
+    gst_type: Optional[Literal["cgst_sgst", "igst"]] = None
+    rcm: Optional[bool] = None
+    notes: Optional[str] = None
+    reason: str = ""
+
+@api.put("/invoices/{iid}")
+async def update_invoice(iid: str, payload: InvoiceUpdateRequest, user=Depends(get_current_user)):
+    existing = await db.invoices.find_one({"id": iid, "user_id": user["user_id"]}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Not found")
+    if not (payload.reason or "").strip():
+        raise HTTPException(status_code=400, detail="Reason for modification is required")
+    updates = {}
+    for k in ("invoice_date", "gst_type", "rcm", "notes"):
+        v = getattr(payload, k)
+        if v is not None and v != existing.get(k):
+            updates[k] = v
+    if updates:
+        await db.invoices.update_one({"id": iid, "user_id": user["user_id"]}, {"$set": updates})
+    # If gst_type/rcm changed, recompute totals
+    if "gst_type" in updates or "rcm" in updates:
+        await _recompute_invoice(iid, user)
+    changes = _diff_dict(existing, {**existing, **updates}, list(updates.keys()))
+    await _log_audit(user, "invoice", "update", entity_id=iid, entity_ref=existing.get("invoice_number", ""), reason=payload.reason, changes=changes)
+    updated = await db.invoices.find_one({"id": iid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
+    return updated
+
 @api.delete("/invoices/{iid}")
-async def delete_invoice(iid: str, user=Depends(get_current_user)):
+async def delete_invoice(iid: str, reason: str = "", user=Depends(get_current_user)):
+    if not (reason or "").strip():
+        raise HTTPException(status_code=400, detail="Reason for deletion is required")
     doc = await db.invoices.find_one({"id": iid, "user_id": user["user_id"]}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Not found")
@@ -542,6 +691,8 @@ async def delete_invoice(iid: str, user=Depends(get_current_user)):
         {"$set": {"status": "pending", "invoice_id": None}},
     )
     await db.invoices.delete_one({"id": iid, "user_id": user["user_id"]})
+    await _log_audit(user, "invoice", "delete", entity_id=iid, entity_ref=doc.get("invoice_number", ""),
+                     reason=reason, changes={"snapshot": {k: doc.get(k) for k in ("invoice_number", "customer_id", "total_amount", "amount_paid", "trip_ids")}})
     return {"ok": True}
 
 class PaymentAdd(BaseModel):
@@ -1636,6 +1787,30 @@ async def trip_lr_pdf(tid: str, user=Depends(get_current_user)):
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="{trip["lr_number"].replace("/", "_")}.pdf"'},
     )
+
+# ==================== Audit Logs ====================
+
+@api.get("/audit-logs")
+async def list_audit_logs(
+    module: Optional[str] = None,
+    action: Optional[str] = None,
+    entity_id: Optional[str] = None,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    limit: int = 200,
+    user=Depends(get_current_user),
+):
+    q: dict = {"user_id": user["user_id"]}
+    if module: q["module"] = module
+    if action: q["action"] = action
+    if entity_id: q["entity_id"] = entity_id
+    if start or end:
+        rng: dict = {}
+        if start: rng["$gte"] = start
+        if end: rng["$lte"] = end + "T23:59:59"
+        q["timestamp"] = rng
+    docs = await db.audit_logs.find(q, {"_id": 0, "user_id": 0}).sort("timestamp", -1).to_list(min(int(limit), 500))
+    return docs
 
 # ==================== Health ====================
 

@@ -1,8 +1,9 @@
 import React from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, API, fmtCurrency, fmtDate } from "@/api";
 import { Link } from "react-router-dom";
-import { Plus, CheckCircle2, Clock, Download, FileText } from "lucide-react";
+import { toast } from "sonner";
+import { Plus, CheckCircle2, Clock, Download, FileText, Trash2 } from "lucide-react";
 
 const downloadEwayBill = async (tripId) => {
   const { api: ax } = await import("@/api");
@@ -21,9 +22,23 @@ const downloadEwayBill = async (tripId) => {
 };
 
 export default function Trips() {
+  const qc = useQueryClient();
   const { data: trips = [] } = useQuery({ queryKey: ["trips"], queryFn: async () => (await api.get("/trips")).data });
   const { data: customers = [] } = useQuery({ queryKey: ["customers"], queryFn: async () => (await api.get("/customers")).data });
   const custMap = Object.fromEntries(customers.map((c) => [c.id, c.name]));
+
+  const del = useMutation({
+    mutationFn: async ({ id, reason }) => (await api.delete(`/trips/${id}`, { params: { reason } })).data,
+    onSuccess: () => { toast.success("Trip deleted"); qc.invalidateQueries(); },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Failed"),
+  });
+
+  const askDelete = (t) => {
+    const linked = t.invoice_id ? "\n⚠ This trip is linked to an invoice. The invoice totals will be recomputed." : "";
+    const reason = window.prompt(`Delete trip on ${t.date} (${t.vehicle_number})?${linked}\n\nReason for deletion (mandatory):`);
+    if (!reason || !reason.trim()) { toast.error("Reason required"); return; }
+    del.mutate({ id: t.id, reason });
+  };
 
   return (
     <div className="space-y-6" data-testid="trips-page">
@@ -112,6 +127,14 @@ export default function Trips() {
                     {t.status === "pending" && (
                       <Link data-testid={`edit-trip-${t.id}`} to={`/trips/${t.id}/edit`} className="text-xs px-2 py-1 border border-zinc-200 rounded-sm hover:bg-zinc-950 hover:text-white">Edit</Link>
                     )}
+                    <button
+                      data-testid={`delete-trip-${t.id}`}
+                      onClick={() => askDelete(t)}
+                      className="ml-1 inline-flex items-center gap-1 text-xs px-2 py-1 border border-rose-200 text-rose-700 rounded-sm hover:bg-rose-50"
+                      title="Delete trip"
+                    >
+                      <Trash2 size={11} />
+                    </button>
                   </td>
                 </tr>
               ))}

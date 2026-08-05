@@ -27,8 +27,13 @@ export default function InvoiceView() {
   });
 
   const del = useMutation({
-    mutationFn: async () => (await api.delete(`/invoices/${id}`)).data,
+    mutationFn: async () => {
+      const reason = window.prompt("Reason for deleting this invoice? (mandatory)");
+      if (!reason || !reason.trim()) throw new Error("Reason required");
+      return (await api.delete(`/invoices/${id}`, { params: { reason } })).data;
+    },
     onSuccess: () => { toast.success("Invoice deleted"); qc.invalidateQueries(); nav("/invoices"); },
+    onError: (e) => toast.error(e?.response?.data?.detail || e.message || "Failed"),
   });
 
   const sendWhatsApp = async () => {
@@ -92,7 +97,7 @@ export default function InvoiceView() {
           <button data-testid="print-btn" onClick={() => window.print()} className="inline-flex items-center gap-2 px-3 py-2 text-xs uppercase tracking-wider font-semibold border border-zinc-950 rounded-sm hover:bg-zinc-950 hover:text-white">
             <Printer size={14} /> Print
           </button>
-          <button data-testid="delete-invoice-btn" onClick={() => { if (window.confirm("Delete invoice? Trips will be released.")) del.mutate(); }} className="inline-flex items-center gap-2 px-3 py-2 text-xs uppercase tracking-wider border border-rose-200 text-rose-700 rounded-sm hover:bg-rose-50">
+            <button data-testid="delete-invoice-btn" onClick={() => { if (window.confirm("Delete invoice? Trips will be released.")) del.mutate(); }} className="inline-flex items-center gap-2 px-3 py-2 text-xs uppercase tracking-wider border border-rose-200 text-rose-700 rounded-sm hover:bg-rose-50">
             <Trash2 size={14} /> Delete
           </button>
         </div>

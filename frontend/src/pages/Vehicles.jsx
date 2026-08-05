@@ -6,9 +6,12 @@ import { Plus, Pencil, Trash2, X, Truck, AlertTriangle, CheckCircle2 } from "luc
 import FileAttachments from "@/components/FileAttachments";
 
 const EMPTY = {
-  vehicle_number: "", owner_name: "", owner_phone: "", make_model: "", capacity_tons: 0,
+  vehicle_number: "", vehicle_type: "own",
+  owner_name: "", owner_phone: "",
+  supplier_name: "", supplier_contact_person: "", supplier_mobile: "",
+  make_model: "", capacity_tons: 0,
   rc_expiry: "", fc_expiry: "", insurance_expiry: "", permit_expiry: "", puc_expiry: "",
-  notes: "",
+  remarks: "", notes: "",
 };
 
 const DOCS = [
@@ -126,10 +129,24 @@ export default function Vehicles() {
             </div>
             <form onSubmit={(e) => { e.preventDefault(); save.mutate(); }} className="p-5 grid grid-cols-1 md:grid-cols-2 gap-3">
               <F label="Vehicle Number *"><input data-testid="vehicle-number" required value={form.vehicle_number} onChange={(e) => setForm({ ...form, vehicle_number: e.target.value.toUpperCase() })} className={ic} placeholder="AP16TA1234" /></F>
+              <F label="Vehicle Type">
+                <select data-testid="vehicle-type" value={form.vehicle_type} onChange={(e) => setForm({ ...form, vehicle_type: e.target.value })} className={ic}>
+                  <option value="own">Own</option>
+                  <option value="supplier">Supplier (Hired)</option>
+                </select>
+              </F>
               <F label="Owner Name"><input data-testid="vehicle-owner" value={form.owner_name} onChange={(e) => setForm({ ...form, owner_name: e.target.value })} className={ic} /></F>
               <F label="Owner Phone"><input data-testid="vehicle-owner-phone" value={form.owner_phone} onChange={(e) => setForm({ ...form, owner_phone: e.target.value })} className={ic} placeholder="For renewal reminders" /></F>
+              {form.vehicle_type === "supplier" && (
+                <>
+                  <F label="Supplier Name"><input data-testid="vehicle-supplier-name" value={form.supplier_name} onChange={(e) => setForm({ ...form, supplier_name: e.target.value })} className={ic} /></F>
+                  <F label="Supplier Contact Person"><input data-testid="vehicle-supplier-contact" value={form.supplier_contact_person} onChange={(e) => setForm({ ...form, supplier_contact_person: e.target.value })} className={ic} /></F>
+                  <F label="Supplier Mobile"><input data-testid="vehicle-supplier-mobile" value={form.supplier_mobile} onChange={(e) => setForm({ ...form, supplier_mobile: e.target.value })} className={ic} /></F>
+                </>
+              )}
               <F label="Make/Model"><input data-testid="vehicle-model" value={form.make_model} onChange={(e) => setForm({ ...form, make_model: e.target.value })} className={ic} placeholder="Tata LPT 3118" /></F>
               <F label="Capacity (Tons)"><input data-testid="vehicle-capacity" type="number" step="0.1" min="0" value={form.capacity_tons} onChange={(e) => setForm({ ...form, capacity_tons: e.target.value })} className={ic} /></F>
+              <F label="Remarks"><input data-testid="vehicle-remarks" value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} className={ic} /></F>
               {DOCS.map(([field, label]) => (
                 <F key={field} label={`${label} Expiry`}>
                   <input data-testid={`vehicle-${field}`} type="date" value={form[field] || ""} onChange={(e) => setForm({ ...form, [field]: e.target.value })} className={ic} />

@@ -12,6 +12,7 @@ import Products from "@/pages/Products";
 import Vehicles from "@/pages/Vehicles";
 import Fuel from "@/pages/Fuel";
 import Files from "@/pages/Files";
+import AuditLog from "@/pages/AuditLog";
 import Reports from "@/pages/Reports";
 import Invoices from "@/pages/Invoices";
 import InvoiceCreate from "@/pages/InvoiceCreate";
@@ -53,6 +54,7 @@ function AppRouter() {
       <Route path="/products" element={<Protected><Products /></Protected>} />
       <Route path="/fuel" element={<Protected><Fuel /></Protected>} />
       <Route path="/files" element={<Protected><Files /></Protected>} />
+      <Route path="/audit" element={<Protected><AuditLog /></Protected>} />
       <Route path="/reports/*" element={<Protected><Reports /></Protected>} />
       <Route path="/invoices" element={<Protected><Invoices /></Protected>} />
       <Route path="/invoices/new" element={<Protected><InvoiceCreate /></Protected>} />
