@@ -7,10 +7,12 @@ import Dashboard from "@/pages/Dashboard";
 import Trips from "@/pages/Trips";
 import TripForm from "@/pages/TripForm";
 import Customers from "@/pages/Customers";
+import Drivers from "@/pages/Drivers";
 import Invoices from "@/pages/Invoices";
 import InvoiceCreate from "@/pages/InvoiceCreate";
 import InvoiceView from "@/pages/InvoiceView";
 import Settings from "@/pages/Settings";
+import TripImport from "@/pages/TripImport";
 import Layout from "@/components/Layout";
 
 function Protected({ children }) {
@@ -38,8 +40,10 @@ function AppRouter() {
       <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />
       <Route path="/trips" element={<Protected><Trips /></Protected>} />
       <Route path="/trips/new" element={<Protected><TripForm /></Protected>} />
+      <Route path="/trips/import" element={<Protected><TripImport /></Protected>} />
       <Route path="/trips/:id/edit" element={<Protected><TripForm /></Protected>} />
       <Route path="/customers" element={<Protected><Customers /></Protected>} />
+      <Route path="/drivers" element={<Protected><Drivers /></Protected>} />
       <Route path="/invoices" element={<Protected><Invoices /></Protected>} />
       <Route path="/invoices/new" element={<Protected><InvoiceCreate /></Protected>} />
       <Route path="/invoices/:id" element={<Protected><InvoiceView /></Protected>} />

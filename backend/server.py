@@ -1,7 +1,7 @@
 """Bitumen Transport Accounting - Backend API
 Emergent Google OAuth + Trip/Invoice management + Server-side PDF.
 """
-from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends
+from fastapi import FastAPI, APIRouter, HTTPException, Request, Response, Depends, UploadFile, File
 from fastapi.responses import StreamingResponse
 from dotenv import load_dotenv
 from starlette.middleware.cors import CORSMiddleware
@@ -11,10 +11,13 @@ import io
 import uuid
 import logging
 import requests
+import secrets
 from pathlib import Path
 from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional, Literal
 from datetime import datetime, timezone, timedelta
+
+import pandas as pd
 
 from pdf_generator import build_invoice_pdf
 
@@ -75,11 +78,20 @@ class Expenses(BaseModel):
     repair: float = 0.0
     other: float = 0.0
 
+class Driver(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("drv_"))
+    name: str
+    phone: str = ""
+    license_number: str = ""
+    notes: str = ""
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+
 class Trip(BaseModel):
     id: str = Field(default_factory=lambda: new_id("trip_"))
     customer_id: str
     date: str  # ISO date
     vehicle_number: str
+    driver_id: Optional[str] = None
     driver_name: str = ""
     load_details: str = "Bitumen VG 40"
     tons: float
@@ -124,6 +136,7 @@ class Invoice(BaseModel):
     payments: List[Payment] = []
     amount_paid: float = 0.0
     balance_due: float = 0.0
+    share_token: Optional[str] = None
     notes: str = ""
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
 
@@ -521,17 +534,33 @@ async def dashboard(user=Depends(get_current_user)):
     total_received = round(sum(i.get("amount_paid", 0.0) for i in invoices), 2)
     total_receivable = round(total_billed - total_received, 2)
 
-    # Customer-wise receivables
+    # Customer-wise receivables (with phone + oldest invoice for overdue calc)
     cust_map = {c["id"]: c for c in customers}
     receivables = {}
+    today = now_utc().date()
     for i in invoices:
         cid = i["customer_id"]
         bal = i.get("balance_due", 0.0)
         if bal <= 0:
             continue
-        rec = receivables.setdefault(cid, {"customer_id": cid, "customer_name": cust_map.get(cid, {}).get("name", "Unknown"), "balance": 0.0, "invoices": 0})
+        c = cust_map.get(cid, {})
+        rec = receivables.setdefault(cid, {
+            "customer_id": cid,
+            "customer_name": c.get("name", "Unknown"),
+            "customer_phone": c.get("phone", ""),
+            "balance": 0.0,
+            "invoices": 0,
+            "oldest_days": 0,
+        })
         rec["balance"] = round(rec["balance"] + bal, 2)
         rec["invoices"] += 1
+        try:
+            inv_date = datetime.fromisoformat(i["invoice_date"]).date()
+            days = (today - inv_date).days
+            if days > rec["oldest_days"]:
+                rec["oldest_days"] = days
+        except Exception:
+            pass
 
     receivables_list = sorted(receivables.values(), key=lambda x: -x["balance"])
 
@@ -554,6 +583,193 @@ async def dashboard(user=Depends(get_current_user)):
         "receivables": receivables_list,
         "recent_trips": recent_trips,
     }
+
+# ==================== Drivers ====================
+
+@api.get("/drivers")
+async def list_drivers(user=Depends(get_current_user)):
+    drivers = await db.drivers.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).to_list(1000)
+    # Attach stats
+    trips = await db.trips.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(5000)
+    stats = {}
+    for t in trips:
+        did = t.get("driver_id")
+        if not did:
+            continue
+        s = stats.setdefault(did, {"trips": 0, "tons": 0.0, "batta": 0.0, "freight": 0.0})
+        s["trips"] += 1
+        s["tons"] += float(t.get("tons", 0))
+        s["batta"] += float((t.get("expenses") or {}).get("batta", 0))
+        s["freight"] += float(t.get("freight_amount", 0))
+    for d in drivers:
+        s = stats.get(d["id"], {"trips": 0, "tons": 0, "batta": 0, "freight": 0})
+        d["stats"] = {k: round(v, 2) for k, v in s.items()}
+    return drivers
+
+@api.post("/drivers")
+async def create_driver(payload: Driver, user=Depends(get_current_user)):
+    doc = payload.model_dump()
+    doc["user_id"] = user["user_id"]
+    await db.drivers.insert_one(doc)
+    doc.pop("_id", None); doc.pop("user_id", None)
+    return doc
+
+@api.put("/drivers/{did}")
+async def update_driver(did: str, payload: Driver, user=Depends(get_current_user)):
+    payload.id = did
+    doc = payload.model_dump()
+    doc["user_id"] = user["user_id"]
+    await db.drivers.update_one({"id": did, "user_id": user["user_id"]}, {"$set": doc})
+    doc.pop("_id", None); doc.pop("user_id", None)
+    return doc
+
+@api.delete("/drivers/{did}")
+async def delete_driver(did: str, user=Depends(get_current_user)):
+    await db.drivers.delete_one({"id": did, "user_id": user["user_id"]})
+    return {"ok": True}
+
+# ==================== Trip Bulk Import ====================
+
+TRIP_IMPORT_COLUMNS = [
+    "date", "customer_name", "vehicle_number", "driver_name",
+    "load_details", "tons", "from_location", "to_location",
+    "freight_mode", "rate_per_ton", "fixed_amount",
+    "diesel", "toll", "batta", "repair", "other", "notes",
+]
+
+@api.get("/trips/import/template")
+async def trip_import_template():
+    df = pd.DataFrame([{c: "" for c in TRIP_IMPORT_COLUMNS}])
+    df.loc[1] = ["2026-02-01", "Megha Engineering", "AP16TA1234", "Ramesh",
+                 "Bitumen VG 40", 25.5, "Vijayawada", "Hyderabad",
+                 "per_ton", 1200, 0, 8000, 500, 1000, 0, 0, "sample row"]
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+        df.to_excel(w, index=False, sheet_name="Trips")
+    buf.seek(0)
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="trip_import_template.xlsx"'},
+    )
+
+@api.post("/trips/import")
+async def trip_import(file: UploadFile = File(...), user=Depends(get_current_user)):
+    contents = await file.read()
+    fname = (file.filename or "").lower()
+    try:
+        if fname.endswith(".csv"):
+            df = pd.read_csv(io.BytesIO(contents))
+        else:
+            df = pd.read_excel(io.BytesIO(contents))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Cannot parse file: {e}")
+
+    # Normalize columns
+    df.columns = [str(c).strip().lower() for c in df.columns]
+    customers = await db.customers.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(2000)
+    cust_by_name = {c["name"].strip().lower(): c["id"] for c in customers}
+
+    inserted = 0
+    errors = []
+    docs = []
+    for idx, row in df.iterrows():
+        try:
+            r = {k: (row.get(k) if k in df.columns else None) for k in TRIP_IMPORT_COLUMNS}
+            cname = str(r.get("customer_name") or "").strip()
+            if not cname:
+                raise ValueError("customer_name empty")
+            cid = cust_by_name.get(cname.lower())
+            if not cid:
+                raise ValueError(f"customer '{cname}' not found — please add it first")
+            date_val = r.get("date")
+            if pd.isna(date_val):
+                raise ValueError("date empty")
+            if hasattr(date_val, "isoformat"):
+                date_str = date_val.strftime("%Y-%m-%d") if hasattr(date_val, "strftime") else str(date_val)[:10]
+            else:
+                date_str = str(date_val)[:10]
+
+            freight_mode = str(r.get("freight_mode") or "per_ton").strip().lower()
+            if freight_mode not in ("per_ton", "fixed"):
+                freight_mode = "per_ton"
+
+            def numf(x):
+                try:
+                    if x is None or (isinstance(x, float) and pd.isna(x)):
+                        return 0.0
+                    return float(x)
+                except Exception:
+                    return 0.0
+
+            trip = Trip(
+                customer_id=cid,
+                date=date_str,
+                vehicle_number=str(r.get("vehicle_number") or "").strip().upper(),
+                driver_name=str(r.get("driver_name") or "").strip(),
+                load_details=str(r.get("load_details") or "Bitumen VG 40").strip(),
+                tons=numf(r.get("tons")),
+                from_location=str(r.get("from_location") or "").strip(),
+                to_location=str(r.get("to_location") or "").strip(),
+                freight_mode=freight_mode,
+                rate_per_ton=numf(r.get("rate_per_ton")),
+                fixed_amount=numf(r.get("fixed_amount")),
+                expenses=Expenses(
+                    diesel=numf(r.get("diesel")),
+                    toll=numf(r.get("toll")),
+                    batta=numf(r.get("batta")),
+                    repair=numf(r.get("repair")),
+                    other=numf(r.get("other")),
+                ),
+                notes=str(r.get("notes") or "").strip(),
+            )
+            if not trip.vehicle_number:
+                raise ValueError("vehicle_number empty")
+            trip = _compute_trip(trip)
+            d = trip.model_dump()
+            d["user_id"] = user["user_id"]
+            docs.append(d)
+        except Exception as e:
+            errors.append({"row": int(idx) + 2, "error": str(e)})
+
+    if docs:
+        await db.trips.insert_many(docs)
+        inserted = len(docs)
+    return {"inserted": inserted, "errors": errors, "total_rows": len(df)}
+
+# ==================== Invoice Share (Public PDF) ====================
+
+@api.post("/invoices/{iid}/share")
+async def create_share_link(iid: str, user=Depends(get_current_user)):
+    inv = await db.invoices.find_one({"id": iid, "user_id": user["user_id"]}, {"_id": 0})
+    if not inv:
+        raise HTTPException(status_code=404, detail="Not found")
+    token = inv.get("share_token")
+    if not token:
+        token = secrets.token_urlsafe(16)
+        await db.invoices.update_one(
+            {"id": iid, "user_id": user["user_id"]},
+            {"$set": {"share_token": token}},
+        )
+    return {"share_token": token}
+
+@api.get("/public/invoice/{token}/pdf")
+async def public_invoice_pdf(token: str):
+    inv = await db.invoices.find_one({"share_token": token}, {"_id": 0})
+    if not inv:
+        raise HTTPException(status_code=404, detail="Not found")
+    customer = await db.customers.find_one({"id": inv["customer_id"], "user_id": inv["user_id"]}, {"_id": 0}) or {}
+    company = await db.companies.find_one({"user_id": inv["user_id"]}, {"_id": 0}) or {}
+    trips = await db.trips.find(
+        {"user_id": inv["user_id"], "id": {"$in": inv["trip_ids"]}},
+        {"_id": 0},
+    ).to_list(1000)
+    trips.sort(key=lambda t: t.get("date", ""))
+    pdf_bytes = build_invoice_pdf(company, customer, inv, trips)
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{inv["invoice_number"].replace("/", "_")}.pdf"'},
+    )
 
 # ==================== Health ====================
 

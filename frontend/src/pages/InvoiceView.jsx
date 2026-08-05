@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, API, fmtCurrency, fmtDate } from "@/api";
 import { toast } from "sonner";
-import { ArrowLeft, Download, Printer, Trash2, Plus } from "lucide-react";
+import { ArrowLeft, Download, Printer, Trash2, Plus, MessageCircle } from "lucide-react";
 
 export default function InvoiceView() {
   const { id } = useParams();
@@ -31,6 +31,36 @@ export default function InvoiceView() {
     onSuccess: () => { toast.success("Invoice deleted"); qc.invalidateQueries(); nav("/invoices"); },
   });
 
+  const sendWhatsApp = async () => {
+    if (!customer.phone) { toast.error("Customer phone not set"); return; }
+    let token = invoice.share_token;
+    if (!token) {
+      try {
+        const { data } = await api.post(`/invoices/${id}/share`);
+        token = data.share_token;
+        qc.invalidateQueries({ queryKey: ["invoice", id] });
+      } catch {
+        toast.error("Could not create share link");
+        return;
+      }
+    }
+    const shareUrl = `${window.location.origin.replace("localhost:3000", window.location.host).replace(/\/$/, "")}`;
+    // Use REACT_APP_BACKEND_URL API for public PDF
+    const pdfUrl = `${API}/public/invoice/${token}/pdf`;
+    const phone = customer.phone.replace(/[^\d]/g, "");
+    const digits = phone.length === 10 ? "91" + phone : phone;
+    const amount = Number(invoice.balance_due || invoice.total_amount).toLocaleString("en-IN");
+    const msg =
+      `Namaste ${customer.name},\n\n` +
+      `Invoice ${invoice.invoice_number} pampistunnamu.\n` +
+      `Total: ₹${Number(invoice.total_amount).toLocaleString("en-IN")}\n` +
+      `Balance Due: ₹${amount}\n\n` +
+      `PDF: ${pdfUrl}\n\n` +
+      `Dayachesi payment cheyandi. Thank you!\n` +
+      `— ${company.name || "Bitumen Transport"}`;
+    window.open(`https://wa.me/${digits}?text=${encodeURIComponent(msg)}`, "_blank");
+  };
+
   if (isLoading || !invoice) return <div className="text-zinc-500">Loading...</div>;
   const customer = customers.find((c) => c.id === invoice.customer_id) || {};
   const trips = allTrips.filter((t) => invoice.trip_ids.includes(t.id))
@@ -48,10 +78,17 @@ export default function InvoiceView() {
             <h1 className="text-3xl font-black tracking-tighter font-mono">{invoice.invoice_number}</h1>
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           <a data-testid="download-pdf-btn" href={pdfUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-3 py-2 text-xs uppercase tracking-wider font-semibold bg-zinc-950 text-white rounded-sm hover:bg-zinc-800">
             <Download size={14} /> PDF
           </a>
+          <button
+            data-testid="whatsapp-invoice-btn"
+            onClick={sendWhatsApp}
+            className="inline-flex items-center gap-2 px-3 py-2 text-xs uppercase tracking-wider font-semibold bg-emerald-600 text-white rounded-sm hover:bg-emerald-700"
+          >
+            <MessageCircle size={14} /> WhatsApp
+          </button>
           <button data-testid="print-btn" onClick={() => window.print()} className="inline-flex items-center gap-2 px-3 py-2 text-xs uppercase tracking-wider font-semibold border border-zinc-950 rounded-sm hover:bg-zinc-950 hover:text-white">
             <Printer size={14} /> Print
           </button>

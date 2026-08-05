@@ -1,0 +1,34 @@
+{
+  "summary": "Backend-only iteration 2 testing. Added /app/backend/tests/test_iter2_features.py covering Drivers CRUD + stats aggregation, Trip import (xlsx template, CSV upload, XLSX upload with valid+invalid rows), Invoice share_token creation + idempotency + public PDF (no auth) + wrong-token 404, and Dashboard receivables enrichment (customer_phone + oldest_days). 22/22 new tests pass. Also re-ran previous suite (backend_test.py): 18/19 pass; the only failure is test_01_company_defaults which fails because company doc persists from a previous run (stale-state assertion, not a real bug).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/company (regression test test_01_company_defaults)", "issue": "Test asserts empty defaults but company doc persists across runs from PUT /company in test_02, making test non-idempotent. Not a product bug — a test-hygiene issue in backend_test.py. Consider using pytest fixture teardown or a fresh sub-user."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter2_features.py",
+    "/app/backend/tests/backend_test.py",
+    "/app/test_reports/pytest/iter2_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py has grown ~790 lines with mixed concerns (auth, CRUD for 4 resources, PDF, import, dashboard). Recommend splitting into modules (routers/drivers.py, routers/import.py, routers/invoices.py) for maintainability — nearing the 700-line threshold.",
+    "trip_import: pd.read_csv/read_excel is called on user-uploaded bytes with no size cap. A very large upload could OOM the worker. Add a size limit via UploadFile.spool_max_size or explicit len(contents) check.",
+    "trip_import: default gets applied silently when freight_mode is invalid (falls back to 'per_ton'). Better to add to errors list so user is aware their row was coerced.",
+    "trip_import: driver_name is imported but driver_id is never resolved from db.drivers by name — meaning imported trips will not contribute to driver stats aggregation. Consider matching driver_name against existing drivers to populate driver_id.",
+    "public_invoice_pdf: no rate-limiting or token rotation/expiry. share_token is permanent once created and can't be revoked. Consider adding a POST /invoices/{iid}/share/revoke endpoint.",
+    "_next_invoice_number still increments the counter even if the invoice creation later fails (transaction is not atomic). Low probability but can leave gaps in numbering."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter2_features.py (new — 22 tests for iteration 2 features)"
+  ],
+  "success_rate": {"backend": "100% (22/22 new; 18/19 legacy — the 1 failure is stale-state test not a product bug)", "frontend": "not tested"},
+  "test_credentials": "MongoDB seeded: user_id='test-user-bitumen', session_token='test_session_bitumen_2026'. Header: Authorization: Bearer test_session_bitumen_2026.",
+  "seed_data_creation": "Reused existing seeded session. Each test class creates and cleans up its own TEST_-prefixed customers/trips/invoices/drivers.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All iteration-2 features (drivers stats, trip import CSV/XLSX + template, invoice share_token + public /api/public/invoice/{token}/pdf, dashboard receivables with customer_phone + oldest_days) verified. Legacy backend_test.py has a stale-state assertion in test_01_company_defaults (assumes company doc absent). To make legacy fully green, either clear db.companies for user_id='test-user-bitumen' before the run, or update the test to not assert on defaults. New test suite file is idempotent via cleanup steps.",
+  "rca of the issue": "No new bugs found. Legacy test_01_company_defaults failure RCA: PUT /api/company in test_02 upserts a company doc that survives between pytest runs; test_01 in a subsequent run then sees populated company doc and fails the '' assertion. Fix options: (a) clear db.companies for test user in a session-scoped fixture, or (b) drop the strict '' equality and just check the response shape/keys."
+}

@@ -9,6 +9,7 @@ const EMPTY = {
   customer_id: "",
   date: new Date().toISOString().slice(0, 10),
   vehicle_number: "",
+  driver_id: "",
   driver_name: "",
   load_details: "Bitumen VG 40",
   tons: 0,
@@ -29,6 +30,7 @@ export default function TripForm() {
   const [form, setForm] = useState(EMPTY);
 
   const { data: customers = [] } = useQuery({ queryKey: ["customers"], queryFn: async () => (await api.get("/customers")).data });
+  const { data: drivers = [] } = useQuery({ queryKey: ["drivers"], queryFn: async () => (await api.get("/drivers")).data });
 
   const { data: trip } = useQuery({
     queryKey: ["trip", id],
@@ -100,7 +102,19 @@ export default function TripForm() {
               <input data-testid="trip-vehicle" required value={form.vehicle_number} onChange={(e) => setForm({ ...form, vehicle_number: e.target.value.toUpperCase() })} className={inputCls} placeholder="AP16TA1234" />
             </Field>
             <Field label="Driver · డ్రైవర్">
-              <input data-testid="trip-driver" value={form.driver_name} onChange={(e) => setForm({ ...form, driver_name: e.target.value })} className={inputCls} />
+              <select
+                data-testid="trip-driver"
+                value={form.driver_id || ""}
+                onChange={(e) => {
+                  const id = e.target.value;
+                  const d = drivers.find((x) => x.id === id);
+                  setForm({ ...form, driver_id: id, driver_name: d?.name || "" });
+                }}
+                className={inputCls}
+              >
+                <option value="">-- Select Driver --</option>
+                {drivers.map((d) => <option key={d.id} value={d.id}>{d.name}{d.phone ? ` · ${d.phone}` : ""}</option>)}
+              </select>
             </Field>
             <Field label="Load · లోడ్">
               <input data-testid="trip-load" value={form.load_details} onChange={(e) => setForm({ ...form, load_details: e.target.value })} className={inputCls} />

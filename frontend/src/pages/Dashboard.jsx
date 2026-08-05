@@ -2,7 +2,7 @@ import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, fmtCurrency, fmtDate } from "@/api";
 import { Link } from "react-router-dom";
-import { TrendingUp, TrendingDown, Truck, FileText, Users, Wallet, ArrowUpRight } from "lucide-react";
+import { TrendingUp, TrendingDown, Truck, FileText, Users, Wallet, ArrowUpRight, MessageCircle } from "lucide-react";
 
 export default function Dashboard() {
   const { data, isLoading } = useQuery({
@@ -108,15 +108,46 @@ export default function Dashboard() {
             </h3>
           </div>
           <div className="divide-y divide-zinc-100 max-h-[380px] overflow-y-auto" data-testid="receivables-list">
-            {(d.receivables || []).map((r) => (
-              <div key={r.customer_id} className="px-5 py-3 flex items-center justify-between">
-                <div>
-                  <div className="text-sm font-semibold">{r.customer_name}</div>
-                  <div className="text-[10px] text-zinc-500 uppercase tracking-wider">{r.invoices} invoice(s)</div>
+            {(d.receivables || []).map((r) => {
+              const overdue = r.oldest_days >= 15;
+              const phone = (r.customer_phone || "").replace(/[^\d]/g, "");
+              const msg = `Namaste ${r.customer_name}, mee paiki ₹${Number(r.balance).toLocaleString("en-IN")} balance undi. Dayachesi payment cheyandi. Thank you. — ${window.location.host}`;
+              const waLink = phone ? `https://wa.me/${phone.length === 10 ? "91" + phone : phone}?text=${encodeURIComponent(msg)}` : null;
+              const smsLink = phone ? `sms:${phone}?body=${encodeURIComponent(msg)}` : null;
+              return (
+                <div key={r.customer_id} className="px-5 py-3 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold truncate">{r.customer_name}</div>
+                    <div className="text-[10px] text-zinc-500 uppercase tracking-wider flex items-center gap-1">
+                      {r.invoices} invoice{r.invoices > 1 ? "s" : ""}
+                      {r.oldest_days > 0 && (
+                        <span className={`ml-1 px-1.5 py-0.5 rounded-sm border ${overdue ? "border-rose-300 bg-rose-50 text-rose-700" : "border-zinc-200 text-zinc-600"}`}>
+                          {r.oldest_days}d
+                        </span>
+                      )}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="font-mono text-sm font-bold text-amber-700 whitespace-nowrap">{fmtCurrency(r.balance)}</div>
+                    {waLink && (
+                      <a
+                        data-testid={`whatsapp-remind-${r.customer_id}`}
+                        href={waLink}
+                        target="_blank"
+                        rel="noreferrer"
+                        title="WhatsApp reminder"
+                        className="p-1.5 border border-emerald-300 text-emerald-700 hover:bg-emerald-50 rounded-sm"
+                      >
+                        <MessageCircle size={14} />
+                      </a>
+                    )}
+                    {!phone && (
+                      <span className="text-[10px] text-zinc-400 italic">No phone</span>
+                    )}
+                  </div>
                 </div>
-                <div className="font-mono text-sm font-bold text-amber-700">{fmtCurrency(r.balance)}</div>
-              </div>
-            ))}
+              );
+            })}
             {(d.receivables || []).length === 0 && (
               <div className="px-5 py-8 text-center text-zinc-400 text-sm">No pending balances.</div>
             )}
