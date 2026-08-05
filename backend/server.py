@@ -19,7 +19,7 @@ from datetime import datetime, timezone, timedelta
 
 import pandas as pd
 
-from pdf_generator import build_invoice_pdf
+from pdf_generator import build_invoice_pdf, build_ledger_pdf
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -60,6 +60,7 @@ class Company(BaseModel):
     hsn_sac: str = "996791"
     invoice_prefix: str = "INV"
     next_invoice_number: int = 1
+    logo: str = ""  # data URL (base64)
 
 class Customer(BaseModel):
     id: str = Field(default_factory=lambda: new_id("cust_"))
@@ -93,19 +94,32 @@ class Trip(BaseModel):
     vehicle_number: str
     driver_id: Optional[str] = None
     driver_name: str = ""
+    product_id: Optional[str] = None
     load_details: str = "Bitumen VG 40"
+    hsn_sac: str = ""
     tons: float
     from_location: str = ""
     to_location: str = ""
     freight_mode: Literal["per_ton", "fixed"]
     rate_per_ton: float = 0.0
     fixed_amount: float = 0.0
+    round_trip_kms: float = 0.0
+    rate_per_km_per_ton: float = 0.0
     freight_amount: float = 0.0
     expenses: Expenses = Field(default_factory=Expenses)
     total_expense: float = 0.0
     profit: float = 0.0
     invoice_id: Optional[str] = None
     status: Literal["pending", "invoiced"] = "pending"
+    notes: str = ""
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+
+class Product(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("prd_"))
+    name: str
+    hsn_sac: str = "996791"
+    default_rate: float = 0.0
+    unit: str = "MT"
     notes: str = ""
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
 
@@ -306,7 +320,12 @@ def _compute_trip(t: Trip) -> Trip:
     if t.freight_mode == "per_ton":
         t.freight_amount = round(t.tons * t.rate_per_ton, 2)
     else:
-        t.freight_amount = round(t.fixed_amount, 2)
+        # Round trip: tons × round_trip_kms × rate_per_km_per_ton
+        # Backward-compat: fall back to fixed_amount if new fields are 0
+        if t.round_trip_kms > 0 and t.rate_per_km_per_ton > 0:
+            t.freight_amount = round(t.tons * t.round_trip_kms * t.rate_per_km_per_ton, 2)
+        else:
+            t.freight_amount = round(t.fixed_amount, 2)
     e = t.expenses
     t.total_expense = round(e.diesel + e.toll + e.batta + e.repair + e.other, 2)
     t.profit = round(t.freight_amount - t.total_expense, 2)
@@ -773,6 +792,261 @@ async def public_invoice_pdf(token: str):
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="{inv["invoice_number"].replace("/", "_")}.pdf"'},
     )
+
+# ==================== Products (Load Master) ====================
+
+@api.get("/products")
+async def list_products(user=Depends(get_current_user)):
+    docs = await db.products.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).to_list(1000)
+    return docs
+
+@api.post("/products")
+async def create_product(payload: Product, user=Depends(get_current_user)):
+    doc = payload.model_dump()
+    doc["user_id"] = user["user_id"]
+    await db.products.insert_one(doc)
+    doc.pop("_id", None); doc.pop("user_id", None)
+    return doc
+
+@api.put("/products/{pid}")
+async def update_product(pid: str, payload: Product, user=Depends(get_current_user)):
+    payload.id = pid
+    doc = payload.model_dump()
+    doc["user_id"] = user["user_id"]
+    await db.products.update_one({"id": pid, "user_id": user["user_id"]}, {"$set": doc})
+    doc.pop("_id", None); doc.pop("user_id", None)
+    return doc
+
+@api.delete("/products/{pid}")
+async def delete_product(pid: str, user=Depends(get_current_user)):
+    await db.products.delete_one({"id": pid, "user_id": user["user_id"]})
+    return {"ok": True}
+
+# ==================== Company Logo ====================
+
+@api.post("/company/logo")
+async def upload_logo(file: UploadFile = File(...), user=Depends(get_current_user)):
+    import base64
+    content = await file.read()
+    if len(content) > 1024 * 1024:
+        raise HTTPException(status_code=400, detail="Logo too large (max 1MB)")
+    mime = file.content_type or "image/png"
+    if not mime.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Not an image")
+    data_url = f"data:{mime};base64,{base64.b64encode(content).decode('ascii')}"
+    await db.companies.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {"logo": data_url}},
+        upsert=True,
+    )
+    return {"logo": data_url}
+
+@api.delete("/company/logo")
+async def delete_logo(user=Depends(get_current_user)):
+    await db.companies.update_one(
+        {"user_id": user["user_id"]},
+        {"$set": {"logo": ""}},
+    )
+    return {"ok": True}
+
+# ==================== Reports ====================
+
+def _in_range(date_str: str, start: Optional[str], end: Optional[str]) -> bool:
+    if not date_str:
+        return False
+    if start and date_str < start:
+        return False
+    if end and date_str > end:
+        return False
+    return True
+
+@api.get("/reports/ledger")
+async def report_ledger(
+    customer_id: str,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    uid = user["user_id"]
+    customer = await db.customers.find_one({"id": customer_id, "user_id": uid}, {"_id": 0})
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    invoices = await db.invoices.find({"user_id": uid, "customer_id": customer_id}, {"_id": 0, "user_id": 0}).to_list(2000)
+
+    # Build entries: invoice (debit), payment (credit)
+    entries = []
+    for inv in invoices:
+        idt = inv.get("invoice_date", "")
+        if _in_range(idt, start, end):
+            entries.append({
+                "date": idt,
+                "type": "invoice",
+                "reference": inv["invoice_number"],
+                "particulars": f"Sales - {len(inv['trip_ids'])} trip(s)",
+                "debit": inv["total_amount"],
+                "credit": 0.0,
+                "invoice_id": inv["id"],
+            })
+        for p in inv.get("payments", []):
+            pdt = p.get("date", "")
+            if _in_range(pdt, start, end):
+                entries.append({
+                    "date": pdt,
+                    "type": "payment",
+                    "reference": inv["invoice_number"],
+                    "particulars": f"Payment received ({p.get('mode','Cash')}) - {p.get('note','')}".strip(" -"),
+                    "debit": 0.0,
+                    "credit": p["amount"],
+                    "invoice_id": inv["id"],
+                })
+
+    # Sort by date, then type (invoice before payment on same day)
+    entries.sort(key=lambda x: (x["date"], 0 if x["type"] == "invoice" else 1))
+
+    # Opening balance = balances before 'start'
+    opening = 0.0
+    if start:
+        for inv in invoices:
+            if inv.get("invoice_date", "") < start:
+                opening += inv["total_amount"]
+            for p in inv.get("payments", []):
+                if p.get("date", "") < start:
+                    opening -= p["amount"]
+
+    running = opening
+    for e in entries:
+        running = round(running + e["debit"] - e["credit"], 2)
+        e["balance"] = running
+
+    total_debit = round(sum(e["debit"] for e in entries), 2)
+    total_credit = round(sum(e["credit"] for e in entries), 2)
+    closing = round(opening + total_debit - total_credit, 2)
+
+    return {
+        "customer": {k: customer.get(k, "") for k in ["id", "name", "gstin", "phone", "address", "state"]},
+        "period": {"start": start, "end": end},
+        "opening_balance": round(opening, 2),
+        "entries": entries,
+        "total_debit": total_debit,
+        "total_credit": total_credit,
+        "closing_balance": closing,
+    }
+
+@api.get("/reports/ledger/pdf")
+async def report_ledger_pdf(
+    customer_id: str,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    ledger = await report_ledger(customer_id=customer_id, start=start, end=end, user=user)
+    company = await db.companies.find_one({"user_id": user["user_id"]}, {"_id": 0}) or {}
+    pdf_bytes = build_ledger_pdf(company, ledger)
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="ledger_{ledger["customer"]["name"].replace(" ", "_")}.pdf"'},
+    )
+
+@api.get("/reports/pl")
+async def report_profit_loss(
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    uid = user["user_id"]
+    trips = await db.trips.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(5000)
+    trips = [t for t in trips if _in_range(t.get("date", ""), start, end)]
+
+    revenue = round(sum(t.get("freight_amount", 0) for t in trips), 2)
+    diesel = round(sum((t.get("expenses") or {}).get("diesel", 0) for t in trips), 2)
+    toll = round(sum((t.get("expenses") or {}).get("toll", 0) for t in trips), 2)
+    batta = round(sum((t.get("expenses") or {}).get("batta", 0) for t in trips), 2)
+    repair = round(sum((t.get("expenses") or {}).get("repair", 0) for t in trips), 2)
+    other = round(sum((t.get("expenses") or {}).get("other", 0) for t in trips), 2)
+    total_expense = round(diesel + toll + batta + repair + other, 2)
+    net_profit = round(revenue - total_expense, 2)
+    margin = round((net_profit / revenue * 100.0), 2) if revenue > 0 else 0.0
+
+    # Per-customer breakdown
+    customers = await db.customers.find({"user_id": uid}, {"_id": 0}).to_list(2000)
+    cmap = {c["id"]: c.get("name", "Unknown") for c in customers}
+    per_customer = {}
+    for t in trips:
+        cid = t.get("customer_id")
+        b = per_customer.setdefault(cid, {"customer_id": cid, "customer_name": cmap.get(cid, "Unknown"), "trips": 0, "revenue": 0.0, "expense": 0.0, "profit": 0.0, "tons": 0.0})
+        b["trips"] += 1
+        b["revenue"] += t.get("freight_amount", 0)
+        b["expense"] += t.get("total_expense", 0)
+        b["profit"] += t.get("profit", 0)
+        b["tons"] += t.get("tons", 0)
+    for b in per_customer.values():
+        for k in ("revenue", "expense", "profit", "tons"):
+            b[k] = round(b[k], 2)
+
+    return {
+        "period": {"start": start, "end": end},
+        "trip_count": len(trips),
+        "revenue": revenue,
+        "expenses": {
+            "diesel": diesel, "toll": toll, "batta": batta, "repair": repair, "other": other,
+            "total": total_expense,
+        },
+        "net_profit": net_profit,
+        "margin_pct": margin,
+        "per_customer": sorted(per_customer.values(), key=lambda x: -x["revenue"]),
+    }
+
+@api.get("/reports/balance-sheet")
+async def report_balance_sheet(
+    as_of: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    uid = user["user_id"]
+    as_of = as_of or now_utc().date().isoformat()
+    trips = await db.trips.find({"user_id": uid}, {"_id": 0}).to_list(5000)
+    invoices = await db.invoices.find({"user_id": uid}, {"_id": 0}).to_list(2000)
+
+    # Cumulative net profit up to as_of (from trips dated <= as_of)
+    trips_todate = [t for t in trips if t.get("date", "") <= as_of]
+    revenue = sum(t.get("freight_amount", 0) for t in trips_todate)
+    expenses = sum(t.get("total_expense", 0) for t in trips_todate)
+    net_profit = round(revenue - expenses, 2)
+
+    # Cash & Bank (approximate) = total payments received up to as_of
+    cash_bank = 0.0
+    receivables = 0.0
+    payments_by_customer = {}
+    for inv in invoices:
+        if inv.get("invoice_date", "") <= as_of:
+            billed = inv.get("total_amount", 0)
+            paid_upto = sum(p["amount"] for p in inv.get("payments", []) if p.get("date", "") <= as_of)
+            cash_bank += paid_upto
+            receivables += max(billed - paid_upto, 0)
+
+    total_assets = round(cash_bank + receivables, 2)
+
+    # Simplified: Owner's equity balances the sheet
+    owners_equity = total_assets  # balance-plug for zero liabilities
+
+    return {
+        "as_of": as_of,
+        "assets": {
+            "cash_and_bank": round(cash_bank, 2),
+            "sundry_debtors": round(receivables, 2),
+            "total": total_assets,
+        },
+        "liabilities": {
+            "current_liabilities": 0.0,
+            "total": 0.0,
+        },
+        "equity": {
+            "retained_earnings": net_profit,
+            "owners_capital": round(owners_equity - net_profit, 2),
+            "total": round(owners_equity, 2),
+        },
+        "note": "Simplified statement. Balance-plug on Owner's Capital. Add loans / opening capital in future for full balance sheet.",
+    }
 
 # ==================== Health ====================
 

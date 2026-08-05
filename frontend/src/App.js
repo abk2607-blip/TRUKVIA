@@ -8,6 +8,8 @@ import Trips from "@/pages/Trips";
 import TripForm from "@/pages/TripForm";
 import Customers from "@/pages/Customers";
 import Drivers from "@/pages/Drivers";
+import Products from "@/pages/Products";
+import Reports from "@/pages/Reports";
 import Invoices from "@/pages/Invoices";
 import InvoiceCreate from "@/pages/InvoiceCreate";
 import InvoiceView from "@/pages/InvoiceView";
@@ -44,6 +46,8 @@ function AppRouter() {
       <Route path="/trips/:id/edit" element={<Protected><TripForm /></Protected>} />
       <Route path="/customers" element={<Protected><Customers /></Protected>} />
       <Route path="/drivers" element={<Protected><Drivers /></Protected>} />
+      <Route path="/products" element={<Protected><Products /></Protected>} />
+      <Route path="/reports/*" element={<Protected><Reports /></Protected>} />
       <Route path="/invoices" element={<Protected><Invoices /></Protected>} />
       <Route path="/invoices/new" element={<Protected><InvoiceCreate /></Protected>} />
       <Route path="/invoices/:id" element={<Protected><InvoiceView /></Protected>} />

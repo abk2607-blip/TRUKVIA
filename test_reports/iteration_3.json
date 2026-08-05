@@ -1,0 +1,37 @@
+{
+  "summary": "Backend-only iteration-3 testing. Added /app/backend/tests/test_iter3_features.py (22 tests) covering Products CRUD, Company logo upload (valid PNG / oversized / non-image / delete), Round-trip freight formula (tons * round_trip_kms * rate_per_km_per_ton) + legacy fixed_amount fallback + per_ton mode + PUT recomputation, Ledger report (full + date-filter + missing customer_id 422 + PDF), P&L, Balance Sheet, and regression smoke (auth/me, list endpoints, invoice PDF, public share PDF). Result: 22/22 iter3 PASS, 22/22 iter2 PASS, 18/19 legacy PASS (only known stale-state failure test_01_company_defaults — carried over from iter2, not a product bug).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/company (legacy test test_01_company_defaults)", "issue": "Same stale-state issue as iter2: assertion 'name==\"\"' fails because company doc persists across runs after PUT /company in test_02. Not a product bug."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter3_features.py",
+    "/app/test_reports/pytest/iter3_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now ~1070 lines with many concerns (auth, 6 CRUD resource groups, PDF, import, dashboard, reports). Strongly recommend splitting into routers/ modules — well past the 700-line threshold.",
+    "/api/company/logo POST: no server-side image validation beyond content_type header (which is client-supplied). A user could upload a .exe with content-type=image/png. Consider verifying magic bytes (PNG/JPEG signatures) via Pillow open() to reject spoofed content. Also 1MB base64-encoded (~1.3MB stored) is fine per record but if company.logo is embedded into every invoice PDF, PDFs may bloat.",
+    "/api/reports/balance-sheet: 'net_profit' is computed from trips <= as_of but 'cash_and_bank' and 'sundry_debtors' only use invoices. Trips that are not yet invoiced still count in retained_earnings — this over-states equity vs assets. In the returned response the identity assets.total == equity.total + liabilities.total holds only because owners_capital is a balance-plug (equity.total = assets.total by construction). This means retained_earnings and owners_capital are internally inconsistent by design; consider documenting more clearly, or drop retained_earnings from the plug-balanced sheet.",
+    "/api/reports/pl: expense.total is sum of trip.expenses only; if user wants a true operating P&L this should also account for driver batta paid outside trips, admin costs, etc. — currently OK for MVP.",
+    "/api/reports/ledger: uses lexical string comparison for dates (date_str < start). Works only because dates are ISO 'YYYY-MM-DD'. Add validation or convert to datetime.date to be safe if user ever passes 'DD/MM/YYYY'.",
+    "_compute_trip: when freight_mode == 'fixed' and BOTH new fields non-zero AND fixed_amount also non-zero, fixed_amount is silently ignored. If user set both, they may expect priority. Consider raising a validation warning, or explicit precedence in API docs.",
+    "Trip.hsn_sac and Trip.product_id are stored but never linked/validated against the Products collection. Adding a FK-like existence check on product_id would prevent orphaned references.",
+    "/api/company/logo POST does NOT return upsert behavior when no company doc exists yet — update_one with upsert=True is used, so it works. Good. But GET /company will return a doc that lacks other fields (only logo + user_id) leading to missing keys downstream. Consider merging into a full Company skeleton on upsert.",
+    "No pagination on list endpoints (/customers, /trips, /invoices, /products, /drivers) — currently to_list(2000). Fine for MVP; add cursor pagination before production scale.",
+    "MongoDB _id is properly excluded in all iter3 endpoints (verified). Good."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter3_features.py (new — 22 tests)"
+  ],
+  "success_rate": {"backend": "100% on iter3 (22/22); 40/41 combined iter2+legacy (1 known stale-state failure)", "frontend": "not tested (backend-only request)"},
+  "test_credentials": "MongoDB seeded: user_id='test-user-bitumen', session_token='test_session_bitumen_2026' (Authorization: Bearer ...). Verified /api/auth/me → 200.",
+  "seed_data_creation": "Each test class creates its own TEST_-prefixed customers/trips/invoices/products and cleans them up via teardown_class. Freight-formula and Reports classes clean fully. Company logo tests leave company.logo cleared at end.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "All iter3 endpoints verified: Products CRUD (/api/products), Company logo (/api/company/logo POST/DELETE with 400 on oversized/non-image), Round-trip freight formula (25.5*400*3.5=35700 verified; legacy fixed_amount fallback verified; PUT recomputes), Ledger report with running balance/opening/closing + date filter + PDF (%PDF- header, >2000 bytes), P&L report per-customer breakdown, Balance sheet identity assets.total == equity.total + liabilities.total holds. Note ledger endpoint requires customer_id → returns 422 when missing (verified). Legacy stale-state test in backend_test.py::test_01_company_defaults still fails — not a product bug. See critical_code_review_comments for design-level suggestions to raise with main agent.",
+  "rca of the issue": "No new bugs. Only carry-over: backend_test.py::test_01_company_defaults asserts empty company defaults, but the seeded test user's companies doc persists across runs (PUT /company in later tests + logo upload in iter3). Fix options: (a) session-scoped fixture that clears db.companies for test user before the run, or (b) relax the assertion to just check response schema."
+}

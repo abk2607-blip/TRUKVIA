@@ -58,8 +58,10 @@ export default function Trips() {
                   <td className="px-3 py-2 text-xs">
                     {t.freight_mode === "per_ton" ? (
                       <span className="telugu">టన్ను ({Number(t.rate_per_ton).toFixed(0)})</span>
+                    ) : (t.round_trip_kms > 0 && t.rate_per_km_per_ton > 0) ? (
+                      <span className="telugu">RT {Number(t.round_trip_kms).toFixed(0)}km × ₹{Number(t.rate_per_km_per_ton).toFixed(2)}</span>
                     ) : (
-                      <span className="telugu">ఫిక్స్‌డ్</span>
+                      <span className="telugu">Lump</span>
                     )}
                   </td>
                   <td className="px-3 py-2 text-right font-mono">{fmtCurrency(t.freight_amount)}</td>

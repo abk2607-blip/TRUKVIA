@@ -104,16 +104,23 @@ export default function InvoiceView() {
         <div className="grid grid-cols-2 gap-6 border-b-2 border-zinc-950 pb-4">
           <div>
             <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">From</div>
-            <div className="mt-1 text-lg font-black">{company.name || "Your Company Name"}</div>
-            <div className="text-xs whitespace-pre-line mt-1 text-zinc-700">{company.address}</div>
-            <div className="text-xs mt-1 text-zinc-700">
-              {company.phone && <>Ph: {company.phone} · </>}
-              {company.email}
+            <div className="flex items-start gap-3 mt-1">
+              {company.logo && (
+                <img data-testid="invoice-logo" src={company.logo} alt="Logo" className="w-16 h-16 object-contain border border-zinc-200 rounded-sm bg-white" />
+              )}
+              <div>
+                <div className="text-lg font-black">{company.name || "Your Company Name"}</div>
+                <div className="text-xs whitespace-pre-line mt-1 text-zinc-700">{company.address}</div>
+                <div className="text-xs mt-1 text-zinc-700">
+                  {company.phone && <>Ph: {company.phone} · </>}
+                  {company.email}
+                </div>
+                <div className="text-xs mt-1 font-mono">
+                  <span className="font-bold">GSTIN:</span> {company.gstin || "—"} · <span className="font-bold">PAN:</span> {company.pan || "—"}
+                </div>
+                <div className="text-xs font-mono">State: {company.state || "—"}</div>
+              </div>
             </div>
-            <div className="text-xs mt-1 font-mono">
-              <span className="font-bold">GSTIN:</span> {company.gstin || "—"} · <span className="font-bold">PAN:</span> {company.pan || "—"}
-            </div>
-            <div className="text-xs font-mono">State: {company.state || "—"}</div>
           </div>
           <div className="text-right">
             <div className="text-3xl font-black tracking-tight">TAX INVOICE</div>
@@ -182,8 +189,14 @@ export default function InvoiceView() {
                   <td className="border border-zinc-300 px-2 py-1.5">{t.load_details}</td>
                   <td className="border border-zinc-300 px-2 py-1.5">{t.from_location} → {t.to_location}</td>
                   <td className="border border-zinc-300 px-2 py-1.5 text-right">{Number(t.tons).toFixed(2)}</td>
-                  <td className="border border-zinc-300 px-2 py-1.5">{t.freight_mode === "per_ton" ? "Per Ton" : "Fixed"}</td>
-                  <td className="border border-zinc-300 px-2 py-1.5 text-right">{t.freight_mode === "per_ton" ? Number(t.rate_per_ton).toFixed(2) : Number(t.fixed_amount).toFixed(2)}</td>
+                  <td className="border border-zinc-300 px-2 py-1.5">{t.freight_mode === "per_ton" ? "Per Ton" : "Round Trip"}</td>
+                  <td className="border border-zinc-300 px-2 py-1.5 text-right">
+                    {t.freight_mode === "per_ton"
+                      ? Number(t.rate_per_ton).toFixed(2)
+                      : (t.round_trip_kms > 0 && t.rate_per_km_per_ton > 0)
+                        ? `${Number(t.round_trip_kms).toFixed(0)}km×₹${Number(t.rate_per_km_per_ton).toFixed(2)}`
+                        : Number(t.fixed_amount).toFixed(2)}
+                  </td>
                   <td className="border border-zinc-300 px-2 py-1.5 text-right font-bold">{Number(t.freight_amount).toFixed(2)}</td>
                 </tr>
               ))}

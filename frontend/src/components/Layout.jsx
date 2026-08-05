@@ -2,7 +2,7 @@ import React from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "@/context/AuthContext";
 import {
-  LayoutDashboard, Truck, Users, FileText, Settings as SettingsIcon, LogOut, UserCog,
+  LayoutDashboard, Truck, Users, FileText, Settings as SettingsIcon, LogOut, UserCog, Package, BarChart3,
 } from "lucide-react";
 
 const nav = [
@@ -10,7 +10,9 @@ const nav = [
   { to: "/trips", te: "ట్రిప్స్", en: "Trips", icon: Truck, testid: "nav-trips" },
   { to: "/customers", te: "కస్టమర్లు", en: "Customers", icon: Users, testid: "nav-customers" },
   { to: "/drivers", te: "డ్రైవర్లు", en: "Drivers", icon: UserCog, testid: "nav-drivers" },
+  { to: "/products", te: "ప్రొడక్ట్‌లు", en: "Products", icon: Package, testid: "nav-products" },
   { to: "/invoices", te: "ఇన్వాయిస్‌లు", en: "Invoices", icon: FileText, testid: "nav-invoices" },
+  { to: "/reports", te: "రిపోర్ట్‌లు", en: "Reports", icon: BarChart3, testid: "nav-reports" },
   { to: "/settings", te: "సెట్టింగ్‌లు", en: "Settings", icon: SettingsIcon, testid: "nav-settings" },
 ];
 

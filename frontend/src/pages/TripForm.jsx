@@ -11,13 +11,17 @@ const EMPTY = {
   vehicle_number: "",
   driver_id: "",
   driver_name: "",
+  product_id: "",
   load_details: "Bitumen VG 40",
+  hsn_sac: "",
   tons: 0,
   from_location: "",
   to_location: "",
   freight_mode: "per_ton",
   rate_per_ton: 0,
   fixed_amount: 0,
+  round_trip_kms: 0,
+  rate_per_km_per_ton: 0,
   expenses: { diesel: 0, toll: 0, batta: 0, repair: 0, other: 0 },
   notes: "",
 };
@@ -31,6 +35,7 @@ export default function TripForm() {
 
   const { data: customers = [] } = useQuery({ queryKey: ["customers"], queryFn: async () => (await api.get("/customers")).data });
   const { data: drivers = [] } = useQuery({ queryKey: ["drivers"], queryFn: async () => (await api.get("/drivers")).data });
+  const { data: products = [] } = useQuery({ queryKey: ["products"], queryFn: async () => (await api.get("/products")).data });
 
   const { data: trip } = useQuery({
     queryKey: ["trip", id],
@@ -49,6 +54,8 @@ export default function TripForm() {
         tons: Number(form.tons),
         rate_per_ton: Number(form.rate_per_ton),
         fixed_amount: Number(form.fixed_amount),
+        round_trip_kms: Number(form.round_trip_kms),
+        rate_per_km_per_ton: Number(form.rate_per_km_per_ton),
         expenses: Object.fromEntries(Object.entries(form.expenses).map(([k, v]) => [k, Number(v || 0)])),
       };
       if (isEdit) return (await api.put(`/trips/${id}`, payload)).data;
@@ -66,7 +73,9 @@ export default function TripForm() {
   // Live computed
   const freight = form.freight_mode === "per_ton"
     ? Number(form.tons || 0) * Number(form.rate_per_ton || 0)
-    : Number(form.fixed_amount || 0);
+    : (Number(form.round_trip_kms || 0) > 0 && Number(form.rate_per_km_per_ton || 0) > 0)
+      ? Number(form.tons || 0) * Number(form.round_trip_kms || 0) * Number(form.rate_per_km_per_ton || 0)
+      : Number(form.fixed_amount || 0);
   const totalExpense = Object.values(form.expenses).reduce((s, v) => s + Number(v || 0), 0);
   const profit = freight - totalExpense;
 
@@ -116,8 +125,31 @@ export default function TripForm() {
                 {drivers.map((d) => <option key={d.id} value={d.id}>{d.name}{d.phone ? ` · ${d.phone}` : ""}</option>)}
               </select>
             </Field>
-            <Field label="Load · లోడ్">
-              <input data-testid="trip-load" value={form.load_details} onChange={(e) => setForm({ ...form, load_details: e.target.value })} className={inputCls} />
+            <Field label="Product / Load · లోడ్">
+              <select
+                data-testid="trip-product"
+                value={form.product_id || ""}
+                onChange={(e) => {
+                  const pid = e.target.value;
+                  const p = products.find((x) => x.id === pid);
+                  if (p) {
+                    setForm({
+                      ...form,
+                      product_id: pid,
+                      load_details: p.name,
+                      hsn_sac: p.hsn_sac,
+                      rate_per_ton: form.freight_mode === "per_ton" && p.default_rate ? p.default_rate : form.rate_per_ton,
+                    });
+                  } else {
+                    setForm({ ...form, product_id: "" });
+                  }
+                }}
+                className={inputCls}
+              >
+                <option value="">-- Custom / Type Below --</option>
+                {products.map((p) => <option key={p.id} value={p.id}>{p.name} (HSN {p.hsn_sac})</option>)}
+              </select>
+              <input data-testid="trip-load" value={form.load_details} onChange={(e) => setForm({ ...form, load_details: e.target.value, product_id: "" })} className={`${inputCls} mt-1`} placeholder="Load details" />
             </Field>
             <Field label="Tons · టన్నులు" required>
               <input data-testid="trip-tons" required type="number" step="0.01" min="0" value={form.tons} onChange={(e) => setForm({ ...form, tons: e.target.value })} className={inputCls} />
@@ -141,28 +173,50 @@ export default function TripForm() {
             </label>
             <label data-testid="freight-mode-fixed" className={`flex-1 border p-3 rounded-sm cursor-pointer ${form.freight_mode === "fixed" ? "border-zinc-950 bg-zinc-50" : "border-zinc-200"}`}>
               <input type="radio" name="mode" checked={form.freight_mode === "fixed"} onChange={() => setForm({ ...form, freight_mode: "fixed" })} className="mr-2" />
-              <span className="font-semibold text-sm"><span className="telugu">రౌండ్ ట్రిప్</span> · Fixed</span>
-              <div className="text-[11px] text-zinc-500 mt-1">Fixed total amount</div>
+              <span className="font-semibold text-sm"><span className="telugu">రౌండ్ ట్రిప్</span> · Round Trip</span>
+              <div className="text-[11px] text-zinc-500 mt-1">Tons × Round Trip KMs × Rate</div>
             </label>
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {form.freight_mode === "per_ton" ? (
+          {form.freight_mode === "per_ton" ? (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               <Field label="Rate per Ton (₹) · రేటు">
                 <input data-testid="trip-rate-per-ton" type="number" step="0.01" min="0" value={form.rate_per_ton} onChange={(e) => setForm({ ...form, rate_per_ton: e.target.value })} className={inputCls} />
               </Field>
-            ) : (
-              <Field label="Fixed Amount (₹) · మొత్తం">
-                <input data-testid="trip-fixed-amount" type="number" step="0.01" min="0" value={form.fixed_amount} onChange={(e) => setForm({ ...form, fixed_amount: e.target.value })} className={inputCls} />
-              </Field>
-            )}
-            <div className="md:col-span-2 flex items-end justify-end">
-              <div className="bg-amber-50 border border-amber-200 px-4 py-3 rounded-sm text-right" data-testid="freight-preview">
-                <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">Freight · ఫ్రైట్</div>
-                <div className="font-mono text-2xl font-bold text-amber-900">{fmtCurrency(freight)}</div>
+              <div className="md:col-span-2 flex items-end justify-end">
+                <div className="bg-amber-50 border border-amber-200 px-4 py-3 rounded-sm text-right" data-testid="freight-preview">
+                  <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">Freight · ఫ్రైట్</div>
+                  <div className="font-mono text-2xl font-bold text-amber-900">{fmtCurrency(freight)}</div>
+                  <div className="text-[10px] text-zinc-500 mt-1 font-mono">{Number(form.tons || 0).toFixed(2)} × ₹{Number(form.rate_per_ton || 0).toFixed(2)}</div>
+                </div>
               </div>
             </div>
-          </div>
+          ) : (
+            <>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                <Field label="Round Trip KMs · రౌండ్ ట్రిప్ KM">
+                  <input data-testid="trip-round-trip-kms" type="number" step="0.01" min="0" value={form.round_trip_kms} onChange={(e) => setForm({ ...form, round_trip_kms: e.target.value })} className={inputCls} placeholder="e.g. 450" />
+                </Field>
+                <Field label="Rate (₹/ton/km) · రేటు">
+                  <input data-testid="trip-rate-per-km-per-ton" type="number" step="0.01" min="0" value={form.rate_per_km_per_ton} onChange={(e) => setForm({ ...form, rate_per_km_per_ton: e.target.value })} className={inputCls} placeholder="e.g. 3.5" />
+                </Field>
+                <Field label="Or Fixed Lump Sum (₹)">
+                  <input data-testid="trip-fixed-amount" type="number" step="0.01" min="0" value={form.fixed_amount} onChange={(e) => setForm({ ...form, fixed_amount: e.target.value })} className={inputCls} placeholder="Used only if KMs/Rate = 0" />
+                </Field>
+              </div>
+              <div className="mt-4 flex justify-end">
+                <div className="bg-amber-50 border border-amber-200 px-4 py-3 rounded-sm text-right" data-testid="freight-preview">
+                  <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">Freight · ఫ్రైట్</div>
+                  <div className="font-mono text-2xl font-bold text-amber-900">{fmtCurrency(freight)}</div>
+                  <div className="text-[10px] text-zinc-500 mt-1 font-mono">
+                    {Number(form.round_trip_kms || 0) > 0 && Number(form.rate_per_km_per_ton || 0) > 0
+                      ? `${Number(form.tons || 0).toFixed(2)} × ${Number(form.round_trip_kms || 0).toFixed(2)}km × ₹${Number(form.rate_per_km_per_ton || 0).toFixed(2)}`
+                      : `Lump sum ₹${Number(form.fixed_amount || 0).toFixed(2)}`}
+                  </div>
+                </div>
+              </div>
+            </>
+          )}
         </Section>
 
         {/* Expenses */}

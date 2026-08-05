@@ -1,19 +1,21 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api";
 import { toast } from "sonner";
-import { Save } from "lucide-react";
+import { Save, Upload, Trash2 } from "lucide-react";
 
 const EMPTY = {
   name: "", address: "", phone: "", email: "",
   gstin: "", pan: "", state: "",
   bank_name: "", account_number: "", ifsc: "", branch: "",
   hsn_sac: "996791", invoice_prefix: "INV", next_invoice_number: 1,
+  logo: "",
 };
 
 export default function Settings() {
   const qc = useQueryClient();
   const [form, setForm] = useState(EMPTY);
+  const fileRef = useRef();
 
   const { data } = useQuery({ queryKey: ["company"], queryFn: async () => (await api.get("/company")).data });
 
@@ -23,6 +25,21 @@ export default function Settings() {
     mutationFn: async () => (await api.put("/company", { ...form, next_invoice_number: Number(form.next_invoice_number) })).data,
     onSuccess: () => { toast.success("Settings saved"); qc.invalidateQueries({ queryKey: ["company"] }); },
     onError: () => toast.error("Failed to save"),
+  });
+
+  const uploadLogo = useMutation({
+    mutationFn: async (file) => {
+      const fd = new FormData();
+      fd.append("file", file);
+      return (await api.post("/company/logo", fd, { headers: { "Content-Type": "multipart/form-data" } })).data;
+    },
+    onSuccess: (d) => { toast.success("Logo uploaded"); setForm({ ...form, logo: d.logo }); qc.invalidateQueries({ queryKey: ["company"] }); },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Upload failed"),
+  });
+
+  const removeLogo = useMutation({
+    mutationFn: async () => (await api.delete("/company/logo")).data,
+    onSuccess: () => { toast.success("Logo removed"); setForm({ ...form, logo: "" }); qc.invalidateQueries({ queryKey: ["company"] }); },
   });
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
@@ -41,6 +58,51 @@ export default function Settings() {
           <Save size={14} /> {save.isPending ? "Saving..." : "Save"}
         </button>
       </header>
+
+      <section className="border border-zinc-200 bg-white rounded-sm" data-testid="logo-section">
+        <div className="px-5 py-3 border-b border-zinc-200 text-sm font-bold uppercase tracking-wider">Logo · లోగో</div>
+        <div className="p-5 flex items-center gap-5">
+          <div className="w-24 h-24 border-2 border-dashed border-zinc-300 rounded-sm flex items-center justify-center bg-zinc-50">
+            {form.logo ? (
+              <img data-testid="logo-preview" src={form.logo} alt="Company logo" className="max-w-full max-h-full object-contain" />
+            ) : (
+              <span className="text-[10px] text-zinc-400 text-center px-2">No logo</span>
+            )}
+          </div>
+          <div className="flex-1">
+            <input
+              ref={fileRef}
+              data-testid="logo-file-input"
+              type="file"
+              accept="image/png,image/jpeg,image/webp"
+              onChange={(e) => { const f = e.target.files?.[0]; if (f) uploadLogo.mutate(f); }}
+              className="hidden"
+            />
+            <div className="flex gap-2">
+              <button
+                type="button"
+                data-testid="upload-logo-btn"
+                onClick={() => fileRef.current?.click()}
+                disabled={uploadLogo.isPending}
+                className="inline-flex items-center gap-2 px-3 py-2 text-xs uppercase tracking-wider border border-zinc-950 rounded-sm hover:bg-zinc-950 hover:text-white"
+              >
+                <Upload size={14} /> {uploadLogo.isPending ? "Uploading..." : "Upload Logo"}
+              </button>
+              {form.logo && (
+                <button
+                  type="button"
+                  data-testid="remove-logo-btn"
+                  onClick={() => { if (window.confirm("Remove logo?")) removeLogo.mutate(); }}
+                  className="inline-flex items-center gap-2 px-3 py-2 text-xs uppercase tracking-wider border border-rose-200 text-rose-700 rounded-sm hover:bg-rose-50"
+                >
+                  <Trash2 size={14} /> Remove
+                </button>
+              )}
+            </div>
+            <div className="mt-2 text-xs text-zinc-500">PNG / JPG / WEBP · max 1MB · appears on the top-left of every invoice PDF</div>
+          </div>
+        </div>
+      </section>
 
       <section className="border border-zinc-200 bg-white rounded-sm">
         <div className="px-5 py-3 border-b border-zinc-200 text-sm font-bold uppercase tracking-wider">Company · సంస్థ</div>
