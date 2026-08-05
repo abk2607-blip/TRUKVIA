@@ -51,6 +51,10 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - [x] **E-Way Bill JSON** per trip — schema-compliant with state-code mapping, intra/inter-state detection
 - [x] Iteration 4 tests: 15/15 new passing (77/78 overall)
 - [x] **File & Media Storage** integration via Emergent Object Storage — upload/list/preview/download/soft-delete with categories (vehicle_doc, fuel_bill, lr_proof, trip_attachment); new **Files** page in sidebar. Storage bucket per user (`bitumen-accounting/uploads/{user_id}/`). Max 10MB per file. Tested end-to-end via curl.
+- [x] **LR / Consignment Note PDF** generation with auto-numbering (`LR/YY-YY/NNNNN`), bilingual English + Telugu terms & conditions (Noto Sans Telugu font), inline font-switching, all fields matching real GC format (BPCL/HPCL style). Tests: 11/11 iter5 backend passing.
+- [x] **Inline File Attachments** on Trip (LR proofs, weighbridge slips) and Vehicle (RC/FC/Insurance scans) via `FileAttachments` component
+- [x] **Bulk Photo Import** on Fuel page — drag-and-drop many files; filename regex auto-tags vehicle_number + date, auto-links to matching vehicle
+- [x] **Storage Usage Bar** on Files page (500 MB soft cap, per-category breakdown)
 
 ## Backlog (P1)
 - [ ] Drivers & Vehicles master (currently free-text)

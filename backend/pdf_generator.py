@@ -3,14 +3,28 @@ Uses reportlab platypus to build a professional bilingual-friendly invoice
 similar to the VBK Logistics reference format.
 """
 from io import BytesIO
+import os
 import base64
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import mm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer, KeepTogether, Image,
 )
+
+# Register Noto Sans Telugu for Unicode rendering (LR terms, invoice labels)
+_FONTS_DIR = os.path.join(os.path.dirname(__file__), "fonts")
+_TE_FONT = "NotoSansTelugu"
+_TE_FONT_BOLD = "NotoSansTelugu-Bold"
+try:
+    if _TE_FONT not in pdfmetrics.getRegisteredFontNames():
+        pdfmetrics.registerFont(TTFont(_TE_FONT, os.path.join(_FONTS_DIR, "NotoSansTelugu-Regular.ttf")))
+        pdfmetrics.registerFont(TTFont(_TE_FONT_BOLD, os.path.join(_FONTS_DIR, "NotoSansTelugu-Bold.ttf")))
+except Exception:
+    _TE_FONT = "Helvetica"  # fallback
 
 
 def _fmt(n):
@@ -434,7 +448,7 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
     styles.add(ParagraphStyle(name="LRSmallBold", fontName="Helvetica-Bold", fontSize=7.5, leading=9.5))
     styles.add(ParagraphStyle(name="LRTitle", fontName="Helvetica-Bold", fontSize=14, leading=17, alignment=1))
     styles.add(ParagraphStyle(name="LRBody", fontName="Helvetica", fontSize=8.5, leading=11))
-    styles.add(ParagraphStyle(name="LRTelugu", fontName="Helvetica", fontSize=7, leading=10))
+    styles.add(ParagraphStyle(name="LRTelugu", fontName=_TE_FONT, fontSize=7.5, leading=11))
     story = []
 
     company_name = company.get("name") or "YOUR COMPANY NAME"
@@ -462,7 +476,7 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
     else:
         header_left_widget = header_left
 
-    title_para = Paragraph("<b>GOODS CONSIGNMENT NOTE</b><br/><font size='7'>Lorry Receipt / సరుకు రవాణా రసీదు</font>", styles["LRTitle"])
+    title_para = Paragraph(f"<b>GOODS CONSIGNMENT NOTE</b><br/><font size='7'>Lorry Receipt / <font name='{_TE_FONT}'>సరుకు రవాణా రసీదు</font></font>", styles["LRTitle"])
     header_tbl = Table([[header_left_widget, title_para]], colWidths=[126 * mm, 64 * mm])
     header_tbl.setStyle(TableStyle([
         ("BOX", (0, 0), (-1, -1), 0.8, colors.black),
@@ -488,8 +502,8 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
     consignor_name = trip.get("consignor_name") or trip.get("from_location") or "—"
     site_loc = trip.get("consignee_site_location") or trip.get("to_location") or "—"
     party = [
-        [Paragraph("<b>Consignor / సరుకు పంపేవారు</b>", styles["LRSmallBold"]),
-         Paragraph("<b>Consignee (M/s) / సరుకు స్వీకర్త</b>", styles["LRSmallBold"])],
+        [Paragraph(f"<b>Consignor</b> / <font name='{_TE_FONT}'>సరుకు పంపేవారు</font>", styles["LRSmallBold"]),
+         Paragraph(f"<b>Consignee (M/s)</b> / <font name='{_TE_FONT}'>సరుకు స్వీకర్త</font>", styles["LRSmallBold"])],
         [Paragraph(consignor_name, styles["LRBody"]),
          Paragraph(f"<b>{customer.get('name','')}</b><br/>{customer.get('address','')}<br/>GSTIN: {customer.get('gstin','—')} · Pincode: {customer.get('pincode','—')}", styles["LRBody"])],
         [Paragraph(f"<b>Site Location:</b> {site_loc}", styles["LRSmall"]),
@@ -508,13 +522,13 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
 
     net_wt = round(float(trip.get("gross_weight", 0) or 0) - float(trip.get("tare_weight", 0) or 0), 3) or float(trip.get("tons", 0) or 0)
     details_rows = [
-        [Paragraph("<b>Tanker No. / వాహనం</b>", styles["LRSmallBold"]), trip.get("vehicle_number", ""),
-         Paragraph("<b>Product / సరుకు</b>", styles["LRSmallBold"]), trip.get("load_details", "")],
-        [Paragraph("<b>Invoice No. / ఇన్వాయిస్</b>", styles["LRSmallBold"]), trip.get("external_invoice_no", "—"),
-         Paragraph("<b>Vehicle Seal No. / సీలు</b>", styles["LRSmallBold"]), trip.get("seal_numbers", "—")],
-        [Paragraph("<b>Gross Wt. / గ్రాస్</b>", styles["LRSmallBold"]), f"{_fmt(trip.get('gross_weight',0))} MT",
-         Paragraph("<b>Tare Wt. / టేర్</b>", styles["LRSmallBold"]), f"{_fmt(trip.get('tare_weight',0))} MT"],
-        [Paragraph("<b>Net Wt. / నెట్</b>", styles["LRSmallBold"]), f"{_fmt(net_wt)} MT",
+        [Paragraph(f"<b>Tanker No.</b> / <font name='{_TE_FONT}'>వాహనం</font>", styles["LRSmallBold"]), trip.get("vehicle_number", ""),
+         Paragraph(f"<b>Product</b> / <font name='{_TE_FONT}'>సరుకు</font>", styles["LRSmallBold"]), trip.get("load_details", "")],
+        [Paragraph(f"<b>Invoice No.</b> / <font name='{_TE_FONT}'>ఇన్వాయిస్</font>", styles["LRSmallBold"]), trip.get("external_invoice_no", "—"),
+         Paragraph(f"<b>Vehicle Seal No.</b> / <font name='{_TE_FONT}'>సీలు</font>", styles["LRSmallBold"]), trip.get("seal_numbers", "—")],
+        [Paragraph(f"<b>Gross Wt.</b> / <font name='{_TE_FONT}'>గ్రాస్</font>", styles["LRSmallBold"]), f"{_fmt(trip.get('gross_weight',0))} MT",
+         Paragraph(f"<b>Tare Wt.</b> / <font name='{_TE_FONT}'>టేర్</font>", styles["LRSmallBold"]), f"{_fmt(trip.get('tare_weight',0))} MT"],
+        [Paragraph(f"<b>Net Wt.</b> / <font name='{_TE_FONT}'>నెట్</font>", styles["LRSmallBold"]), f"{_fmt(net_wt)} MT",
          Paragraph("<b>Round Trip KMs</b>", styles["LRSmallBold"]), _fmt(trip.get("round_trip_kms", 0))],
     ]
     details_tbl = Table(details_rows, colWidths=[40 * mm, 55 * mm, 40 * mm, 55 * mm])
@@ -527,8 +541,8 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
     ]))
     story.append(details_tbl)
 
-    driver_rows = [[Paragraph("<b>Driver Name / డ్రైవర్</b>", styles["LRSmallBold"]), trip.get("driver_name", "—"),
-                    Paragraph("<b>Driver Mobile / మొబైల్</b>", styles["LRSmallBold"]), trip.get("driver_mobile", "—")]]
+    driver_rows = [[Paragraph(f"<b>Driver Name</b> / <font name='{_TE_FONT}'>డ్రైవర్</font>", styles["LRSmallBold"]), trip.get("driver_name", "—"),
+                    Paragraph(f"<b>Driver Mobile</b> / <font name='{_TE_FONT}'>మొబైల్</font>", styles["LRSmallBold"]), trip.get("driver_mobile", "—")]]
     driver_tbl = Table(driver_rows, colWidths=[40 * mm, 55 * mm, 40 * mm, 55 * mm])
     driver_tbl.setStyle(TableStyle([
         ("BOX", (0, 0), (-1, -1), 0.5, colors.black),
@@ -540,7 +554,7 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
     story.append(driver_tbl)
 
     un_rows = [
-        [Paragraph("<b>Unloading Details by Site Officials / అన్‌లోడింగ్ వివరాలు</b>", styles["LRSmallBold"])],
+        [Paragraph(f"<b>Unloading Details by Site Officials</b> / <font name='{_TE_FONT}'>అన్‌లోడింగ్ వివరాలు</font>", styles["LRSmallBold"])],
         ["Date of Arrival | Time | Date of Diversion | Date of Unloading | Date of Departure | Extra KM | Shortage/Excess | HSD at Plant | Advance at Plant | Seal Checked By"],
         [""],
         ["Site Entry Gate (Stamp / Date / Time / Signature)"],
@@ -570,8 +584,8 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
     story.append(gst_box)
 
     story.append(Spacer(1, 4))
-    story.append(Paragraph("<b>TANKER UNLOADING PROCEDURES AT SITE TO BE FOLLOWED / సైట్‌లో పాటించవలసిన విధానాలు</b>", styles["LRSmallBold"]))
-    terms_rows = [[Paragraph("<b>English</b>", styles["LRSmallBold"]), Paragraph("<b>తెలుగు</b>", styles["LRSmallBold"])]]
+    story.append(Paragraph(f"<b>TANKER UNLOADING PROCEDURES AT SITE TO BE FOLLOWED</b> / <font name='{_TE_FONT}'>సైట్‌లో పాటించవలసిన విధానాలు</font>", styles["LRSmallBold"]))
+    terms_rows = [[Paragraph("<b>English</b>", styles["LRSmallBold"]), Paragraph(f"<font name='{_TE_FONT}'><b>తెలుగు</b></font>", styles["LRSmallBold"])]]
     for en, te in zip(LR_TERMS_EN, LR_TERMS_TE):
         terms_rows.append([Paragraph(en, styles["LRSmall"]), Paragraph(te, styles["LRTelugu"])])
     terms_tbl = Table(terms_rows, colWidths=[95 * mm, 95 * mm])
