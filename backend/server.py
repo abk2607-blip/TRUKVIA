@@ -20,6 +20,7 @@ from datetime import datetime, timezone, timedelta
 import pandas as pd
 
 from pdf_generator import build_invoice_pdf, build_ledger_pdf
+from storage_client import init_storage, put_object, get_object, mime_for, APP_NAME
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -53,6 +54,7 @@ class Company(BaseModel):
     gstin: str = ""
     pan: str = ""
     state: str = ""
+    pincode: str = ""
     bank_name: str = ""
     account_number: str = ""
     ifsc: str = ""
@@ -60,6 +62,8 @@ class Company(BaseModel):
     hsn_sac: str = "996791"
     invoice_prefix: str = "INV"
     next_invoice_number: int = 1
+    lr_prefix: str = "LR"
+    next_lr_number: int = 1
     logo: str = ""  # data URL (base64)
 
 class Customer(BaseModel):
@@ -70,6 +74,7 @@ class Customer(BaseModel):
     gstin: str = ""
     pan: str = ""
     state: str = ""
+    pincode: str = ""
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
 
 class Expenses(BaseModel):
@@ -94,12 +99,15 @@ class Trip(BaseModel):
     vehicle_number: str
     driver_id: Optional[str] = None
     driver_name: str = ""
+    driver_mobile: str = ""
     product_id: Optional[str] = None
     load_details: str = "Bitumen VG 40"
     hsn_sac: str = ""
     tons: float
     from_location: str = ""
     to_location: str = ""
+    from_pincode: str = ""
+    to_pincode: str = ""
     freight_mode: Literal["per_ton", "fixed"]
     rate_per_ton: float = 0.0
     fixed_amount: float = 0.0
@@ -112,6 +120,17 @@ class Trip(BaseModel):
     invoice_id: Optional[str] = None
     status: Literal["pending", "invoiced"] = "pending"
     notes: str = ""
+    # LR (Lorry Receipt / Consignment Note) fields
+    lr_number: str = ""
+    lr_time: str = ""
+    consignor_name: str = ""
+    consignor_address: str = ""
+    consignee_site_location: str = ""
+    consignee_site_contact: str = ""
+    external_invoice_no: str = ""
+    gross_weight: float = 0.0
+    tare_weight: float = 0.0
+    seal_numbers: str = ""
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
 
 class Product(BaseModel):
@@ -127,6 +146,7 @@ class Vehicle(BaseModel):
     id: str = Field(default_factory=lambda: new_id("veh_"))
     vehicle_number: str
     owner_name: str = ""
+    owner_phone: str = ""
     make_model: str = ""
     capacity_tons: float = 0.0
     rc_expiry: str = ""            # ISO date
@@ -134,6 +154,19 @@ class Vehicle(BaseModel):
     insurance_expiry: str = ""
     permit_expiry: str = ""
     puc_expiry: str = ""            # Pollution Under Control
+    notes: str = ""
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+
+class MaintenanceLog(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("mnt_"))
+    vehicle_id: Optional[str] = None
+    vehicle_number: str
+    date: str
+    type: Literal["Tyre", "Service", "Repair", "Other"] = "Service"
+    description: str = ""
+    cost: float = 0.0
+    odometer: float = 0.0
+    next_due_date: str = ""
     notes: str = ""
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
 
@@ -1354,7 +1387,7 @@ async def eway_bill(tid: str, user=Depends(get_current_user)):
                 "fromAddr1": company.get("address", "")[:120],
                 "fromAddr2": "",
                 "fromPlace": company.get("state", ""),
-                "fromPincode": 0,
+                "fromPincode": int(company.get("pincode", "0") or 0) if str(company.get("pincode", "")).isdigit() else 0,
                 "fromStateCode": int(from_state_code) if from_state_code else 0,
                 "actFromStateCode": int(from_state_code) if from_state_code else 0,
                 "toGstin": customer.get("gstin", "URP"),
@@ -1362,7 +1395,7 @@ async def eway_bill(tid: str, user=Depends(get_current_user)):
                 "toAddr1": customer.get("address", "")[:120],
                 "toAddr2": "",
                 "toPlace": customer.get("state", ""),
-                "toPincode": 0,
+                "toPincode": int(customer.get("pincode", "0") or 0) if str(customer.get("pincode", "")).isdigit() else 0,
                 "toStateCode": int(to_state_code) if to_state_code else 0,
                 "actToStateCode": int(to_state_code) if to_state_code else 0,
                 "transactionType": 1,
@@ -1403,6 +1436,94 @@ async def eway_bill(tid: str, user=Depends(get_current_user)):
     }
     return payload
 
+# ==================== File Uploads (Object Storage) ====================
+
+class FileRef(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("file_"))
+    storage_path: str
+    original_filename: str
+    content_type: str
+    size: int
+    category: str = "general"           # logo | vehicle_doc | fuel_bill | lr_proof | trip_attachment | general
+    linked_type: str = ""               # vehicle | trip | fuel | invoice | ""
+    linked_id: str = ""
+    is_deleted: bool = False
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+
+@api.post("/files/upload")
+async def upload_file(
+    file: UploadFile = File(...),
+    category: str = "general",
+    linked_type: str = "",
+    linked_id: str = "",
+    user=Depends(get_current_user),
+):
+    data = await file.read()
+    if len(data) > 10 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large (max 10MB)")
+    ext = (file.filename or "bin").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "bin"
+    path = f"{APP_NAME}/uploads/{user['user_id']}/{uuid.uuid4().hex}.{ext}"
+    ctype = file.content_type or mime_for(file.filename or "")
+    try:
+        result = put_object(path, data, ctype)
+    except Exception as e:
+        logger.exception("storage upload failed")
+        raise HTTPException(status_code=502, detail=f"Storage upload failed: {e}")
+    ref = FileRef(
+        storage_path=result["path"],
+        original_filename=file.filename or "unknown",
+        content_type=ctype,
+        size=result.get("size", len(data)),
+        category=category,
+        linked_type=linked_type,
+        linked_id=linked_id,
+    )
+    doc = ref.model_dump()
+    doc["user_id"] = user["user_id"]
+    await db.files.insert_one(doc)
+    doc.pop("_id", None); doc.pop("user_id", None)
+    return doc
+
+@api.get("/files")
+async def list_files(
+    category: Optional[str] = None,
+    linked_type: Optional[str] = None,
+    linked_id: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    q = {"user_id": user["user_id"], "is_deleted": False}
+    if category: q["category"] = category
+    if linked_type: q["linked_type"] = linked_type
+    if linked_id: q["linked_id"] = linked_id
+    docs = await db.files.find(q, {"_id": 0, "user_id": 0}).sort("created_at", -1).to_list(500)
+    return docs
+
+@api.get("/files/{fid}/download")
+async def download_file(fid: str, user=Depends(get_current_user)):
+    ref = await db.files.find_one({"id": fid, "user_id": user["user_id"], "is_deleted": False}, {"_id": 0})
+    if not ref:
+        raise HTTPException(status_code=404, detail="Not found")
+    try:
+        data, ctype = get_object(ref["storage_path"])
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Storage fetch failed: {e}")
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type=ref.get("content_type") or ctype,
+        headers={"Content-Disposition": f'inline; filename="{ref["original_filename"]}"'},
+    )
+
+@api.delete("/files/{fid}")
+async def delete_file(fid: str, user=Depends(get_current_user)):
+    # Soft delete (storage has no delete API)
+    r = await db.files.update_one(
+        {"id": fid, "user_id": user["user_id"]},
+        {"$set": {"is_deleted": True}},
+    )
+    if r.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Not found")
+    return {"ok": True}
+
 # ==================== Health ====================
 
 @api.get("/")
@@ -1418,6 +1539,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.on_event("startup")
+async def startup_event():
+    try:
+        init_storage()
+        logger.info("Object storage initialized")
+    except Exception as e:
+        logger.warning(f"Storage init failed at startup: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

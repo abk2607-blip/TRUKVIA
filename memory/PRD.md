@@ -50,6 +50,7 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - [x] **GSTR-1 Monthly Report** with B2B/B2C split, per-state POS breakdown, CSV export
 - [x] **E-Way Bill JSON** per trip — schema-compliant with state-code mapping, intra/inter-state detection
 - [x] Iteration 4 tests: 15/15 new passing (77/78 overall)
+- [x] **File & Media Storage** integration via Emergent Object Storage — upload/list/preview/download/soft-delete with categories (vehicle_doc, fuel_bill, lr_proof, trip_attachment); new **Files** page in sidebar. Storage bucket per user (`bitumen-accounting/uploads/{user_id}/`). Max 10MB per file. Tested end-to-end via curl.
 
 ## Backlog (P1)
 - [ ] Drivers & Vehicles master (currently free-text)
