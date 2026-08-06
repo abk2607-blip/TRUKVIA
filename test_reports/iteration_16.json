@@ -1,0 +1,24 @@
+{
+  "summary": "Iteration 16 — Verified the AuthCallback sessionStorage-dedup fix on the deployed preview. All 5 targeted tests passed: (1) fresh FAKEID hash triggers exactly ONE POST /api/auth/session (401 as expected), FAKEID is recorded in sessionStorage.consumed_session_ids, hash is stripped via history.replaceState, user is navigated to '/', localStorage.session_token remains unset, and 'Sign-in failed: Invalid session_id' toast is shown. (2) Second visit to /dashboard#session_id=FAKEID produces ZERO additional /auth/session POSTs (short-circuit works), hash stripped, redirect to '/'. (3) With a valid pre-seeded session_token + consumed_session_ids containing FAKEID, visiting /dashboard#session_id=FAKEID does NOT re-post, preserves the token, and navigates to /dashboard. (4) Regression: valid Bearer test_session_bitumen_2026 loads the Dashboard cleanly. (5) Error toast surfaces the backend detail ('Sign-in failed: Invalid session_id') rather than a generic message.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "AuthCallback consumed_session_ids uses a comma-delimited string trimmed to last 10 — fine, but a session_id containing a comma would corrupt the list. Emergent's session_ids appear opaque/UUID-like so this is a low-risk theoretical edge case only.",
+    "history.replaceState strips the hash before the async POST resolves — good; prevents any reload/back-nav re-exchange even during the in-flight request.",
+    "api.js only clears session_token on /auth/me 401 (correct); AuthContext skips /auth/me while hash contains session_id= (correct) — the interlock between AuthCallback and AuthContext is sound."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "n/a (skipped per request)", "frontend": "100% (5/5 targeted tests passed)"},
+  "test_credentials": "Bearer test_session_bitumen_2026 (user test-user-bitumen) works against deployed backend as expected.",
+  "seed_data_creation": "None persistent. Tests seed localStorage/sessionStorage in-browser only.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "The AuthCallback dedup fix is verified end-to-end on https://trip-billing-pro-1.preview.emergentagent.com. Playwright captured network requests to /api/auth/session and confirmed exactly-once semantics per session_id, plus hash stripping and correct navigation branching (dashboard vs login). Real Google OAuth cannot be triggered from Playwright — this is expected; the FE dedup logic is validated with synthesized session_ids that 401 at the backend.",
+  "rca of the issue": "Original bug: POST /api/auth/session was being called twice for the same session_id (React StrictMode, remounts, back-nav preserving the hash). Emergent's session-data endpoint is one-shot; the second call always 401'd → 'Sign-in failed'. Fix (verified): (a) started ref guards StrictMode double-invoke within a mount, (b) sessionStorage.consumed_session_ids guards across remounts / back-nav / tab reopen, (c) history.replaceState strips session_id from the URL immediately after extraction so reload/back cannot re-trigger, (d) if a valid session_token already exists when a dup id is seen, user is routed to /dashboard instead of bounced to Login."
+}
