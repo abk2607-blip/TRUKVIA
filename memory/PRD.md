@@ -101,6 +101,10 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - [x] Iter13 tests: 7/7 backend + full frontend UI all passing
 - [x] **GSTIN Offline Lookup** (Iter14) — GET /api/gstin/lookup parses state/PAN/entity + Mod-36 checksum validation. Customer + Party forms auto-fill State + PAN when the user types a 15-char GSTIN. Zero API cost. Placeholder note documents where paid API (Signzy/ClearTax) can plug in via GSTIN_LOOKUP_API_KEY env var
 - [x] Iter14 tests: 9/9 backend + frontend auto-fill verified
+- [x] **Multi-Company Profiles** (Iter15) — Multiple companies per user account. Shared masters (customers/vehicles/drivers/products/parties); scoped transactions (trips/invoices/reports/files). Sidebar switcher + Settings management UI + per-company invoice prefix & sequence + auto-default + backfill of legacy docs
+- [x] **HSN per Invoice** — 996791 / 996511 dropdown in InvoiceCreate; stored on Invoice; rendered in PDF and InvoiceView (falls back to company default)
+- [x] **RCM/Normal GST toggle** — Radio-style toggle in InvoiceCreate; RCM keeps subtotal as total (recipient pays), Normal adds 5% GST
+- [x] Iter15 tests: 15/15 backend + full frontend UI verified
 
 ## Backlog (P1)
 - [ ] Drivers & Vehicles master (currently free-text)
