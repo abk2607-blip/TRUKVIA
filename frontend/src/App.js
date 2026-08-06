@@ -25,7 +25,8 @@ import Layout from "@/components/Layout";
 
 function Protected({ children }) {
   const { user, loading } = useAuth();
-  if (loading) {
+  // If cached user exists, render immediately while /auth/me verifies in background.
+  if (loading && !user) {
     return (
       <div className="flex items-center justify-center h-screen text-zinc-500" data-testid="loading-screen">
         Loading...

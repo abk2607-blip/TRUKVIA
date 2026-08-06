@@ -21,13 +21,19 @@ api.interceptors.request.use((cfg) => {
   return cfg;
 });
 
-// If any request returns 401, clear the stored token so the app falls back to Login.
+// If a request to /auth/me returns 401 the session is truly invalid — clear it.
+// For any OTHER endpoint we do NOT clear the token: a transient permission /
+// backend error must never silently sign the user out.
 api.interceptors.response.use(
   (r) => r,
   (err) => {
-    if (err?.response?.status === 401) {
-      try { localStorage.removeItem("session_token"); } catch {}
-    }
+    try {
+      const status = err?.response?.status;
+      const url = (err?.config?.url || "");
+      if (status === 401 && url.includes("/auth/me")) {
+        localStorage.removeItem("session_token");
+      }
+    } catch {}
     return Promise.reject(err);
   }
 );

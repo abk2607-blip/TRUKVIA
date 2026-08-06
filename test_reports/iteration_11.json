@@ -1,0 +1,20 @@
+{
+  "summary": "Iteration 11 BUGFIX validation for auto-signout / sign-in failure. Validated backend auth endpoints (5 curl checks) and frontend auth persistence via Playwright with add_init_script preloading localStorage. All 6 targeted scenarios PASS: (1) valid token+cached user renders /dashboard instantly, no redirect; (2) 404 on /api/nonexistent-endpoint preserves session_token and auth_user; (3) /api/auth/me with bogus Bearer returns 401 (backend confirms interceptor trigger condition); (4) invalid token in localStorage → /auth/me 401 → redirect to '/' AND both session_token and auth_user cleared; (5) no regression on /trips, /invoices, /reports (auto-redirects to /reports/ledger) — token preserved through all; (6) /trips/new form renders. Backend: /auth/me 200 with valid Bearer returning user_id/email/name; /auth/me 401 with no auth; /auth/session with invalid session_id returns 401; /trips and /invoices return 200 with Bearer.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": ["/app/backend/tests/backend_test.py"],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "api.js interceptor correctly narrow-scopes the 401 storage clear to URLs containing '/auth/me' — good defensive fix.",
+    "AuthContext hydrates from localStorage.auth_user optimistically and only nullifies user on true 401 — resolves the flash-to-Login perception issue.",
+    "Consider adding an expiry check on cached auth_user (e.g. store timestamp) so a stale cache doesn't linger for weeks; low priority since /auth/me verifies in background on every mount."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Bearer test_session_bitumen_2026 (user test-user-bitumen, owner@vbklogistics.test) — verified seeded in MongoDB.",
+  "seed_data_creation": "None — used existing seeded session from /app/memory/test_credentials.md.",
+  "retest_needed": false,
+  "should_main_agent_self_test": true,
+  "context_for_next_testing_agent": "Auth persistence bug is FIXED. Session survives 404/5xx on non-auth endpoints; only true /auth/me 401 clears storage. Cached user renders Dashboard instantly (no login-flash). If user still reports auto sign-out, investigate: (a) session expiry (backend session TTL = 7 days), (b) cookie SameSite/Secure issues in specific browsers — but the Bearer-token path via localStorage now works independent of cookies. Regression testing on /trips, /invoices, /reports all green.",
+  "rca of the issue": "RCA: OLD axios response interceptor removed localStorage.session_token on ANY 401 response, so a transient 401 from /auth/session (session re-use race), a permission-restricted endpoint, or an unrelated backend hiccup would silently sign the user out. Additionally the Protected wrapper showed the Login page while /auth/me was in-flight, causing perceived sign-outs. Mitigation: (1) selective clear ONLY on /auth/me 401 in api.js interceptor; (2) optimistic user hydration from localStorage.auth_user in AuthContext; (3) Protected renders children immediately when a cached user exists. Verified all 3 mitigations work end-to-end."
+}
