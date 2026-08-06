@@ -1,0 +1,265 @@
+<!doctype html>
+<html lang="te">
+<head>
+<meta charset="utf-8" />
+<title>Anek Telugu vs Mallanna — Live UI Comparison</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Anek+Telugu:wght@400;500;600;700&family=Mallanna&display=swap" rel="stylesheet">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #f4f6fa; padding: 24px;
+    font-family: system-ui, sans-serif;
+  }
+  h1 { font-family: system-ui; font-size: 22px; color: #0f172a; margin-bottom: 4px; }
+  .sub { color: #64748b; font-size: 14px; margin-bottom: 20px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  .col { }
+  .col-title {
+    font-family: system-ui, sans-serif;
+    font-weight: 700; font-size: 18px; color: #0f172a;
+    padding: 12px 16px; border-radius: 10px;
+    background: linear-gradient(90deg,#f59e0b,#f97316);
+    color: white; margin-bottom: 12px; letter-spacing: 0.02em;
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .col-title small { font-size: 12px; opacity: 0.85; font-weight: 500; }
+  .card {
+    background: white; border: 1px solid #e2e8f0;
+    border-radius: 12px; padding: 20px; margin-bottom: 14px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+
+  /* Font-scoped classes */
+  .anek { font-family: 'Anek Telugu', sans-serif; }
+  .malla { font-family: 'Mallanna', sans-serif; }
+
+  /* Dashboard KPI cards */
+  .kpi-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .kpi {
+    background: #f8fafc; border: 1px solid #e2e8f0;
+    border-radius: 10px; padding: 12px 14px;
+  }
+  .kpi .lbl { font-size: 13px; color: #64748b; font-weight: 500; }
+  .kpi .val {
+    font-family: ui-monospace, monospace;
+    font-size: 22px; font-weight: 700; color: #0f172a; margin-top: 4px;
+  }
+  .kpi.pri { background: linear-gradient(135deg,#fef3c7,#fed7aa); border-color: #fbbf24; }
+
+  /* Sidebar nav */
+  .nav {
+    background: #0f172a; color: white;
+    border-radius: 10px; padding: 12px; margin-top: 8px;
+  }
+  .nav .item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border-radius: 8px; margin-bottom: 4px;
+    font-size: 15px; color: #cbd5e1;
+  }
+  .nav .item.active { background: #f59e0b; color: #1b1200; font-weight: 600; }
+  .nav .item .ico { width: 8px; height: 8px; border-radius: 2px; background: currentColor; opacity: 0.7; }
+
+  /* Table */
+  table {
+    width: 100%; border-collapse: collapse; margin-top: 6px;
+  }
+  th, td {
+    text-align: left; padding: 10px 8px;
+    border-bottom: 1px solid #e2e8f0; font-size: 14px;
+  }
+  th { background: #f8fafc; color: #475569; font-size: 12px; letter-spacing: 0.06em; text-transform: uppercase; }
+  .num { font-family: ui-monospace, monospace; text-align: right; font-weight: 600; }
+  .status {
+    display: inline-block; padding: 2px 10px; border-radius: 999px;
+    font-size: 12px; font-weight: 600;
+  }
+  .status.paid { background: #dcfce7; color: #166534; }
+  .status.due { background: #fee2e2; color: #991b1b; }
+
+  /* Buttons */
+  .btn {
+    display: inline-block; padding: 10px 18px; border-radius: 8px;
+    background: #f59e0b; color: #1b1200; font-weight: 600; font-size: 15px;
+    border: none;
+  }
+  .btn.ghost {
+    background: white; color: #0f172a; border: 1px solid #e2e8f0;
+  }
+  .btn-row { display: flex; gap: 8px; margin-top: 10px; }
+
+  h2.section {
+    font-size: 22px; font-weight: 700; color: #0f172a;
+    margin-bottom: 4px;
+  }
+  .section-sub { font-size: 13px; color: #64748b; margin-bottom: 12px; }
+
+  /* Form */
+  .form { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .form .field { display: flex; flex-direction: column; gap: 4px; }
+  .form label { font-size: 12px; color: #64748b; font-weight: 500; }
+  .form input, .form select {
+    padding: 8px 10px; border: 1px solid #cbd5e1; border-radius: 6px;
+    font-size: 14px; background: white;
+  }
+  /* When inside .anek/.malla, form inherits font */
+  .anek input, .anek select, .malla input, .malla select { font-family: inherit; }
+
+  /* Foot */
+  .foot { color: #64748b; font-size: 13px; padding: 4px 8px; }
+</style>
+</head>
+<body>
+  <h1>Anek Telugu  vs  Mallanna — UI comparison</h1>
+  <div class="sub">Same UI mockup rendered with each font. Numbers stay in monospace (as invoice amounts always will).</div>
+
+  <div class="grid">
+
+    <!-- ================ LEFT: Anek Telugu ================ -->
+    <div class="col anek">
+      <div class="col-title" style="font-family: 'Anek Telugu';">Anek Telugu <small>Modern SaaS</small></div>
+
+      <!-- 1. Dashboard KPI -->
+      <div class="card">
+        <h2 class="section">డాష్‌బోర్డ్</h2>
+        <div class="section-sub">ఈ నెల మీ వ్యాపార సారాంశం</div>
+        <div class="kpi-row">
+          <div class="kpi pri">
+            <div class="lbl">మొత్తం ఆదాయం</div>
+            <div class="val">₹ 3,45,000</div>
+          </div>
+          <div class="kpi">
+            <div class="lbl">నికర లాభం</div>
+            <div class="val">₹ 82,500</div>
+          </div>
+          <div class="kpi">
+            <div class="lbl">పూర్తయిన ట్రిప్‌లు</div>
+            <div class="val">24</div>
+          </div>
+          <div class="kpi">
+            <div class="lbl">బకాయిలు</div>
+            <div class="val">₹ 1,20,000</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 2. Sidebar Nav -->
+      <div class="card" style="padding:14px;">
+        <div class="nav">
+          <div class="item active"><span class="ico"></span> డాష్‌బోర్డ్</div>
+          <div class="item"><span class="ico"></span> ట్రిప్ షీట్</div>
+          <div class="item"><span class="ico"></span> ఇన్‌వాయిస్‌లు</div>
+          <div class="item"><span class="ico"></span> కస్టమర్‌లు</div>
+          <div class="item"><span class="ico"></span> వాహనాలు</div>
+          <div class="item"><span class="ico"></span> డ్రైవర్‌లు</div>
+          <div class="item"><span class="ico"></span> నివేదికలు</div>
+        </div>
+      </div>
+
+      <!-- 3. Invoice Table -->
+      <div class="card">
+        <h2 class="section">ఇటీవలి ఇన్‌వాయిస్‌లు</h2>
+        <div class="section-sub">జనవరి నుండి ఫిబ్రవరి వరకు</div>
+        <table>
+          <tr><th>నెంబర్</th><th>కస్టమర్</th><th>మొత్తం</th><th>స్థితి</th></tr>
+          <tr><td>INV/25-26/00042</td><td>హైదరాబాద్ కన్‌స్ట్రక్షన్స్</td><td class="num">₹ 16,800</td><td><span class="status paid">చెల్లించారు</span></td></tr>
+          <tr><td>INV/25-26/00043</td><td>విజయవాడ రోడ్ లైన్స్</td><td class="num">₹ 28,500</td><td><span class="status due">బకాయి</span></td></tr>
+          <tr><td>INV/25-26/00044</td><td>విశాఖ బిటుమెన్ కో.</td><td class="num">₹ 45,200</td><td><span class="status paid">చెల్లించారు</span></td></tr>
+        </table>
+      </div>
+
+      <!-- 4. Form -->
+      <div class="card">
+        <h2 class="section">కొత్త ట్రిప్ యాడ్ చేయండి</h2>
+        <div class="section-sub">వాహన నెంబర్ మరియు లోడ్ వివరాలు నమోదు చేయండి</div>
+        <div class="form">
+          <div class="field"><label>తేదీ</label><input placeholder="11-02-2026"/></div>
+          <div class="field"><label>కస్టమర్</label><input placeholder="హైదరాబాద్ కన్‌స్ట్రక్షన్స్"/></div>
+          <div class="field"><label>వాహన నెంబర్</label><input placeholder="AP16TA1234"/></div>
+          <div class="field"><label>డ్రైవర్</label><input placeholder="రామకృష్ణ"/></div>
+          <div class="field"><label>లోడ్</label><input placeholder="బిటుమెన్ VG-40"/></div>
+          <div class="field"><label>మార్గం</label><input placeholder="విశాఖపట్నం → హైదరాబాద్"/></div>
+        </div>
+        <div class="btn-row">
+          <button class="btn anek">సేవ్ చేయండి</button>
+          <button class="btn ghost anek">రద్దు చేయండి</button>
+        </div>
+      </div>
+
+      <div class="foot">© 2026 బిటుమెన్ ట్రాన్స్‌పోర్ట్ అకౌంటింగ్ — అన్ని హక్కులు రిజర్వ్ చేయబడ్డాయి</div>
+    </div>
+
+    <!-- ================ RIGHT: Mallanna ================ -->
+    <div class="col malla">
+      <div class="col-title" style="font-family: 'Mallanna';">Mallanna <small>Simple &amp; balanced</small></div>
+
+      <div class="card">
+        <h2 class="section">డాష్‌బోర్డ్</h2>
+        <div class="section-sub">ఈ నెల మీ వ్యాపార సారాంశం</div>
+        <div class="kpi-row">
+          <div class="kpi pri">
+            <div class="lbl">మొత్తం ఆదాయం</div>
+            <div class="val">₹ 3,45,000</div>
+          </div>
+          <div class="kpi">
+            <div class="lbl">నికర లాభం</div>
+            <div class="val">₹ 82,500</div>
+          </div>
+          <div class="kpi">
+            <div class="lbl">పూర్తయిన ట్రిప్‌లు</div>
+            <div class="val">24</div>
+          </div>
+          <div class="kpi">
+            <div class="lbl">బకాయిలు</div>
+            <div class="val">₹ 1,20,000</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card" style="padding:14px;">
+        <div class="nav">
+          <div class="item active"><span class="ico"></span> డాష్‌బోర్డ్</div>
+          <div class="item"><span class="ico"></span> ట్రిప్ షీట్</div>
+          <div class="item"><span class="ico"></span> ఇన్‌వాయిస్‌లు</div>
+          <div class="item"><span class="ico"></span> కస్టమర్‌లు</div>
+          <div class="item"><span class="ico"></span> వాహనాలు</div>
+          <div class="item"><span class="ico"></span> డ్రైవర్‌లు</div>
+          <div class="item"><span class="ico"></span> నివేదికలు</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 class="section">ఇటీవలి ఇన్‌వాయిస్‌లు</h2>
+        <div class="section-sub">జనవరి నుండి ఫిబ్రవరి వరకు</div>
+        <table>
+          <tr><th>నెంబర్</th><th>కస్టమర్</th><th>మొత్తం</th><th>స్థితి</th></tr>
+          <tr><td>INV/25-26/00042</td><td>హైదరాబాద్ కన్‌స్ట్రక్షన్స్</td><td class="num">₹ 16,800</td><td><span class="status paid">చెల్లించారు</span></td></tr>
+          <tr><td>INV/25-26/00043</td><td>విజయవాడ రోడ్ లైన్స్</td><td class="num">₹ 28,500</td><td><span class="status due">బకాయి</span></td></tr>
+          <tr><td>INV/25-26/00044</td><td>విశాఖ బిటుమెన్ కో.</td><td class="num">₹ 45,200</td><td><span class="status paid">చెల్లించారు</span></td></tr>
+        </table>
+      </div>
+
+      <div class="card">
+        <h2 class="section">కొత్త ట్రిప్ యాడ్ చేయండి</h2>
+        <div class="section-sub">వాహన నెంబర్ మరియు లోడ్ వివరాలు నమోదు చేయండి</div>
+        <div class="form">
+          <div class="field"><label>తేదీ</label><input placeholder="11-02-2026"/></div>
+          <div class="field"><label>కస్టమర్</label><input placeholder="హైదరాబాద్ కన్‌స్ట్రక్షన్స్"/></div>
+          <div class="field"><label>వాహన నెంబర్</label><input placeholder="AP16TA1234"/></div>
+          <div class="field"><label>డ్రైవర్</label><input placeholder="రామకృష్ణ"/></div>
+          <div class="field"><label>లోడ్</label><input placeholder="బిటుమెన్ VG-40"/></div>
+          <div class="field"><label>మార్గం</label><input placeholder="విశాఖపట్నం → హైదరాబాద్"/></div>
+        </div>
+        <div class="btn-row">
+          <button class="btn malla">సేవ్ చేయండి</button>
+          <button class="btn ghost malla">రద్దు చేయండి</button>
+        </div>
+      </div>
+
+      <div class="foot">© 2026 బిటుమెన్ ట్రాన్స్‌పోర్ట్ అకౌంటింగ్ — అన్ని హక్కులు రిజర్వ్ చేయబడ్డాయి</div>
+    </div>
+
+  </div>
+</body>
+</html>
