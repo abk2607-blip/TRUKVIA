@@ -99,6 +99,8 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - [x] **GST Summary Dashboard Widget** — current month CGST/SGST/IGST + FY totals + next GSTR-1 (11th) and GSTR-3B (20th) due dates
 - [x] **Overdue Invoices Dashboard Widget** — count + outstanding amount card linking to reminders screen
 - [x] Iter13 tests: 7/7 backend + full frontend UI all passing
+- [x] **GSTIN Offline Lookup** (Iter14) — GET /api/gstin/lookup parses state/PAN/entity + Mod-36 checksum validation. Customer + Party forms auto-fill State + PAN when the user types a 15-char GSTIN. Zero API cost. Placeholder note documents where paid API (Signzy/ClearTax) can plug in via GSTIN_LOOKUP_API_KEY env var
+- [x] Iter14 tests: 9/9 backend + frontend auto-fill verified
 
 ## Backlog (P1)
 - [ ] Drivers & Vehicles master (currently free-text)
