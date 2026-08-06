@@ -250,6 +250,22 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
             desc = f"↳ Halting Charges — {hdays} day(s) × ₹ {_fmt(hrate)} / day"
             rows.append(["", desc, "", "", "", "", "", "", "", f"₹ {_fmt(t.get('halting_amount', 0))}"])
             sub_row_indices.append(len(rows) - 1)
+        # Diesel-from-Customer sub-row
+        diesel_amt = float((t.get("expenses") or {}).get("diesel_from_customer_amount", 0) or 0)
+        if diesel_amt > 0:
+            dq = (t.get("expenses") or {}).get("diesel_from_customer_qty", 0) or 0
+            dr = (t.get("expenses") or {}).get("diesel_from_customer_rate", 0) or 0
+            if dq and dr:
+                desc = f"↳ Less: Diesel from Customer — {_fmt(dq)} L × ₹ {_fmt(dr)} / L"
+            else:
+                desc = "↳ Less: Diesel from Customer"
+            rows.append(["", desc, "", "", "", "", "", "", "", f"(₹ {_fmt(diesel_amt)})"])
+            sub_row_indices.append(len(rows) - 1)
+        # Customer Advance sub-row
+        adv_amt = float((t.get("expenses") or {}).get("cash_advance_received", 0) or 0)
+        if adv_amt > 0:
+            rows.append(["", "↳ Less: Customer Advance Received", "", "", "", "", "", "", "", f"(₹ {_fmt(adv_amt)})"])
+            sub_row_indices.append(len(rows) - 1)
         # Shortage sub-row (product-rate based OR expense-level fallback)
         shortage_qty = float(t.get("shortage_qty", 0) or 0)
         expenses = t.get("expenses") or {}
@@ -310,6 +326,12 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
     shortage_total = invoice.get("shortage_total") or round(
         sum(float(t.get("shortage_amount", 0)) + float((t.get("expenses") or {}).get("shortage_amount", 0)) for t in trips), 2,
     )
+    diesel_total = invoice.get("diesel_deduction_total") or round(
+        sum(float((t.get("expenses") or {}).get("diesel_from_customer_amount", 0)) for t in trips), 2,
+    )
+    advance_total = invoice.get("advance_deduction_total") or round(
+        sum(float((t.get("expenses") or {}).get("cash_advance_received", 0)) for t in trips), 2,
+    )
 
     # --- Totals ---
     subtotal = invoice.get("subtotal", 0)
@@ -330,7 +352,11 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
         totals_rows.append(["Excess Quantity Charges", f"₹ {_fmt(excess_total)}"])
     if shortage_total > 0:
         totals_rows.append(["Less: Shortage Deduction", f"(₹ {_fmt(shortage_total)})"])
-    totals_rows.append(["Taxable Amount", f"₹ {_fmt(subtotal)}"])
+    if diesel_total > 0:
+        totals_rows.append(["Less: Diesel from Customer", f"(₹ {_fmt(diesel_total)})"])
+    if advance_total > 0:
+        totals_rows.append(["Less: Customer Advance Received", f"(₹ {_fmt(advance_total)})"])
+    totals_rows.append(["Net Freight (Taxable)", f"₹ {_fmt(subtotal)}"])
     if gst_type == "cgst_sgst":
         totals_rows.append(["CGST @ 2.5%", f"₹ {_fmt(cgst)}"])
         totals_rows.append(["SGST @ 2.5%", f"₹ {_fmt(sgst)}"])

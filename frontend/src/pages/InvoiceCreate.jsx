@@ -37,7 +37,9 @@ export default function InvoiceCreate() {
   const haltingTotal = selectedTrips.reduce((s, t) => s + Number(t.halting_amount || 0), 0);
   const excessTotal = selectedTrips.reduce((s, t) => s + Number(t.excess_amount || 0), 0);
   const shortageTotal = selectedTrips.reduce((s, t) => s + Number(t.shortage_amount || 0) + Number((t.expenses || {}).shortage_amount || 0), 0);
-  const subtotal = freightTotal + haltingTotal + excessTotal - shortageTotal;
+  const dieselDedTotal = selectedTrips.reduce((s, t) => s + Number((t.expenses || {}).diesel_from_customer_amount || 0), 0);
+  const advanceDedTotal = selectedTrips.reduce((s, t) => s + Number((t.expenses || {}).cash_advance_received || 0), 0);
+  const subtotal = freightTotal + haltingTotal + excessTotal - shortageTotal - dieselDedTotal - advanceDedTotal;
   const cgst = gstType === "cgst_sgst" ? subtotal * 0.025 : 0;
   const sgst = gstType === "cgst_sgst" ? subtotal * 0.025 : 0;
   const igst = gstType === "igst" ? subtotal * 0.05 : 0;
@@ -200,7 +202,9 @@ export default function InvoiceCreate() {
               {haltingTotal > 0 && <Row k="Halting Charges" v={fmtCurrency(haltingTotal)} mono />}
               {excessTotal > 0 && <Row k="Excess Charges" v={fmtCurrency(excessTotal)} mono />}
               {shortageTotal > 0 && <Row k="Less: Shortage" v={`(${fmtCurrency(shortageTotal)})`} mono />}
-              <Row k="Taxable Amount" v={fmtCurrency(subtotal)} mono />
+              {dieselDedTotal > 0 && <Row k="Less: Diesel from Customer" v={`(${fmtCurrency(dieselDedTotal)})`} mono />}
+              {advanceDedTotal > 0 && <Row k="Less: Customer Advance" v={`(${fmtCurrency(advanceDedTotal)})`} mono />}
+              <Row k="Net Freight (Taxable)" v={fmtCurrency(subtotal)} mono />
               {gstType === "cgst_sgst" ? (
                 <>
                   <Row k="CGST @ 2.5%" v={fmtCurrency(cgst)} mono />

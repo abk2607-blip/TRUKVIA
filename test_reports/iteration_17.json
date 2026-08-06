@@ -1,0 +1,28 @@
+{
+  "summary": "Iteration 17 — Trip-wise Diesel-from-Customer & Cash-Advance deductions on Invoice. Verified backend end-to-end (6/6 pytest passed) and frontend (InvoiceView + InvoiceCreate preview). Formula Net Freight = Freight + Halting + Excess − Shortage − Diesel-from-Customer − Customer-Advance is honoured everywhere: _trip_billable, create_invoice, _recompute_invoice on trip edit, PDF (labels 'Less: Diesel from Customer', 'Less: Customer Advance Received', 'Net Freight (Taxable)' + per-trip sub-rows), InvoiceView.jsx (per-trip sub-rows + summary rows + Net Freight label), InvoiceCreate.jsx preview (dieselDedTotal + advanceDedTotal + Net Freight (Taxable)). Multi-company scoping regression clean — C2 preview does not see C1 trips; cross-company invoice creation rejected (400). Regression: trips without diesel/advance produce zero deductions.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter17_diesel_advance_deductions.py",
+    "/app/test_reports/pytest/iter17_results.xml",
+    "/app/test_reports/iter17_invoice_view.png",
+    "/app/test_reports/iter17_invoice_create.png"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py _trip_billable() at L732-733 subtracts BOTH t.shortage_amount AND (expenses.shortage_amount). If a user ever populates both fields the shortage will be double-counted. Trip model exposes shortage_amount at both the trip level (auto-computed from shortage_qty × product_rate_per_mt) and inside Expenses. Recommend picking one canonical field or explicitly documenting/zeroing the other. Not in scope for iter17 but worth cleaning up.",
+    "PUT /api/trips/{tid} requires a full Trip body (Pydantic v2 strict). Any client sending a partial patch will get a 422. The current React UI always resends the whole trip so this is fine, but consider adding PATCH semantics or accepting Optional fields to make edits safer from scripts/imports.",
+    "There is no GET /api/trips/{tid} endpoint — only list. Not blocking (frontend loads via list + filter), but individual-trip fetch would be useful for deep-linking and testability.",
+    "invoice creation path recomputes subtotal / diesel_deduction_total / advance_deduction_total identically to _recompute_invoice — could DRY into one helper to prevent drift."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter17_diesel_advance_deductions.py (new)"
+  ],
+  "success_rate": {"backend": "100% (6/6)", "frontend": "100% (InvoiceView + InvoiceCreate preview both verified visually and via DOM assertions)"},
+  "test_credentials": "Bearer test_session_bitumen_2026 (user test-user-bitumen) — session already seeded per /app/memory/test_credentials.md.",
+  "seed_data_creation": "Test data was seeded via API and cleaned up after tests (module fixture + explicit mongosh delete at end). No residual test data remains for test-user-bitumen.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter17 validated: create Trip with diesel/advance → Invoice.diesel_deduction_total / advance_deduction_total persisted; edit Trip → invoice auto-recomputes; PDF labels present ('Less: Diesel from Customer', 'Less: Customer Advance Received', 'Net Freight (Taxable)'); InvoiceView renders trip sub-rows (₹ (x,xxx.xx)) and summary rows in rose-700; InvoiceCreate.jsx preview mirrors backend formula (Freight − Diesel − Advance = Net Freight). Multi-company scoping unaffected. Note server.py has a latent shortage-double-count bug when both t.shortage_amount and expenses.shortage_amount are set — not exercised by this iteration but flagged for cleanup.",
+  "rca of the issue": "N/A — feature validated end-to-end, no defects."
+}

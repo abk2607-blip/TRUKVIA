@@ -288,6 +288,8 @@ class Invoice(BaseModel):
     halting_total: float = 0.0
     excess_total: float = 0.0
     shortage_total: float = 0.0
+    diesel_deduction_total: float = 0.0
+    advance_deduction_total: float = 0.0
     gst_type: Literal["cgst_sgst", "igst"] = "cgst_sgst"
     cgst_rate: float = 2.5
     sgst_rate: float = 2.5
@@ -718,13 +720,19 @@ def _compute_trip(t: Trip) -> Trip:
     return t
 
 def _trip_billable(t: dict) -> float:
-    """Billable freight for invoice = freight + halting + excess − shortage."""
+    """Billable freight to customer for invoicing.
+    = Freight + Halting + Excess − Shortage − Diesel-from-Customer − Advance-from-Customer.
+    Diesel & Advance are customer-side reimbursements: the customer already paid
+    (or funded) these amounts, so they must be netted off the invoice total."""
+    e = t.get("expenses") or {}
     return round(
         float(t.get("freight_amount", 0))
         + float(t.get("halting_amount", 0))
         + float(t.get("excess_amount", 0))
         - float(t.get("shortage_amount", 0))
-        - float((t.get("expenses") or {}).get("shortage_amount", 0)),
+        - float(e.get("shortage_amount", 0))
+        - float(e.get("diesel_from_customer_amount", 0))
+        - float(e.get("cash_advance_received", 0)),
         2,
     )
 
@@ -814,6 +822,8 @@ async def _recompute_invoice(iid: str, user):
     shortage_total = round(
         sum(t.get("shortage_amount", 0.0) + (t.get("expenses") or {}).get("shortage_amount", 0.0) for t in trips), 2,
     )
+    diesel_deduction_total = round(sum((t.get("expenses") or {}).get("diesel_from_customer_amount", 0.0) for t in trips), 2)
+    advance_deduction_total = round(sum((t.get("expenses") or {}).get("cash_advance_received", 0.0) for t in trips), 2)
     subtotal = round(sum(_trip_billable(t) for t in trips), 2)
     # Auto GST re-evaluation on edit (customer/company state may have changed)
     customer_doc = await db.customers.find_one({"id": inv.get("customer_id"), "user_id": user["user_id"]}, {"_id": 0}) or {}
@@ -838,6 +848,8 @@ async def _recompute_invoice(iid: str, user):
         {"id": iid, "user_id": user["user_id"]},
         {"$set": {"subtotal": subtotal, "freight_total": freight_total, "halting_total": halting_total,
                   "excess_total": excess_total, "shortage_total": shortage_total,
+                  "diesel_deduction_total": diesel_deduction_total,
+                  "advance_deduction_total": advance_deduction_total,
                   "gst_type": gst_type,
                   "cgst_amount": cgst, "sgst_amount": sgst, "igst_amount": igst,
                   "total_tax": total_tax, "gross_total": gross_total, "round_off": round_off,
@@ -960,6 +972,8 @@ async def create_invoice(payload: InvoiceCreateRequest, request: Request, user=D
     shortage_total = round(
         sum(t.get("shortage_amount", 0.0) + (t.get("expenses") or {}).get("shortage_amount", 0.0) for t in trips), 2,
     )
+    diesel_deduction_total = round(sum((t.get("expenses") or {}).get("diesel_from_customer_amount", 0.0) for t in trips), 2)
+    advance_deduction_total = round(sum((t.get("expenses") or {}).get("cash_advance_received", 0.0) for t in trips), 2)
     # --- Auto GST type based on state match ---
     customer_doc = await db.customers.find_one({"id": payload.customer_id, "user_id": user["user_id"]}, {"_id": 0}) or {}
     company_doc = await db.companies.find_one({"id": cid, "user_id": user["user_id"]}, {"_id": 0}) or {}
@@ -997,6 +1011,8 @@ async def create_invoice(payload: InvoiceCreateRequest, request: Request, user=D
         halting_total=halting_total,
         excess_total=excess_total,
         shortage_total=shortage_total,
+        diesel_deduction_total=diesel_deduction_total,
+        advance_deduction_total=advance_deduction_total,
         gst_type=gst_type,
         cgst_amount=cgst,
         sgst_amount=sgst,

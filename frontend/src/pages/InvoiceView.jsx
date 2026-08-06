@@ -230,6 +230,30 @@ export default function InvoiceView() {
                         <td className="border border-zinc-300 px-2 py-1 text-right">{fmtCurrency(haltAmt)}</td>
                       </tr>
                     )}
+                    {(() => {
+                      const d = Number((t.expenses || {}).diesel_from_customer_amount || 0);
+                      if (d <= 0) return null;
+                      const dq = Number((t.expenses || {}).diesel_from_customer_qty || 0);
+                      const dr = Number((t.expenses || {}).diesel_from_customer_rate || 0);
+                      return (
+                        <tr className="bg-zinc-50 text-rose-700">
+                          <td className="border border-zinc-300 px-2 py-1"></td>
+                          <td className="border border-zinc-300 px-2 py-1" colSpan={7}>↳ Less: Diesel from Customer{dq > 0 && dr > 0 ? ` — ${dq.toFixed(2)} L × ₹ ${dr.toFixed(2)} / L` : ""}</td>
+                          <td className="border border-zinc-300 px-2 py-1 text-right">({fmtCurrency(d)})</td>
+                        </tr>
+                      );
+                    })()}
+                    {(() => {
+                      const a = Number((t.expenses || {}).cash_advance_received || 0);
+                      if (a <= 0) return null;
+                      return (
+                        <tr className="bg-zinc-50 text-rose-700">
+                          <td className="border border-zinc-300 px-2 py-1"></td>
+                          <td className="border border-zinc-300 px-2 py-1" colSpan={7}>↳ Less: Customer Advance Received</td>
+                          <td className="border border-zinc-300 px-2 py-1 text-right">({fmtCurrency(a)})</td>
+                        </tr>
+                      );
+                    })()}
                     {shortAmt > 0 && (
                       <tr className="bg-zinc-50 text-rose-700">
                         <td className="border border-zinc-300 px-2 py-1"></td>
@@ -283,7 +307,13 @@ export default function InvoiceView() {
                 {invoice.shortage_total > 0 && (
                   <tr><td className="border-b border-zinc-300 px-3 py-1.5 text-rose-700">Less: Shortage Deduction</td><td className="border-b border-zinc-300 px-3 py-1.5 text-right text-rose-700">({fmtCurrency(invoice.shortage_total)})</td></tr>
                 )}
-                <tr className="bg-zinc-50"><td className="border-b border-zinc-300 px-3 py-1.5 font-bold">Taxable Amount</td><td className="border-b border-zinc-300 px-3 py-1.5 text-right font-bold">{fmtCurrency(invoice.subtotal)}</td></tr>
+                {invoice.diesel_deduction_total > 0 && (
+                  <tr><td className="border-b border-zinc-300 px-3 py-1.5 text-rose-700">Less: Diesel from Customer</td><td className="border-b border-zinc-300 px-3 py-1.5 text-right text-rose-700">({fmtCurrency(invoice.diesel_deduction_total)})</td></tr>
+                )}
+                {invoice.advance_deduction_total > 0 && (
+                  <tr><td className="border-b border-zinc-300 px-3 py-1.5 text-rose-700">Less: Customer Advance Received</td><td className="border-b border-zinc-300 px-3 py-1.5 text-right text-rose-700">({fmtCurrency(invoice.advance_deduction_total)})</td></tr>
+                )}
+                <tr className="bg-zinc-50"><td className="border-b border-zinc-300 px-3 py-1.5 font-bold">Net Freight (Taxable)</td><td className="border-b border-zinc-300 px-3 py-1.5 text-right font-bold">{fmtCurrency(invoice.subtotal)}</td></tr>
                 {invoice.gst_type === "cgst_sgst" ? (
                   <>
                     <tr><td className="border-b border-zinc-300 px-3 py-1.5">CGST @ 2.5%</td><td className="border-b border-zinc-300 px-3 py-1.5 text-right">{fmtCurrency(invoice.cgst_amount)}</td></tr>
