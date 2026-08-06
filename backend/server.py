@@ -495,9 +495,24 @@ async def _active_company_id(request: Request, user: dict) -> str:
     return default["id"]
 
 async def _backfill_company_id(user_id: str, company_id: str):
-    """Assign the given company_id to any legacy trip/invoice/file lacking one for this user."""
-    for coll in ("trips", "invoices", "files", "audit_logs"):
-        await db[coll].update_many({"user_id": user_id, "$or": [{"company_id": {"$exists": False}}, {"company_id": ""}]}, {"$set": {"company_id": company_id}})
+    """Assign the given company_id to any legacy doc lacking one for this user.
+
+    Includes both transaction collections (trips/invoices/files/audit_logs/fuel)
+    and master collections (customers/vehicles/drivers/products/parties). Every
+    legacy master with no company_id is assigned to the caller's default company
+    so multi-company isolation is enforceable going forward."""
+    for coll in ("trips", "invoices", "files", "audit_logs", "fuel",
+                 "customers", "vehicles", "drivers", "products", "parties"):
+        await db[coll].update_many(
+            {"user_id": user_id, "$or": [{"company_id": {"$exists": False}}, {"company_id": ""}]},
+            {"$set": {"company_id": company_id}},
+        )
+
+async def _backfill_to_default(user_id: str):
+    """Backfill legacy docs to the user's default company (idempotent, always safe)."""
+    default = await _get_or_create_default_company(user_id)
+    await _backfill_company_id(user_id, default["id"])
+    return default["id"]
 
 # ==================== Company Settings ====================
 
@@ -575,34 +590,41 @@ async def save_company(payload: Company, request: Request, user=Depends(get_curr
 # ==================== Customers ====================
 
 @api.get("/customers")
-async def list_customers(user=Depends(get_current_user)):
-    docs = await db.customers.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).to_list(1000)
+async def list_customers(request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
+    await _backfill_to_default(user["user_id"])
+    docs = await db.customers.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(1000)
     return docs
 
 @api.post("/customers")
-async def create_customer(payload: Customer, user=Depends(get_current_user)):
+async def create_customer(payload: Customer, request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
     doc = payload.model_dump()
     doc["user_id"] = user["user_id"]
+    doc["company_id"] = cid
     await db.customers.insert_one(doc)
     doc.pop("user_id", None)
     doc.pop("_id", None)
     return doc
 
 @api.put("/customers/{cid}")
-async def update_customer(cid: str, payload: Customer, user=Depends(get_current_user)):
+async def update_customer(cid: str, payload: Customer, request: Request, user=Depends(get_current_user)):
+    company_id = await _active_company_id(request, user)
     doc = payload.model_dump()
     doc["id"] = cid
     doc["user_id"] = user["user_id"]
+    doc["company_id"] = company_id
     await db.customers.update_one(
-        {"id": cid, "user_id": user["user_id"]},
+        {"id": cid, "user_id": user["user_id"], "company_id": company_id},
         {"$set": doc},
     )
     doc.pop("user_id", None)
     return doc
 
 @api.delete("/customers/{cid}")
-async def delete_customer(cid: str, user=Depends(get_current_user)):
-    await db.customers.delete_one({"id": cid, "user_id": user["user_id"]})
+async def delete_customer(cid: str, request: Request, user=Depends(get_current_user)):
+    company_id = await _active_company_id(request, user)
+    await db.customers.delete_one({"id": cid, "user_id": user["user_id"], "company_id": company_id})
     return {"ok": True}
 
 # ==================== Trips ====================
@@ -739,7 +761,7 @@ def _trip_billable(t: dict) -> float:
 @api.get("/trips")
 async def list_trips(request: Request, user=Depends(get_current_user), customer_id: Optional[str] = None, status: Optional[str] = None):
     cid = await _active_company_id(request, user)
-    await _backfill_company_id(user["user_id"], cid)
+    await _backfill_to_default(user["user_id"])
     q = {"user_id": user["user_id"], "company_id": cid}
     if customer_id:
         q["customer_id"] = customer_id
@@ -753,7 +775,7 @@ async def create_trip(payload: Trip, request: Request, user=Depends(get_current_
     cid = await _active_company_id(request, user)
     payload.company_id = cid
     if not payload.vehicle_id and payload.vehicle_number:
-        v = await db.vehicles.find_one({"vehicle_number": payload.vehicle_number.upper(), "user_id": user["user_id"]}, {"_id": 0})
+        v = await db.vehicles.find_one({"vehicle_number": payload.vehicle_number.upper(), "user_id": user["user_id"], "company_id": cid}, {"_id": 0})
         if v:
             payload.vehicle_id = v["id"]
             payload.vehicle_type = v.get("vehicle_type", "own")
@@ -769,13 +791,15 @@ async def create_trip(payload: Trip, request: Request, user=Depends(get_current_
     return doc
 
 @api.put("/trips/{tid}")
-async def update_trip(tid: str, payload: Trip, user=Depends(get_current_user)):
-    existing = await db.trips.find_one({"id": tid, "user_id": user["user_id"]}, {"_id": 0})
+async def update_trip(tid: str, payload: Trip, request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
+    existing = await db.trips.find_one({"id": tid, "user_id": user["user_id"], "company_id": cid}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Trip not found")
     payload.id = tid
+    payload.company_id = cid
     if payload.vehicle_number:
-        v = await db.vehicles.find_one({"vehicle_number": payload.vehicle_number.upper(), "user_id": user["user_id"]}, {"_id": 0})
+        v = await db.vehicles.find_one({"vehicle_number": payload.vehicle_number.upper(), "user_id": user["user_id"], "company_id": cid}, {"_id": 0})
         if v:
             payload.vehicle_id = v["id"]
             payload.vehicle_type = v.get("vehicle_type", "own")
@@ -786,7 +810,7 @@ async def update_trip(tid: str, payload: Trip, user=Depends(get_current_user)):
     doc["user_id"] = user["user_id"]
     doc["invoice_id"] = existing.get("invoice_id")
     doc["status"] = existing.get("status", "pending")
-    await db.trips.update_one({"id": tid, "user_id": user["user_id"]}, {"$set": doc})
+    await db.trips.update_one({"id": tid, "user_id": user["user_id"], "company_id": cid}, {"$set": doc})
     if existing.get("invoice_id"):
         await _recompute_invoice(existing["invoice_id"], user)
     changes = _diff_dict(existing, doc, ["freight_amount", "tons", "rate_per_ton", "supplier_freight", "total_expense", "profit", "vehicle_number", "vehicle_type"])
@@ -795,16 +819,17 @@ async def update_trip(tid: str, payload: Trip, user=Depends(get_current_user)):
     return doc
 
 @api.delete("/trips/{tid}")
-async def delete_trip(tid: str, reason: str = "", user=Depends(get_current_user)):
+async def delete_trip(tid: str, request: Request, reason: str = "", user=Depends(get_current_user)):
     if not _has_perm(user, "delete_trip"):
         raise HTTPException(status_code=403, detail="Missing permission: delete_trip")
     if not (reason or "").strip():
         raise HTTPException(status_code=400, detail="Reason for deletion is required")
-    existing = await db.trips.find_one({"id": tid, "user_id": user["user_id"]}, {"_id": 0})
+    cid = await _active_company_id(request, user)
+    existing = await db.trips.find_one({"id": tid, "user_id": user["user_id"], "company_id": cid}, {"_id": 0})
     if not existing:
         raise HTTPException(status_code=404, detail="Trip not found")
     linked_invoice_id = existing.get("invoice_id")
-    await db.trips.delete_one({"id": tid, "user_id": user["user_id"]})
+    await db.trips.delete_one({"id": tid, "user_id": user["user_id"], "company_id": cid})
     if linked_invoice_id:
         await _recompute_invoice(linked_invoice_id, user)
     await _log_audit(user, "trip", "delete", entity_id=tid, entity_ref=existing.get("vehicle_number", ""), reason=reason,
@@ -826,8 +851,10 @@ async def _recompute_invoice(iid: str, user):
     advance_deduction_total = round(sum((t.get("expenses") or {}).get("cash_advance_received", 0.0) for t in trips), 2)
     subtotal = round(sum(_trip_billable(t) for t in trips), 2)
     # Auto GST re-evaluation on edit (customer/company state may have changed)
+    inv_company_id = inv.get("company_id", "")
     customer_doc = await db.customers.find_one({"id": inv.get("customer_id"), "user_id": user["user_id"]}, {"_id": 0}) or {}
-    company_doc = await db.companies.find_one({"user_id": user["user_id"]}, {"_id": 0}) or {}
+    company_doc = await db.companies.find_one({"id": inv_company_id, "user_id": user["user_id"]}, {"_id": 0}) if inv_company_id else None
+    company_doc = company_doc or await db.companies.find_one({"user_id": user["user_id"], "is_default": True}, {"_id": 0}) or {}
     home_state = (company_doc.get("state") or "").strip().lower()
     cust_state = (customer_doc.get("state") or "").strip().lower()
     if home_state and cust_state:
@@ -909,7 +936,7 @@ async def _next_invoice_number_for_company(company_id: str, user_id: str) -> str
 @api.get("/invoices")
 async def list_invoices(request: Request, user=Depends(get_current_user)):
     cid = await _active_company_id(request, user)
-    await _backfill_company_id(user["user_id"], cid)
+    await _backfill_to_default(user["user_id"])
     docs = await db.invoices.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "user_id": 0}).sort("created_at", -1).to_list(1000)
     return docs
 
@@ -926,7 +953,7 @@ async def list_overdue_invoices(request: Request, days: int = 30, user=Depends(g
         "balance_due": {"$gt": 0.01},
         "invoice_date": {"$lte": cutoff},
     }, {"_id": 0, "user_id": 0}).sort("invoice_date", 1).to_list(500)
-    customers = await db.customers.find({"user_id": uid}, {"_id": 0}).to_list(2000)
+    customers = await db.customers.find({"user_id": uid, "company_id": cid}, {"_id": 0}).to_list(2000)
     cmap = {c["id"]: c for c in customers}
     today = now_utc().date()
     out = []
@@ -1070,7 +1097,9 @@ async def update_invoice(iid: str, payload: InvoiceUpdateRequest, user=Depends(g
     # Auto-save PDF snapshot to storage (best-effort, non-blocking on failure)
     try:
         customer = await db.customers.find_one({"id": updated["customer_id"], "user_id": user["user_id"]}, {"_id": 0}) or {}
-        company = await db.companies.find_one({"user_id": user["user_id"]}, {"_id": 0}) or {}
+        inv_company_id = updated.get("company_id", "")
+        company = await db.companies.find_one({"id": inv_company_id, "user_id": user["user_id"]}, {"_id": 0}) if inv_company_id else None
+        company = company or await db.companies.find_one({"user_id": user["user_id"], "is_default": True}, {"_id": 0}) or {}
         trip_docs = await db.trips.find({"user_id": user["user_id"], "id": {"$in": updated["trip_ids"]}}, {"_id": 0}).to_list(500)
         trip_docs.sort(key=lambda t: t.get("date", ""))
         pdf_bytes = build_invoice_pdf(company, customer, updated, trip_docs)
@@ -1142,7 +1171,9 @@ async def invoice_pdf(iid: str, user=Depends(get_current_user)):
     if not inv:
         raise HTTPException(status_code=404, detail="Not found")
     customer = await db.customers.find_one({"id": inv["customer_id"], "user_id": user["user_id"]}, {"_id": 0}) or {}
-    company = await db.companies.find_one({"user_id": user["user_id"]}, {"_id": 0}) or {}
+    inv_company_id = inv.get("company_id", "")
+    company = await db.companies.find_one({"id": inv_company_id, "user_id": user["user_id"]}, {"_id": 0}) if inv_company_id else None
+    company = company or await db.companies.find_one({"user_id": user["user_id"], "is_default": True}, {"_id": 0}) or {}
     trips = await db.trips.find(
         {"user_id": user["user_id"], "id": {"$in": inv["trip_ids"]}},
         {"_id": 0},
@@ -1163,7 +1194,7 @@ async def dashboard(request: Request, user=Depends(get_current_user)):
     cid = await _active_company_id(request, user)
     trips = await db.trips.find({"user_id": uid, "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(5000)
     invoices = await db.invoices.find({"user_id": uid, "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(2000)
-    customers = await db.customers.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(2000)
+    customers = await db.customers.find({"user_id": uid, "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(2000)
 
     total_revenue = round(sum(t.get("freight_amount", 0.0) for t in trips), 2)
     total_expense = round(sum(t.get("total_expense", 0.0) for t in trips), 2)
@@ -1181,13 +1212,13 @@ async def dashboard(request: Request, user=Depends(get_current_user)):
     receivables = {}
     today = now_utc().date()
     for i in invoices:
-        cid = i["customer_id"]
+        cust_id = i["customer_id"]
         bal = i.get("balance_due", 0.0)
         if bal <= 0:
             continue
-        c = cust_map.get(cid, {})
-        rec = receivables.setdefault(cid, {
-            "customer_id": cid,
+        c = cust_map.get(cust_id, {})
+        rec = receivables.setdefault(cust_id, {
+            "customer_id": cust_id,
             "customer_name": c.get("name", "Unknown"),
             "customer_phone": c.get("phone", ""),
             "balance": 0.0,
@@ -1211,7 +1242,7 @@ async def dashboard(request: Request, user=Depends(get_current_user)):
         rt["customer_name"] = cust_map.get(rt.get("customer_id"), {}).get("name", "")
 
     # Vehicle expiry alerts (within 60 days or expired)
-    vehicles = await db.vehicles.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(500)
+    vehicles = await db.vehicles.find({"user_id": uid, "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(500)
     expiry_alerts = []
     for v in vehicles:
         v = _vehicle_expiry_stats(v)
@@ -1246,10 +1277,12 @@ async def dashboard(request: Request, user=Depends(get_current_user)):
 # ==================== Drivers ====================
 
 @api.get("/drivers")
-async def list_drivers(user=Depends(get_current_user)):
-    drivers = await db.drivers.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).to_list(1000)
-    # Attach stats
-    trips = await db.trips.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(5000)
+async def list_drivers(request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
+    await _backfill_to_default(user["user_id"])
+    drivers = await db.drivers.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(1000)
+    # Attach stats (trips scoped to same company)
+    trips = await db.trips.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0}).to_list(5000)
     stats = {}
     for t in trips:
         did = t.get("driver_id")
@@ -1266,25 +1299,30 @@ async def list_drivers(user=Depends(get_current_user)):
     return drivers
 
 @api.post("/drivers")
-async def create_driver(payload: Driver, user=Depends(get_current_user)):
+async def create_driver(payload: Driver, request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
     doc = payload.model_dump()
     doc["user_id"] = user["user_id"]
+    doc["company_id"] = cid
     await db.drivers.insert_one(doc)
     doc.pop("_id", None); doc.pop("user_id", None)
     return doc
 
 @api.put("/drivers/{did}")
-async def update_driver(did: str, payload: Driver, user=Depends(get_current_user)):
+async def update_driver(did: str, payload: Driver, request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
     payload.id = did
     doc = payload.model_dump()
     doc["user_id"] = user["user_id"]
-    await db.drivers.update_one({"id": did, "user_id": user["user_id"]}, {"$set": doc})
+    doc["company_id"] = cid
+    await db.drivers.update_one({"id": did, "user_id": user["user_id"], "company_id": cid}, {"$set": doc})
     doc.pop("_id", None); doc.pop("user_id", None)
     return doc
 
 @api.delete("/drivers/{did}")
-async def delete_driver(did: str, user=Depends(get_current_user)):
-    await db.drivers.delete_one({"id": did, "user_id": user["user_id"]})
+async def delete_driver(did: str, request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
+    await db.drivers.delete_one({"id": did, "user_id": user["user_id"], "company_id": cid})
     return {"ok": True}
 
 # ==================== Trip Bulk Import ====================
@@ -1312,7 +1350,8 @@ async def trip_import_template():
     )
 
 @api.post("/trips/import")
-async def trip_import(file: UploadFile = File(...), user=Depends(get_current_user)):
+async def trip_import(request: Request, file: UploadFile = File(...), user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
     contents = await file.read()
     fname = (file.filename or "").lower()
     try:
@@ -1325,9 +1364,9 @@ async def trip_import(file: UploadFile = File(...), user=Depends(get_current_use
 
     # Normalize columns
     df.columns = [str(c).strip().lower() for c in df.columns]
-    customers = await db.customers.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(2000)
+    customers = await db.customers.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0}).to_list(2000)
     cust_by_name = {c["name"].strip().lower(): c["id"] for c in customers}
-    drivers = await db.drivers.find({"user_id": user["user_id"]}, {"_id": 0}).to_list(1000)
+    drivers = await db.drivers.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0}).to_list(1000)
     driver_by_name = {d["name"].strip().lower(): d["id"] for d in drivers}
 
     inserted = 0
@@ -1389,6 +1428,7 @@ async def trip_import(file: UploadFile = File(...), user=Depends(get_current_use
             trip = _compute_trip(trip)
             d = trip.model_dump()
             d["user_id"] = user["user_id"]
+            d["company_id"] = cid
             docs.append(d)
         except Exception as e:
             errors.append({"row": int(idx) + 2, "error": str(e)})
@@ -1420,7 +1460,9 @@ async def public_invoice_pdf(token: str):
     if not inv:
         raise HTTPException(status_code=404, detail="Not found")
     customer = await db.customers.find_one({"id": inv["customer_id"], "user_id": inv["user_id"]}, {"_id": 0}) or {}
-    company = await db.companies.find_one({"user_id": inv["user_id"]}, {"_id": 0}) or {}
+    inv_company_id = inv.get("company_id", "")
+    company = await db.companies.find_one({"id": inv_company_id, "user_id": inv["user_id"]}, {"_id": 0}) if inv_company_id else None
+    company = company or await db.companies.find_one({"user_id": inv["user_id"], "is_default": True}, {"_id": 0}) or {}
     trips = await db.trips.find(
         {"user_id": inv["user_id"], "id": {"$in": inv["trip_ids"]}},
         {"_id": 0},
@@ -1436,30 +1478,37 @@ async def public_invoice_pdf(token: str):
 # ==================== Products (Load Master) ====================
 
 @api.get("/products")
-async def list_products(user=Depends(get_current_user)):
-    docs = await db.products.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).to_list(1000)
+async def list_products(request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
+    await _backfill_to_default(user["user_id"])
+    docs = await db.products.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(1000)
     return docs
 
 @api.post("/products")
-async def create_product(payload: Product, user=Depends(get_current_user)):
+async def create_product(payload: Product, request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
     doc = payload.model_dump()
     doc["user_id"] = user["user_id"]
+    doc["company_id"] = cid
     await db.products.insert_one(doc)
     doc.pop("_id", None); doc.pop("user_id", None)
     return doc
 
 @api.put("/products/{pid}")
-async def update_product(pid: str, payload: Product, user=Depends(get_current_user)):
+async def update_product(pid: str, payload: Product, request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
     payload.id = pid
     doc = payload.model_dump()
     doc["user_id"] = user["user_id"]
-    await db.products.update_one({"id": pid, "user_id": user["user_id"]}, {"$set": doc})
+    doc["company_id"] = cid
+    await db.products.update_one({"id": pid, "user_id": user["user_id"], "company_id": cid}, {"$set": doc})
     doc.pop("_id", None); doc.pop("user_id", None)
     return doc
 
 @api.delete("/products/{pid}")
-async def delete_product(pid: str, user=Depends(get_current_user)):
-    await db.products.delete_one({"id": pid, "user_id": user["user_id"]})
+async def delete_product(pid: str, request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
+    await db.products.delete_one({"id": pid, "user_id": user["user_id"], "company_id": cid})
     return {"ok": True}
 
 # ==================== Company Logo ====================
@@ -1510,7 +1559,7 @@ async def report_ledger(
 ):
     uid = user["user_id"]
     cid = await _active_company_id(request, user)
-    customer = await db.customers.find_one({"id": customer_id, "user_id": uid}, {"_id": 0})
+    customer = await db.customers.find_one({"id": customer_id, "user_id": uid, "company_id": cid}, {"_id": 0})
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
     invoices = await db.invoices.find({"user_id": uid, "company_id": cid, "customer_id": customer_id}, {"_id": 0, "user_id": 0}).to_list(2000)
@@ -1576,13 +1625,15 @@ async def report_ledger(
 
 @api.get("/reports/ledger/pdf")
 async def report_ledger_pdf(
+    request: Request,
     customer_id: str,
     start: Optional[str] = None,
     end: Optional[str] = None,
     user=Depends(get_current_user),
 ):
-    ledger = await report_ledger(customer_id=customer_id, start=start, end=end, user=user)
-    company = await db.companies.find_one({"user_id": user["user_id"]}, {"_id": 0}) or {}
+    ledger = await report_ledger(request=request, customer_id=customer_id, start=start, end=end, user=user)
+    cid = await _active_company_id(request, user)
+    company = await db.companies.find_one({"id": cid, "user_id": user["user_id"]}, {"_id": 0}) or {}
     pdf_bytes = build_ledger_pdf(company, ledger)
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
@@ -1620,12 +1671,12 @@ async def report_profit_loss(
     margin = round((net_profit / revenue * 100.0), 2) if revenue > 0 else 0.0
 
     # Per-customer breakdown
-    customers = await db.customers.find({"user_id": uid}, {"_id": 0}).to_list(2000)
+    customers = await db.customers.find({"user_id": uid, "company_id": cid}, {"_id": 0}).to_list(2000)
     cmap = {c["id"]: c.get("name", "Unknown") for c in customers}
     per_customer = {}
     for t in trips:
-        cid = t.get("customer_id")
-        b = per_customer.setdefault(cid, {"customer_id": cid, "customer_name": cmap.get(cid, "Unknown"), "trips": 0, "revenue": 0.0, "expense": 0.0, "profit": 0.0, "tons": 0.0})
+        cust_id = t.get("customer_id")
+        b = per_customer.setdefault(cust_id, {"customer_id": cust_id, "customer_name": cmap.get(cust_id, "Unknown"), "trips": 0, "revenue": 0.0, "expense": 0.0, "profit": 0.0, "tons": 0.0})
         b["trips"] += 1
         billable = float(t.get("freight_amount", 0)) + float(t.get("halting_amount", 0)) + float(t.get("excess_amount", 0)) - float(t.get("shortage_amount", 0)) - float((t.get("expenses") or {}).get("shortage_amount", 0))
         b["revenue"] += billable
@@ -1731,71 +1782,86 @@ def _vehicle_expiry_stats(v: dict) -> dict:
     return v
 
 @api.get("/vehicles")
-async def list_vehicles(user=Depends(get_current_user)):
-    docs = await db.vehicles.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).to_list(1000)
+async def list_vehicles(request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
+    await _backfill_to_default(user["user_id"])
+    docs = await db.vehicles.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(1000)
     return [_vehicle_expiry_stats(v) for v in docs]
 
 @api.post("/vehicles")
-async def create_vehicle(payload: Vehicle, user=Depends(get_current_user)):
+async def create_vehicle(payload: Vehicle, request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
     payload.vehicle_number = payload.vehicle_number.upper().strip()
     doc = payload.model_dump()
     doc["user_id"] = user["user_id"]
+    doc["company_id"] = cid
     await db.vehicles.insert_one(doc)
     doc.pop("_id", None); doc.pop("user_id", None)
     return _vehicle_expiry_stats(doc)
 
 @api.put("/vehicles/{vid}")
-async def update_vehicle(vid: str, payload: Vehicle, user=Depends(get_current_user)):
+async def update_vehicle(vid: str, payload: Vehicle, request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
     payload.id = vid
     payload.vehicle_number = payload.vehicle_number.upper().strip()
     doc = payload.model_dump()
     doc["user_id"] = user["user_id"]
-    await db.vehicles.update_one({"id": vid, "user_id": user["user_id"]}, {"$set": doc})
+    doc["company_id"] = cid
+    await db.vehicles.update_one({"id": vid, "user_id": user["user_id"], "company_id": cid}, {"$set": doc})
     doc.pop("_id", None); doc.pop("user_id", None)
     return _vehicle_expiry_stats(doc)
 
 @api.delete("/vehicles/{vid}")
-async def delete_vehicle(vid: str, user=Depends(get_current_user)):
-    await db.vehicles.delete_one({"id": vid, "user_id": user["user_id"]})
+async def delete_vehicle(vid: str, request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
+    await db.vehicles.delete_one({"id": vid, "user_id": user["user_id"], "company_id": cid})
     return {"ok": True}
 
 # ==================== Fuel Log ====================
 
 @api.get("/fuel")
-async def list_fuel(user=Depends(get_current_user)):
-    docs = await db.fuel.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).sort("date", -1).to_list(2000)
+async def list_fuel(request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
+    await _backfill_to_default(user["user_id"])
+    docs = await db.fuel.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "user_id": 0}).sort("date", -1).to_list(2000)
     return docs
 
 @api.post("/fuel")
-async def create_fuel(payload: Fuel, user=Depends(get_current_user)):
+async def create_fuel(payload: Fuel, request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
     payload.vehicle_number = payload.vehicle_number.upper().strip()
     payload.amount = round(payload.litres * payload.rate_per_litre, 2) if payload.amount == 0 else round(payload.amount, 2)
     doc = payload.model_dump()
     doc["user_id"] = user["user_id"]
+    doc["company_id"] = cid
     await db.fuel.insert_one(doc)
     doc.pop("_id", None); doc.pop("user_id", None)
     return doc
 
 @api.put("/fuel/{fid}")
-async def update_fuel(fid: str, payload: Fuel, user=Depends(get_current_user)):
+async def update_fuel(fid: str, payload: Fuel, request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
     payload.id = fid
     payload.vehicle_number = payload.vehicle_number.upper().strip()
     payload.amount = round(payload.litres * payload.rate_per_litre, 2) if payload.amount == 0 else round(payload.amount, 2)
     doc = payload.model_dump()
     doc["user_id"] = user["user_id"]
-    await db.fuel.update_one({"id": fid, "user_id": user["user_id"]}, {"$set": doc})
+    doc["company_id"] = cid
+    await db.fuel.update_one({"id": fid, "user_id": user["user_id"], "company_id": cid}, {"$set": doc})
     doc.pop("_id", None); doc.pop("user_id", None)
     return doc
 
 @api.delete("/fuel/{fid}")
-async def delete_fuel(fid: str, user=Depends(get_current_user)):
-    await db.fuel.delete_one({"id": fid, "user_id": user["user_id"]})
+async def delete_fuel(fid: str, request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
+    await db.fuel.delete_one({"id": fid, "user_id": user["user_id"], "company_id": cid})
     return {"ok": True}
 
 @api.get("/fuel/summary")
-async def fuel_summary(user=Depends(get_current_user)):
+async def fuel_summary(request: Request, user=Depends(get_current_user)):
     uid = user["user_id"]
-    fuels = await db.fuel.find({"user_id": uid}, {"_id": 0}).sort("date", 1).to_list(5000)
+    cid = await _active_company_id(request, user)
+    fuels = await db.fuel.find({"user_id": uid, "company_id": cid}, {"_id": 0}).sort("date", 1).to_list(5000)
     by_vehicle: dict = {}
     for f in fuels:
         vno = (f.get("vehicle_number") or "").upper()
@@ -1930,7 +1996,7 @@ async def report_gstr1(month: str, request: Request, user=Depends(get_current_us
     cid = await _active_company_id(request, user)
     invoices = await db.invoices.find({"user_id": uid, "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(5000)
     invoices = [i for i in invoices if start <= i.get("invoice_date", "") <= end]
-    customers = await db.customers.find({"user_id": uid}, {"_id": 0}).to_list(2000)
+    customers = await db.customers.find({"user_id": uid, "company_id": cid}, {"_id": 0}).to_list(2000)
     cmap = {c["id"]: c for c in customers}
     company = await db.companies.find_one({"id": cid, "user_id": uid}, {"_id": 0}) or {}
     home_state_code = _state_code(company.get("state", ""))
@@ -2004,7 +2070,9 @@ async def eway_bill(tid: str, user=Depends(get_current_user)):
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found")
     customer = await db.customers.find_one({"id": trip["customer_id"], "user_id": user["user_id"]}, {"_id": 0}) or {}
-    company = await db.companies.find_one({"user_id": user["user_id"]}, {"_id": 0}) or {}
+    trip_company_id = trip.get("company_id", "")
+    company = await db.companies.find_one({"id": trip_company_id, "user_id": user["user_id"]}, {"_id": 0}) if trip_company_id else None
+    company = company or await db.companies.find_one({"user_id": user["user_id"], "is_default": True}, {"_id": 0}) or {}
 
     invoice = None
     if trip.get("invoice_id"):
@@ -2156,6 +2224,7 @@ async def file_usage(user=Depends(get_current_user)):
 
 @api.post("/files/bulk-upload")
 async def bulk_upload(
+    request: Request,
     files: List[UploadFile] = File(...),
     category: str = "general",
     user=Depends(get_current_user),
@@ -2163,6 +2232,7 @@ async def bulk_upload(
     """Upload multiple files. Auto-tag vehicle_number and date from filename pattern
     like 'AP16TA1234_2026-02-05_anything.jpg' or 'AP16TA1234-2026-02-05.png'."""
     import re
+    cid = await _active_company_id(request, user)
     results = []
     veh_re = re.compile(r"([A-Z]{2}[-\s]?\d{1,2}[-\s]?[A-Z]{1,3}[-\s]?\d{1,4})", re.IGNORECASE)
     date_re = re.compile(r"(20\d{2}[-_/.](?:0[1-9]|1[0-2])[-_/.](?:0[1-9]|[12]\d|3[01]))")
@@ -2187,7 +2257,7 @@ async def bulk_upload(
             tags = {}
             if veh_match:
                 vno = re.sub(r"[-\s]", "", veh_match.group(1)).upper()
-                v = await db.vehicles.find_one({"vehicle_number": vno, "user_id": user["user_id"]}, {"_id": 0})
+                v = await db.vehicles.find_one({"vehicle_number": vno, "user_id": user["user_id"], "company_id": cid}, {"_id": 0})
                 if v:
                     linked_type = "vehicle"; linked_id = v["id"]
                 tags["vehicle_number"] = vno
@@ -2251,8 +2321,11 @@ async def delete_file(fid: str, user=Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Not found")
     return {"ok": True}
 
-async def _next_lr_number(user_id: str) -> str:
-    company = await db.companies.find_one({"user_id": user_id}, {"_id": 0})
+async def _next_lr_number(user_id: str, company_id: str = "") -> str:
+    q = {"user_id": user_id, "id": company_id} if company_id else {"user_id": user_id, "is_default": True}
+    company = await db.companies.find_one(q, {"_id": 0})
+    if not company and company_id:
+        company = await db.companies.find_one({"user_id": user_id, "id": company_id}, {"_id": 0})
     prefix = "LR"
     seq = 1
     if company:
@@ -2263,10 +2336,11 @@ async def _next_lr_number(user_id: str) -> str:
     yr_next = (fy.year + 1) % 100
     fy_str = f"{yr:02d}-{yr_next:02d}" if fy.month >= 4 else f"{yr-1:02d}-{yr:02d}"
     num = f"{prefix}/{fy_str}/{seq:05d}"
+    match_q = {"user_id": user_id, "id": company["id"]} if company and company.get("id") else {"user_id": user_id}
     await db.companies.update_one(
-        {"user_id": user_id},
+        match_q,
         {"$set": {"next_lr_number": seq + 1}},
-        upsert=True,
+        upsert=False,
     )
     return num
 
@@ -2276,13 +2350,15 @@ async def trip_lr_pdf(tid: str, user=Depends(get_current_user)):
     trip = await db.trips.find_one({"id": tid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found")
-    # Auto-assign lr_number if missing
+    # Auto-assign lr_number if missing (per-company LR series)
     if not trip.get("lr_number"):
-        lr_num = await _next_lr_number(user["user_id"])
+        lr_num = await _next_lr_number(user["user_id"], trip.get("company_id", ""))
         await db.trips.update_one({"id": tid, "user_id": user["user_id"]}, {"$set": {"lr_number": lr_num}})
         trip["lr_number"] = lr_num
     customer = await db.customers.find_one({"id": trip["customer_id"], "user_id": user["user_id"]}, {"_id": 0}) or {}
-    company = await db.companies.find_one({"user_id": user["user_id"]}, {"_id": 0}) or {}
+    trip_company_id = trip.get("company_id", "")
+    company = await db.companies.find_one({"id": trip_company_id, "user_id": user["user_id"]}, {"_id": 0}) if trip_company_id else None
+    company = company or await db.companies.find_one({"user_id": user["user_id"], "is_default": True}, {"_id": 0}) or {}
     pdf_bytes = build_lr_pdf(company, customer, trip)
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
@@ -2421,33 +2497,40 @@ async def report_supplier_pl(request: Request, start: Optional[str] = None, end:
 # ==================== Consignor / Consignee Master ====================
 
 @api.get("/parties")
-async def list_parties(party_type: Optional[str] = None, user=Depends(get_current_user)):
-    q = {"user_id": user["user_id"]}
+async def list_parties(request: Request, party_type: Optional[str] = None, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
+    await _backfill_to_default(user["user_id"])
+    q = {"user_id": user["user_id"], "company_id": cid}
     if party_type:
         q["$or"] = [{"party_type": party_type}, {"party_type": "both"}]
     docs = await db.parties.find(q, {"_id": 0, "user_id": 0}).sort("name", 1).to_list(2000)
     return docs
 
 @api.post("/parties")
-async def create_party(payload: Party, user=Depends(get_current_user)):
+async def create_party(payload: Party, request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
     doc = payload.model_dump()
     doc["user_id"] = user["user_id"]
+    doc["company_id"] = cid
     await db.parties.insert_one(doc)
     return payload.model_dump()
 
 @api.put("/parties/{pid}")
-async def update_party(pid: str, payload: Party, user=Depends(get_current_user)):
+async def update_party(pid: str, payload: Party, request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
     upd = payload.model_dump()
     upd["id"] = pid
+    upd["company_id"] = cid
     upd.pop("created_at", None)
-    r = await db.parties.update_one({"id": pid, "user_id": user["user_id"]}, {"$set": upd})
+    r = await db.parties.update_one({"id": pid, "user_id": user["user_id"], "company_id": cid}, {"$set": upd})
     if r.matched_count == 0:
         raise HTTPException(status_code=404, detail="Party not found")
-    return await db.parties.find_one({"id": pid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
+    return await db.parties.find_one({"id": pid, "user_id": user["user_id"], "company_id": cid}, {"_id": 0, "user_id": 0})
 
 @api.delete("/parties/{pid}")
-async def delete_party(pid: str, user=Depends(get_current_user)):
-    r = await db.parties.delete_one({"id": pid, "user_id": user["user_id"]})
+async def delete_party(pid: str, request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
+    r = await db.parties.delete_one({"id": pid, "user_id": user["user_id"], "company_id": cid})
     if r.deleted_count == 0:
         raise HTTPException(status_code=404, detail="Party not found")
     return {"ok": True}
@@ -2465,7 +2548,7 @@ async def report_halting(request: Request, start: Optional[str] = None, end: Opt
     cid = await _active_company_id(request, user)
     trips = await db.trips.find({"user_id": uid, "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(10000)
     trips = [t for t in trips if _in_range(t.get("date", ""), start, end)]
-    customers = await db.customers.find({"user_id": uid}, {"_id": 0}).to_list(2000)
+    customers = await db.customers.find({"user_id": uid, "company_id": cid}, {"_id": 0}).to_list(2000)
     cmap = {c["id"]: c.get("name", "Unknown") for c in customers}
 
     by = {}
@@ -2475,9 +2558,9 @@ async def report_halting(request: Request, start: Optional[str] = None, end: Opt
         charge_days = int(t.get("chargeable_halting_days", 0) or 0)
         if halt <= 0 and charge_days == 0:
             continue
-        cid = t.get("customer_id")
-        b = by.setdefault(cid, {
-            "customer_id": cid, "customer_name": cmap.get(cid, "Unknown"),
+        cust_id = t.get("customer_id")
+        b = by.setdefault(cust_id, {
+            "customer_id": cust_id, "customer_name": cmap.get(cust_id, "Unknown"),
             "trips_with_halting": 0, "total_days": 0, "chargeable_days": 0,
             "halting_revenue": 0.0, "avg_rate": 0.0,
         })
