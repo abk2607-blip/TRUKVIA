@@ -91,6 +91,14 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - [x] **DejaVu Fonts Persisted** at /app/backend/fonts/ — ₹ renders correctly (was black ■ due to non-persistent apt install)
 - [x] **T&C Updated** — 'Halting Charges applicable after 48 hours from arrival at the site.' (removed fixed ₹2,500 rate)
 - [x] Iter12 tests: 7/7 backend pytest + frontend UI verification all passing
+- [x] **Consignor / Consignee Master** (Iter13) — /parties with type filter, state dropdown, linked customer FK; Party model + full CRUD
+- [x] **Halting Report** — per-customer aggregation (total days, chargeable days, avg rate, halting revenue) with date range filter; wired as Reports tab
+- [x] **WhatsApp Invoice Share** — wa.me link on InvoiceView + Overdue page (no API, pre-filled reminder + PDF link)
+- [x] **Gmail Payment Reminders** — mail.google.com compose link (no OAuth); opens user's Gmail with subject/body/PDF URL pre-filled
+- [x] **Overdue Invoices Page** — /invoices/overdue with days filter (0/15/30/45/60/90); per-row WhatsApp + Gmail + PDF; age bucket badges
+- [x] **GST Summary Dashboard Widget** — current month CGST/SGST/IGST + FY totals + next GSTR-1 (11th) and GSTR-3B (20th) due dates
+- [x] **Overdue Invoices Dashboard Widget** — count + outstanding amount card linking to reminders screen
+- [x] Iter13 tests: 7/7 backend + full frontend UI all passing
 
 ## Backlog (P1)
 - [ ] Drivers & Vehicles master (currently free-text)
