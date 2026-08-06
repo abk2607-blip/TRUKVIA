@@ -107,6 +107,9 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - [x] Iter15 tests: 15/15 backend + full frontend UI verified
 - [x] **Sign-In Failure ROOT CAUSE FIXED** (Iter16) — POST /api/auth/session was returning 401 because Emergent's session_id was being consumed twice (React remounts / browser back-forward preserving the hash). AuthCallback now tracks `consumed_session_ids` in sessionStorage: (a) exchanges each session_id ONCE, (b) short-circuits if already consumed, (c) `history.replaceState` clears hash immediately so page reloads don't re-fire, (d) toast now surfaces the actual backend error detail
 - [x] Iter16 tests: 5/5 auth-dedup scenarios verified
+- [x] **Customer Diesel & Advance Deductions** (Iter17) — Trip's diesel_from_customer & cash_advance_received now deduct from invoice. Invoice model has diesel_deduction_total + advance_deduction_total fields. PDF + InvoiceView show trip-wise sub-rows ('↳ Less: Diesel from Customer — 100L × ₹90/L') + summary totals. Formula: **Net Freight = Freight + Halting + Excess − Shortage − Diesel − Advance**. InvoiceCreate preview computes live totals
+- [x] Iter17 tests: 6/6 backend + frontend UI verified
+- [x] **Iter18 — User-Verify Smoke Test** (Feb 2026) — Live end-to-end verified on preview URL: Trip(20 MT × ₹1,500 = ₹30,000, Diesel ₹9,000, Advance ₹5,000) → Invoice Net Freight = ₹16,000 ✅, GST 5% = ₹800, Gross = ₹16,800. PDF contains labels 'Diesel from Customer', 'Customer Advance', 'Net Freight' and renders ₹ symbol correctly
 
 ## Backlog (P1)
 - [ ] Drivers & Vehicles master (currently free-text)
