@@ -107,6 +107,36 @@ export default function TripView() {
         </Grid2>
       </Section>
 
+      {/* Loading / Unloading */}
+      {(trip.loaded_qty || trip.unloaded_qty || trip.loading_date || trip.unloading_date) ? (
+        <Section title="Loading & Unloading · లోడ్/అన్‌లోడ్">
+          <Grid2>
+            <Row k="Loading Date" v={trip.loading_date ? fmtDate(trip.loading_date) : "—"} />
+            <Row k="Unloading Date" v={trip.unloading_date ? fmtDate(trip.unloading_date) : "—"} />
+            <Row k="Loaded Qty" v={`${Number(trip.loaded_qty || 0).toFixed(3)} MT`} mono />
+            <Row k="Unloaded Qty" v={`${Number(trip.unloaded_qty || 0).toFixed(3)} MT`} mono />
+            <Row k="Shortage Qty" v={`${Number(trip.shortage_qty || 0).toFixed(3)} MT`} mono />
+            <Row k="Excess Qty" v={`${Number(trip.excess_qty || 0).toFixed(3)} MT`} mono />
+            <Row k="Product Rate" v={trip.product_rate_per_mt ? `₹ ${Number(trip.product_rate_per_mt).toFixed(2)} / MT` : "—"} mono />
+            <Row k="Shortage Amount" v={fmtCurrency(trip.shortage_amount)} mono strong />
+            <Row k="Excess Amount" v={fmtCurrency(trip.excess_amount)} mono strong />
+          </Grid2>
+        </Section>
+      ) : null}
+
+      {/* Halting Charges */}
+      {(trip.halting_amount || trip.loading_date && trip.unloading_date) ? (
+        <Section title="Halting / Waiting Charges · హాల్టింగ్">
+          <Grid2>
+            <Row k="Total Days" v={trip.total_halting_days || 0} mono />
+            <Row k="Grace Days" v={trip.grace_days || 4} mono />
+            <Row k="Chargeable Days" v={trip.chargeable_halting_days || 0} mono />
+            <Row k="Halting Rate / Day" v={fmtCurrency(trip.halting_rate_per_day)} mono />
+            <Row k="Halting Amount" v={fmtCurrency(trip.halting_amount)} mono strong />
+          </Grid2>
+        </Section>
+      ) : null}
+
       {/* Freight (Customer Billing) */}
       <Section title="Customer Freight · బిల్లింగ్">
         <Grid2>

@@ -1,1 +1,2 @@
 cron=3.0pl1-162
+fonts-dejavu-core=2.37-6

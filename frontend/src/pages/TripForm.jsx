@@ -42,6 +42,25 @@ const EMPTY = {
   fixed_amount: 0,
   round_trip_kms: 0,
   rate_per_km_per_ton: 0,
+  // Loading / Unloading tracking
+  loading_date: "",
+  unloading_date: "",
+  loaded_qty: 0,
+  unloaded_qty: 0,
+  shortage_qty: 0,
+  excess_qty: 0,
+  product_rate_per_mt: 0,
+  shortage_amount: 0,
+  excess_amount: 0,
+  shortage_amount_override: false,
+  excess_amount_override: false,
+  // Halting / Waiting charges
+  total_halting_days: 0,
+  grace_days: 4,
+  chargeable_halting_days: 0,
+  halting_rate_per_day: 0,
+  halting_amount: 0,
+  halting_amount_override: false,
   expenses: {
     diesel: 0, toll: 0, batta: 0, repair: 0, other: 0,
     firewood: 0, other_desc: "",
@@ -104,6 +123,21 @@ export default function TripForm() {
         supplier_quantity: Number(form.supplier_quantity || 0),
         supplier_advance: Number(form.supplier_advance || 0),
         supplier_other_recoveries: Number(form.supplier_other_recoveries || 0),
+        loaded_qty: Number(form.loaded_qty || 0),
+        unloaded_qty: Number(form.unloaded_qty || 0),
+        excess_qty: Number(form.excess_qty || 0),
+        shortage_qty: Number(form.shortage_qty || 0),
+        product_rate_per_mt: Number(form.product_rate_per_mt || 0),
+        shortage_amount: Number(form.shortage_amount || 0),
+        excess_amount: Number(form.excess_amount || 0),
+        shortage_amount_override: !!form.shortage_amount_override,
+        excess_amount_override: !!form.excess_amount_override,
+        total_halting_days: Number(form.total_halting_days || 0),
+        grace_days: Number(form.grace_days || 0),
+        chargeable_halting_days: Number(form.chargeable_halting_days || 0),
+        halting_rate_per_day: Number(form.halting_rate_per_day || 0),
+        halting_amount: Number(form.halting_amount || 0),
+        halting_amount_override: !!form.halting_amount_override,
         invoice_value: Number(form.invoice_value || 0),
         gross_weight: Number(form.gross_weight || 0),
         tare_weight: Number(form.tare_weight || 0),
@@ -144,6 +178,53 @@ export default function TripForm() {
   }
   const supplierNetPayable = supplierFreightLive - Number(form.supplier_advance || 0) - Number(form.supplier_other_recoveries || 0);
   const supplierProfit = freight - (supplierFreightLive - Number(form.supplier_advance || 0));
+
+  // Loading/Unloading auto-diff
+  const loadedQ = Number(form.loaded_qty || 0);
+  const unloadedQ = Number(form.unloaded_qty || 0);
+  const qtyDiff = Number((loadedQ - unloadedQ).toFixed(3));
+  const shortageQtyLive = (loadedQ > 0 || unloadedQ > 0) && qtyDiff > 0 ? qtyDiff : 0;
+  const excessQtyLive = (loadedQ > 0 || unloadedQ > 0) && qtyDiff < 0 ? Math.abs(qtyDiff) : 0;
+  const productRate = Number(form.product_rate_per_mt || 0);
+  const shortageAmountLive = form.shortage_amount_override
+    ? Number(form.shortage_amount || 0)
+    : Number((productRate * shortageQtyLive).toFixed(2));
+  const excessAmountLive = form.excess_amount_override
+    ? Number(form.excess_amount || 0)
+    : Number((productRate * excessQtyLive).toFixed(2));
+
+  // Halting auto-calc
+  let totalHaltingDaysLive = 0;
+  if (form.loading_date && form.unloading_date) {
+    const ld = new Date(form.loading_date);
+    const ud = new Date(form.unloading_date);
+    const diffMs = ud - ld;
+    totalHaltingDaysLive = Math.max(Math.floor(diffMs / 86400000), 0);
+  }
+  const graceDaysLive = Math.max(Number(form.grace_days || 0), 0);
+  const autoChargeableDays = Math.max(totalHaltingDaysLive - graceDaysLive, 0);
+  const chargeableDaysLive = form.halting_amount_override
+    ? Number(form.chargeable_halting_days || 0)
+    : autoChargeableDays;
+  const haltingRateLive = Number(form.halting_rate_per_day || 0);
+  const haltingAmountLive = form.halting_amount_override
+    ? Number(form.halting_amount || 0)
+    : Number((chargeableDaysLive * haltingRateLive).toFixed(2));
+
+  // Keep auto-derived fields in sync when user hasn't overridden
+  useEffect(() => {
+    if (!form.shortage_amount_override) {
+      setForm((f) => ({ ...f, shortage_qty: shortageQtyLive, excess_qty: excessQtyLive, shortage_amount: shortageAmountLive, excess_amount: excessAmountLive }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadedQ, unloadedQ, productRate, form.shortage_amount_override, form.excess_amount_override]);
+
+  useEffect(() => {
+    if (!form.halting_amount_override) {
+      setForm((f) => ({ ...f, total_halting_days: totalHaltingDaysLive, chargeable_halting_days: autoChargeableDays, halting_amount: haltingAmountLive }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.loading_date, form.unloading_date, form.grace_days, form.halting_rate_per_day, form.halting_amount_override]);
 
   const setExp = (k, v) => setForm({ ...form, expenses: { ...form.expenses, [k]: v } });
 
@@ -319,6 +400,75 @@ export default function TripForm() {
               </div>
             </>
           )}
+        </Section>
+
+        {/* Loading / Unloading Details */}
+        <Section title="Loading &amp; Unloading Details · లోడ్/అన్‌లోడ్">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <Field label="Loading Date">
+              <input data-testid="trip-loading-date" type="date" value={form.loading_date} onChange={(e) => setForm({ ...form, loading_date: e.target.value })} className={inputCls} />
+            </Field>
+            <Field label="Unloading Date">
+              <input data-testid="trip-unloading-date" type="date" value={form.unloading_date} onChange={(e) => setForm({ ...form, unloading_date: e.target.value })} className={inputCls} />
+            </Field>
+            <Field label="Loaded Qty (MT)">
+              <input data-testid="trip-loaded-qty" type="number" step="0.001" min="0" value={form.loaded_qty} onChange={(e) => setForm({ ...form, loaded_qty: e.target.value })} className={inputCls} />
+            </Field>
+            <Field label="Unloaded Qty (MT)">
+              <input data-testid="trip-unloaded-qty" type="number" step="0.001" min="0" value={form.unloaded_qty} onChange={(e) => setForm({ ...form, unloaded_qty: e.target.value })} className={inputCls} />
+            </Field>
+            <Field label="Product Rate (₹ / MT)">
+              <input data-testid="trip-product-rate" type="number" step="0.01" min="0" value={form.product_rate_per_mt} onChange={(e) => setForm({ ...form, product_rate_per_mt: e.target.value, shortage_amount_override: false, excess_amount_override: false })} className={inputCls} placeholder="Optional" />
+            </Field>
+            <div className="border border-zinc-200 p-2 rounded-sm text-center">
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">Shortage Qty</div>
+              <div className="font-mono text-sm font-bold text-rose-700">{shortageQtyLive.toFixed(3)} MT</div>
+            </div>
+            <div className="border border-zinc-200 p-2 rounded-sm text-center">
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">Excess Qty</div>
+              <div className="font-mono text-sm font-bold text-emerald-700">{excessQtyLive.toFixed(3)} MT</div>
+            </div>
+            <Field label={
+              <span>Shortage Amount (₹) <button type="button" onClick={() => setForm({ ...form, shortage_amount_override: !form.shortage_amount_override })} className={`ml-1 text-[9px] uppercase tracking-wider ${form.shortage_amount_override ? "text-amber-700" : "text-zinc-400"}`}>{form.shortage_amount_override ? "manual" : "auto"}</button></span>
+            }>
+              <input data-testid="trip-shortage-amount" type="number" step="0.01" min="0" value={form.shortage_amount_override ? form.shortage_amount : shortageAmountLive} disabled={!form.shortage_amount_override} onChange={(e) => setForm({ ...form, shortage_amount: e.target.value })} className={`${inputCls} disabled:bg-zinc-50 disabled:text-zinc-600`} />
+            </Field>
+            <Field label={
+              <span>Excess Amount (₹) <button type="button" onClick={() => setForm({ ...form, excess_amount_override: !form.excess_amount_override })} className={`ml-1 text-[9px] uppercase tracking-wider ${form.excess_amount_override ? "text-amber-700" : "text-zinc-400"}`}>{form.excess_amount_override ? "manual" : "auto"}</button></span>
+            }>
+              <input data-testid="trip-excess-amount" type="number" step="0.01" min="0" value={form.excess_amount_override ? form.excess_amount : excessAmountLive} disabled={!form.excess_amount_override} onChange={(e) => setForm({ ...form, excess_amount: e.target.value })} className={`${inputCls} disabled:bg-zinc-50 disabled:text-zinc-600`} />
+            </Field>
+          </div>
+        </Section>
+
+        {/* Halting / Waiting Charges */}
+        <Section title="Halting / Waiting Charges · హాల్టింగ్">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <div className="border border-zinc-200 p-2 rounded-sm text-center">
+              <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">Total Days</div>
+              <div className="font-mono text-lg font-bold" data-testid="trip-total-halting-days">{totalHaltingDaysLive}</div>
+              <div className="text-[9px] text-zinc-400 mt-0.5">Auto from dates</div>
+            </div>
+            <Field label="Grace Days">
+              <input data-testid="trip-grace-days" type="number" min="0" step="1" value={form.grace_days} onChange={(e) => setForm({ ...form, grace_days: e.target.value, halting_amount_override: false })} className={inputCls} />
+            </Field>
+            <Field label={
+              <span>Chargeable Days <button type="button" onClick={() => setForm({ ...form, halting_amount_override: !form.halting_amount_override })} className={`ml-1 text-[9px] uppercase tracking-wider ${form.halting_amount_override ? "text-amber-700" : "text-zinc-400"}`}>{form.halting_amount_override ? "manual" : "auto"}</button></span>
+            }>
+              <input data-testid="trip-chargeable-days" type="number" min="0" step="1" value={form.halting_amount_override ? form.chargeable_halting_days : autoChargeableDays} disabled={!form.halting_amount_override} onChange={(e) => setForm({ ...form, chargeable_halting_days: e.target.value })} className={`${inputCls} disabled:bg-zinc-50 disabled:text-zinc-600`} />
+            </Field>
+            <Field label="Halting Rate (₹ / Day)">
+              <input data-testid="trip-halting-rate" type="number" step="0.01" min="0" value={form.halting_rate_per_day} onChange={(e) => setForm({ ...form, halting_rate_per_day: e.target.value, halting_amount_override: false })} className={inputCls} />
+            </Field>
+            <Field label={
+              <span>Halting Amount (₹) <span className={`ml-1 text-[9px] uppercase tracking-wider ${form.halting_amount_override ? "text-amber-700" : "text-zinc-400"}`}>{form.halting_amount_override ? "manual" : "auto"}</span></span>
+            }>
+              <input data-testid="trip-halting-amount" type="number" step="0.01" min="0" value={form.halting_amount_override ? form.halting_amount : haltingAmountLive} disabled={!form.halting_amount_override} onChange={(e) => setForm({ ...form, halting_amount: e.target.value })} className={`${inputCls} disabled:bg-zinc-50 disabled:text-zinc-600 font-bold`} />
+            </Field>
+          </div>
+          <div className="mt-3 text-[11px] text-zinc-500 bg-zinc-50 border border-zinc-200 rounded-sm p-2">
+            <span className="font-bold">Rule:</span> First {form.grace_days || 4} days = grace period (free). From day {(Number(form.grace_days) || 4) + 1} onwards, halting is charged at ₹{Number(form.halting_rate_per_day || 0).toLocaleString("en-IN")} / day. All fields editable if customer contract differs.
+          </div>
         </Section>
 
         {/* Expenses */}

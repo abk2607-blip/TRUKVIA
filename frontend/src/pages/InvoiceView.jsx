@@ -223,7 +223,17 @@ export default function InvoiceView() {
           <div>
             <table className="w-full text-sm border border-zinc-300">
               <tbody className="font-mono">
-                <tr><td className="border-b border-zinc-300 px-3 py-1.5 font-bold">Taxable Amount</td><td className="border-b border-zinc-300 px-3 py-1.5 text-right">{fmtCurrency(invoice.subtotal)}</td></tr>
+                <tr><td className="border-b border-zinc-300 px-3 py-1.5 font-bold">Freight Amount</td><td className="border-b border-zinc-300 px-3 py-1.5 text-right">{fmtCurrency(invoice.freight_total || invoice.subtotal)}</td></tr>
+                {invoice.halting_total > 0 && (
+                  <tr><td className="border-b border-zinc-300 px-3 py-1.5">Halting Charges</td><td className="border-b border-zinc-300 px-3 py-1.5 text-right">{fmtCurrency(invoice.halting_total)}</td></tr>
+                )}
+                {invoice.excess_total > 0 && (
+                  <tr><td className="border-b border-zinc-300 px-3 py-1.5">Excess Qty Charges</td><td className="border-b border-zinc-300 px-3 py-1.5 text-right">{fmtCurrency(invoice.excess_total)}</td></tr>
+                )}
+                {invoice.shortage_total > 0 && (
+                  <tr><td className="border-b border-zinc-300 px-3 py-1.5 text-rose-700">Less: Shortage Deduction</td><td className="border-b border-zinc-300 px-3 py-1.5 text-right text-rose-700">({fmtCurrency(invoice.shortage_total)})</td></tr>
+                )}
+                <tr className="bg-zinc-50"><td className="border-b border-zinc-300 px-3 py-1.5 font-bold">Taxable Amount</td><td className="border-b border-zinc-300 px-3 py-1.5 text-right font-bold">{fmtCurrency(invoice.subtotal)}</td></tr>
                 {invoice.gst_type === "cgst_sgst" ? (
                   <>
                     <tr><td className="border-b border-zinc-300 px-3 py-1.5">CGST @ 2.5%</td><td className="border-b border-zinc-300 px-3 py-1.5 text-right">{fmtCurrency(invoice.cgst_amount)}</td></tr>

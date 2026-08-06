@@ -26,6 +26,8 @@ export default function AuthCallback() {
     (async () => {
       try {
         const { data } = await api.post("/auth/session", { session_id });
+        // Persist token for Bearer fallback (cookies may be blocked in Safari/iOS)
+        try { if (data.session_token) localStorage.setItem("session_token", data.session_token); } catch {}
         setUser(data);
         toast.success("Signed in");
         navigate("/dashboard", { replace: true, state: { user: data } });

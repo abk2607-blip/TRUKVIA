@@ -1,0 +1,25 @@
+{
+  "summary": "Iteration 10 tested login-token flow (POST /auth/session schema + Bearer auth via GET /auth/me), trip auto-calc for loading/unloading + halting + product rate, manual override flags, invoice billable (freight+halting+excess-shortage), invoice auto-recompute on trip edit, invoice PDF ₹ (U+20B9) rendering with Halting/Shortage labels, and reports/pl new fields (freight/halting/excess revenues + shortage_deduction). Backend: 11/11 pytest passed. Frontend: /trips/new renders all 12 required data-testids for Loading & Unloading + Halting sections; live compute matches spec (loading 2026-02-05 → unloading 2026-02-11, rate 2000/day, loaded 20 / unloaded 19.5, product rate 50000 → total_days=6, chargeable=2, halting_amount=4000, shortage_amount=25000).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter10_billing.py",
+    "/app/test_reports/pytest/iter10_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is 2000+ lines; still worth splitting into routers (auth/trip/invoice/report) — carried over from iter-8/9.",
+    "_compute_trip: `if not t.shortage_amount_override` also gates excess amount recomputation via `if not t.excess_amount_override:` — good. But when `product_rate_per_mt=0` and user manually types shortage_amount without setting override, the value will be overwritten to 0 silently. Consider raising override flag automatically when user edits amount.",
+    "auth/session sets samesite=none cookie AND returns token in body — good defensive fallback for Safari/iOS. Ensure frontend AuthCallback clears any old token before storing the new one to avoid stale-session edge cases.",
+    "PDF _num_to_words_inr: input `n=0` returns 'Zero Rupees Only' but for negative balance_due (overpaid invoice) it will call units[-1] and crash. Add `if n < 0: return f\"Minus {_num_to_words_inr(-n)}\"` guard.",
+    "pdf totals table uses `(0, -3)` for 'TOTAL PAYABLE' bold row — assumes exactly 3 trailing rows (Total, Received, Balance). If invoice model ever grows an extra trailing row, styling silently drifts. Consider indexing by row content instead."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter10_billing.py (new)"],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "100% (12/12 testids + live compute)"},
+  "test_credentials": "Authorization: Bearer test_session_bitumen_2026 (user_id=test-user-bitumen). Verified working.",
+  "seed_data_creation": "Module-scope fixture creates TEST_iter10_Customer + several trips + one invoice; all cleaned up on teardown via customer_id fixture.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "PyMuPDF (fitz) is installed and works. Frontend auth in Playwright: use page.add_init_script to seed localStorage['session_token']='test_session_bitumen_2026' BEFORE navigating; AuthContext runs on mount and needs the token available synchronously, otherwise it redirects to /login. All new fields (loaded_qty, unloaded_qty, product_rate_per_mt, loading_date, unloading_date, grace_days, halting_rate_per_day) are auto-derived in _compute_trip; overrides via *_amount_override booleans. Invoice model has freight_total/halting_total/excess_total/shortage_total; subtotal = freight+halting+excess-shortage; RCM=true means total_amount=subtotal (tax not added).",
+  "rca of the issue": "N/A — no bugs found; feature works end-to-end."
+}

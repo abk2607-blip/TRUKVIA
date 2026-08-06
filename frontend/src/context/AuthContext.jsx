@@ -29,6 +29,7 @@ export const AuthProvider = ({ children }) => {
 
   const logout = async () => {
     try { await api.post("/auth/logout"); } catch {}
+    try { localStorage.removeItem("session_token"); } catch {}
     setUser(null);
     window.location.href = "/";
   };

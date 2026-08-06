@@ -26,6 +26,24 @@ try:
 except Exception:
     _TE_FONT = "Helvetica"  # fallback
 
+# DejaVu Sans is used across invoice/LR/report bodies because it supports the
+# Indian Rupee sign (₹, U+20B9) which the built-in Helvetica lacks.
+_UNI_FONT = "DejaVuSans"
+_UNI_FONT_BOLD = "DejaVuSans-Bold"
+_UNI_PATHS = [
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+]
+try:
+    if _UNI_FONT not in pdfmetrics.getRegisteredFontNames():
+        pdfmetrics.registerFont(TTFont(_UNI_FONT, _UNI_PATHS[0]))
+        pdfmetrics.registerFont(TTFont(_UNI_FONT_BOLD, _UNI_PATHS[1]))
+        from reportlab.pdfbase.pdfmetrics import registerFontFamily
+        registerFontFamily(_UNI_FONT, normal=_UNI_FONT, bold=_UNI_FONT_BOLD, italic=_UNI_FONT, boldItalic=_UNI_FONT_BOLD)
+except Exception:
+    _UNI_FONT = "Helvetica"
+    _UNI_FONT_BOLD = "Helvetica-Bold"
+
 
 def _fmt(n):
     try:
@@ -88,12 +106,15 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
         title=f"Invoice {invoice.get('invoice_number','')}",
     )
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="Small", fontName="Helvetica", fontSize=8, leading=10))
-    styles.add(ParagraphStyle(name="SmallBold", fontName="Helvetica-Bold", fontSize=8, leading=10))
-    styles.add(ParagraphStyle(name="H1", fontName="Helvetica-Bold", fontSize=16, leading=20, alignment=1))
-    styles.add(ParagraphStyle(name="H2", fontName="Helvetica-Bold", fontSize=11, leading=14))
-    styles.add(ParagraphStyle(name="Body", fontName="Helvetica", fontSize=9, leading=12))
-    styles.add(ParagraphStyle(name="BodyRight", fontName="Helvetica", fontSize=9, leading=12, alignment=2))
+    # Use DejaVu Sans across the invoice so ₹ (U+20B9) renders correctly.
+    _F = _UNI_FONT
+    _FB = _UNI_FONT_BOLD
+    styles.add(ParagraphStyle(name="Small", fontName=_F, fontSize=8, leading=10))
+    styles.add(ParagraphStyle(name="SmallBold", fontName=_FB, fontSize=8, leading=10))
+    styles.add(ParagraphStyle(name="H1", fontName=_FB, fontSize=16, leading=20, alignment=1))
+    styles.add(ParagraphStyle(name="H2", fontName=_FB, fontSize=11, leading=14))
+    styles.add(ParagraphStyle(name="Body", fontName=_F, fontSize=9, leading=12))
+    styles.add(ParagraphStyle(name="BodyRight", fontName=_F, fontSize=9, leading=12, alignment=2))
     styles.add(ParagraphStyle(name="Mono", fontName="Courier", fontSize=8, leading=10))
 
     story = []
@@ -193,21 +214,21 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
     story.append(party_tbl)
 
     # --- Trip line items ---
-    header = ["#", "Date", "Vehicle No", "Load", "Route", "Cust Inv", "Tons", "Rate Mode", "Rate/KMs", "Freight (Rs)"]
+    header = ["#", "Date", "Vehicle No", "Load", "Route", "Cust Inv", "Tons", "Rate Mode", "Rate/KMs", "Freight (₹)"]
     rows = [header]
     for idx, t in enumerate(trips, start=1):
         route = f"{t.get('from_location','')} → {t.get('to_location','')}"
         if t.get("freight_mode") == "per_ton":
             mode = "Per Ton"
-            rate = f"₹{_fmt(t.get('rate_per_ton', 0))}/T"
+            rate = f"₹ {_fmt(t.get('rate_per_ton', 0))}/T"
         else:
             mode = "Round Trip"
             km = t.get("round_trip_kms", 0) or 0
             rkm = t.get("rate_per_km_per_ton", 0) or 0
             if km > 0 and rkm > 0:
-                rate = f"{_fmt(km)}km × ₹{_fmt(rkm)}"
+                rate = f"{_fmt(km)}km × ₹ {_fmt(rkm)}"
             else:
-                rate = f"Lump ₹{_fmt(t.get('fixed_amount', 0))}"
+                rate = f"Lump ₹ {_fmt(t.get('fixed_amount', 0))}"
         rows.append([
             str(idx),
             t.get("date", ""),
@@ -218,14 +239,15 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
             _fmt(t.get("tons", 0)),
             mode,
             rate,
-            _fmt(t.get("freight_amount", 0)),
+            f"₹ {_fmt(t.get('freight_amount', 0))}",
         ])
 
-    items_tbl = Table(rows, colWidths=[8*mm, 20*mm, 20*mm, 22*mm, 34*mm, 20*mm, 12*mm, 16*mm, 18*mm, 16*mm], repeatRows=1)
+    items_tbl = Table(rows, colWidths=[8*mm, 20*mm, 20*mm, 22*mm, 34*mm, 20*mm, 12*mm, 16*mm, 18*mm, 20*mm], repeatRows=1)
     items_tbl.setStyle(TableStyle([
         ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F4F4F5")),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, 0), (-1, 0), _FB),
+        ("FONTNAME", (0, 1), (-1, -1), _F),
         ("FONTSIZE", (0, 0), (-1, -1), 7.5),
         ("ALIGN", (6, 1), (6, -1), "RIGHT"),
         ("ALIGN", (8, 1), (9, -1), "RIGHT"),
@@ -237,6 +259,14 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
     ]))
     story.append(items_tbl)
 
+    # --- Additional Charges (Halting) & Deductions (Shortage) breakdown ---
+    freight_total = invoice.get("freight_total") or round(sum(float(t.get("freight_amount", 0)) for t in trips), 2)
+    halting_total = invoice.get("halting_total") or round(sum(float(t.get("halting_amount", 0)) for t in trips), 2)
+    excess_total = invoice.get("excess_total") or round(sum(float(t.get("excess_amount", 0)) for t in trips), 2)
+    shortage_total = invoice.get("shortage_total") or round(
+        sum(float(t.get("shortage_amount", 0)) + float((t.get("expenses") or {}).get("shortage_amount", 0)) for t in trips), 2,
+    )
+
     # --- Totals ---
     subtotal = invoice.get("subtotal", 0)
     gst_type = invoice.get("gst_type", "cgst_sgst")
@@ -247,28 +277,36 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
     paid = invoice.get("amount_paid", 0)
     balance = invoice.get("balance_due", 0)
 
-    totals_rows = [["Taxable Amount", _fmt(subtotal)]]
+    totals_rows = [["Freight Amount", f"₹ {_fmt(freight_total)}"]]
+    if halting_total > 0:
+        totals_rows.append(["Halting Charges", f"₹ {_fmt(halting_total)}"])
+    if excess_total > 0:
+        totals_rows.append(["Excess Quantity Charges", f"₹ {_fmt(excess_total)}"])
+    if shortage_total > 0:
+        totals_rows.append(["Less: Shortage Deduction", f"(₹ {_fmt(shortage_total)})"])
+    totals_rows.append(["Taxable Amount", f"₹ {_fmt(subtotal)}"])
     if gst_type == "cgst_sgst":
-        totals_rows.append(["CGST @ 2.5%", _fmt(cgst)])
-        totals_rows.append(["SGST @ 2.5%", _fmt(sgst)])
+        totals_rows.append(["CGST @ 2.5%", f"₹ {_fmt(cgst)}"])
+        totals_rows.append(["SGST @ 2.5%", f"₹ {_fmt(sgst)}"])
     else:
-        totals_rows.append(["IGST @ 5%", _fmt(igst)])
+        totals_rows.append(["IGST @ 5%", f"₹ {_fmt(igst)}"])
     if invoice.get("rcm"):
         totals_rows.append(["Tax under RCM (not collected)", "—"])
     else:
-        totals_rows.append(["Total Tax", _fmt(invoice.get("total_tax", 0))])
-    totals_rows.append(["TOTAL PAYABLE", _fmt(total)])
-    totals_rows.append(["Amount Received", _fmt(paid)])
-    totals_rows.append(["Balance Due", _fmt(balance)])
+        totals_rows.append(["Total Tax", f"₹ {_fmt(invoice.get('total_tax', 0))}"])
+    totals_rows.append(["TOTAL PAYABLE", f"₹ {_fmt(total)}"])
+    totals_rows.append(["Amount Received", f"₹ {_fmt(paid)}"])
+    totals_rows.append(["Balance Due", f"₹ {_fmt(balance)}"])
 
-    totals_tbl = Table(totals_rows, colWidths=[50 * mm, 30 * mm])
+    totals_tbl = Table(totals_rows, colWidths=[50 * mm, 35 * mm])
     totals_tbl.setStyle(TableStyle([
         ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
         ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("FONTNAME", (0, 0), (-1, -1), _F),
         ("ALIGN", (1, 0), (1, -1), "RIGHT"),
-        ("FONTNAME", (0, -3), (-1, -3), "Helvetica-Bold"),
+        ("FONTNAME", (0, -3), (-1, -3), _FB),
         ("BACKGROUND", (0, -3), (-1, -3), colors.HexColor("#FEF3C7")),
-        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+        ("FONTNAME", (0, 0), (0, -1), _FB),
         ("LEFTPADDING", (0, 0), (-1, -1), 5),
         ("RIGHTPADDING", (0, 0), (-1, -1), 5),
         ("TOPPADDING", (0, 0), (-1, -1), 3),
@@ -290,7 +328,7 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
         Paragraph("<br/>".join(bank_lines), styles["Small"]),
     ]
 
-    bottom_tbl = Table([[left_stack, totals_tbl]], colWidths=[106 * mm, 80 * mm])
+    bottom_tbl = Table([[left_stack, totals_tbl]], colWidths=[101 * mm, 85 * mm])
     bottom_tbl.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("BOX", (0, 0), (-1, -1), 0.8, colors.black),

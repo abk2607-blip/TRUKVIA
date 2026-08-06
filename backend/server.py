@@ -108,6 +108,26 @@ class Trip(BaseModel):
     vehicle_number: str
     vehicle_id: Optional[str] = None
     vehicle_type: Literal["own", "supplier"] = "own"
+    # ---- Loading / Unloading (Feb 2026) ----
+    loading_date: str = ""       # ISO date; if empty, `date` is used
+    unloading_date: str = ""     # ISO date
+    loaded_qty: float = 0.0      # MT loaded at origin
+    unloaded_qty: float = 0.0    # MT received at destination
+    excess_qty: float = 0.0      # auto: max(unloaded - loaded, 0)
+    shortage_qty: float = 0.0    # auto: max(loaded - unloaded, 0)
+    product_rate_per_mt: float = 0.0   # optional per-MT rate for excess/shortage valuation
+    shortage_amount: float = 0.0       # auto: rate * shortage_qty (editable via override)
+    excess_amount: float = 0.0         # auto: rate * excess_qty (editable via override)
+    shortage_amount_override: bool = False   # true = user manually set shortage_amount
+    excess_amount_override: bool = False
+    # ---- Halting / Waiting charges (Feb 2026) ----
+    total_halting_days: int = 0        # auto: (unloading_date - loading_date) days
+    grace_days: int = 4                # user-editable (contractual)
+    chargeable_halting_days: int = 0   # auto: max(total_halting_days - grace_days, 0), user-editable
+    halting_rate_per_day: float = 0.0  # user-editable
+    halting_amount: float = 0.0        # auto: chargeable * rate, user-editable
+    halting_amount_override: bool = False
+    # ---- Supplier fields ----
     supplier_name: str = ""
     supplier_freight: float = 0.0
     # Supplier freight detailed calculation (mirrors customer billing)
@@ -233,6 +253,10 @@ class Invoice(BaseModel):
     invoice_date: str
     trip_ids: List[str]
     subtotal: float
+    freight_total: float = 0.0
+    halting_total: float = 0.0
+    excess_total: float = 0.0
+    shortage_total: float = 0.0
     gst_type: Literal["cgst_sgst", "igst"] = "cgst_sgst"
     cgst_rate: float = 2.5
     sgst_rate: float = 2.5
@@ -376,6 +400,7 @@ async def create_session(request: Request, response: Response):
         "email": email,
         "name": data.get("name", ""),
         "picture": data.get("picture", ""),
+        "session_token": session_token,  # fallback for browsers blocking third-party cookies
     }
 
 @api.get("/auth/me")
@@ -493,6 +518,41 @@ def _compute_trip(t: Trip) -> Trip:
             t.freight_amount = round(t.tons * t.round_trip_kms * t.rate_per_km_per_ton, 2)
         else:
             t.freight_amount = round(t.fixed_amount, 2)
+    # ---- Loading / Unloading auto-diff ----
+    diff = round((t.loaded_qty or 0) - (t.unloaded_qty or 0), 3)
+    if t.loaded_qty > 0 or t.unloaded_qty > 0:
+        if diff > 0:
+            t.shortage_qty = diff
+            t.excess_qty = 0.0
+        elif diff < 0:
+            t.excess_qty = round(-diff, 3)
+            t.shortage_qty = 0.0
+        else:
+            t.shortage_qty = 0.0
+            t.excess_qty = 0.0
+    # Product-rate valuation for shortage / excess (editable via override flags)
+    rate = t.product_rate_per_mt or 0
+    if not t.shortage_amount_override:
+        t.shortage_amount = round(rate * t.shortage_qty, 2)
+    if not t.excess_amount_override:
+        t.excess_amount = round(rate * t.excess_qty, 2)
+    # ---- Halting / Waiting Charges auto-calc ----
+    if t.loading_date and t.unloading_date:
+        try:
+            _ld = datetime.fromisoformat(t.loading_date).date()
+            _ud = datetime.fromisoformat(t.unloading_date).date()
+            t.total_halting_days = max((_ud - _ld).days, 0)
+        except Exception:
+            t.total_halting_days = 0
+    else:
+        t.total_halting_days = 0
+    _grace = max(int(t.grace_days or 0), 0)
+    # Only auto-set chargeable days if not manually diverged from formula
+    _auto_chargeable = max(t.total_halting_days - _grace, 0)
+    # If user hasn't customised (override marker via halting_amount_override implies manual)
+    if not t.halting_amount_override:
+        t.chargeable_halting_days = _auto_chargeable
+        t.halting_amount = round(t.chargeable_halting_days * (t.halting_rate_per_day or 0), 2)
     e = t.expenses
     # Auto-compute diesel from customer amount
     if e.diesel_from_customer_qty > 0 and e.diesel_from_customer_rate > 0 and e.diesel_from_customer_amount == 0:
@@ -520,12 +580,23 @@ def _compute_trip(t: Trip) -> Trip:
     else:
         t.total_expense = round(own_expense_net, 2)
         t.supplier_net_payable = 0.0
-    # Net revenue after shortage deduction
-    net_freight = t.freight_amount - e.shortage_amount
-    t.profit = round(net_freight - t.total_expense, 2)
-    # Cash settlement to driver / from customer perspective (informational)
-    t.net_settlement = round(net_freight - t.total_expense - e.cash_advance_received, 2)
+    # Billable freight to customer = freight + halting + excess − shortage
+    # (shortage is a customer deduction from our freight; excess bonus optional add-on)
+    billable = t.freight_amount + t.halting_amount + t.excess_amount - t.shortage_amount - e.shortage_amount
+    t.profit = round(billable - t.total_expense, 2)
+    t.net_settlement = round(billable - t.total_expense - e.cash_advance_received, 2)
     return t
+
+def _trip_billable(t: dict) -> float:
+    """Billable freight for invoice = freight + halting + excess − shortage."""
+    return round(
+        float(t.get("freight_amount", 0))
+        + float(t.get("halting_amount", 0))
+        + float(t.get("excess_amount", 0))
+        - float(t.get("shortage_amount", 0))
+        - float((t.get("expenses") or {}).get("shortage_amount", 0)),
+        2,
+    )
 
 @api.get("/trips")
 async def list_trips(user=Depends(get_current_user), customer_id: Optional[str] = None, status: Optional[str] = None):
@@ -603,7 +674,13 @@ async def _recompute_invoice(iid: str, user):
     if not inv:
         return
     trips = await db.trips.find({"user_id": user["user_id"], "id": {"$in": inv.get("trip_ids", [])}}, {"_id": 0}).to_list(500)
-    subtotal = round(sum(t.get("freight_amount", 0.0) for t in trips), 2)
+    freight_total = round(sum(t.get("freight_amount", 0.0) for t in trips), 2)
+    halting_total = round(sum(t.get("halting_amount", 0.0) for t in trips), 2)
+    excess_total = round(sum(t.get("excess_amount", 0.0) for t in trips), 2)
+    shortage_total = round(
+        sum(t.get("shortage_amount", 0.0) + (t.get("expenses") or {}).get("shortage_amount", 0.0) for t in trips), 2,
+    )
+    subtotal = round(sum(_trip_billable(t) for t in trips), 2)
     gst_type = inv.get("gst_type", "cgst_sgst")
     cgst = round(subtotal * 2.5 / 100, 2) if gst_type == "cgst_sgst" else 0.0
     sgst = round(subtotal * 2.5 / 100, 2) if gst_type == "cgst_sgst" else 0.0
@@ -614,7 +691,9 @@ async def _recompute_invoice(iid: str, user):
     balance_due = round(total_amount - amount_paid, 2)
     await db.invoices.update_one(
         {"id": iid, "user_id": user["user_id"]},
-        {"$set": {"subtotal": subtotal, "cgst_amount": cgst, "sgst_amount": sgst, "igst_amount": igst,
+        {"$set": {"subtotal": subtotal, "freight_total": freight_total, "halting_total": halting_total,
+                  "excess_total": excess_total, "shortage_total": shortage_total,
+                  "cgst_amount": cgst, "sgst_amount": sgst, "igst_amount": igst,
                   "total_tax": total_tax, "total_amount": total_amount,
                   "amount_paid": amount_paid, "balance_due": balance_due}},
     )
@@ -673,7 +752,13 @@ async def create_invoice(payload: InvoiceCreateRequest, user=Depends(get_current
         if t.get("status") == "invoiced":
             raise HTTPException(status_code=400, detail=f"Trip {t['id']} already invoiced")
 
-    subtotal = round(sum(t.get("freight_amount", 0.0) for t in trips), 2)
+    subtotal = round(sum(_trip_billable(t) for t in trips), 2)
+    freight_total = round(sum(t.get("freight_amount", 0.0) for t in trips), 2)
+    halting_total = round(sum(t.get("halting_amount", 0.0) for t in trips), 2)
+    excess_total = round(sum(t.get("excess_amount", 0.0) for t in trips), 2)
+    shortage_total = round(
+        sum(t.get("shortage_amount", 0.0) + (t.get("expenses") or {}).get("shortage_amount", 0.0) for t in trips), 2,
+    )
     cgst = sgst = igst = 0.0
     if payload.gst_type == "cgst_sgst":
         cgst = round(subtotal * 2.5 / 100, 2)
@@ -691,6 +776,10 @@ async def create_invoice(payload: InvoiceCreateRequest, user=Depends(get_current
         invoice_date=payload.invoice_date or now_utc().date().isoformat(),
         trip_ids=payload.trip_ids,
         subtotal=subtotal,
+        freight_total=freight_total,
+        halting_total=halting_total,
+        excess_total=excess_total,
+        shortage_total=shortage_total,
         gst_type=payload.gst_type,
         cgst_amount=cgst,
         sgst_amount=sgst,
@@ -1273,7 +1362,13 @@ async def report_profit_loss(
     trips = await db.trips.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(5000)
     trips = [t for t in trips if _in_range(t.get("date", ""), start, end)]
 
-    revenue = round(sum(t.get("freight_amount", 0) for t in trips), 2)
+    freight_revenue = round(sum(t.get("freight_amount", 0) for t in trips), 2)
+    halting_revenue = round(sum(t.get("halting_amount", 0) for t in trips), 2)
+    excess_revenue = round(sum(t.get("excess_amount", 0) for t in trips), 2)
+    shortage_deduction = round(
+        sum(t.get("shortage_amount", 0) + (t.get("expenses") or {}).get("shortage_amount", 0) for t in trips), 2,
+    )
+    revenue = round(freight_revenue + halting_revenue + excess_revenue - shortage_deduction, 2)
     diesel = round(sum((t.get("expenses") or {}).get("diesel", 0) for t in trips), 2)
     toll = round(sum((t.get("expenses") or {}).get("toll", 0) for t in trips), 2)
     batta = round(sum((t.get("expenses") or {}).get("batta", 0) for t in trips), 2)
@@ -1292,7 +1387,8 @@ async def report_profit_loss(
         cid = t.get("customer_id")
         b = per_customer.setdefault(cid, {"customer_id": cid, "customer_name": cmap.get(cid, "Unknown"), "trips": 0, "revenue": 0.0, "expense": 0.0, "profit": 0.0, "tons": 0.0})
         b["trips"] += 1
-        b["revenue"] += t.get("freight_amount", 0)
+        billable = float(t.get("freight_amount", 0)) + float(t.get("halting_amount", 0)) + float(t.get("excess_amount", 0)) - float(t.get("shortage_amount", 0)) - float((t.get("expenses") or {}).get("shortage_amount", 0))
+        b["revenue"] += billable
         b["expense"] += t.get("total_expense", 0)
         b["profit"] += t.get("profit", 0)
         b["tons"] += t.get("tons", 0)
@@ -1304,6 +1400,10 @@ async def report_profit_loss(
         "period": {"start": start, "end": end},
         "trip_count": len(trips),
         "revenue": revenue,
+        "freight_revenue": freight_revenue,
+        "halting_revenue": halting_revenue,
+        "excess_revenue": excess_revenue,
+        "shortage_deduction": shortage_deduction,
         "expenses": {
             "diesel": diesel, "toll": toll, "batta": batta, "repair": repair, "other": other,
             "supplier_net_payable": supplier_cost,
