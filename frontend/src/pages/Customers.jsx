@@ -100,23 +100,48 @@ export default function Customers() {
               <button onClick={() => setOpen(false)} data-testid="close-customer-modal"><X size={18} /></button>
             </div>
             <form onSubmit={(e) => { e.preventDefault(); save.mutate(); }} className="p-5 space-y-3">
-              {[
-                ["name", "Name / పేరు", true],
-                ["gstin", "GSTIN", false],
-                ["pan", "PAN", false],
-                ["phone", "Phone / ఫోన్", false],
-              ].map(([k, lbl, req]) => (
-                <div key={k}>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">{lbl}{req && " *"}</label>
-                  <input
-                    data-testid={`customer-input-${k}`}
-                    required={req}
-                    value={form[k] || ""}
-                    onChange={(e) => setForm({ ...form, [k]: e.target.value })}
-                    className="mt-1 w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none"
-                  />
-                </div>
-              ))}
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Name / పేరు *</label>
+                <input data-testid="customer-input-name" required value={form.name || ""} onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  className="mt-1 w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none" />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+                  GSTIN <span className="text-emerald-700 normal-case">(auto-fills State &amp; PAN)</span>
+                </label>
+                <input data-testid="customer-input-gstin" value={form.gstin || ""}
+                  onChange={async (e) => {
+                    const v = e.target.value.toUpperCase();
+                    const next = { ...form, gstin: v };
+                    if (v.length === 15) {
+                      try {
+                        const { data } = await api.get("/gstin/lookup", { params: { gstin: v } });
+                        if (data.valid_format) {
+                          if (data.state) next.state = data.state;
+                          if (data.pan) next.pan = data.pan;
+                          if (data.checksum_ok) toast.success(`GSTIN valid · ${data.state}`);
+                          else toast.warning("GSTIN format ok but checksum failed");
+                        } else {
+                          toast.error("Invalid GSTIN format");
+                        }
+                      } catch {}
+                    }
+                    setForm(next);
+                  }}
+                  placeholder="e.g. 37AAECR5210P2Z2"
+                  maxLength={15}
+                  className="mt-1 w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm font-mono uppercase focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none" />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">PAN</label>
+                <input data-testid="customer-input-pan" value={form.pan || ""} onChange={(e) => setForm({ ...form, pan: e.target.value.toUpperCase() })}
+                  className="mt-1 w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm font-mono uppercase focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none" />
+              </div>
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Phone / ఫోన్</label>
+                <input data-testid="customer-input-phone" value={form.phone || ""} onChange={(e) => setForm({ ...form, phone: e.target.value })}
+                  className="mt-1 w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none" />
+              </div>
               <div>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">State / రాష్ట్రం</label>
                 <StateSelect

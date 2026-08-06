@@ -174,8 +174,28 @@ export default function Parties() {
               <F label="Email">
                 <input data-testid="party-input-email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className={inputCls} />
               </F>
-              <F label="GSTIN">
-                <input data-testid="party-input-gstin" value={form.gstin} onChange={(e) => setForm({ ...form, gstin: e.target.value })} className={inputCls} />
+              <F label="GSTIN (auto-fills State & PAN)">
+                <input data-testid="party-input-gstin" value={form.gstin}
+                  maxLength={15}
+                  onChange={async (e) => {
+                    const v = e.target.value.toUpperCase();
+                    const next = { ...form, gstin: v };
+                    if (v.length === 15) {
+                      try {
+                        const { data } = await api.get("/gstin/lookup", { params: { gstin: v } });
+                        if (data.valid_format) {
+                          if (data.state) next.state = data.state;
+                          if (data.pan) next.pan = data.pan;
+                          if (data.checksum_ok) toast.success(`GSTIN valid · ${data.state}`);
+                          else toast.warning("GSTIN checksum failed");
+                        } else {
+                          toast.error("Invalid GSTIN format");
+                        }
+                      } catch {}
+                    }
+                    setForm(next);
+                  }}
+                  className={inputCls + " font-mono uppercase"} placeholder="e.g. 37AAECR5210P2Z2" />
               </F>
               <F label="PAN">
                 <input data-testid="party-input-pan" value={form.pan} onChange={(e) => setForm({ ...form, pan: e.target.value })} className={inputCls} />

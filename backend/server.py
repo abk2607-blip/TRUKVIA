@@ -10,6 +10,7 @@ import os
 import io
 import uuid
 import logging
+import re
 import requests
 import secrets
 from pathlib import Path
@@ -1685,6 +1686,76 @@ def _state_code(name: str) -> str:
         return ""
     key = name.strip().lower()
     return STATE_CODES.get(key, "")
+
+# Reverse map: 2-digit GST state code → canonical state name
+STATE_CODE_TO_NAME = {v: k.title().replace("And ", "and ").replace("Of ", "of ") for k, v in STATE_CODES.items()}
+# Manual title-case tweaks (union territories / compound names)
+STATE_CODE_TO_NAME["07"] = "Delhi"
+STATE_CODE_TO_NAME["35"] = "Andaman and Nicobar Islands"
+STATE_CODE_TO_NAME["26"] = "Dadra and Nagar Haveli and Daman and Diu"
+STATE_CODE_TO_NAME["01"] = "Jammu and Kashmir"
+STATE_CODE_TO_NAME["37"] = "Andhra Pradesh"
+STATE_CODE_TO_NAME["36"] = "Telangana"
+
+# ==================== GSTIN Lookup (offline structure parse) ====================
+
+# GSTIN format: 15 chars = <2-digit state><10-char PAN><1 entity><'Z'><1 checksum>
+_GSTIN_RE = re.compile(r"^([0-9]{2})([A-Z]{5}[0-9]{4}[A-Z])([0-9A-Z])(Z)([0-9A-Z])$")
+_GSTIN_CHECK_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+def _gstin_checksum(gstin14: str) -> str:
+    """Compute the 15th checksum char of a GSTIN using the standard algorithm."""
+    total = 0
+    for idx, ch in enumerate(gstin14):
+        v = _GSTIN_CHECK_ALPHABET.index(ch)
+        factor = 2 if idx % 2 else 1
+        prod = v * factor
+        total += (prod // 36) + (prod % 36)
+    remainder = total % 36
+    return _GSTIN_CHECK_ALPHABET[(36 - remainder) % 36]
+
+@api.get("/gstin/lookup")
+async def gstin_lookup(gstin: str, user=Depends(get_current_user)):
+    """Parse a GSTIN offline (free) and return state, PAN, entity code and format validity.
+
+    A future paid GSTIN details API (Signzy / ClearTax / etc.) can be layered on
+    top by populating GSTIN_LOOKUP_API_KEY in .env — this endpoint would then
+    also return the taxpayer's legal name, trade name and registered address.
+    For now it just returns the offline parse so customer forms can auto-fill
+    state and PAN the moment the GSTIN is entered.
+    """
+    g = (gstin or "").strip().upper().replace(" ", "")
+    if not g:
+        raise HTTPException(status_code=400, detail="GSTIN is required")
+    m = _GSTIN_RE.match(g)
+    result = {
+        "gstin": g,
+        "valid_format": bool(m),
+        "checksum_ok": False,
+        "state_code": "",
+        "state": "",
+        "pan": "",
+        "entity_code": "",
+        "source": "offline_parse",
+        "legal_name": None,
+        "trade_name": None,
+        "address": None,
+        "note": None,
+    }
+    if m:
+        state_code = m.group(1)
+        pan = m.group(2)
+        entity = m.group(3)
+        expected_check = _gstin_checksum(g[:14])
+        result["state_code"] = state_code
+        result["state"] = STATE_CODE_TO_NAME.get(state_code, "")
+        result["pan"] = pan
+        result["entity_code"] = entity
+        result["checksum_ok"] = (expected_check == g[14])
+    # Placeholder for paid API integration — no key configured yet.
+    if not os.environ.get("GSTIN_LOOKUP_API_KEY"):
+        result["note"] = "Offline parse only. Full name/address needs a paid GSTIN API (Signzy/ClearTax). Configure GSTIN_LOOKUP_API_KEY to enable."
+    return result
 
 @api.get("/reports/gstr1")
 async def report_gstr1(month: str, user=Depends(get_current_user)):
