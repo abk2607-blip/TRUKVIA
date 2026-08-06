@@ -72,6 +72,15 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - [x] **Supplier Profit Formula** — `Profit = Customer Freight − (Supplier Freight − Supplier Advance)` reflected in trip profit, Supplier P&L, MIS Dashboard, P&L report
 - [x] **LR PDF Split into 2 Pages** — Page 1 all operational details (LR#, consignor/consignee, vehicle, driver, material, freight, waybill); Page 2 Terms & Conditions only with acknowledgement block
 - [x] Iter8 tests: 8/8 backend + all frontend UI checks passing
+- [x] **LR PDF Removed Freight Fields** — 'Freight Basis' and 'Freight Amount' removed from LR (invoice already contains it)
+- [x] **LR Unloading Details Column-wise** — 10-column site officials fill-in table + 5-column signature strip
+- [x] **Login Token Fallback** — POST /api/auth/session returns session_token in body; frontend stores in localStorage; axios adds Authorization: Bearer header (fixes Safari/iOS/incognito third-party cookie blocking)
+- [x] **₹ Rupee Symbol in Invoice PDF** — DejaVuSans font registered; all monetary values now render ₹ (Freight, Halting, Shortage, GST, TOTAL PAYABLE, Balance Due, etc.)
+- [x] **Trip Loading/Unloading Details** — loading_date, unloading_date, loaded_qty, unloaded_qty; auto-diff to shortage_qty / excess_qty
+- [x] **Product Rate (optional)** — product_rate_per_mt field; auto shortage_amount = rate × shortage_qty; auto excess_amount = rate × excess_qty; per-field manual override (shortage_amount_override / excess_amount_override)
+- [x] **Halting / Waiting Charges** — auto total_halting_days from dates; grace_days (default 4); auto chargeable_halting_days = max(total − grace, 0); halting_rate_per_day; auto halting_amount = chargeable × rate; per-field manual override; adds to invoice subtotal → GST → total
+- [x] **Invoice Billable Formula** — subtotal = freight + halting + excess − shortage. Invoice model now stores freight_total/halting_total/excess_total/shortage_total for reporting. P&L report reflects same
+- [x] Iter10 tests: 11/11 backend + frontend UI + PDF ₹ rendering all passing
 
 ## Backlog (P1)
 - [ ] Drivers & Vehicles master (currently free-text)
