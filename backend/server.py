@@ -202,6 +202,8 @@ class Vehicle(BaseModel):
     supplier_name: str = ""
     supplier_contact_person: str = ""
     supplier_mobile: str = ""
+    supplier_state: str = ""
+    supplier_gstin: str = ""
     make_model: str = ""
     capacity_tons: float = 0.0
     rc_expiry: str = ""
@@ -265,6 +267,8 @@ class Invoice(BaseModel):
     sgst_amount: float = 0.0
     igst_amount: float = 0.0
     total_tax: float = 0.0
+    gross_total: float = 0.0
+    round_off: float = 0.0
     total_amount: float = 0.0
     rcm: bool = True  # Reverse charge — tax not collected
     payments: List[Payment] = []
@@ -681,20 +685,33 @@ async def _recompute_invoice(iid: str, user):
         sum(t.get("shortage_amount", 0.0) + (t.get("expenses") or {}).get("shortage_amount", 0.0) for t in trips), 2,
     )
     subtotal = round(sum(_trip_billable(t) for t in trips), 2)
-    gst_type = inv.get("gst_type", "cgst_sgst")
+    # Auto GST re-evaluation on edit (customer/company state may have changed)
+    customer_doc = await db.customers.find_one({"id": inv.get("customer_id"), "user_id": user["user_id"]}, {"_id": 0}) or {}
+    company_doc = await db.companies.find_one({"user_id": user["user_id"]}, {"_id": 0}) or {}
+    home_state = (company_doc.get("state") or "").strip().lower()
+    cust_state = (customer_doc.get("state") or "").strip().lower()
+    if home_state and cust_state:
+        gst_type = "cgst_sgst" if home_state == cust_state else "igst"
+    else:
+        gst_type = inv.get("gst_type", "cgst_sgst")
     cgst = round(subtotal * 2.5 / 100, 2) if gst_type == "cgst_sgst" else 0.0
     sgst = round(subtotal * 2.5 / 100, 2) if gst_type == "cgst_sgst" else 0.0
     igst = round(subtotal * 5.0 / 100, 2) if gst_type == "igst" else 0.0
     total_tax = round(cgst + sgst + igst, 2)
-    total_amount = round(subtotal if inv.get("rcm") else subtotal + total_tax, 2)
+    gross_total = round(subtotal if inv.get("rcm") else subtotal + total_tax, 2)
+    final_amount = float(int(gross_total + 0.5)) if gross_total >= 0 else -float(int(-gross_total + 0.5))
+    round_off = round(final_amount - gross_total, 2)
+    total_amount = final_amount
     amount_paid = round(sum(p["amount"] for p in inv.get("payments", [])), 2)
     balance_due = round(total_amount - amount_paid, 2)
     await db.invoices.update_one(
         {"id": iid, "user_id": user["user_id"]},
         {"$set": {"subtotal": subtotal, "freight_total": freight_total, "halting_total": halting_total,
                   "excess_total": excess_total, "shortage_total": shortage_total,
+                  "gst_type": gst_type,
                   "cgst_amount": cgst, "sgst_amount": sgst, "igst_amount": igst,
-                  "total_tax": total_tax, "total_amount": total_amount,
+                  "total_tax": total_tax, "gross_total": gross_total, "round_off": round_off,
+                  "total_amount": total_amount,
                   "amount_paid": amount_paid, "balance_due": balance_due}},
     )
 
@@ -759,15 +776,29 @@ async def create_invoice(payload: InvoiceCreateRequest, user=Depends(get_current
     shortage_total = round(
         sum(t.get("shortage_amount", 0.0) + (t.get("expenses") or {}).get("shortage_amount", 0.0) for t in trips), 2,
     )
+    # --- Auto GST type based on state match ---
+    customer_doc = await db.customers.find_one({"id": payload.customer_id, "user_id": user["user_id"]}, {"_id": 0}) or {}
+    company_doc = await db.companies.find_one({"user_id": user["user_id"]}, {"_id": 0}) or {}
+    home_state = (company_doc.get("state") or "").strip().lower()
+    cust_state = (customer_doc.get("state") or "").strip().lower()
+    if home_state and cust_state:
+        auto_gst = "cgst_sgst" if home_state == cust_state else "igst"
+    else:
+        auto_gst = payload.gst_type  # fallback to payload if state missing
+    gst_type = auto_gst
     cgst = sgst = igst = 0.0
-    if payload.gst_type == "cgst_sgst":
+    if gst_type == "cgst_sgst":
         cgst = round(subtotal * 2.5 / 100, 2)
         sgst = round(subtotal * 2.5 / 100, 2)
     else:
         igst = round(subtotal * 5.0 / 100, 2)
     total_tax = round(cgst + sgst + igst, 2)
     # RCM: tax NOT added to total (recipient pays)
-    total_amount = round(subtotal if payload.rcm else subtotal + total_tax, 2)
+    gross_total = round(subtotal if payload.rcm else subtotal + total_tax, 2)
+    # Round off to nearest rupee
+    final_amount = float(int(gross_total + 0.5)) if gross_total >= 0 else -float(int(-gross_total + 0.5))
+    round_off = round(final_amount - gross_total, 2)
+    total_amount = final_amount
 
     invoice_number = await _next_invoice_number(user["user_id"])
     inv = Invoice(
@@ -780,11 +811,13 @@ async def create_invoice(payload: InvoiceCreateRequest, user=Depends(get_current
         halting_total=halting_total,
         excess_total=excess_total,
         shortage_total=shortage_total,
-        gst_type=payload.gst_type,
+        gst_type=gst_type,
         cgst_amount=cgst,
         sgst_amount=sgst,
         igst_amount=igst,
         total_tax=total_tax,
+        gross_total=gross_total,
+        round_off=round_off,
         total_amount=total_amount,
         rcm=payload.rcm,
         amount_paid=0.0,

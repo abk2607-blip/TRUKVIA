@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api";
 import { toast } from "sonner";
 import { Plus, Pencil, Trash2, X } from "lucide-react";
+import { StateSelect } from "@/lib/states";
 
 const EMPTY = { name: "", address: "", phone: "", gstin: "", pan: "", state: "" };
 
@@ -104,7 +105,6 @@ export default function Customers() {
                 ["gstin", "GSTIN", false],
                 ["pan", "PAN", false],
                 ["phone", "Phone / ఫోన్", false],
-                ["state", "State / రాష్ట్రం", false],
               ].map(([k, lbl, req]) => (
                 <div key={k}>
                   <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">{lbl}{req && " *"}</label>
@@ -117,6 +117,15 @@ export default function Customers() {
                   />
                 </div>
               ))}
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">State / రాష్ట్రం</label>
+                <StateSelect
+                  value={form.state}
+                  onChange={(v) => setForm({ ...form, state: v })}
+                  dataTestId="customer-input-state"
+                  className="mt-1 w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none bg-white"
+                />
+              </div>
               <div>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Address / చిరునామా</label>
                 <textarea

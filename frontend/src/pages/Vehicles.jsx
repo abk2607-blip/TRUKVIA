@@ -4,11 +4,12 @@ import { api } from "@/api";
 import { toast } from "sonner";
 import { Plus, Pencil, Trash2, X, Truck, AlertTriangle, CheckCircle2 } from "lucide-react";
 import FileAttachments from "@/components/FileAttachments";
+import { StateSelect } from "@/lib/states";
 
 const EMPTY = {
   vehicle_number: "", vehicle_type: "own",
-  owner_name: "", owner_phone: "",
-  supplier_name: "", supplier_contact_person: "", supplier_mobile: "",
+  owner_name: "", owner_phone: "", owner_state: "",
+  supplier_name: "", supplier_contact_person: "", supplier_mobile: "", supplier_state: "", supplier_gstin: "",
   make_model: "", capacity_tons: 0,
   rc_expiry: "", fc_expiry: "", insurance_expiry: "", permit_expiry: "", puc_expiry: "",
   remarks: "", notes: "",
@@ -142,6 +143,8 @@ export default function Vehicles() {
                   <F label="Supplier Name"><input data-testid="vehicle-supplier-name" value={form.supplier_name} onChange={(e) => setForm({ ...form, supplier_name: e.target.value })} className={ic} /></F>
                   <F label="Supplier Contact Person"><input data-testid="vehicle-supplier-contact" value={form.supplier_contact_person} onChange={(e) => setForm({ ...form, supplier_contact_person: e.target.value })} className={ic} /></F>
                   <F label="Supplier Mobile"><input data-testid="vehicle-supplier-mobile" value={form.supplier_mobile} onChange={(e) => setForm({ ...form, supplier_mobile: e.target.value })} className={ic} /></F>
+                  <F label="Supplier GSTIN"><input data-testid="vehicle-supplier-gstin" value={form.supplier_gstin || ""} onChange={(e) => setForm({ ...form, supplier_gstin: e.target.value })} className={ic} /></F>
+                  <F label="Supplier State"><StateSelect value={form.supplier_state} onChange={(v) => setForm({ ...form, supplier_state: v })} dataTestId="vehicle-supplier-state" className={ic + " bg-white"} /></F>
                 </>
               )}
               <F label="Make/Model"><input data-testid="vehicle-model" value={form.make_model} onChange={(e) => setForm({ ...form, make_model: e.target.value })} className={ic} placeholder="Tata LPT 3118" /></F>

@@ -1,0 +1,23 @@
+{
+  "summary": "Iteration 12 — validated all 7 change requests from real user testing. 7/7 backend pytest tests passed (auto-GST intra/inter-state override, round-off math both directions, new invoice fields, _recompute_invoice re-runs auto-GST on trip edit, PDF renders with DejaVu ₹ symbol + Halting sub-row + Shortage sub-row + Total Amount + Round Off + FINAL PAYABLE + new T&C text without old 'Rs. 2,500 per day'). Frontend UI verified: Customer/Settings state dropdowns have exactly 37 options (1 placeholder + 28 states + 8 UTs), Karnataka persists via API, invoice GST Type is a read-only DIV that auto-switches to IGST when customer state ≠ company state and CGST+SGST when same, with hint 'Company: X · Customer: Y → Same state / Different states'.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter12_features.py",
+    "/app/test_reports/pytest/iter12.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now ~1500+ lines; consider splitting into routers (invoices/trips/masters/reports) for maintainability.",
+    "Auto-GST silently overrides the payload gst_type — this is intentional per spec, but the API contract should be documented (Swagger description) so integrators aren't surprised.",
+    "Round-off uses int(gross_total + 0.5) which is standard half-up; banker's rounding could be considered but half-up matches Indian invoicing convention."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter12_features.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Bearer test_session_bitumen_2026 (test-user-bitumen). All customers/trips/invoices cleaned after run.",
+  "seed_data_creation": "Only ephemeral TEST_* data, cleaned up post-test.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 12 features all verified. If retesting: (1) Auto-GST logic lives in create_invoice + _recompute_invoice around server.py:780-800 and :688-704. (2) Round-off = float(int(gross+0.5)); rounded up when gross ends >= .50. (3) PDF DejaVu fonts at /app/backend/fonts/DejaVuSans*.ttf are persisted. (4) Halting/Shortage sub-rows are inserted in pdf_generator.py:246-279 with SPAN styling. (5) invoice-gst-type in InvoiceCreate.jsx is a DIV (read-only) not a <select> — DO NOT try to select_option on it.",
+  "rca of the issue": "N/A — no defects found this iteration."
+}

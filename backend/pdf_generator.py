@@ -31,8 +31,8 @@ except Exception:
 _UNI_FONT = "DejaVuSans"
 _UNI_FONT_BOLD = "DejaVuSans-Bold"
 _UNI_PATHS = [
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+    os.path.join(_FONTS_DIR, "DejaVuSans.ttf"),
+    os.path.join(_FONTS_DIR, "DejaVuSans-Bold.ttf"),
 ]
 try:
     if _UNI_FONT not in pdfmetrics.getRegisteredFontNames():
@@ -213,9 +213,11 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
     ]))
     story.append(party_tbl)
 
-    # --- Trip line items ---
-    header = ["#", "Date", "Vehicle No", "Load", "Route", "Cust Inv", "Tons", "Rate Mode", "Rate/KMs", "Freight (₹)"]
+    # --- Trip line items with per-trip Halting / Shortage sub-rows ---
+    header = ["#", "Date", "Vehicle No", "Load", "Route", "Cust Inv", "Tons", "Rate Mode", "Rate/KMs", "Amount (₹)"]
     rows = [header]
+    # Track (row_index, style) commands for the spanned sub-rows so we can style them uniformly.
+    sub_row_indices = []  # 0-based row indices in `rows` that are sub-rows (span across cols 1..9)
     for idx, t in enumerate(trips, start=1):
         route = f"{t.get('from_location','')} → {t.get('to_location','')}"
         if t.get("freight_mode") == "per_ton":
@@ -241,9 +243,43 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
             rate,
             f"₹ {_fmt(t.get('freight_amount', 0))}",
         ])
+        # Halting sub-row (only when applicable)
+        if float(t.get("halting_amount", 0) or 0) > 0:
+            hdays = t.get("chargeable_halting_days", 0) or 0
+            hrate = t.get("halting_rate_per_day", 0) or 0
+            desc = f"↳ Halting Charges — {hdays} day(s) × ₹ {_fmt(hrate)} / day"
+            rows.append(["", desc, "", "", "", "", "", "", "", f"₹ {_fmt(t.get('halting_amount', 0))}"])
+            sub_row_indices.append(len(rows) - 1)
+        # Shortage sub-row (product-rate based OR expense-level fallback)
+        shortage_qty = float(t.get("shortage_qty", 0) or 0)
+        expenses = t.get("expenses") or {}
+        expense_shortage_amt = float(expenses.get("shortage_amount", 0) or 0)
+        trip_shortage_amt = float(t.get("shortage_amount", 0) or 0)
+        total_shortage_amt = round(trip_shortage_amt + expense_shortage_amt, 2)
+        if total_shortage_amt > 0:
+            prod_rate = t.get("product_rate_per_mt", 0) or 0
+            if shortage_qty > 0 and prod_rate > 0:
+                desc = f"↳ Less: Shortage — {shortage_qty:.3f} MT × ₹ {_fmt(prod_rate)} / MT"
+            elif shortage_qty > 0:
+                desc = f"↳ Less: Shortage — {shortage_qty:.3f} MT"
+            else:
+                desc = "↳ Less: Shortage Deduction"
+            rows.append(["", desc, "", "", "", "", "", "", "", f"(₹ {_fmt(total_shortage_amt)})"])
+            sub_row_indices.append(len(rows) - 1)
+        # Excess sub-row (informational)
+        excess_amt = float(t.get("excess_amount", 0) or 0)
+        if excess_amt > 0:
+            excess_qty = float(t.get("excess_qty", 0) or 0)
+            prod_rate = t.get("product_rate_per_mt", 0) or 0
+            if excess_qty > 0 and prod_rate > 0:
+                desc = f"↳ Add: Excess Qty — {excess_qty:.3f} MT × ₹ {_fmt(prod_rate)} / MT"
+            else:
+                desc = "↳ Add: Excess Qty"
+            rows.append(["", desc, "", "", "", "", "", "", "", f"₹ {_fmt(excess_amt)}"])
+            sub_row_indices.append(len(rows) - 1)
 
     items_tbl = Table(rows, colWidths=[8*mm, 20*mm, 20*mm, 22*mm, 34*mm, 20*mm, 12*mm, 16*mm, 18*mm, 20*mm], repeatRows=1)
-    items_tbl.setStyle(TableStyle([
+    _style = [
         ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F4F4F5")),
         ("FONTNAME", (0, 0), (-1, 0), _FB),
@@ -256,7 +292,15 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
         ("RIGHTPADDING", (0, 0), (-1, -1), 3),
         ("TOPPADDING", (0, 0), (-1, -1), 3),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
-    ]))
+    ]
+    # Style sub-rows: span description across cols 1..8 and give a subtle background.
+    for r in sub_row_indices:
+        _style.append(("SPAN", (1, r), (8, r)))
+        _style.append(("ALIGN", (1, r), (1, r), "LEFT"))
+        _style.append(("BACKGROUND", (0, r), (-1, r), colors.HexColor("#FAFAFA")))
+        _style.append(("FONTSIZE", (0, r), (-1, r), 7))
+        _style.append(("TEXTCOLOR", (0, r), (-1, r), colors.HexColor("#525252")))
+    items_tbl.setStyle(TableStyle(_style))
     story.append(items_tbl)
 
     # --- Additional Charges (Halting) & Deductions (Shortage) breakdown ---
@@ -273,6 +317,8 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
     cgst = invoice.get("cgst_amount", 0)
     sgst = invoice.get("sgst_amount", 0)
     igst = invoice.get("igst_amount", 0)
+    gross_total = invoice.get("gross_total", invoice.get("total_amount", 0))
+    round_off = invoice.get("round_off", 0)
     total = invoice.get("total_amount", 0)
     paid = invoice.get("amount_paid", 0)
     balance = invoice.get("balance_due", 0)
@@ -294,7 +340,11 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
         totals_rows.append(["Tax under RCM (not collected)", "—"])
     else:
         totals_rows.append(["Total Tax", f"₹ {_fmt(invoice.get('total_tax', 0))}"])
-    totals_rows.append(["TOTAL PAYABLE", f"₹ {_fmt(total)}"])
+    totals_rows.append(["Total Amount", f"₹ {_fmt(gross_total)}"])
+    if abs(round_off) >= 0.005:
+        sign = "+" if round_off > 0 else "−"
+        totals_rows.append(["Round Off", f"{sign} ₹ {_fmt(abs(round_off))}"])
+    totals_rows.append(["FINAL PAYABLE", f"₹ {_fmt(total)}"])
     totals_rows.append(["Amount Received", f"₹ {_fmt(paid)}"])
     totals_rows.append(["Balance Due", f"₹ {_fmt(balance)}"])
 
@@ -344,7 +394,7 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
     terms = [
         "1. GST shall be paid by the service recipient under the Reverse Charge Mechanism as per Notification No. 08/2017 (if RCM = YES)." if invoice.get("rcm") else "1. GST is charged under forward charge and included in the total payable.",
         "2. Shortage or excess in Bitumen quantity will be accounted for only beyond a permissible variation of 1%.",
-        "3. Halting charges Rs. 2,500 per day applicable after 48 hours from arrival at the site.",
+        "3. Halting Charges applicable after 48 hours from arrival at the site.",
         "4. Responsibility for product insurance lies with the consignor or consignee, as applicable.",
     ]
     if invoice.get("notes"):

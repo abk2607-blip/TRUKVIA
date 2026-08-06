@@ -186,25 +186,61 @@ export default function InvoiceView() {
               </tr>
             </thead>
             <tbody className="font-mono">
-              {trips.map((t, idx) => (
-                <tr key={t.id}>
-                  <td className="border border-zinc-300 px-2 py-1.5">{idx + 1}</td>
-                  <td className="border border-zinc-300 px-2 py-1.5">{fmtDate(t.date)}</td>
-                  <td className="border border-zinc-300 px-2 py-1.5">{t.vehicle_number}</td>
-                  <td className="border border-zinc-300 px-2 py-1.5">{t.load_details}</td>
-                  <td className="border border-zinc-300 px-2 py-1.5">{t.from_location} → {t.to_location}</td>
-                  <td className="border border-zinc-300 px-2 py-1.5 text-right">{Number(t.tons).toFixed(2)}</td>
-                  <td className="border border-zinc-300 px-2 py-1.5">{t.freight_mode === "per_ton" ? "Per Ton" : "Round Trip"}</td>
-                  <td className="border border-zinc-300 px-2 py-1.5 text-right">
-                    {t.freight_mode === "per_ton"
-                      ? Number(t.rate_per_ton).toFixed(2)
-                      : (t.round_trip_kms > 0 && t.rate_per_km_per_ton > 0)
-                        ? `${Number(t.round_trip_kms).toFixed(0)}km×₹${Number(t.rate_per_km_per_ton).toFixed(2)}`
-                        : Number(t.fixed_amount).toFixed(2)}
-                  </td>
-                  <td className="border border-zinc-300 px-2 py-1.5 text-right font-bold">{Number(t.freight_amount).toFixed(2)}</td>
-                </tr>
-              ))}
+              {trips.map((t, idx) => {
+                const shortAmt = Number(t.shortage_amount || 0) + Number((t.expenses || {}).shortage_amount || 0);
+                const haltAmt = Number(t.halting_amount || 0);
+                const excessAmt = Number(t.excess_amount || 0);
+                return (
+                  <React.Fragment key={t.id}>
+                    <tr>
+                      <td className="border border-zinc-300 px-2 py-1.5">{idx + 1}</td>
+                      <td className="border border-zinc-300 px-2 py-1.5">{fmtDate(t.date)}</td>
+                      <td className="border border-zinc-300 px-2 py-1.5">{t.vehicle_number}</td>
+                      <td className="border border-zinc-300 px-2 py-1.5">{t.load_details}</td>
+                      <td className="border border-zinc-300 px-2 py-1.5">{t.from_location} → {t.to_location}</td>
+                      <td className="border border-zinc-300 px-2 py-1.5 text-right">{Number(t.tons).toFixed(2)}</td>
+                      <td className="border border-zinc-300 px-2 py-1.5">{t.freight_mode === "per_ton" ? "Per Ton" : "Round Trip"}</td>
+                      <td className="border border-zinc-300 px-2 py-1.5 text-right">
+                        {t.freight_mode === "per_ton"
+                          ? Number(t.rate_per_ton).toFixed(2)
+                          : (t.round_trip_kms > 0 && t.rate_per_km_per_ton > 0)
+                            ? `${Number(t.round_trip_kms).toFixed(0)}km×₹${Number(t.rate_per_km_per_ton).toFixed(2)}`
+                            : Number(t.fixed_amount).toFixed(2)}
+                      </td>
+                      <td className="border border-zinc-300 px-2 py-1.5 text-right font-bold">{fmtCurrency(t.freight_amount)}</td>
+                    </tr>
+                    {haltAmt > 0 && (
+                      <tr className="bg-zinc-50 text-zinc-600">
+                        <td className="border border-zinc-300 px-2 py-1"></td>
+                        <td className="border border-zinc-300 px-2 py-1" colSpan={7}>↳ Halting Charges — {t.chargeable_halting_days || 0} day(s) × ₹ {Number(t.halting_rate_per_day || 0).toFixed(2)} / day</td>
+                        <td className="border border-zinc-300 px-2 py-1 text-right">{fmtCurrency(haltAmt)}</td>
+                      </tr>
+                    )}
+                    {shortAmt > 0 && (
+                      <tr className="bg-zinc-50 text-rose-700">
+                        <td className="border border-zinc-300 px-2 py-1"></td>
+                        <td className="border border-zinc-300 px-2 py-1" colSpan={7}>
+                          ↳ Less: Shortage
+                          {t.shortage_qty > 0 && ` — ${Number(t.shortage_qty).toFixed(3)} MT`}
+                          {t.product_rate_per_mt > 0 && ` × ₹ ${Number(t.product_rate_per_mt).toFixed(2)} / MT`}
+                        </td>
+                        <td className="border border-zinc-300 px-2 py-1 text-right">({fmtCurrency(shortAmt)})</td>
+                      </tr>
+                    )}
+                    {excessAmt > 0 && (
+                      <tr className="bg-zinc-50 text-emerald-700">
+                        <td className="border border-zinc-300 px-2 py-1"></td>
+                        <td className="border border-zinc-300 px-2 py-1" colSpan={7}>
+                          ↳ Add: Excess Qty
+                          {t.excess_qty > 0 && ` — ${Number(t.excess_qty).toFixed(3)} MT`}
+                          {t.product_rate_per_mt > 0 && ` × ₹ ${Number(t.product_rate_per_mt).toFixed(2)} / MT`}
+                        </td>
+                        <td className="border border-zinc-300 px-2 py-1 text-right">{fmtCurrency(excessAmt)}</td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -216,7 +252,7 @@ export default function InvoiceView() {
             <ol className="mt-2 list-decimal list-inside space-y-1 text-zinc-700">
               <li>{invoice.rcm ? "GST is payable by service recipient under RCM per Notification No. 08/2017." : "GST charged under forward charge; included in total."}</li>
               <li>Bitumen shortage/excess accounted only beyond 1% variation.</li>
-              <li>Halting charges Rs. 2,500 per day after 48 hours at site.</li>
+              <li>Halting Charges applicable after 48 hours from arrival at the site.</li>
               {invoice.notes && <li>Notes: {invoice.notes}</li>}
             </ol>
           </div>
@@ -243,7 +279,11 @@ export default function InvoiceView() {
                   <tr><td className="border-b border-zinc-300 px-3 py-1.5">IGST @ 5%</td><td className="border-b border-zinc-300 px-3 py-1.5 text-right">{fmtCurrency(invoice.igst_amount)}</td></tr>
                 )}
                 {invoice.rcm && <tr><td className="border-b border-zinc-300 px-3 py-1.5 text-zinc-500">Under RCM</td><td className="border-b border-zinc-300 px-3 py-1.5 text-right text-zinc-400">—</td></tr>}
-                <tr className="bg-amber-50"><td className="border-b border-zinc-300 px-3 py-2 font-black text-base">TOTAL PAYABLE</td><td className="border-b border-zinc-300 px-3 py-2 text-right font-black text-base">{fmtCurrency(invoice.total_amount)}</td></tr>
+                <tr><td className="border-b border-zinc-300 px-3 py-1.5 font-semibold">Total Amount</td><td className="border-b border-zinc-300 px-3 py-1.5 text-right font-semibold">{fmtCurrency(invoice.gross_total || invoice.total_amount)}</td></tr>
+                {typeof invoice.round_off === "number" && Math.abs(invoice.round_off) >= 0.005 && (
+                  <tr><td className="border-b border-zinc-300 px-3 py-1.5 text-zinc-500">Round Off</td><td className="border-b border-zinc-300 px-3 py-1.5 text-right text-zinc-500">{invoice.round_off > 0 ? "+" : "−"} {fmtCurrency(Math.abs(invoice.round_off))}</td></tr>
+                )}
+                <tr className="bg-amber-50"><td className="border-b border-zinc-300 px-3 py-2 font-black text-base">FINAL PAYABLE</td><td className="border-b border-zinc-300 px-3 py-2 text-right font-black text-base">{fmtCurrency(invoice.total_amount)}</td></tr>
                 <tr><td className="border-b border-zinc-300 px-3 py-1.5 text-emerald-700 font-semibold">Amount Received</td><td className="border-b border-zinc-300 px-3 py-1.5 text-right text-emerald-700 font-semibold">{fmtCurrency(invoice.amount_paid)}</td></tr>
                 <tr><td className="px-3 py-1.5 text-amber-800 font-bold">Balance Due</td><td className="px-3 py-1.5 text-right text-amber-800 font-bold">{fmtCurrency(invoice.balance_due)}</td></tr>
               </tbody>

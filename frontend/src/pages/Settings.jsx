@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api";
 import { toast } from "sonner";
 import { Save, Upload, Trash2 } from "lucide-react";
+import { StateSelect } from "@/lib/states";
 
 const EMPTY = {
   name: "", address: "", phone: "", email: "",
@@ -113,7 +114,7 @@ export default function Settings() {
             <F label="Address · చిరునామా"><textarea data-testid="setting-address" rows={3} value={form.address} onChange={set("address")} className={inputCls} /></F>
           </div>
           <F label="Email"><input data-testid="setting-email" value={form.email} onChange={set("email")} className={inputCls} /></F>
-          <F label="State · రాష్ట్రం"><input data-testid="setting-state" value={form.state} onChange={set("state")} className={inputCls} /></F>
+          <F label="State · రాష్ట్రం"><StateSelect value={form.state} onChange={(v) => setForm({ ...form, state: v })} dataTestId="setting-state" className={inputCls + " bg-white"} /></F>
           <F label="GSTIN"><input data-testid="setting-gstin" value={form.gstin} onChange={set("gstin")} className={inputCls} /></F>
           <F label="PAN"><input data-testid="setting-pan" value={form.pan} onChange={set("pan")} className={inputCls} /></F>
           <F label="HSN/SAC (default 996791)"><input data-testid="setting-hsn" value={form.hsn_sac} onChange={set("hsn_sac")} className={inputCls} /></F>

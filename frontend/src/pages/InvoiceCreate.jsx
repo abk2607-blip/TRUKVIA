@@ -10,25 +10,40 @@ export default function InvoiceCreate() {
   const qc = useQueryClient();
   const [customerId, setCustomerId] = useState("");
   const [selected, setSelected] = useState({});
-  const [gstType, setGstType] = useState("cgst_sgst");
   const [rcm, setRcm] = useState(true);
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState("");
 
   const { data: customers = [] } = useQuery({ queryKey: ["customers"], queryFn: async () => (await api.get("/customers")).data });
+  const { data: company } = useQuery({ queryKey: ["company"], queryFn: async () => (await api.get("/company")).data });
   const { data: trips = [], refetch } = useQuery({
     queryKey: ["invoiceable-trips", customerId],
     queryFn: async () => (await api.get("/trips", { params: { customer_id: customerId, status: "pending" } })).data,
     enabled: Boolean(customerId),
   });
 
+  const selectedCustomer = customers.find((c) => c.id === customerId);
+  // Auto GST determination: same state → CGST+SGST; different / missing → IGST
+  const gstType = useMemo(() => {
+    const home = (company?.state || "").trim().toLowerCase();
+    const cust = (selectedCustomer?.state || "").trim().toLowerCase();
+    if (!home || !cust) return "cgst_sgst"; // fallback for preview only
+    return home === cust ? "cgst_sgst" : "igst";
+  }, [company?.state, selectedCustomer?.state]);
+
   const selectedTrips = useMemo(() => trips.filter((t) => selected[t.id]), [trips, selected]);
-  const subtotal = selectedTrips.reduce((s, t) => s + Number(t.freight_amount || 0), 0);
+  const freightTotal = selectedTrips.reduce((s, t) => s + Number(t.freight_amount || 0), 0);
+  const haltingTotal = selectedTrips.reduce((s, t) => s + Number(t.halting_amount || 0), 0);
+  const excessTotal = selectedTrips.reduce((s, t) => s + Number(t.excess_amount || 0), 0);
+  const shortageTotal = selectedTrips.reduce((s, t) => s + Number(t.shortage_amount || 0) + Number((t.expenses || {}).shortage_amount || 0), 0);
+  const subtotal = freightTotal + haltingTotal + excessTotal - shortageTotal;
   const cgst = gstType === "cgst_sgst" ? subtotal * 0.025 : 0;
   const sgst = gstType === "cgst_sgst" ? subtotal * 0.025 : 0;
   const igst = gstType === "igst" ? subtotal * 0.05 : 0;
   const totalTax = cgst + sgst + igst;
-  const total = rcm ? subtotal : subtotal + totalTax;
+  const grossTotal = rcm ? subtotal : subtotal + totalTax;
+  const finalTotal = Math.round(grossTotal);
+  const roundOff = Number((finalTotal - grossTotal).toFixed(2));
 
   const create = useMutation({
     mutationFn: async () => (await api.post("/invoices", {
@@ -84,11 +99,15 @@ export default function InvoiceCreate() {
             <input data-testid="invoice-date" type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} className={inputCls} />
           </div>
           <div>
-            <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">GST Type</label>
-            <select data-testid="invoice-gst-type" value={gstType} onChange={(e) => setGstType(e.target.value)} className={inputCls}>
-              <option value="cgst_sgst">CGST + SGST (Intra-state)</option>
-              <option value="igst">IGST (Inter-state)</option>
-            </select>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">GST Type <span className="text-emerald-700">(Auto)</span></label>
+            <div data-testid="invoice-gst-type" className={`${inputCls} bg-zinc-50 flex items-center`}>
+              {gstType === "cgst_sgst" ? "CGST + SGST (Intra-state)" : "IGST (Inter-state)"}
+            </div>
+            <div className="text-[10px] text-zinc-500 mt-1">
+              {selectedCustomer?.state && company?.state
+                ? `Company: ${company.state} · Customer: ${selectedCustomer.state} → ${gstType === "cgst_sgst" ? "Same state" : "Different states"}`
+                : "Set Company & Customer states to auto-determine"}
+            </div>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -154,7 +173,11 @@ export default function InvoiceCreate() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-1 text-sm">
               <Row k="Trips Selected" v={selectedTrips.length} mono />
-              <Row k="Subtotal (Taxable)" v={fmtCurrency(subtotal)} mono />
+              <Row k="Freight Total" v={fmtCurrency(freightTotal)} mono />
+              {haltingTotal > 0 && <Row k="Halting Charges" v={fmtCurrency(haltingTotal)} mono />}
+              {excessTotal > 0 && <Row k="Excess Charges" v={fmtCurrency(excessTotal)} mono />}
+              {shortageTotal > 0 && <Row k="Less: Shortage" v={`(${fmtCurrency(shortageTotal)})`} mono />}
+              <Row k="Taxable Amount" v={fmtCurrency(subtotal)} mono />
               {gstType === "cgst_sgst" ? (
                 <>
                   <Row k="CGST @ 2.5%" v={fmtCurrency(cgst)} mono />
@@ -164,10 +187,14 @@ export default function InvoiceCreate() {
                 <Row k="IGST @ 5%" v={fmtCurrency(igst)} mono />
               )}
               {rcm && <Row k="RCM (tax not collected)" v="—" muted />}
+              <Row k="Total Amount" v={fmtCurrency(grossTotal)} mono />
+              {Math.abs(roundOff) >= 0.005 && (
+                <Row k="Round Off" v={`${roundOff > 0 ? "+" : "−"} ${fmtCurrency(Math.abs(roundOff))}`} mono muted />
+              )}
             </div>
             <div className="bg-amber-50 border border-amber-200 p-4 rounded-sm text-right">
-              <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Total Payable</div>
-              <div className="font-mono text-3xl font-black text-amber-900 mt-2">{fmtCurrency(total)}</div>
+              <div className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Final Payable</div>
+              <div className="font-mono text-3xl font-black text-amber-900 mt-2">{fmtCurrency(finalTotal)}</div>
             </div>
           </div>
 
