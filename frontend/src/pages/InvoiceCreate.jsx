@@ -11,6 +11,7 @@ export default function InvoiceCreate() {
   const [customerId, setCustomerId] = useState("");
   const [selected, setSelected] = useState({});
   const [rcm, setRcm] = useState(true);
+  const [hsnSac, setHsnSac] = useState("996791");
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState("");
 
@@ -50,6 +51,7 @@ export default function InvoiceCreate() {
       customer_id: customerId,
       trip_ids: Object.keys(selected).filter((k) => selected[k]),
       invoice_date: invoiceDate,
+      hsn_sac: hsnSac,
       gst_type: gstType,
       rcm,
       notes,
@@ -109,15 +111,36 @@ export default function InvoiceCreate() {
                 : "Set Company & Customer states to auto-determine"}
             </div>
           </div>
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">HSN / SAC Code</label>
+            <select data-testid="invoice-hsn" value={hsnSac} onChange={(e) => setHsnSac(e.target.value)} className={inputCls + " bg-white"}>
+              <option value="996791">996791 · Goods Transport Agency Services</option>
+              <option value="996511">996511 · Road transport services of goods</option>
+            </select>
+            <div className="text-[10px] text-zinc-500 mt-1">Applies to all trips in this invoice. Trips may still override individually.</div>
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <input id="rcm" data-testid="invoice-rcm" type="checkbox" checked={rcm} onChange={(e) => setRcm(e.target.checked)} className="w-4 h-4" />
-          <label htmlFor="rcm" className="text-sm">
-            <span className="font-semibold">Reverse Charge (RCM)</span>
-            <span className="ml-2 text-xs text-zinc-500">
-              <span className="telugu">తక్కువ చార్జ్ — పన్ను రిసీవర్ చెల్లిస్తారు</span>
-            </span>
-          </label>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4">
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">GST Treatment</label>
+            <div className="mt-1 flex gap-2" data-testid="invoice-gst-treatment">
+              <button type="button" onClick={() => setRcm(true)}
+                data-testid="gst-rcm-btn"
+                className={`flex-1 px-3 py-2 text-xs uppercase tracking-wider font-semibold rounded-sm border ${rcm ? "bg-amber-100 border-amber-400 text-amber-900" : "bg-white border-zinc-200 text-zinc-500 hover:border-zinc-950"}`}>
+                RCM · Recipient pays tax
+              </button>
+              <button type="button" onClick={() => setRcm(false)}
+                data-testid="gst-normal-btn"
+                className={`flex-1 px-3 py-2 text-xs uppercase tracking-wider font-semibold rounded-sm border ${!rcm ? "bg-emerald-100 border-emerald-400 text-emerald-900" : "bg-white border-zinc-200 text-zinc-500 hover:border-zinc-950"}`}>
+                Normal GST · Forward charge
+              </button>
+            </div>
+            <div className="text-[10px] text-zinc-500 mt-1">
+              {rcm
+                ? "RCM selected: tax will be shown on invoice but NOT collected. Customer files it under RCM."
+                : "Normal charge: 5% GST added to the taxable amount."}
+            </div>
+          </div>
         </div>
       </section>
 

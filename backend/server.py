@@ -48,6 +48,7 @@ def new_id(prefix: str = ""):
 
 class Company(BaseModel):
     model_config = ConfigDict(extra="ignore")
+    id: str = Field(default_factory=lambda: new_id("co_"))
     name: str = ""
     address: str = ""
     phone: str = ""
@@ -66,6 +67,7 @@ class Company(BaseModel):
     lr_prefix: str = "LR"
     next_lr_number: int = 1
     logo: str = ""  # data URL (base64)
+    is_default: bool = False
 
 class Customer(BaseModel):
     id: str = Field(default_factory=lambda: new_id("cust_"))
@@ -104,6 +106,7 @@ class Driver(BaseModel):
 
 class Trip(BaseModel):
     id: str = Field(default_factory=lambda: new_id("trip_"))
+    company_id: str = ""
     customer_id: str
     date: str  # ISO date
     vehicle_number: str
@@ -274,11 +277,13 @@ class Payment(BaseModel):
 
 class Invoice(BaseModel):
     id: str = Field(default_factory=lambda: new_id("inv_"))
+    company_id: str = ""
     invoice_number: str
     customer_id: str
     invoice_date: str
     trip_ids: List[str]
     subtotal: float
+    hsn_sac: str = "996791"  # 996511 or 996791 — chosen at invoice creation
     freight_total: float = 0.0
     halting_total: float = 0.0
     excess_total: float = 0.0
@@ -448,25 +453,122 @@ async def logout(request: Request, response: Response):
     response.delete_cookie("session_token", path="/")
     return {"ok": True}
 
+# ==================== Multi-Company Support ====================
+# Users can maintain multiple company profiles under one login.
+# Masters (customers, vehicles, drivers, products, parties) are shared.
+# Transactions (trips, invoices, fuel logs) are scoped to the active company.
+
+async def _get_or_create_default_company(user_id: str) -> dict:
+    """Ensure at least one company exists for the user. Migrate legacy (no id) docs."""
+    docs = await db.companies.find({"user_id": user_id}, {"_id": 0}).to_list(50)
+    # Backfill missing id / is_default on legacy docs
+    for d in docs:
+        if not d.get("id"):
+            new = new_id("co_")
+            await db.companies.update_one({"user_id": user_id, "name": d.get("name", "")}, {"$set": {"id": new}})
+            d["id"] = new
+    if not docs:
+        # Create an empty default
+        c = Company(name="My Company", is_default=True).model_dump()
+        c["user_id"] = user_id
+        await db.companies.insert_one(c)
+        return c
+    # Ensure exactly one is_default
+    if not any(d.get("is_default") for d in docs):
+        first_id = docs[0]["id"]
+        await db.companies.update_one({"user_id": user_id, "id": first_id}, {"$set": {"is_default": True}})
+        docs[0]["is_default"] = True
+    return next((d for d in docs if d.get("is_default")), docs[0])
+
+async def _active_company_id(request: Request, user: dict) -> str:
+    """Resolve which company the current request is scoped to.
+    Priority: X-Company-Id header → user's default company → first company."""
+    override = request.headers.get("x-company-id") or request.headers.get("X-Company-Id")
+    if override:
+        # Verify the company belongs to this user
+        doc = await db.companies.find_one({"id": override, "user_id": user["user_id"]}, {"id": 1, "_id": 0})
+        if doc:
+            return override
+    default = await _get_or_create_default_company(user["user_id"])
+    return default["id"]
+
+async def _backfill_company_id(user_id: str, company_id: str):
+    """Assign the given company_id to any legacy trip/invoice/file lacking one for this user."""
+    for coll in ("trips", "invoices", "files", "audit_logs"):
+        await db[coll].update_many({"user_id": user_id, "$or": [{"company_id": {"$exists": False}}, {"company_id": ""}]}, {"$set": {"company_id": company_id}})
+
 # ==================== Company Settings ====================
 
+@api.get("/companies")
+async def list_companies(user=Depends(get_current_user)):
+    default = await _get_or_create_default_company(user["user_id"])  # ensures at least one
+    docs = await db.companies.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).to_list(50)
+    # Backfill legacy transactions to the default company
+    await _backfill_company_id(user["user_id"], default["id"])
+    return docs
+
+@api.post("/companies")
+async def create_company(payload: Company, user=Depends(get_current_user)):
+    doc = payload.model_dump()
+    doc["user_id"] = user["user_id"]
+    # If first-ever, mark default
+    existing = await db.companies.count_documents({"user_id": user["user_id"]})
+    if existing == 0:
+        doc["is_default"] = True
+    await db.companies.insert_one(doc)
+    doc.pop("_id", None); doc.pop("user_id", None)
+    return doc
+
+@api.put("/companies/{cid}")
+async def update_company_by_id(cid: str, payload: Company, user=Depends(get_current_user)):
+    upd = payload.model_dump()
+    upd.pop("id", None)
+    r = await db.companies.update_one({"id": cid, "user_id": user["user_id"]}, {"$set": upd})
+    if r.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Company not found")
+    return await db.companies.find_one({"id": cid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
+
+@api.post("/companies/{cid}/set-default")
+async def set_default_company(cid: str, user=Depends(get_current_user)):
+    r = await db.companies.update_one({"id": cid, "user_id": user["user_id"]}, {"$set": {"is_default": True}})
+    if r.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Company not found")
+    await db.companies.update_many({"user_id": user["user_id"], "id": {"$ne": cid}}, {"$set": {"is_default": False}})
+    return {"ok": True}
+
+@api.delete("/companies/{cid}")
+async def delete_company_by_id(cid: str, user=Depends(get_current_user)):
+    count = await db.companies.count_documents({"user_id": user["user_id"]})
+    if count <= 1:
+        raise HTTPException(status_code=400, detail="Cannot delete the only company")
+    r = await db.companies.delete_one({"id": cid, "user_id": user["user_id"]})
+    if r.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Company not found")
+    return {"ok": True}
+
+# ==================== Legacy single-company aliases (active company) ====================
+
 @api.get("/company")
-async def get_company(user=Depends(get_current_user)):
-    doc = await db.companies.find_one({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
+async def get_company(request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
+    doc = await db.companies.find_one({"id": cid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
     if not doc:
         return Company().model_dump()
     return doc
 
 @api.put("/company")
-async def save_company(payload: Company, user=Depends(get_current_user)):
+async def save_company(payload: Company, request: Request, user=Depends(get_current_user)):
+    """Save changes to the ACTIVE company (backward-compatible with single-company clients)."""
+    cid = await _active_company_id(request, user)
     doc = payload.model_dump()
+    doc["id"] = cid
     doc["user_id"] = user["user_id"]
     await db.companies.update_one(
-        {"user_id": user["user_id"]},
+        {"id": cid, "user_id": user["user_id"]},
         {"$set": doc},
         upsert=True,
     )
-    return payload.model_dump()
+    return doc
 
 # ==================== Customers ====================
 
@@ -627,8 +729,10 @@ def _trip_billable(t: dict) -> float:
     )
 
 @api.get("/trips")
-async def list_trips(user=Depends(get_current_user), customer_id: Optional[str] = None, status: Optional[str] = None):
-    q = {"user_id": user["user_id"]}
+async def list_trips(request: Request, user=Depends(get_current_user), customer_id: Optional[str] = None, status: Optional[str] = None):
+    cid = await _active_company_id(request, user)
+    await _backfill_company_id(user["user_id"], cid)
+    q = {"user_id": user["user_id"], "company_id": cid}
     if customer_id:
         q["customer_id"] = customer_id
     if status:
@@ -637,7 +741,9 @@ async def list_trips(user=Depends(get_current_user), customer_id: Optional[str] 
     return docs
 
 @api.post("/trips")
-async def create_trip(payload: Trip, user=Depends(get_current_user)):
+async def create_trip(payload: Trip, request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
+    payload.company_id = cid
     if not payload.vehicle_id and payload.vehicle_number:
         v = await db.vehicles.find_one({"vehicle_number": payload.vehicle_number.upper(), "user_id": user["user_id"]}, {"_id": 0})
         if v:
@@ -745,6 +851,7 @@ class InvoiceCreateRequest(BaseModel):
     customer_id: str
     trip_ids: List[str]
     invoice_date: Optional[str] = None
+    hsn_sac: str = "996791"  # 996511 or 996791
     gst_type: Literal["cgst_sgst", "igst"] = "cgst_sgst"
     rcm: bool = True
     notes: str = ""
@@ -768,19 +875,42 @@ async def _next_invoice_number(user_id: str) -> str:
     )
     return num
 
+async def _next_invoice_number_for_company(company_id: str, user_id: str) -> str:
+    """Generate next invoice number scoped to a specific company (multi-company)."""
+    company = await db.companies.find_one({"id": company_id, "user_id": user_id}, {"_id": 0})
+    prefix = "INV"
+    seq = 1
+    if company:
+        prefix = company.get("invoice_prefix") or "INV"
+        seq = int(company.get("next_invoice_number") or 1)
+    fy = now_utc()
+    yr = fy.year % 100
+    yr_next = (fy.year + 1) % 100
+    fy_str = f"{yr:02d}-{yr_next:02d}" if fy.month >= 4 else f"{yr-1:02d}-{yr:02d}"
+    num = f"{prefix}/{fy_str}/{seq:04d}"
+    await db.companies.update_one(
+        {"id": company_id, "user_id": user_id},
+        {"$set": {"next_invoice_number": seq + 1}},
+    )
+    return num
+
 @api.get("/invoices")
-async def list_invoices(user=Depends(get_current_user)):
-    docs = await db.invoices.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).sort("created_at", -1).to_list(1000)
+async def list_invoices(request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
+    await _backfill_company_id(user["user_id"], cid)
+    docs = await db.invoices.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "user_id": 0}).sort("created_at", -1).to_list(1000)
     return docs
 
 @api.get("/invoices/overdue")
-async def list_overdue_invoices(days: int = 30, user=Depends(get_current_user)):
+async def list_overdue_invoices(request: Request, days: int = 30, user=Depends(get_current_user)):
     """List invoices with outstanding balance older than `days` days."""
     uid = user["user_id"]
+    cid = await _active_company_id(request, user)
     from datetime import timedelta
     cutoff = (now_utc().date() - timedelta(days=days)).isoformat()
     docs = await db.invoices.find({
         "user_id": uid,
+        "company_id": cid,
         "balance_due": {"$gt": 0.01},
         "invoice_date": {"$lte": cutoff},
     }, {"_id": 0, "user_id": 0}).sort("invoice_date", 1).to_list(500)
@@ -810,14 +940,15 @@ async def get_invoice(iid: str, user=Depends(get_current_user)):
     return doc
 
 @api.post("/invoices")
-async def create_invoice(payload: InvoiceCreateRequest, user=Depends(get_current_user)):
-    # Load trips
+async def create_invoice(payload: InvoiceCreateRequest, request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
+    # Load trips scoped to this company
     trips = await db.trips.find(
-        {"user_id": user["user_id"], "id": {"$in": payload.trip_ids}, "customer_id": payload.customer_id},
+        {"user_id": user["user_id"], "company_id": cid, "id": {"$in": payload.trip_ids}, "customer_id": payload.customer_id},
         {"_id": 0},
     ).to_list(1000)
     if len(trips) != len(payload.trip_ids):
-        raise HTTPException(status_code=400, detail="Some trips not found or belong to different customer")
+        raise HTTPException(status_code=400, detail="Some trips not found or belong to different customer / company")
     for t in trips:
         if t.get("status") == "invoiced":
             raise HTTPException(status_code=400, detail=f"Trip {t['id']} already invoiced")
@@ -831,7 +962,7 @@ async def create_invoice(payload: InvoiceCreateRequest, user=Depends(get_current
     )
     # --- Auto GST type based on state match ---
     customer_doc = await db.customers.find_one({"id": payload.customer_id, "user_id": user["user_id"]}, {"_id": 0}) or {}
-    company_doc = await db.companies.find_one({"user_id": user["user_id"]}, {"_id": 0}) or {}
+    company_doc = await db.companies.find_one({"id": cid, "user_id": user["user_id"]}, {"_id": 0}) or {}
     home_state = (company_doc.get("state") or "").strip().lower()
     cust_state = (customer_doc.get("state") or "").strip().lower()
     if home_state and cust_state:
@@ -853,13 +984,15 @@ async def create_invoice(payload: InvoiceCreateRequest, user=Depends(get_current
     round_off = round(final_amount - gross_total, 2)
     total_amount = final_amount
 
-    invoice_number = await _next_invoice_number(user["user_id"])
+    invoice_number = await _next_invoice_number_for_company(cid, user["user_id"])
     inv = Invoice(
+        company_id=cid,
         invoice_number=invoice_number,
         customer_id=payload.customer_id,
         invoice_date=payload.invoice_date or now_utc().date().isoformat(),
         trip_ids=payload.trip_ids,
         subtotal=subtotal,
+        hsn_sac=payload.hsn_sac or (company_doc.get("hsn_sac") or "996791"),
         freight_total=freight_total,
         halting_total=halting_total,
         excess_total=excess_total,
@@ -1009,10 +1142,11 @@ async def invoice_pdf(iid: str, user=Depends(get_current_user)):
 # ==================== Dashboard ====================
 
 @api.get("/dashboard")
-async def dashboard(user=Depends(get_current_user)):
+async def dashboard(request: Request, user=Depends(get_current_user)):
     uid = user["user_id"]
-    trips = await db.trips.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(5000)
-    invoices = await db.invoices.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(2000)
+    cid = await _active_company_id(request, user)
+    trips = await db.trips.find({"user_id": uid, "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(5000)
+    invoices = await db.invoices.find({"user_id": uid, "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(2000)
     customers = await db.customers.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(2000)
 
     total_revenue = round(sum(t.get("freight_amount", 0.0) for t in trips), 2)
@@ -1352,16 +1486,18 @@ def _in_range(date_str: str, start: Optional[str], end: Optional[str]) -> bool:
 
 @api.get("/reports/ledger")
 async def report_ledger(
+    request: Request,
     customer_id: str,
     start: Optional[str] = None,
     end: Optional[str] = None,
     user=Depends(get_current_user),
 ):
     uid = user["user_id"]
+    cid = await _active_company_id(request, user)
     customer = await db.customers.find_one({"id": customer_id, "user_id": uid}, {"_id": 0})
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
-    invoices = await db.invoices.find({"user_id": uid, "customer_id": customer_id}, {"_id": 0, "user_id": 0}).to_list(2000)
+    invoices = await db.invoices.find({"user_id": uid, "company_id": cid, "customer_id": customer_id}, {"_id": 0, "user_id": 0}).to_list(2000)
 
     # Build entries: invoice (debit), payment (credit)
     entries = []
@@ -1440,12 +1576,14 @@ async def report_ledger_pdf(
 
 @api.get("/reports/pl")
 async def report_profit_loss(
+    request: Request,
     start: Optional[str] = None,
     end: Optional[str] = None,
     user=Depends(get_current_user),
 ):
     uid = user["user_id"]
-    trips = await db.trips.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(5000)
+    cid = await _active_company_id(request, user)
+    trips = await db.trips.find({"user_id": uid, "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(5000)
     trips = [t for t in trips if _in_range(t.get("date", ""), start, end)]
 
     freight_revenue = round(sum(t.get("freight_amount", 0) for t in trips), 2)
@@ -1502,13 +1640,15 @@ async def report_profit_loss(
 
 @api.get("/reports/balance-sheet")
 async def report_balance_sheet(
+    request: Request,
     as_of: Optional[str] = None,
     user=Depends(get_current_user),
 ):
     uid = user["user_id"]
+    cid = await _active_company_id(request, user)
     as_of = as_of or now_utc().date().isoformat()
-    trips = await db.trips.find({"user_id": uid}, {"_id": 0}).to_list(5000)
-    invoices = await db.invoices.find({"user_id": uid}, {"_id": 0}).to_list(2000)
+    trips = await db.trips.find({"user_id": uid, "company_id": cid}, {"_id": 0}).to_list(5000)
+    invoices = await db.invoices.find({"user_id": uid, "company_id": cid}, {"_id": 0}).to_list(2000)
 
     # Cumulative net profit up to as_of (from trips dated <= as_of)
     trips_todate = [t for t in trips if t.get("date", "") <= as_of]
@@ -1758,7 +1898,7 @@ async def gstin_lookup(gstin: str, user=Depends(get_current_user)):
     return result
 
 @api.get("/reports/gstr1")
-async def report_gstr1(month: str, user=Depends(get_current_user)):
+async def report_gstr1(month: str, request: Request, user=Depends(get_current_user)):
     """month format: YYYY-MM"""
     try:
         year_str, mo_str = month.split("-")
@@ -1771,11 +1911,12 @@ async def report_gstr1(month: str, user=Depends(get_current_user)):
     end = f"{y:04d}-{m:02d}-{monthrange(y, m)[1]:02d}"
 
     uid = user["user_id"]
-    invoices = await db.invoices.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(5000)
+    cid = await _active_company_id(request, user)
+    invoices = await db.invoices.find({"user_id": uid, "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(5000)
     invoices = [i for i in invoices if start <= i.get("invoice_date", "") <= end]
     customers = await db.customers.find({"user_id": uid}, {"_id": 0}).to_list(2000)
     cmap = {c["id"]: c for c in customers}
-    company = await db.companies.find_one({"user_id": uid}, {"_id": 0}) or {}
+    company = await db.companies.find_one({"id": cid, "user_id": uid}, {"_id": 0}) or {}
     home_state_code = _state_code(company.get("state", ""))
 
     b2b_rows = []
@@ -2223,9 +2364,10 @@ async def team_me(user=Depends(get_current_user)):
 # ==================== Supplier P&L Report ====================
 
 @api.get("/reports/supplier-pl")
-async def report_supplier_pl(start: Optional[str] = None, end: Optional[str] = None, user=Depends(get_current_user)):
+async def report_supplier_pl(request: Request, start: Optional[str] = None, end: Optional[str] = None, user=Depends(get_current_user)):
     uid = user["user_id"]
-    trips = await db.trips.find({"user_id": uid, "vehicle_type": "supplier"}, {"_id": 0, "user_id": 0}).to_list(5000)
+    cid = await _active_company_id(request, user)
+    trips = await db.trips.find({"user_id": uid, "company_id": cid, "vehicle_type": "supplier"}, {"_id": 0, "user_id": 0}).to_list(5000)
     trips = [t for t in trips if _in_range(t.get("date", ""), start, end)]
     by = {}
     for t in trips:
@@ -2297,14 +2439,15 @@ async def delete_party(pid: str, user=Depends(get_current_user)):
 # ==================== Halting Report ====================
 
 @api.get("/reports/halting")
-async def report_halting(start: Optional[str] = None, end: Optional[str] = None, user=Depends(get_current_user)):
+async def report_halting(request: Request, start: Optional[str] = None, end: Optional[str] = None, user=Depends(get_current_user)):
     """Monthly / range summary of halting per customer.
 
     Response includes rows per customer with total trips, total halting days,
     chargeable halting days and halting revenue, plus overall totals.
     """
     uid = user["user_id"]
-    trips = await db.trips.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(10000)
+    cid = await _active_company_id(request, user)
+    trips = await db.trips.find({"user_id": uid, "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(10000)
     trips = [t for t in trips if _in_range(t.get("date", ""), start, end)]
     customers = await db.customers.find({"user_id": uid}, {"_id": 0}).to_list(2000)
     cmap = {c["id"]: c.get("name", "Unknown") for c in customers}
@@ -2343,9 +2486,10 @@ async def report_halting(start: Optional[str] = None, end: Optional[str] = None,
 # ==================== GST Summary Widget ====================
 
 @api.get("/reports/gst-summary")
-async def report_gst_summary(user=Depends(get_current_user)):
+async def report_gst_summary(request: Request, user=Depends(get_current_user)):
     """Compact GST breakup for the current month + current FY + next filing due date."""
     uid = user["user_id"]
+    cid = await _active_company_id(request, user)
     today = now_utc().date()
     month_start = today.replace(day=1).isoformat()
     month_end = today.isoformat()
@@ -2365,7 +2509,7 @@ async def report_gst_summary(user=Depends(get_current_user)):
             "total": round(sum(i.get("total_amount", 0) for i in rows), 2),
         }
 
-    invoices = await db.invoices.find({"user_id": uid}, {"_id": 0}).to_list(10000)
+    invoices = await db.invoices.find({"user_id": uid, "company_id": cid}, {"_id": 0}).to_list(10000)
     month_rows = [i for i in invoices if month_start <= i.get("invoice_date", "") <= month_end]
     fy_rows = [i for i in invoices if fy_start <= i.get("invoice_date", "") <= fy_end]
 

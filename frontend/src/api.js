@@ -3,6 +3,17 @@ import axios from "axios";
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 export const API = `${BACKEND_URL}/api`;
 
+const ACTIVE_COMPANY_KEY = "active_company_id";
+export const getActiveCompanyId = () => {
+  try { return localStorage.getItem(ACTIVE_COMPANY_KEY) || ""; } catch { return ""; }
+};
+export const setActiveCompanyId = (cid) => {
+  try {
+    if (cid) localStorage.setItem(ACTIVE_COMPANY_KEY, cid);
+    else localStorage.removeItem(ACTIVE_COMPANY_KEY);
+  } catch {}
+};
+
 export const api = axios.create({
   baseURL: API,
   withCredentials: true,
@@ -16,6 +27,12 @@ api.interceptors.request.use((cfg) => {
     if (t) {
       cfg.headers = cfg.headers || {};
       if (!cfg.headers.Authorization) cfg.headers.Authorization = `Bearer ${t}`;
+    }
+    // Attach active company for multi-company scoping
+    const cid = getActiveCompanyId();
+    if (cid) {
+      cfg.headers = cfg.headers || {};
+      if (!cfg.headers["X-Company-Id"]) cfg.headers["X-Company-Id"] = cid;
     }
   } catch {}
   return cfg;

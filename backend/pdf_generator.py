@@ -187,7 +187,7 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
     meta = [
         ["Invoice No", invoice.get("invoice_number", "")],
         ["Invoice Date", invoice.get("invoice_date", "")],
-        ["HSN/SAC", company.get("hsn_sac", "996791")],
+        ["HSN/SAC", invoice.get("hsn_sac") or company.get("hsn_sac", "996791")],
         ["GST Type", "CGST+SGST" if invoice.get("gst_type") == "cgst_sgst" else "IGST"],
     ]
     meta_tbl = Table(meta, colWidths=[30 * mm, 46 * mm])

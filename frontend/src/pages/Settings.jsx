@@ -19,13 +19,32 @@ export default function Settings() {
   const fileRef = useRef();
 
   const { data } = useQuery({ queryKey: ["company"], queryFn: async () => (await api.get("/company")).data });
+  const { data: companies = [] } = useQuery({
+    queryKey: ["companies"],
+    queryFn: async () => (await api.get("/companies")).data,
+  });
 
   useEffect(() => { if (data) setForm({ ...EMPTY, ...data }); }, [data]);
 
   const save = useMutation({
     mutationFn: async () => (await api.put("/company", { ...form, next_invoice_number: Number(form.next_invoice_number) })).data,
-    onSuccess: () => { toast.success("Settings saved"); qc.invalidateQueries({ queryKey: ["company"] }); },
+    onSuccess: () => { toast.success("Settings saved"); qc.invalidateQueries({ queryKey: ["company"] }); qc.invalidateQueries({ queryKey: ["companies"] }); },
     onError: () => toast.error("Failed to save"),
+  });
+
+  const addCompany = useMutation({
+    mutationFn: async (name) => (await api.post("/companies", { name })).data,
+    onSuccess: () => { toast.success("Company added"); qc.invalidateQueries({ queryKey: ["companies"] }); },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Failed"),
+  });
+  const setDefault = useMutation({
+    mutationFn: async (cid) => (await api.post(`/companies/${cid}/set-default`)).data,
+    onSuccess: () => { toast.success("Default updated"); qc.invalidateQueries({ queryKey: ["companies"] }); },
+  });
+  const delCompany = useMutation({
+    mutationFn: async (cid) => (await api.delete(`/companies/${cid}`)).data,
+    onSuccess: () => { toast.success("Company deleted"); qc.invalidateQueries({ queryKey: ["companies"] }); },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Failed"),
   });
 
   const uploadLogo = useMutation({
@@ -59,6 +78,38 @@ export default function Settings() {
           <Save size={14} /> {save.isPending ? "Saving..." : "Save"}
         </button>
       </header>
+
+      <section className="border border-zinc-950 bg-white rounded-sm" data-testid="companies-section">
+        <div className="px-5 py-3 border-b border-zinc-200 text-sm font-bold uppercase tracking-wider flex items-center justify-between">
+          <span>All Companies · అన్ని కంపెనీలు</span>
+          <button data-testid="add-company-btn" onClick={() => {
+            const name = window.prompt("New company name?");
+            if (name && name.trim()) addCompany.mutate(name.trim());
+          }} className="text-[10px] uppercase tracking-wider px-2 py-1 bg-zinc-950 text-white rounded-sm">+ Add</button>
+        </div>
+        <div className="p-5 space-y-2">
+          {companies.map((c) => (
+            <div key={c.id} data-testid={`company-row-${c.id}`} className="flex items-center gap-3 border border-zinc-200 p-2 rounded-sm">
+              <div className="flex-1">
+                <div className="font-semibold">{c.name || "(unnamed)"}</div>
+                <div className="text-[10px] text-zinc-500">{c.state || "State not set"} · GSTIN {c.gstin || "—"} · Prefix {c.invoice_prefix}</div>
+              </div>
+              {c.is_default ? (
+                <span className="text-[10px] uppercase tracking-wider bg-emerald-100 text-emerald-800 px-2 py-1 rounded-sm font-bold">Default</span>
+              ) : (
+                <button data-testid={`set-default-${c.id}`} onClick={() => setDefault.mutate(c.id)} className="text-[10px] uppercase tracking-wider border border-zinc-200 px-2 py-1 rounded-sm hover:bg-zinc-950 hover:text-white">Make Default</button>
+              )}
+              {companies.length > 1 && (
+                <button data-testid={`delete-company-${c.id}`} onClick={() => window.confirm(`Delete "${c.name}"? Its trips/invoices will be orphaned.`) && delCompany.mutate(c.id)} className="text-[10px] uppercase tracking-wider border border-rose-200 text-rose-700 px-2 py-1 rounded-sm hover:bg-rose-50">Delete</button>
+              )}
+            </div>
+          ))}
+          {companies.length === 0 && <div className="text-sm text-zinc-500">No companies yet — a default will be created automatically.</div>}
+          <div className="text-[11px] text-zinc-500 bg-zinc-50 border border-zinc-100 rounded-sm p-2">
+            Switch active company anytime from the sidebar dropdown. Trips, invoices, reports are scoped per-company. Customers, vehicles, drivers, products are shared across companies.
+          </div>
+        </div>
+      </section>
 
       <section className="border border-zinc-200 bg-white rounded-sm" data-testid="logo-section">
         <div className="px-5 py-3 border-b border-zinc-200 text-sm font-bold uppercase tracking-wider">Logo · లోగో</div>

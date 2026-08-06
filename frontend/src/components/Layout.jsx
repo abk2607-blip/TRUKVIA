@@ -1,8 +1,10 @@
 import React from "react";
 import { NavLink, useNavigate } from "react-router-dom";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/context/AuthContext";
+import { api, getActiveCompanyId, setActiveCompanyId } from "@/api";
 import {
-  LayoutDashboard, Truck, Users, FileText, Settings as SettingsIcon, LogOut, UserCog, Package, BarChart3, Car, Fuel as FuelIcon, FolderArchive, History, ShieldCheck, MapPin, AlertCircle,
+  LayoutDashboard, Truck, Users, FileText, Settings as SettingsIcon, LogOut, UserCog, Package, BarChart3, Car, Fuel as FuelIcon, FolderArchive, History, ShieldCheck, MapPin, AlertCircle, Building2, Check,
 } from "lucide-react";
 
 const nav = [
@@ -26,6 +28,22 @@ const nav = [
 export default function Layout({ children }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const qc = useQueryClient();
+
+  const { data: companies = [] } = useQuery({
+    queryKey: ["companies"],
+    queryFn: async () => (await api.get("/companies")).data,
+    staleTime: 30000,
+  });
+  const activeCid = getActiveCompanyId() || companies.find((c) => c.is_default)?.id || companies[0]?.id || "";
+  const active = companies.find((c) => c.id === activeCid);
+
+  const switchCompany = (cid) => {
+    setActiveCompanyId(cid);
+    // Reset all cached queries so every list re-fetches under the new company
+    qc.invalidateQueries();
+    navigate(0); // hard reload for absolute cleanliness
+  };
 
   return (
     <div className="min-h-screen flex bg-zinc-100">
@@ -36,6 +54,23 @@ export default function Layout({ children }) {
           <div className="mt-1 font-black text-xl tracking-tight text-zinc-950">అకౌంటింగ్</div>
           <div className="text-xs text-zinc-500">Accounting Suite</div>
         </div>
+        {/* Company Switcher */}
+        {companies.length > 0 && (
+          <div className="px-4 py-3 border-b border-zinc-200" data-testid="company-switcher">
+            <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 flex items-center gap-1"><Building2 size={11} /> Active Company</div>
+            <select
+              data-testid="company-switcher-select"
+              value={activeCid}
+              onChange={(e) => switchCompany(e.target.value)}
+              className="mt-1 w-full border border-zinc-300 px-2 py-1.5 rounded-sm text-sm font-semibold bg-white focus:border-zinc-950 outline-none"
+            >
+              {companies.map((c) => (
+                <option key={c.id} value={c.id}>{c.name || "(unnamed)"}{c.is_default ? " · default" : ""}</option>
+              ))}
+            </select>
+            <div className="mt-1 text-[10px] text-zinc-500">{active?.state || "Set state in Settings"}</div>
+          </div>
+        )}
         <nav className="flex-1 p-3 space-y-1">
           {nav.map((n) => (
             <NavLink

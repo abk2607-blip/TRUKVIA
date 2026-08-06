@@ -1,0 +1,26 @@
+{
+  "summary": "Iteration 15 (Multi-Company + HSN + RCM) tested end-to-end. 15/15 backend tests pass (companies CRUD, default flip, delete-last guard, trip/invoice scoping via X-Company-Id, HSN per invoice with PDF text verification via pypdf, RCM vs Normal totals, per-company invoice prefixes VBK/26-27/0001 & BKA/26-27/0001, legacy /api/company scoped to active, backfill of legacy trip company_id, auto GST state matching, dashboard scoped by company). Frontend UI verified: sidebar company-switcher-select lists both companies and switching persists localStorage.active_company_id (page also reloaded to reflect BKA as active); Settings companies-section renders per-row Make Default/Delete buttons and a Default chip; /invoices/new exposes invoice-hsn dropdown with values 996791 & 996511 and mutex gst-rcm-btn/gst-normal-btn toggles; api.js interceptor sends X-Company-Id header (verified by manually setting active_company_id then fetching /api/trips with header — scoped result returned).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter15_multicompany.py",
+    "/app/test_reports/pytest/iter15.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is 2558 lines — should be split into modules (companies, trips, invoices, reports, auth).",
+    "Legacy _next_invoice_number (line 859) is unused after multi-company migration; consider removing to avoid confusion.",
+    "In list_companies, _backfill_company_id runs on every request — cheap but slightly wasteful; consider gating behind a per-user flag.",
+    "set_default_company: two-step update (set target true, then set others false) is not atomic — if the second update fails, multiple defaults could exist. Consider using a transaction or resetting first then setting.",
+    "_active_company_id silently ignores an X-Company-Id header that doesn't belong to the user (falls back to default) — could hide client bugs; a 400/404 might be safer for API consumers."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter15_multicompany.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Bearer test_session_bitumen_2026 for user test-user-bitumen (seeded).",
+  "seed_data_creation": "Backend tests self-seed and clean via module-scoped fixture. For UI test, created a second company 'BKA Logistics' (prefix BKA, Karnataka) alongside the auto-created 'My Company' default. Test data remains for main-agent verification; can be cleaned via db.{trips,invoices,customers,companies,audit_logs}.deleteMany({user_id:'test-user-bitumen'}).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 15 clean pass. Route order /api/invoices/overdue before /api/invoices/{iid} is intact. Multi-company invoice numbering uses _next_invoice_number_for_company (per-company sequence). PDF byte-search will fail because ReportLab uses FlateDecode — extract text via pypdf as done in test_09/10."
+}

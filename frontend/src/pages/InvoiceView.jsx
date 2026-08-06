@@ -157,7 +157,7 @@ export default function InvoiceView() {
               </div>
               <div className="grid grid-cols-2 divide-x divide-zinc-300 border-t border-zinc-300">
                 <div className="px-3 py-1.5 font-bold bg-zinc-50">HSN/SAC</div>
-                <div className="px-3 py-1.5 font-mono">{company.hsn_sac || "996791"}</div>
+                <div className="px-3 py-1.5 font-mono">{invoice.hsn_sac || company.hsn_sac || "996791"}</div>
               </div>
             </div>
           </div>
