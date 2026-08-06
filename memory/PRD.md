@@ -81,6 +81,16 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - [x] **Halting / Waiting Charges** — auto total_halting_days from dates; grace_days (default 4); auto chargeable_halting_days = max(total − grace, 0); halting_rate_per_day; auto halting_amount = chargeable × rate; per-field manual override; adds to invoice subtotal → GST → total
 - [x] **Invoice Billable Formula** — subtotal = freight + halting + excess − shortage. Invoice model now stores freight_total/halting_total/excess_total/shortage_total for reporting. P&L report reflects same
 - [x] Iter10 tests: 11/11 backend + frontend UI + PDF ₹ rendering all passing
+- [x] **Login auto-signout FIXED** (Iter11) — axios interceptor only clears storage on /auth/me 401; user cached to localStorage; Protected renders instantly if cached (no flash)
+- [x] **Auto GST from State** (Iter12) — create_invoice + _recompute_invoice auto-detect intra vs inter-state and set cgst_sgst / igst; ignores payload gst_type
+- [x] **State Dropdown Everywhere** — INDIA_STATES (28 states + 8 UTs) + StateSelect component used in Customer, Settings (Company), Vehicles supplier fields
+- [x] **Vehicle supplier_state / supplier_gstin** added to backend + frontend
+- [x] **Trip-wise Halting Sub-rows** in Invoice PDF + InvoiceView (days × rate = amount)
+- [x] **Trip-wise Shortage Sub-rows** in Invoice PDF + InvoiceView (qty × rate = amount)
+- [x] **Round Off** — invoice stores gross_total, round_off, final total_amount rounded to nearest ₹; Amount in Words uses rounded value
+- [x] **DejaVu Fonts Persisted** at /app/backend/fonts/ — ₹ renders correctly (was black ■ due to non-persistent apt install)
+- [x] **T&C Updated** — 'Halting Charges applicable after 48 hours from arrival at the site.' (removed fixed ₹2,500 rate)
+- [x] Iter12 tests: 7/7 backend pytest + frontend UI verification all passing
 
 ## Backlog (P1)
 - [ ] Drivers & Vehicles master (currently free-text)
