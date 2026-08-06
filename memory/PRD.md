@@ -105,6 +105,8 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - [x] **HSN per Invoice** — 996791 / 996511 dropdown in InvoiceCreate; stored on Invoice; rendered in PDF and InvoiceView (falls back to company default)
 - [x] **RCM/Normal GST toggle** — Radio-style toggle in InvoiceCreate; RCM keeps subtotal as total (recipient pays), Normal adds 5% GST
 - [x] Iter15 tests: 15/15 backend + full frontend UI verified
+- [x] **Sign-In Failure ROOT CAUSE FIXED** (Iter16) — POST /api/auth/session was returning 401 because Emergent's session_id was being consumed twice (React remounts / browser back-forward preserving the hash). AuthCallback now tracks `consumed_session_ids` in sessionStorage: (a) exchanges each session_id ONCE, (b) short-circuits if already consumed, (c) `history.replaceState` clears hash immediately so page reloads don't re-fire, (d) toast now surfaces the actual backend error detail
+- [x] Iter16 tests: 5/5 auth-dedup scenarios verified
 
 ## Backlog (P1)
 - [ ] Drivers & Vehicles master (currently free-text)
