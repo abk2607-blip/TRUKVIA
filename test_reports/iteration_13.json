@@ -1,0 +1,24 @@
+{
+  "summary": "Iteration 13 — 5 new features fully verified. Backend: 7/7 pytest passing (Party CRUD, party_type filter with 'both' returned for both consignor and consignee, Halting Report per-customer aggregation with 7d/4gd/3cd/₹6000, empty halting case, GST Summary current_month/current_fy/gstr1_due(11th)/gstr3b_due(20th), Overdue Invoices empty + populated with customer_name/customer_phone/age_days enrichment). Route ordering verified: /invoices/overdue resolves to list, not shadowed by /invoices/{iid}. Frontend: all data-testids present — parties-page, add-party-btn, party-input-state (37 options), party-filter tabs, edit/delete buttons; nav-parties and nav-overdue in sidebar; gst-summary-widget + overdue-widget on Dashboard; overdue-invoices-page + overdue-invoices-table + whatsapp-invoice-* href='https://wa.me/91<phone>?text=...' with URL-encoded body containing invoice number and PDF URL; gmail-invoice-* href='https://mail.google.com/mail/?view=cm&fs=1&to=&su=...&body=...'; halting-report-page + halting-report-table + halting-start-date + halting-end-date at /reports/halting; InvoiceView gmail-invoice-btn present with correct mail.google.com href. No regression on /customers, /vehicles, /invoices/new.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter13_features.py",
+    "/app/test_reports/pytest/iter13.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "server.py is now ~2344 lines — strongly recommend splitting into routers (parties, reports, invoices, trips, masters).",
+    "PUT /api/invoices/{iid} rejected an update with invoice_date field (400). Testing agents needed to update the doc directly in MongoDB to backdate. Consider allowing an admin-only date override endpoint for legitimate correction workflows.",
+    "Party model allows arbitrary state strings — validation against a canonical Indian states list at the API layer would prevent frontend/backend drift (frontend already uses the shared list via StateSelect).",
+    "Overdue message body includes PDF URL that requires Bearer auth to open — recipient clicking will 401. Consider a signed short-lived public PDF link for reminders."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter13_features.py"],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Bearer test_session_bitumen_2026 (test-user-bitumen). All parties/customers/trips/invoices cleaned after run.",
+  "seed_data_creation": "Only ephemeral TEST_/PW_TEST_ data, all cleaned up post-test.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iteration 13 features all verified: (1) POST /api/parties uses Party model with party_type in {consignor|consignee|both}; filter=consignor includes 'both'. (2) GET /api/reports/halting returns {customers:[{customer_id,customer_name,trips_with_halting,total_days,chargeable_days,avg_rate,halting_revenue}], totals:{...}}. (3) GET /api/reports/gst-summary — due dates are 11th (GSTR-1) and 20th (GSTR-3B) of NEXT month even in Dec (year rolls). (4) GET /api/invoices/overdue MUST stay defined BEFORE /invoices/{iid} in server.py (~L775) — if reordered, route resolves to 404 Invoice not found. (5) To backdate an invoice for testing overdue, PUT does NOT accept invoice_date; use mongosh to `db.invoices.updateOne(...)`. (6) Frontend testids: nav-parties, nav-overdue, parties-page, gst-summary-widget, overdue-widget, overdue-invoices-table, whatsapp-invoice-{id}, gmail-invoice-{id}, pdf-invoice-{id}, gmail-invoice-btn (InvoiceView), halting-report-page/table.",
+  "rca of the issue": "N/A — no defects."
+}

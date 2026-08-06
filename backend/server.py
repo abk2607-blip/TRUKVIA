@@ -149,6 +149,10 @@ class Trip(BaseModel):
     product_id: Optional[str] = None
     load_details: str = "Bitumen VG 40"
     hsn_sac: str = ""
+    consignor_id: Optional[str] = None
+    consignor_name: str = ""
+    consignee_id: Optional[str] = None
+    consignee_name: str = ""
     tons: float
     from_location: str = ""
     to_location: str = ""
@@ -190,6 +194,25 @@ class Product(BaseModel):
     hsn_sac: str = "996791"
     default_rate: float = 0.0
     unit: str = "MT"
+    notes: str = ""
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+
+class Party(BaseModel):
+    """Consignor / Consignee address book (both types share one shape).
+    Used to select loading (consignor) and unloading (consignee) parties on a trip
+    when they differ from the billed customer."""
+    id: str = Field(default_factory=lambda: new_id("party_"))
+    party_type: Literal["consignor", "consignee", "both"] = "both"
+    name: str
+    contact_person: str = ""
+    phone: str = ""
+    email: str = ""
+    gstin: str = ""
+    pan: str = ""
+    address: str = ""
+    state: str = ""
+    pincode: str = ""
+    linked_customer_id: Optional[str] = None  # optional linkage to a customer
     notes: str = ""
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
 
@@ -748,6 +771,35 @@ async def _next_invoice_number(user_id: str) -> str:
 async def list_invoices(user=Depends(get_current_user)):
     docs = await db.invoices.find({"user_id": user["user_id"]}, {"_id": 0, "user_id": 0}).sort("created_at", -1).to_list(1000)
     return docs
+
+@api.get("/invoices/overdue")
+async def list_overdue_invoices(days: int = 30, user=Depends(get_current_user)):
+    """List invoices with outstanding balance older than `days` days."""
+    uid = user["user_id"]
+    from datetime import timedelta
+    cutoff = (now_utc().date() - timedelta(days=days)).isoformat()
+    docs = await db.invoices.find({
+        "user_id": uid,
+        "balance_due": {"$gt": 0.01},
+        "invoice_date": {"$lte": cutoff},
+    }, {"_id": 0, "user_id": 0}).sort("invoice_date", 1).to_list(500)
+    customers = await db.customers.find({"user_id": uid}, {"_id": 0}).to_list(2000)
+    cmap = {c["id"]: c for c in customers}
+    today = now_utc().date()
+    out = []
+    for d in docs:
+        c = cmap.get(d.get("customer_id"), {})
+        try:
+            inv_dt = datetime.fromisoformat(d.get("invoice_date")).date()
+            age_days = (today - inv_dt).days
+        except Exception:
+            age_days = 0
+        d["customer_name"] = c.get("name", "")
+        d["customer_phone"] = c.get("phone", "")
+        d["customer_email"] = c.get("email", "")
+        d["age_days"] = age_days
+        out.append(d)
+    return out
 
 @api.get("/invoices/{iid}")
 async def get_invoice(iid: str, user=Depends(get_current_user)):
@@ -2136,6 +2188,131 @@ async def report_supplier_pl(start: Optional[str] = None, end: Optional[str] = N
         "suppliers": sorted(by.values(), key=lambda x: -x["profit"]),
         "totals": total,
     }
+
+# ==================== Consignor / Consignee Master ====================
+
+@api.get("/parties")
+async def list_parties(party_type: Optional[str] = None, user=Depends(get_current_user)):
+    q = {"user_id": user["user_id"]}
+    if party_type:
+        q["$or"] = [{"party_type": party_type}, {"party_type": "both"}]
+    docs = await db.parties.find(q, {"_id": 0, "user_id": 0}).sort("name", 1).to_list(2000)
+    return docs
+
+@api.post("/parties")
+async def create_party(payload: Party, user=Depends(get_current_user)):
+    doc = payload.model_dump()
+    doc["user_id"] = user["user_id"]
+    await db.parties.insert_one(doc)
+    return payload.model_dump()
+
+@api.put("/parties/{pid}")
+async def update_party(pid: str, payload: Party, user=Depends(get_current_user)):
+    upd = payload.model_dump()
+    upd["id"] = pid
+    upd.pop("created_at", None)
+    r = await db.parties.update_one({"id": pid, "user_id": user["user_id"]}, {"$set": upd})
+    if r.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Party not found")
+    return await db.parties.find_one({"id": pid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
+
+@api.delete("/parties/{pid}")
+async def delete_party(pid: str, user=Depends(get_current_user)):
+    r = await db.parties.delete_one({"id": pid, "user_id": user["user_id"]})
+    if r.deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Party not found")
+    return {"ok": True}
+
+# ==================== Halting Report ====================
+
+@api.get("/reports/halting")
+async def report_halting(start: Optional[str] = None, end: Optional[str] = None, user=Depends(get_current_user)):
+    """Monthly / range summary of halting per customer.
+
+    Response includes rows per customer with total trips, total halting days,
+    chargeable halting days and halting revenue, plus overall totals.
+    """
+    uid = user["user_id"]
+    trips = await db.trips.find({"user_id": uid}, {"_id": 0, "user_id": 0}).to_list(10000)
+    trips = [t for t in trips if _in_range(t.get("date", ""), start, end)]
+    customers = await db.customers.find({"user_id": uid}, {"_id": 0}).to_list(2000)
+    cmap = {c["id"]: c.get("name", "Unknown") for c in customers}
+
+    by = {}
+    for t in trips:
+        halt = float(t.get("halting_amount", 0) or 0)
+        total_days = int(t.get("total_halting_days", 0) or 0)
+        charge_days = int(t.get("chargeable_halting_days", 0) or 0)
+        if halt <= 0 and charge_days == 0:
+            continue
+        cid = t.get("customer_id")
+        b = by.setdefault(cid, {
+            "customer_id": cid, "customer_name": cmap.get(cid, "Unknown"),
+            "trips_with_halting": 0, "total_days": 0, "chargeable_days": 0,
+            "halting_revenue": 0.0, "avg_rate": 0.0,
+        })
+        b["trips_with_halting"] += 1
+        b["total_days"] += total_days
+        b["chargeable_days"] += charge_days
+        b["halting_revenue"] += halt
+    total = {"trips_with_halting": 0, "total_days": 0, "chargeable_days": 0, "halting_revenue": 0.0}
+    for b in by.values():
+        b["halting_revenue"] = round(b["halting_revenue"], 2)
+        b["avg_rate"] = round(b["halting_revenue"] / b["chargeable_days"], 2) if b["chargeable_days"] > 0 else 0.0
+        for k in ("trips_with_halting", "total_days", "chargeable_days"):
+            total[k] += b[k]
+        total["halting_revenue"] += b["halting_revenue"]
+    total["halting_revenue"] = round(total["halting_revenue"], 2)
+    return {
+        "period": {"start": start, "end": end},
+        "customers": sorted(by.values(), key=lambda x: -x["halting_revenue"]),
+        "totals": total,
+    }
+
+# ==================== GST Summary Widget ====================
+
+@api.get("/reports/gst-summary")
+async def report_gst_summary(user=Depends(get_current_user)):
+    """Compact GST breakup for the current month + current FY + next filing due date."""
+    uid = user["user_id"]
+    today = now_utc().date()
+    month_start = today.replace(day=1).isoformat()
+    month_end = today.isoformat()
+    # Financial year: Apr - Mar
+    fy_start_year = today.year if today.month >= 4 else today.year - 1
+    fy_start = f"{fy_start_year:04d}-04-01"
+    fy_end = f"{fy_start_year + 1:04d}-03-31"
+
+    def _agg(rows):
+        return {
+            "invoices": len(rows),
+            "taxable": round(sum(i.get("subtotal", 0) for i in rows), 2),
+            "cgst": round(sum(i.get("cgst_amount", 0) for i in rows), 2),
+            "sgst": round(sum(i.get("sgst_amount", 0) for i in rows), 2),
+            "igst": round(sum(i.get("igst_amount", 0) for i in rows), 2),
+            "total_tax": round(sum(i.get("total_tax", 0) for i in rows), 2),
+            "total": round(sum(i.get("total_amount", 0) for i in rows), 2),
+        }
+
+    invoices = await db.invoices.find({"user_id": uid}, {"_id": 0}).to_list(10000)
+    month_rows = [i for i in invoices if month_start <= i.get("invoice_date", "") <= month_end]
+    fy_rows = [i for i in invoices if fy_start <= i.get("invoice_date", "") <= fy_end]
+
+    # Next GSTR-1 filing date: 11th of following month
+    y = today.year + (1 if today.month == 12 else 0)
+    m = 1 if today.month == 12 else today.month + 1
+    gstr1_due = f"{y:04d}-{m:02d}-11"
+    # Next GSTR-3B: 20th of following month
+    gstr3b_due = f"{y:04d}-{m:02d}-20"
+
+    return {
+        "current_month": {"start": month_start, "end": month_end, **_agg(month_rows)},
+        "current_fy": {"start": fy_start, "end": fy_end, **_agg(fy_rows)},
+        "next_gstr1_due": gstr1_due,
+        "next_gstr3b_due": gstr3b_due,
+    }
+
+# ==================== Overdue Invoices — see /invoices/overdue defined above /invoices/{iid} ====================
 
 # ==================== Health ====================
 

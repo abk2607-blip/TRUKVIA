@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, API, fmtCurrency, fmtDate } from "@/api";
 import { toast } from "sonner";
-import { ArrowLeft, Download, Printer, Trash2, Plus, MessageCircle } from "lucide-react";
+import { ArrowLeft, Download, Printer, Trash2, Plus, MessageCircle, Mail } from "lucide-react";
 
 export default function InvoiceView() {
   const { id } = useParams();
@@ -94,6 +94,20 @@ export default function InvoiceView() {
           >
             <MessageCircle size={14} /> WhatsApp
           </button>
+          <a
+            data-testid="gmail-invoice-btn"
+            href={(() => {
+              const subject = `Invoice ${invoice.invoice_number} — ${company?.name || ""}`.trim();
+              const body = `Dear ${customer?.name || "Customer"},\n\nPlease find attached / linked Invoice ${invoice.invoice_number} dated ${(invoice.invoice_date || "")} for ${Number(invoice.total_amount || 0).toLocaleString("en-IN")}.\nBalance Due: ${Number(invoice.balance_due || 0).toLocaleString("en-IN")}\n\nPDF: ${pdfUrl}\n\nRegards,\n${company?.name || ""}`;
+              const to = customer?.email || "";
+              return `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(to)}&su=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+            })()}
+            target="_blank" rel="noreferrer"
+            className="inline-flex items-center gap-2 px-3 py-2 text-xs uppercase tracking-wider font-semibold bg-rose-600 text-white rounded-sm hover:bg-rose-700"
+            title={customer?.email ? `Compose Gmail to ${customer.email}` : "Compose Gmail (no customer email set)"}
+          >
+            <Mail size={14} /> Gmail
+          </a>
           <button data-testid="print-btn" onClick={() => window.print()} className="inline-flex items-center gap-2 px-3 py-2 text-xs uppercase tracking-wider font-semibold border border-zinc-950 rounded-sm hover:bg-zinc-950 hover:text-white">
             <Printer size={14} /> Print
           </button>

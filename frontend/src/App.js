@@ -16,6 +16,8 @@ import Files from "@/pages/Files";
 import AuditLog from "@/pages/AuditLog";
 import Team from "@/pages/Team";
 import Reports from "@/pages/Reports";
+import OverdueInvoices from "@/pages/OverdueInvoices";
+import Parties from "@/pages/Parties";
 import Invoices from "@/pages/Invoices";
 import InvoiceCreate from "@/pages/InvoiceCreate";
 import InvoiceView from "@/pages/InvoiceView";
@@ -53,6 +55,7 @@ function AppRouter() {
       <Route path="/trips/:id/edit" element={<Protected><TripForm /></Protected>} />
       <Route path="/trips/:id/view" element={<Protected><TripView /></Protected>} />
       <Route path="/customers" element={<Protected><Customers /></Protected>} />
+      <Route path="/parties" element={<Protected><Parties /></Protected>} />
       <Route path="/drivers" element={<Protected><Drivers /></Protected>} />
       <Route path="/vehicles" element={<Protected><Vehicles /></Protected>} />
       <Route path="/products" element={<Protected><Products /></Protected>} />
@@ -61,6 +64,7 @@ function AppRouter() {
       <Route path="/audit" element={<Protected><AuditLog /></Protected>} />
       <Route path="/team" element={<Protected><Team /></Protected>} />
       <Route path="/reports/*" element={<Protected><Reports /></Protected>} />
+      <Route path="/invoices/overdue" element={<Protected><OverdueInvoices /></Protected>} />
       <Route path="/invoices" element={<Protected><Invoices /></Protected>} />
       <Route path="/invoices/new" element={<Protected><InvoiceCreate /></Protected>} />
       <Route path="/invoices/:id" element={<Protected><InvoiceView /></Protected>} />

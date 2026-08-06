@@ -9,6 +9,14 @@ export default function Dashboard() {
     queryKey: ["dashboard"],
     queryFn: async () => (await api.get("/dashboard")).data,
   });
+  const { data: gst } = useQuery({
+    queryKey: ["gst-summary"],
+    queryFn: async () => (await api.get("/reports/gst-summary")).data,
+  });
+  const { data: overdue = [] } = useQuery({
+    queryKey: ["overdue-invoices-widget"],
+    queryFn: async () => (await api.get("/invoices/overdue", { params: { days: 30 } })).data,
+  });
 
   if (isLoading) return <div className="text-zinc-500">Loading...</div>;
   const d = data || {};
@@ -61,6 +69,46 @@ export default function Dashboard() {
         <MiniStat testid="mini-invoices" icon={FileText} label="Invoices" value={d.invoice_count || 0} sub={`${fmtCurrency(d.total_billed)} billed`} />
         <MiniStat testid="mini-customers" icon={Users} label="Customers" value={d.customer_count || 0} />
         <MiniStat testid="mini-received" icon={Wallet} label="Received" value={fmtCurrency(d.total_received)} />
+      </div>
+
+      {/* GST Summary + Overdue widgets */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4" data-testid="gst-summary-widget">
+        {gst && (
+          <>
+            <div className="border border-zinc-950 bg-white rounded-sm p-4 lg:col-span-2">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-[11px] uppercase tracking-wider font-bold text-zinc-500">GST Summary — Current Month · {gst.current_month.start?.slice(0,7)}</div>
+                <Link to="/reports/gstr1" className="text-[10px] text-zinc-500 hover:text-zinc-950 inline-flex items-center gap-1">GSTR-1 <ArrowUpRight size={11} /></Link>
+              </div>
+              <div className="grid grid-cols-3 gap-3 text-sm">
+                <GstCell label="CGST" value={fmtCurrency(gst.current_month.cgst)} />
+                <GstCell label="SGST" value={fmtCurrency(gst.current_month.sgst)} />
+                <GstCell label="IGST" value={fmtCurrency(gst.current_month.igst)} />
+                <GstCell label="Taxable" value={fmtCurrency(gst.current_month.taxable)} muted />
+                <GstCell label="Total Tax" value={fmtCurrency(gst.current_month.total_tax)} accent="amber" />
+                <GstCell label="Invoices" value={gst.current_month.invoices} />
+              </div>
+              <div className="mt-3 pt-3 border-t border-zinc-100 flex flex-wrap gap-4 text-[11px]">
+                <div><span className="text-zinc-500 uppercase tracking-wider font-bold">FY {gst.current_fy.start?.slice(2,4)}-{gst.current_fy.end?.slice(2,4)} Taxable:</span> <span className="font-mono font-bold ml-1">{fmtCurrency(gst.current_fy.taxable)}</span></div>
+                <div><span className="text-zinc-500 uppercase tracking-wider font-bold">FY Tax:</span> <span className="font-mono font-bold ml-1">{fmtCurrency(gst.current_fy.total_tax)}</span></div>
+                <div><span className="text-zinc-500 uppercase tracking-wider font-bold">Next GSTR-1:</span> <span className="font-mono ml-1">{gst.next_gstr1_due}</span></div>
+                <div><span className="text-zinc-500 uppercase tracking-wider font-bold">Next GSTR-3B:</span> <span className="font-mono ml-1">{gst.next_gstr3b_due}</span></div>
+              </div>
+            </div>
+            <Link to="/invoices/overdue" className={`border rounded-sm p-4 block hover:shadow-md transition-shadow ${overdue.length > 0 ? "border-rose-300 bg-rose-50" : "border-emerald-300 bg-emerald-50"}`} data-testid="overdue-widget">
+              <div className="flex items-center gap-2 text-[11px] uppercase tracking-wider font-bold text-zinc-500">
+                <AlertTriangle size={12} className={overdue.length > 0 ? "text-rose-600" : "text-emerald-600"} /> Overdue Invoices (30+ days)
+              </div>
+              <div className={`font-mono text-4xl font-black mt-2 ${overdue.length > 0 ? "text-rose-800" : "text-emerald-800"}`}>{overdue.length}</div>
+              <div className="font-mono text-sm mt-1">
+                {fmtCurrency(overdue.reduce((s, i) => s + Number(i.balance_due || 0), 0))} outstanding
+              </div>
+              <div className="mt-3 text-[11px] text-zinc-600 inline-flex items-center gap-1">
+                Send reminders <ArrowUpRight size={11} />
+              </div>
+            </Link>
+          </>
+        )}
       </div>
 
       {/* Expiry alerts */}
@@ -179,6 +227,19 @@ export default function Dashboard() {
     </div>
   );
 }
+
+function GstCell({ label, value, accent, muted }) {
+  const cls = accent === "amber" ? "text-amber-800 bg-amber-50 border-amber-200"
+    : muted ? "text-zinc-500 bg-zinc-50 border-zinc-100"
+    : "border-zinc-100 bg-white";
+  return (
+    <div className={`border rounded-sm p-2 ${cls}`}>
+      <div className="text-[9px] uppercase tracking-wider font-bold text-zinc-500">{label}</div>
+      <div className="font-mono font-bold text-sm mt-0.5">{value}</div>
+    </div>
+  );
+}
+
 
 function MiniStat({ testid, icon: Icon, label, value, sub }) {
   return (

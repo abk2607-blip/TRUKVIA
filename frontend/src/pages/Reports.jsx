@@ -2,12 +2,14 @@ import React, { useState } from "react";
 import { NavLink, Routes, Route, Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api, API, fmtCurrency, fmtDate } from "@/api";
-import { FileText, TrendingUp, Scale, Download, Landmark, Handshake } from "lucide-react";
+import { FileText, TrendingUp, Scale, Download, Landmark, Handshake, Clock } from "lucide-react";
+import HaltingReport from "@/pages/HaltingReport";
 
 const tabs = [
   { to: "ledger", te: "లెడ్జర్", en: "Ledger", icon: FileText, testid: "tab-ledger" },
   { to: "pl", te: "లాభ-నష్టం", en: "P&L", icon: TrendingUp, testid: "tab-pl" },
   { to: "supplier-pl", te: "సప్లయర్ P&L", en: "Supplier P&L", icon: Handshake, testid: "tab-supplier-pl" },
+  { to: "halting", te: "హాల్టింగ్", en: "Halting", icon: Clock, testid: "tab-halting" },
   { to: "balance-sheet", te: "బ్యాలెన్స్ షీట్", en: "Balance Sheet", icon: Scale, testid: "tab-balance-sheet" },
   { to: "gstr1", te: "GSTR-1", en: "GSTR-1", icon: Landmark, testid: "tab-gstr1" },
 ];
@@ -46,6 +48,7 @@ export default function Reports() {
         <Route path="ledger" element={<LedgerReport />} />
         <Route path="pl" element={<PLReport />} />
         <Route path="supplier-pl" element={<SupplierPLReport />} />
+        <Route path="halting" element={<HaltingReport />} />
         <Route path="balance-sheet" element={<BalanceSheetReport />} />
         <Route path="gstr1" element={<GSTR1Report />} />
       </Routes>
