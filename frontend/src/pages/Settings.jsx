@@ -11,6 +11,7 @@ const EMPTY = {
   bank_name: "", account_number: "", ifsc: "", branch: "",
   hsn_sac: "996791", invoice_prefix: "INV", next_invoice_number: 1,
   logo: "",
+  udyam_registration: "",
 };
 
 export default function Settings() {
@@ -169,6 +170,18 @@ export default function Settings() {
           <F label="GSTIN"><input data-testid="setting-gstin" value={form.gstin} onChange={set("gstin")} className={inputCls} /></F>
           <F label="PAN"><input data-testid="setting-pan" value={form.pan} onChange={set("pan")} className={inputCls} /></F>
           <F label="HSN/SAC (default 996791)"><input data-testid="setting-hsn" value={form.hsn_sac} onChange={set("hsn_sac")} className={inputCls} /></F>
+          <div className="md:col-span-2">
+            <F label="MSME / Udyam Registration No · MSME / ఉద్యమ్ రిజిస్ట్రేషన్ నెంబర్">
+              <input
+                data-testid="setting-udyam"
+                value={form.udyam_registration}
+                onChange={set("udyam_registration")}
+                placeholder="UDYAM-AP-01-1234567"
+                className={inputCls}
+              />
+              <div className="text-[10px] text-zinc-500 mt-1">Appears in the Terms &amp; Conditions section of every Transport Invoice PDF for this company.</div>
+            </F>
+          </div>
         </div>
       </section>
 

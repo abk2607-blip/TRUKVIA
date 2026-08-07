@@ -67,6 +67,7 @@ class Company(BaseModel):
     lr_prefix: str = "LR"
     next_lr_number: int = 1
     logo: str = ""  # data URL (base64)
+    udyam_registration: str = ""  # MSME / Udyam Registration No. — appears in Invoice T&C
     is_default: bool = False
 
 class Customer(BaseModel):
@@ -1514,8 +1515,9 @@ async def delete_product(pid: str, request: Request, user=Depends(get_current_us
 # ==================== Company Logo ====================
 
 @api.post("/company/logo")
-async def upload_logo(file: UploadFile = File(...), user=Depends(get_current_user)):
+async def upload_logo(request: Request, file: UploadFile = File(...), user=Depends(get_current_user)):
     import base64
+    cid = await _active_company_id(request, user)
     content = await file.read()
     if len(content) > 1024 * 1024:
         raise HTTPException(status_code=400, detail="Logo too large (max 1MB)")
@@ -1524,16 +1526,16 @@ async def upload_logo(file: UploadFile = File(...), user=Depends(get_current_use
         raise HTTPException(status_code=400, detail="Not an image")
     data_url = f"data:{mime};base64,{base64.b64encode(content).decode('ascii')}"
     await db.companies.update_one(
-        {"user_id": user["user_id"]},
+        {"id": cid, "user_id": user["user_id"]},
         {"$set": {"logo": data_url}},
-        upsert=True,
     )
     return {"logo": data_url}
 
 @api.delete("/company/logo")
-async def delete_logo(user=Depends(get_current_user)):
+async def delete_logo(request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
     await db.companies.update_one(
-        {"user_id": user["user_id"]},
+        {"id": cid, "user_id": user["user_id"]},
         {"$set": {"logo": ""}},
     )
     return {"ok": True}

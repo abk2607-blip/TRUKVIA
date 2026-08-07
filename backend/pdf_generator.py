@@ -423,8 +423,13 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
         "3. Halting Charges applicable after 48 hours from arrival at the site.",
         "4. Responsibility for product insurance lies with the consignor or consignee, as applicable.",
     ]
+    next_no = 5
+    udyam = (company.get("udyam_registration") or "").strip()
+    if udyam:
+        terms.append(f"{next_no}. MSME / Udyam Registration No: {udyam}")
+        next_no += 1
     if invoice.get("notes"):
-        terms.append(f"5. Notes: {invoice.get('notes')}")
+        terms.append(f"{next_no}. Notes: {invoice.get('notes')}")
     story.append(Spacer(1, 6))
     story.append(Paragraph("<br/>".join(terms), styles["Small"]))
 

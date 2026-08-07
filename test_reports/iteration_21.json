@@ -1,0 +1,49 @@
+{
+  "summary": "Iter21 backend testing complete. Verified per-company logo isolation and MSME/Udyam field persistence + PDF T&C rendering. All 7 new pytest cases in test_iter21_logo_udyam_per_company.py PASS. Regression suites (test_multi_company_iso.py 7/7 and test_iter17_diesel_advance_deductions.py 6/6) also PASS when run serially. Both bugs reported in the review request are fully fixed on the backend.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter21_logo_udyam_per_company.py",
+    "/app/test_reports/pytest/iter21.xml",
+    "/app/test_reports/pytest/iter21_regression.xml"
+  ],
+  "test_results": {
+    "iter21_new_tests": {
+      "total": 7, "passed": 7, "failed": 0,
+      "cases": [
+        "test_01_logo_upload_scoped_per_company — PASS (logos L1/L2 stored per-company, no overwrite, /companies list returns distinct logos per doc)",
+        "test_02_delete_logo_scoped — PASS (DELETE on A only clears A, B's logo intact)",
+        "test_03_udyam_save_and_load_per_company — PASS (UDYAM-AP-01-COMPANY-A vs UDYAM-TS-05-COMPANY-B persist independently)",
+        "test_04_invoice_pdfs_differ_between_companies — PASS (each PDF >5KB, application/pdf)",
+        "test_05_udyam_appears_in_pdf_tnc — PASS (extracted PDF text via PyMuPDF fitz contains exact MSME/Udyam string per company, no cross-contamination)",
+        "test_06_no_udyam_line_when_blank — PASS (blank udyam ⇒ no 'MSME / Udyam' phrase in PDF; backward-compatible)",
+        "test_07_master_isolation_regression — PASS (customer sets disjoint between A and B)"
+      ]
+    },
+    "regression_iter19_multi_company_iso": {"total": 7, "passed": 7, "failed": 0, "note": "PASS when run serially (-n0). See flaky_tests below."},
+    "regression_iter17_diesel_advance": {"total": 6, "passed": 6, "failed": 0}
+  },
+  "flaky_tests": [
+    {
+      "test": "test_multi_company_iso.py::test_master_isolation[/parties-*] and ::test_trip_and_invoice_isolation",
+      "cause": "Test-infra only, NOT a product bug. Both test_iter17_diesel_advance_deductions.py and test_multi_company_iso.py use the same shared test user (test-user-bitumen). iter17 has a module-scope autouse fixture `_clean()` that deletes ALL companies/trips/invoices/customers/audit_logs/files for this user_id at module setup and teardown. When pytest-xdist runs both files in parallel workers, iter17's clean wipes iter19's PYT companies mid-flight, causing spurious LEAK failures. Running with `-n0` (serial) yields 13/13 PASS.",
+      "recommendation": "Either (a) use distinct user_ids per test module (e.g. TOKEN=test_session_iter17 vs test_session_iter21), or (b) make iter17 `_clean()` scope by a name prefix (only delete docs it created), or (c) add `pytest.mark.xdist_group('bitumen-shared-user')` on both files to force same-worker execution."
+    }
+  ],
+  "action_items": [
+    "OPTIONAL: harden test isolation between shared-user pytest modules (see flaky_tests). Not blocking the iter21 fix."
+  ],
+  "critical_code_review_comments": [
+    "server.py:584 PUT /api/company still uses upsert=True with a filter that includes id=cid. Given _active_company_id resolves cid to an existing company doc, upsert is effectively a no-op update, but it's semantically wrong (upsert=False would be safer and would surface bugs if cid ever resolved to a non-existent company).",
+    "server.py:1528 POST /api/company/logo does not check update result. If X-Company-Id points to a company that doesn't belong to this user, _active_company_id falls back to default — meaning a client supplying a wrong header will silently write to the DEFAULT company instead of erroring. Consider returning 404 when the header value is invalid.",
+    "pdf_generator.py:427 udyam string is emitted verbatim into T&C. Consider stripping/escaping in case udyam contains problematic reportlab paragraph markup (e.g., angle brackets).",
+    "Company Pydantic model default `udyam_registration = \"\"` is fine, but there's no server-side length/format validation (Indian UDYAM format is 'UDYAM-XX-00-0000000'). Optional enhancement."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter21_logo_udyam_per_company.py"],
+  "success_rate": {"backend": "100%", "frontend": "n/a (frontend testing skipped per request)"},
+  "test_credentials": "Authorization: Bearer test_session_bitumen_2026 (auto-provisioned test user 'test-user-bitumen')",
+  "seed_data_creation": "Created two throwaway companies ISO-LOGO-A / ISO-LOGO-B with tiny 1x1 PNG logos (red/blue), plus one customer/vehicle/driver/trip/invoice per company. All cleaned up via /companies/{id} DELETE and cascading company_id filter. No production data touched.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter21 adds per-company logo scoping + Company.udyam_registration field that renders into Invoice PDF T&C. All 7 new tests + 13 regression tests (iter17 + iter19) pass on backend. If you run the full suite in parallel with pytest-xdist, expect flakes between test_iter17_diesel_advance_deductions.py and test_multi_company_iso.py because they share user_id=test-user-bitumen and iter17 has a module-level _clean(). Run `-n0` for reliable results, or fix test isolation. PyMuPDF (fitz) is available for PDF text extraction and works well for verifying T&C content."
+}
