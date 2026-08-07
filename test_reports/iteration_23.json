@@ -1,0 +1,24 @@
+{
+  "summary": "Iter23 backend testing complete. Added new pytest file test_iter23_invoice_column_alignment.py covering the 5 BUG scenarios (A: Date single line, B: Tons single line for both decimal and integer, C: Vehicle No single line, D: Common product name single line, E: row-count sanity for main + sub rows) plus a regression check for iter22 structural labels and revised T&C. All 7 iter23 tests pass. Regression run of iter17 (6) + iter21 (7) + iter22 (7) = 20 tests all pass. Grand total 27/27 passing. The compact per-cell paragraph styles (RowTxt/RowTxtB/RowNum/RowAmt/RowRate/RowMuted) plus rebalanced column widths [6,22,26,27,31,15,27,32]mm effectively eliminate the mid-token wrapping reported in the user's screenshot. Raw-text negative assertions ('2026-07\\n-31', '32.5\\n3', 'AP39UK511\\n7', 'BITUMEN VG\\n30') all confirmed absent.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter23_invoice_column_alignment.py",
+    "/app/test_reports/pytest/iter23.xml",
+    "/app/test_reports/pytest/iter23_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "pdf_generator.py is ~1030 lines — approaching the 700-line guideline. Consider splitting into pdf_invoice.py / pdf_lr.py / pdf_ledger.py / pdf_owner.py for maintainability.",
+    "Column-width constants ([6,22,26,27,31,15,27,32]) are magic numbers; a comment explaining the fit-budget derivation is present but a named tuple/dict would be clearer.",
+    "The 'Rate' column intentionally has 2 visual lines by design (mode + muted breakdown). Documented in code as expected — not a bug."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter23_invoice_column_alignment.py"],
+  "success_rate": {"backend": "100% (27/27)", "frontend": "N/A (skipped per request)"},
+  "test_credentials": "Bearer test_session_bitumen_2026",
+  "seed_data_creation": "Test creates its own ITER23-CO company, TEST_C23 customer, AP39UK5117 vehicle, D23 driver, and multiple trips/invoices. All cascaded-deleted via DELETE /api/companies/{id} on fixture teardown.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter23 covers trip-table column alignment and font-size reduction. All 27 backend tests (iter17 + iter21 + iter22 + iter23) pass serially. Use '-o addopts= -p no:xdist' when running because pytest-xdist may cause shared-user flakiness. Regression suite total wall time ~4 minutes; individual iter23 file ~28s.",
+  "rca of the issue": "Root cause of original wrap bug: previous 9pt cell text + narrower Date(18mm)/Vehicle(25mm)/Tons(13mm) columns + long 'Load / Product' header. Fix: reduced cell font to 8pt, widened Date→22mm/Vehicle→26mm/Tons→15mm, shortened header to 'Load'. Uniform 6pt top/bottom padding across body rows ensures even row heights. Verified via PyMuPDF raw text extraction — no mid-token \\n splits remain for the reported inputs."
+}
