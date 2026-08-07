@@ -426,7 +426,8 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
     next_no = 5
     udyam = (company.get("udyam_registration") or "").strip()
     if udyam:
-        terms.append(f"{next_no}. MSME / Udyam Registration No: {udyam}")
+        from xml.sax.saxutils import escape as _xml_escape
+        terms.append(f"{next_no}. MSME / Udyam Registration No: {_xml_escape(udyam)}")
         next_no += 1
     if invoice.get("notes"):
         terms.append(f"{next_no}. Notes: {invoice.get('notes')}")
