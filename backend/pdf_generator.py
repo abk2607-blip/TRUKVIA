@@ -366,7 +366,7 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
             _add_sub(lbl, f"₹ {_fmt(excess_amt)}")
 
     # Column widths (total 186mm ≈ A4 - 24mm margins) — generous for readability
-    col_widths = [7*mm, 18*mm, 25*mm, 26*mm, 38*mm, 13*mm, 27*mm, 32*mm]
+    col_widths = [7*mm, 18*mm, 25*mm, 29*mm, 35*mm, 13*mm, 27*mm, 32*mm]
     items_tbl = Table(rows, colWidths=col_widths, repeatRows=1)
     _style = [
         # Header band

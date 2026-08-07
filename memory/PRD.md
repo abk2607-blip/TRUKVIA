@@ -117,6 +117,10 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
   - New `Company.udyam_registration` field persisted via `PUT /api/company`; added to Settings.jsx (data-testid `setting-udyam`).
   - Invoice PDF T&C now renders `MSME / Udyam Registration No: XXX` on a new numbered line ONLY when the active company has a value set (XML-escaped for safety).
   - Tests: 7/7 in `tests/test_iter21_logo_udyam_per_company.py` — covers logo isolation across companies, delete scoping, udyam save/load per company, PDF text extraction (via PyMuPDF), and backward compatibility when udyam is blank. Iter17 + Iter19 regressions still 6/6 and 7/7 green.
+- [x] **Iter22 — Invoice PDF Redesign + Revised T&C Clause #2** (Feb 2026)
+  - Full rewrite of `build_invoice_pdf()` with a modern flat design (slate/amber palette). Trip line-item table shrunk from 10 columns to 8 (merged 'Rate Mode' + 'Rate/KMs' into a single 'Rate' column with mode-bold + rate-breakdown-muted stack). Zebra-striped body rows, amber sub-rows for Halting/Diesel/Advance/Shortage/Excess. Boxed FINAL PAYABLE row highlighted with amber accent lines. Section labels: BILL TO / AMOUNT IN WORDS / BANK DETAILS / TERMS & CONDITIONS. Signature block with two-column layout.
+  - Revised T&C clause #2 to: "Shortage or excess in quantity will be accounted for only beyond a permissible variation of 0.5% for Bitumen, Emulsion, and Other Products, and 1% for CRMB / PMB." (verbatim from user).
+  - Tests: 7/7 in `tests/test_iter22_invoice_pdf_redesign.py` — structural label presence, per-ton + diesel + advance rendering, fixed-mode rendering, revised T&C verbatim check, MSME/Udyam presence/absence, multi-company PDF differentiation. Iter17 (6/6) + Iter21 (7/7) regressions still green. Total: 20/20 pass.
 
 ## Backlog (P1)
 - [ ] Drivers & Vehicles master (currently free-text)
