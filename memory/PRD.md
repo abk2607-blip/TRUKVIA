@@ -120,7 +120,12 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - [x] **Iter22 — Invoice PDF Redesign + Revised T&C Clause #2** (Feb 2026)
   - Full rewrite of `build_invoice_pdf()` with a modern flat design (slate/amber palette). Trip line-item table shrunk from 10 columns to 8 (merged 'Rate Mode' + 'Rate/KMs' into a single 'Rate' column with mode-bold + rate-breakdown-muted stack). Zebra-striped body rows, amber sub-rows for Halting/Diesel/Advance/Shortage/Excess. Boxed FINAL PAYABLE row highlighted with amber accent lines. Section labels: BILL TO / AMOUNT IN WORDS / BANK DETAILS / TERMS & CONDITIONS. Signature block with two-column layout.
   - Revised T&C clause #2 to: "Shortage or excess in quantity will be accounted for only beyond a permissible variation of 0.5% for Bitumen, Emulsion, and Other Products, and 1% for CRMB / PMB." (verbatim from user).
-  - Tests: 7/7 in `tests/test_iter22_invoice_pdf_redesign.py` — structural label presence, per-ton + diesel + advance rendering, fixed-mode rendering, revised T&C verbatim check, MSME/Udyam presence/absence, multi-company PDF differentiation. Iter17 (6/6) + Iter21 (7/7) regressions still green. Total: 20/20 pass.
+  - Tests: 7/7 in `tests/test_iter22_invoice_pdf_redesign.py`. Iter17 (6/6) + Iter21 (7/7) regressions still green. Total: 20/20 pass.
+- [x] **Iter23 — Trip-Table Alignment & Font Fix** (Feb 2026)
+  - Introduced compact per-cell paragraph styles (RowTxt/RowTxtB/RowNum/RowAmt/RowRate/RowMuted) — trip-details font down from 9pt to 8pt (rate breakdown 6.5pt) as user requested.
+  - Rebalanced column widths [6,22,26,27,31,15,27,32]mm — Date now fits '2026-07-31', Tons fits '32.53', Vehicle fits 'AP39UK5117', Load fits 'BITUMEN VG 30' — all on single lines. Header 'Load / Product' shortened to 'Load'.
+  - Explicit `ALIGN CENTER` for #/Date/Tons columns, `RIGHT` for Amount, and uniform 6pt top/bottom padding for even row heights.
+  - Tests: 7/7 in `tests/test_iter23_invoice_column_alignment.py`. Full regression Iter17+21+22+23 = **27/27 pass**.
 
 ## Backlog (P1)
 - [ ] Drivers & Vehicles master (currently free-text)
