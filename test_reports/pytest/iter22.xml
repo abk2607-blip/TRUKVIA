@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="7" time="6.759" timestamp="2026-08-07T11:46:12.800002+00:00" hostname="agent-env-a4e490e2-9c97-4db7-896b-74e67972fa90"><testcase classname="tests.test_iter22_invoice_pdf_redesign" name="test_01_structural_labels_present_and_legacy_absent" time="1.514" /><testcase classname="tests.test_iter22_invoice_pdf_redesign" name="test_02_per_ton_with_diesel_and_advance" time="0.651"><failure message="AssertionError: Missing 'Bitumen VG 40' in PDF&#10;  ITER22-CO-A&#10;  State Andhra Pradesh&#10;  TAX INVOICE&#10;  Reverse Charge: YES&#10;  BILL TO&#10;  TEST_C22_PT&#10;  GSTIN 37ABCDE1234F1Z5 State Andhra Pradesh&#10;  Invoice No&#10;  I22A/26-27/0002&#10;  Invoice Date&#10;  2026-08-07&#10;  HSN/SAC&#10;  996791&#10;  GST Type&#10;  CGST+SGST&#10;  #&#10;  Date&#10;  Vehicle No&#10;  Load /&#10;  Product&#10;  Route&#10;  Tons&#10;  Rate&#10;  Amount (₹)&#10;  1&#10;  2026-02&#10;  -15&#10;  AP01PT22&#10;  Bitumen VG&#10;  40&#10;  Chennai →&#10;  Bangalore&#10;  20.0&#10;  0&#10;  Per Ton&#10;  ₹ 1,500.00 / MT&#10;  ₹ 30,000.00&#10;  ↳ Less: Diesel from Customer — 100.00 L × ₹ 90.00 / L&#10;  (₹ 9,000.00)&#10;  ↳ Less: Customer Advance Received&#10;  (₹ 5,000.00)&#10;  AMOUNT IN WORDS&#10;  Sixteen Thousand Rupees Only&#10;  BANK DETAILS (RTGS / NEFT)&#10;  Bank:&#10;  A/c No:&#10;  IFSC: Branch:&#10;  Freight Amount&#10;  ₹ 30,000.00&#10;  Less: Diesel from&#10;  Customer&#10;  (₹ 9,000.00)&#10;  Less: Customer&#10;  Advance&#10;  (₹ 5,000.00)&#10;  Net Freight (Taxable)&#10;  ₹ 16,000.00&#10;  CGST @ 2.5%&#10;  ₹ 400.00&#10;  SGST @ 2.5%&#10;  ₹ 400.00&#10;  Tax under RCM (not&#10;  collected)&#10;  —&#10;  Gross Total&#10;  ₹ 16,000.00&#10;  FINAL PAYABLE&#10;  ₹ 16,000.00&#10;  Amount Received&#10;  ₹ 0.00&#10;  Balance Due&#10;  ₹ 16,000.00&#10;  TERMS &amp; CONDITIONS&#10;  1. GST shall be paid by the service recipient under the Reverse Charge Mechanism as per Notification No. 08/2017 (if RCM =&#10;  YES).&#10;  2. Shortage or excess in quantity will be accounted for only beyond a permissible variation of 0.5% for Bitumen, Emulsion,&#10;  and Other Products, and 1% for CRMB / PMB.&#10;  3. Halting Charges applicable after 48 hours from arrival at the site.&#10;  4. Responsibility for product insurance lies with the consignor or consignee, as applicable.&#10;  Received in good condition&#10;  For ITER22-CO-A&#10;  Customer Signature &amp; Stamp&#10;  Authorised Signatory&#10;  &#10;assert 'Bitumen VG 40' in 'ITER22-CO-A\nState Andhra Pradesh\nTAX INVOICE\nReverse Charge: YES\nBILL TO\nTEST_C22_PT\nGSTIN 37ABCDE1234F1Z5 State Andhra Pradesh\nInvoice No\nI22A/26-27/0002\nInvoice Date\n2026-08-07\nHSN/SAC\n996791\nGST Type\nCGST+SGST\n#\nDate\nVehicle No\nLoad /\nProduct\nRoute\nTons\nRate\nAmount (₹)\n1\n2026-02\n-15\nAP01PT22\nBitumen VG\n40\nChennai →\nBangalore\n20.0\n0\nPer Ton\n₹ 1,500.00 / MT\n₹ 30,000.00\n↳ Less: Diesel from Customer — 100.00 L × ₹ 90.00 / L\n(₹ 9,000.00)\n↳ Less: Customer Advance Received\n(₹ 5,000.00)\nAMOUNT IN WORDS\nSixteen Thousand Rupees Only\nBANK DETAILS (RTGS / NEFT)\nBank:\nA/c No:\nIFSC: Branch:\nFreight Amount\n₹ 30,000.00\nLess: Diesel from\nCustomer\n(₹ 9,000.00)\nLess: Customer\nAdvance\n(₹ 5,000.00)\nNet Freight (Taxable)\n₹ 16,000.00\nCGST @ 2.5%\n₹ 400.00\nSGST @ 2.5%\n₹ 400.00\nTax under RCM (not\ncollected)\n—\nGross Total\n₹ 16,000.00\nFINAL PAYABLE\n₹ 16,000.00\nAmount Received\n₹ 0.00\nBalance Due\n₹ 16,000.00\nTERMS &amp; CONDITIONS\n1. GST shall be paid by the service recipient under the Reverse Charge Mechanism as per Notification No. 08/2017 (if RCM =\nYES).\n2. Shortage or excess in quantity will be accounted for only beyond a permissible variation of 0.5% for Bitumen, Emulsion,\nand Other Products, and 1% for CRMB / PMB.\n3. Halting Charges applicable after 48 hours from arrival at the site.\n4. Responsibility for product insurance lies with the consignor or consignee, as applicable.\nReceived in good condition\nFor ITER22-CO-A\nCustomer Signature &amp; Stamp\nAuthorised Signatory\n'">backend/tests/test_iter22_invoice_pdf_redesign.py:173: in test_02_per_ton_with_diesel_and_advance
+    assert needle in text, f"Missing {needle!r} in PDF\n{text[:1500]}"
+E   AssertionError: Missing 'Bitumen VG 40' in PDF
+E     ITER22-CO-A
+E     State Andhra Pradesh
+E     TAX INVOICE
+E     Reverse Charge: YES
+E     BILL TO
+E     TEST_C22_PT
+E     GSTIN 37ABCDE1234F1Z5 State Andhra Pradesh
+E     Invoice No
+E     I22A/26-27/0002
+E     Invoice Date
+E     2026-08-07
+E     HSN/SAC
+E     996791
+E     GST Type
+E     CGST+SGST
+E     #
+E     Date
+E     Vehicle No
+E     Load /
+E     Product
+E     Route
+E     Tons
+E     Rate
+E     Amount (₹)
+E     1
+E     2026-02
+E     -15
+E     AP01PT22
+E     Bitumen VG
+E     40
+E     Chennai →
+E     Bangalore
+E     20.0
+E     0
+E     Per Ton
+E     ₹ 1,500.00 / MT
+E     ₹ 30,000.00
+E     ↳ Less: Diesel from Customer — 100.00 L × ₹ 90.00 / L
+E     (₹ 9,000.00)
+E     ↳ Less: Customer Advance Received
+E     (₹ 5,000.00)
+E     AMOUNT IN WORDS
+E     Sixteen Thousand Rupees Only
+E     BANK DETAILS (RTGS / NEFT)
+E     Bank:
+E     A/c No:
+E     IFSC: Branch:
+E     Freight Amount
+E     ₹ 30,000.00
+E     Less: Diesel from
+E     Customer
+E     (₹ 9,000.00)
+E     Less: Customer
+E     Advance
+E     (₹ 5,000.00)
+E     Net Freight (Taxable)
+E     ₹ 16,000.00
+E     CGST @ 2.5%
+E     ₹ 400.00
+E     SGST @ 2.5%
+E     ₹ 400.00
+E     Tax under RCM (not
+E     collected)
+E     —
+E     Gross Total
+E     ₹ 16,000.00
+E     FINAL PAYABLE
+E     ₹ 16,000.00
+E     Amount Received
+E     ₹ 0.00
+E     Balance Due
+E     ₹ 16,000.00
+E     TERMS &amp; CONDITIONS
+E     1. GST shall be paid by the service recipient under the Reverse Charge Mechanism as per Notification No. 08/2017 (if RCM =
+E     YES).
+E     2. Shortage or excess in quantity will be accounted for only beyond a permissible variation of 0.5% for Bitumen, Emulsion,
+E     and Other Products, and 1% for CRMB / PMB.
+E     3. Halting Charges applicable after 48 hours from arrival at the site.
+E     4. Responsibility for product insurance lies with the consignor or consignee, as applicable.
+E     Received in good condition
+E     For ITER22-CO-A
+E     Customer Signature &amp; Stamp
+E     Authorised Signatory
+E     
+E   assert 'Bitumen VG 40' in 'ITER22-CO-A\nState Andhra Pradesh\nTAX INVOICE\nReverse Charge: YES\nBILL TO\nTEST_C22_PT\nGSTIN 37ABCDE1234F1Z5 State Andhra Pradesh\nInvoice No\nI22A/26-27/0002\nInvoice Date\n2026-08-07\nHSN/SAC\n996791\nGST Type\nCGST+SGST\n#\nDate\nVehicle No\nLoad /\nProduct\nRoute\nTons\nRate\nAmount (₹)\n1\n2026-02\n-15\nAP01PT22\nBitumen VG\n40\nChennai →\nBangalore\n20.0\n0\nPer Ton\n₹ 1,500.00 / MT\n₹ 30,000.00\n↳ Less: Diesel from Customer — 100.00 L × ₹ 90.00 / L\n(₹ 9,000.00)\n↳ Less: Customer Advance Received\n(₹ 5,000.00)\nAMOUNT IN WORDS\nSixteen Thousand Rupees Only\nBANK DETAILS (RTGS / NEFT)\nBank:\nA/c No:\nIFSC: Branch:\nFreight Amount\n₹ 30,000.00\nLess: Diesel from\nCustomer\n(₹ 9,000.00)\nLess: Customer\nAdvance\n(₹ 5,000.00)\nNet Freight (Taxable)\n₹ 16,000.00\nCGST @ 2.5%\n₹ 400.00\nSGST @ 2.5%\n₹ 400.00\nTax under RCM (not\ncollected)\n—\nGross Total\n₹ 16,000.00\nFINAL PAYABLE\n₹ 16,000.00\nAmount Received\n₹ 0.00\nBalance Due\n₹ 16,000.00\nTERMS &amp; CONDITIONS\n1. GST shall be paid by the service recipient under the Reverse Charge Mechanism as per Notification No. 08/2017 (if RCM =\nYES).\n2. Shortage or excess in quantity will be accounted for only beyond a permissible variation of 0.5% for Bitumen, Emulsion,\nand Other Products, and 1% for CRMB / PMB.\n3. Halting Charges applicable after 48 hours from arrival at the site.\n4. Responsibility for product insurance lies with the consignor or consignee, as applicable.\nReceived in good condition\nFor ITER22-CO-A\nCustomer Signature &amp; Stamp\nAuthorised Signatory\n'</failure></testcase><testcase classname="tests.test_iter22_invoice_pdf_redesign" name="test_03_fixed_mode_renders" time="0.624" /><testcase classname="tests.test_iter22_invoice_pdf_redesign" name="test_04_revised_tnc_present_and_old_absent" time="0.633" /><testcase classname="tests.test_iter22_invoice_pdf_redesign" name="test_05_udyam_appears_when_set" time="0.825" /><testcase classname="tests.test_iter22_invoice_pdf_redesign" name="test_06_udyam_absent_when_blank" time="0.829" /><testcase classname="tests.test_iter22_invoice_pdf_redesign" name="test_07_multi_company_pdfs_generate_and_differ" time="1.547" /></testsuite></testsuites>

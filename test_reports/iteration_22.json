@@ -1,0 +1,25 @@
+{
+  "summary": "Iter22 — Invoice PDF redesign + revised T&C clause #2 backend validation. Wrote /app/backend/tests/test_iter22_invoice_pdf_redesign.py (7 tests) covering structural labels, per-ton+diesel+advance rendering, fixed-mode rendering, revised T&C verbatim, MSME/Udyam presence/absence, and multi-company PDF differentiation. Ran new suite + full iter17 + iter21 regressions serially: 20/20 pass.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter22_invoice_pdf_redesign.py",
+    "/app/test_reports/pytest/iter22_full.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "pdf_generator.py build_invoice_pdf() is now ~450 lines within a 1000+ line module. Consider splitting invoice-PDF/LR-PDF into separate modules if the file grows past 700 lines total (currently borderline).",
+    "The revised T&C clause is hard-coded as a Python string literal. Consider extracting all T&C clauses to a config/constants module for future edits without touching the layout code.",
+    "PDF text extraction shows minor column wrap for 'Load / Product' (e.g., 'Bitumen VG 40' wraps to two lines because 26mm column width is tight). Visually acceptable but the layout could reserve 2-3 more mm for the Load column and steal from Route (38mm) to reduce wrapping for typical product names."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter22_invoice_pdf_redesign.py (new)"
+  ],
+  "success_rate": {"backend": "100% (20/20)", "frontend": "not tested (backend-only per request)"},
+  "test_credentials": "Bearer test_session_bitumen_2026",
+  "seed_data_creation": "Test-prefixed companies (ITER22-CO-A / ITER22-CO-B) with customers/vehicles/drivers/trips/invoices; auto cleaned via cascading DELETE /companies/{id} fixture teardown.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "iter22 covers Invoice PDF redesign + revised T&C. New pytest file: test_iter22_invoice_pdf_redesign.py. PyMuPDF (fitz) used for text extraction. Note: PDF text may wrap across lines in narrow columns — always normalize whitespace (' '.join(text.split())) before substring assertions on multi-word phrases like 'Bitumen VG 40'. iter17 + iter21 regressions still 100% pass when run serially with -p no:xdist. Company creation uses no X-Company-Id header (creates a new company); trip/invoice creation requires X-Company-Id header to scope. Fixed mode trips must supply fixed_amount and freight_mode='fixed' (rate_per_ton is zeroed by test helper).",
+  "rca of the issue": "No bugs found in this iteration. One test-only issue encountered and fixed: 'Bitumen VG 40' appeared as 'Bitumen VG\\n40' in PyMuPDF extraction due to column-wrap in the new tight 'Load / Product' column (26mm). Fixed by normalizing whitespace on both needle and haystack before substring check."
+}
