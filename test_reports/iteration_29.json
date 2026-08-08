@@ -1,0 +1,32 @@
+{
+  "summary": "Iter29 acceptance: verified new _resolveBackendUrl() runtime helper in api.js maps '.preview.static.emergentagent.com' hostname -> '.preview.emergentagent.com' (backend host). AIChatBubble now imports API from @/api (no direct process.env). Dynamic preview URL end-to-end works: demo-login-button -> /dashboard renders (KPIs ₹10,000 revenue, sidebar with Trip Templates, active company selector, Recent Trips table). AI chat bubble opens, sends 'What is my total revenue?', assistant replies '₹10,000' via SSE within ~5s. Trip-import curl smoke (REIMPORT_TEST, 2 rows) inserted=2 errors=[] and both trips visible via GET /api/trips (iter28 cid-shadow fix intact). Static origin returns SPA index.html for /api/* (no backend proxy) — confirms the runtime fallback in api.js is the correct fix; the mapping will take effect on next static-bundle rebuild. Full regression 41/41 pytest green (iter17+21+22+23+multi_company_iso+iter28+iter29).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter29_url_resolution.py",
+    "/app/backend/tests/test_iter28_import_and_demo.py",
+    "/app/test_reports/pytest/iter29_regression.xml"
+  ],
+  "action_items": [
+    "Static preview URL (.preview.static.emergentagent.com) still serves a stale bundle compiled without REACT_APP_BACKEND_URL — the new _resolveBackendUrl() fallback will only take effect after the platform rebuilds the static bundle. Out of code scope; monitor after next deploy."
+  ],
+  "critical_code_review_comments": [
+    "api.js _resolveBackendUrl() correctly prioritizes env, then static->dynamic host map, then empty fallback. Consider also normalizing trailing slashes in the mapped branch (line 15 uses `${protocol}//${h.replace(...)}` — matches expected behaviour since API is appended with '/api').",
+    "AIChatBubble.jsx correctly switched to `import { API } from '@/api'` — no direct process.env usage. Good.",
+    "Demo login bypass and test session token are still hardcoded and should be gated behind an env flag before production."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter29_url_resolution.py"
+  ],
+  "success_rate": {"backend": "100% (41/41 pytest)", "frontend": "100% (demo-login + dashboard + AI chat SSE all pass)"},
+  "test_credentials": "Bearer test_session_bitumen_2026 (owner@vbklogistics.test) — seeded session.",
+  "seed_data_creation": "Reused TEST_ImportCoA/B companies from iter28 fixture; REIMPORT_TEST customer + AP01REIMP001/002 trips inserted via curl smoke (not cleaned up — safe to leave for next iteration).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter29 fix is source-code only (api.js runtime hostname mapping + AIChatBubble API import). Dynamic preview URL fully verified; static preview URL still serves stale bundle (SPA index.html for /api/*) — that will self-heal on next platform rebuild. Regression pytest command: `REACT_APP_BACKEND_URL=<url> pytest backend/tests/test_iter17*.py backend/tests/test_iter21*.py backend/tests/test_iter22*.py backend/tests/test_iter23*.py backend/tests/test_multi_company_iso.py backend/tests/test_iter28*.py backend/tests/test_iter29*.py -o addopts=''`.",
+  "rca of the issue": "Static Cloudflare-cached React bundle at .preview.static.emergentagent.com was compiled with empty/wrong REACT_APP_BACKEND_URL, so axios.baseURL became 'undefined/api' -> hit static origin -> SPA fallback / 404 for /auth/me. Fix (source-only): api.js now runtime-detects hostname; if '.preview.static.emergentagent.com', maps to '.preview.emergentagent.com' automatically. Verified via page.evaluate simulation: static hostname resolves to https://trip-billing-pro-1.preview.emergentagent.com/api (correct). Effective after next static rebuild."
+}

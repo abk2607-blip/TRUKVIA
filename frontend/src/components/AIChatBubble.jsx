@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { MessageSquare, X, Send, Trash2, Plus } from "lucide-react";
-import { getActiveCompanyId } from "@/api";
+import { getActiveCompanyId, API } from "@/api";
 import { useAuth } from "@/context/AuthContext";
 
 const SESSION_KEY = "ai_chat_session_id";
@@ -25,7 +25,7 @@ export default function AIChatBubble() {
   useEffect(() => {
     if (!sessionId || !open) return;
     const token = session?.session_token || localStorage.getItem("session_token");
-    fetch(`${process.env.REACT_APP_BACKEND_URL}/api/ai/sessions/${sessionId}/messages`, {
+    fetch(`${API}/ai/sessions/${sessionId}/messages`, {
       headers: { Authorization: `Bearer ${token}` },
     }).then(r => r.ok ? r.json() : []).then(msgs => setMessages(msgs.map(m => ({ role: m.role, content: m.content }))));
   }, [sessionId, open, session]);
@@ -47,7 +47,7 @@ export default function AIChatBubble() {
     try {
       const token = session?.session_token || localStorage.getItem("session_token");
       const cid = getActiveCompanyId() || "";
-      const resp = await fetch(`${process.env.REACT_APP_BACKEND_URL}/api/ai/chat`, {
+      const resp = await fetch(`${API}/ai/chat`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

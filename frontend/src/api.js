@@ -1,6 +1,24 @@
 import axios from "axios";
 
-const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
+// Runtime-derive the backend URL. If the build was compiled with a wrong or
+// empty REACT_APP_BACKEND_URL (common on statically-cached preview builds),
+// fall back to the sibling ".preview.emergentagent.com" host that owns the
+// backend for this project. This way login works on both the dynamic preview
+// URL and the Cloudflare-cached ".preview.static.emergentagent.com" URL.
+function _resolveBackendUrl() {
+  const env = process.env.REACT_APP_BACKEND_URL;
+  if (env && /^https?:\/\//.test(env)) return env.replace(/\/+$/, "");
+  if (typeof window !== "undefined" && window.location?.hostname) {
+    const h = window.location.hostname;
+    // Map ".preview.static.emergentagent.com" -> ".preview.emergentagent.com"
+    if (h.includes(".preview.static.emergentagent.com")) {
+      return `${window.location.protocol}//${h.replace(".preview.static.emergentagent.com", ".preview.emergentagent.com")}`;
+    }
+  }
+  return env || "";
+}
+
+const BACKEND_URL = _resolveBackendUrl();
 export const API = `${BACKEND_URL}/api`;
 
 const ACTIVE_COMPANY_KEY = "active_company_id";
