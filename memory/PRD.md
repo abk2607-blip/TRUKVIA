@@ -163,12 +163,16 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
   - `Trips.jsx`: added "LR No." column between Date and Customer (mono font, em-dash placeholder for empty).
   - `TripForm.jsx`: LR field placeholder updated to "Leave blank for auto-generation".
   - Tests: 7 new + 56 regression = **63/63 pass**.
+- [x] **Iter32 — Phase-2 Bundle: SearchableSelect + Quick-Add + Supplier Settlement Expansion + Complete Trip View** (Feb 2026)
+  - `components/SearchableSelect.jsx` (new): reusable type-to-filter dropdown with optional `onCreateNew` inline button. Filters options by label OR meta (secondary line). Click-outside close + keyboard focus.
+  - `components/QuickAddModals.jsx` (new): `QuickAddCustomer`, `QuickAddVehicle`, `QuickAddDriver`, `QuickAddProduct` — inline modals that POST to /api/{entity}, invalidate query cache, and auto-select the created record via `onCreated` callback.
+  - `TripForm.jsx`: Customer / Vehicle / Driver / Product selects replaced with `SearchableSelect` + inline "+ Add New" that opens the corresponding quick-add modal. Newly-created entity is auto-populated back into the form.
+  - Supplier Panel expansion — added 3 new backend fields: `supplier_diesel`, `supplier_shortage_deduction`, `supplier_other_income`. New formula: `net_payable = supplier_freight − advance − diesel − shortage − other_recoveries + other_income`. `total_expense` now equals `net_payable`.
+  - `TripView.jsx`: Loading/Unloading, Halting, LR/Weighbridge/Consignor and Notes sections ALWAYS render (previously conditional on empty). Supplier settlement shows all 5 deduction/income rows with new formula caption.
+  - Tests: 2 new (`test_iter32_supplier_settlement.py`) + iter8 updated + full frontend regression = **100% success** (only pre-existing invoice-recompute cgst test unrelated).
 
 ## Backlog (P0-P1, requested but not yet built)
-- [ ] Searchable Dropdowns (Customer / Supplier / Vehicle / Driver / Product across forms)
-- [ ] Quick-Add Master Data inline modals from Trip Sheet
-- [ ] Supplier Vehicle Enhancements — auto-show supplier panel, supplier diesel tracking, auto-adjust shortage/excess/incomes/expenses in settlement
-- [ ] Complete Trip View — render ALL fields (even empty) matching TripEntry structure
+- (all Phase-2 items delivered in Iter32 — searchable dropdowns, quick-add, supplier expansion, complete trip view)
 
 ## Backlog (P2, previously logged)
 - [ ] Drivers & Vehicles master (currently free-text)
