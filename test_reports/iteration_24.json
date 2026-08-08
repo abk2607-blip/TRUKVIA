@@ -1,0 +1,32 @@
+{
+  "summary": "Backend refactor regression verification for the server.py + pdf_generator.py modular split. Ran full acceptance suite (5 files, 34 tests) with -o addopts= -p no:xdist and smoke-tested 23 GET endpoints. Result: 34/34 pytest PASS and 23/23 smoke endpoints return 2xx. Refactor is behaviour-preserving.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "POST /api/auth/session", "issue": "Returns 500 when called with the test session id because handler calls the real Emergent OAuth session-data URL (https://demobackend.emergentagent.com/auth/v1/env/oauth/session-data) which rejects a fake token. This is pre-existing behaviour (not a refactor regression); the Bearer-token path (GET /api/auth/me with Authorization: Bearer test_session_bitumen_2026) works correctly and is what all 34 regression tests use."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/test_reports/pytest/refactor_regression.xml",
+    "/app/backend/tests/test_iter17_diesel_advance_deductions.py",
+    "/app/backend/tests/test_iter21_logo_udyam_per_company.py",
+    "/app/backend/tests/test_iter22_invoice_pdf_redesign.py",
+    "/app/backend/tests/test_iter23_invoice_column_alignment.py",
+    "/app/backend/tests/test_multi_company_iso.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "models.py holds ALL Pydantic models across every domain — this file will grow uncontrollably; consider splitting per domain (customers/trips/invoices/etc.) alongside routers/ to fully honour the modular intent.",
+    "services.py mixes trip math, invoice math, numbering and GST helpers. Splitting into services/trip.py, services/invoice.py, services/gst.py would improve locality with the corresponding routers.",
+    "pdf_generator.py compat shim is fine for now, but add a TODO/deprecation notice so future callers migrate to `from pdf import ...`.",
+    "Consider adding a lightweight /api/healthz endpoint — smoke checks currently rely on /api/companies which requires auth + company scoping."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (34/34 pytest, 23/23 smoke)", "frontend": "not tested (backend-only request)"},
+  "seed_data_creation": "None — tests self-provision via their own fixtures.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Refactor of server.py (2660→79 lines) and pdf_generator.py (1030→shim) into routers/ + pdf/ + shared modules (db/models/auth/company/audit/services). All 34 acceptance tests pass, all smoke endpoints 2xx, multi-company isolation and PDF integrity (TAX INVOICE label, DejaVuSans ₹ glyph, revised T&C, column alignment) all verified through the existing iter17/21/22/23/multi_company_iso suites. Green light to ship. Only observation: models.py and services.py could be split further in a follow-up (non-blocking).",
+  "rca of the issue": "N/A — no regressions found."
+}
