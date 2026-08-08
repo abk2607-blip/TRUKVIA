@@ -639,7 +639,7 @@ export default function TripForm() {
         <Section title="LR / Lorry Receipt (Optional)">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <Field label="LR Number (auto)">
-              <input data-testid="trip-lr-number" value={form.lr_number} onChange={(e) => setForm({ ...form, lr_number: e.target.value })} className={inputCls} placeholder="Auto-generated on download" />
+              <input data-testid="trip-lr-number" value={form.lr_number} onChange={(e) => setForm({ ...form, lr_number: e.target.value })} className={inputCls} placeholder="Leave blank for auto-generation" />
             </Field>
             <Field label="LR Time">
               <input data-testid="trip-lr-time" type="time" value={form.lr_time} onChange={(e) => setForm({ ...form, lr_time: e.target.value })} className={inputCls} />

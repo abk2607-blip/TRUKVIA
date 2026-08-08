@@ -123,12 +123,13 @@ export default function Vehicles() {
 
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4" data-testid="vehicle-modal">
-          <div className="bg-white w-full max-w-2xl border border-zinc-950 rounded-sm">
-            <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-200">
+          <div className="bg-white w-full max-w-2xl max-h-[90vh] flex flex-col border border-zinc-950 rounded-sm">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-200 flex-shrink-0">
               <h3 className="font-bold">{editing ? "Edit Vehicle" : "New Vehicle"}</h3>
               <button onClick={() => setOpen(false)}><X size={18} /></button>
             </div>
-            <form onSubmit={(e) => { e.preventDefault(); save.mutate(); }} className="p-5 grid grid-cols-1 md:grid-cols-2 gap-3">
+            <form onSubmit={(e) => { e.preventDefault(); save.mutate(); }} className="flex flex-col flex-1 min-h-0">
+              <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-3 overflow-y-auto flex-1">
               <F label="Vehicle Number *"><input data-testid="vehicle-number" required value={form.vehicle_number} onChange={(e) => setForm({ ...form, vehicle_number: e.target.value.toUpperCase() })} className={ic} placeholder="AP16TA1234" /></F>
               <F label="Vehicle Type">
                 <select data-testid="vehicle-type" value={form.vehicle_type} onChange={(e) => setForm({ ...form, vehicle_type: e.target.value })} className={ic}>
@@ -164,7 +165,8 @@ export default function Vehicles() {
                   <FileAttachments linkedType="vehicle" linkedId={editing.id} category="vehicle_doc" title="Vehicle Documents" />
                 </div>
               )}
-              <div className="md:col-span-2 flex justify-end gap-2 pt-2">
+              </div>
+              <div className="px-5 py-3 border-t border-zinc-200 bg-white flex justify-end gap-2 flex-shrink-0 sticky bottom-0">
                 <button type="button" onClick={() => setOpen(false)} className="px-4 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm">Cancel</button>
                 <button data-testid="save-vehicle-btn" type="submit" disabled={save.isPending} className="px-4 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 disabled:opacity-50">
                   {save.isPending ? "Saving..." : "Save"}

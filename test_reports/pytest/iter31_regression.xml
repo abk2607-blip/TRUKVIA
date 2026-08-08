@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="5" skipped="0" tests="68" time="81.251" timestamp="2026-08-08T12:10:34.794837+00:00" hostname="agent-env-a4e490e2-9c97-4db7-896b-74e67972fa90"><testcase classname="tests.test_iter17_diesel_advance_deductions" name="test_01_single_trip_deductions_and_invoice_totals" time="0.555" /><testcase classname="tests.test_iter17_diesel_advance_deductions" name="test_02_multi_trip_aggregation" time="0.445" /><testcase classname="tests.test_iter17_diesel_advance_deductions" name="test_03_edit_trip_recomputes_invoice" time="0.243" /><testcase classname="tests.test_iter17_diesel_advance_deductions" name="test_04_pdf_labels" time="0.246" /><testcase classname="tests.test_iter17_diesel_advance_deductions" name="test_05_regression_no_reduction" time="0.338" /><testcase classname="tests.test_iter17_diesel_advance_deductions" name="test_06_multi_company_scoping" time="0.371" /><testcase classname="tests.test_iter21_logo_udyam_per_company" name="test_01_logo_upload_scoped_per_company" time="0.705" /><testcase classname="tests.test_iter21_logo_udyam_per_company" name="test_02_delete_logo_scoped" time="0.410" /><testcase classname="tests.test_iter21_logo_udyam_per_company" name="test_03_udyam_save_and_load_per_company" time="0.614" /><testcase classname="tests.test_iter21_logo_udyam_per_company" name="test_04_invoice_pdfs_differ_between_companies" time="1.467" /><testcase classname="tests.test_iter21_logo_udyam_per_company" name="test_05_udyam_appears_in_pdf_tnc" time="0.039" /><testcase classname="tests.test_iter21_logo_udyam_per_company" name="test_06_no_udyam_line_when_blank" time="0.921" /><testcase classname="tests.test_iter21_logo_udyam_per_company" name="test_07_master_isolation_regression" time="0.429" /><testcase classname="tests.test_iter22_invoice_pdf_redesign" name="test_01_structural_labels_present_and_legacy_absent" time="1.032" /><testcase classname="tests.test_iter22_invoice_pdf_redesign" name="test_02_per_ton_with_diesel_and_advance" time="0.652" /><testcase classname="tests.test_iter22_invoice_pdf_redesign" name="test_03_fixed_mode_renders" time="0.627" /><testcase classname="tests.test_iter22_invoice_pdf_redesign" name="test_04_revised_tnc_present_and_old_absent" time="0.630" /><testcase classname="tests.test_iter22_invoice_pdf_redesign" name="test_05_udyam_appears_when_set" time="0.851" /><testcase classname="tests.test_iter22_invoice_pdf_redesign" name="test_06_udyam_absent_when_blank" time="0.851" /><testcase classname="tests.test_iter22_invoice_pdf_redesign" name="test_07_multi_company_pdfs_generate_and_differ" time="1.512" /><testcase classname="tests.test_iter23_invoice_column_alignment" name="test_bug_a_date_single_line" time="0.715" /><testcase classname="tests.test_iter23_invoice_column_alignment" name="test_bug_b_tons_decimal_single_line" time="0.000" /><testcase classname="tests.test_iter23_invoice_column_alignment" name="test_bug_b_tons_integer_single_line" time="0.352" /><testcase classname="tests.test_iter23_invoice_column_alignment" name="test_bug_c_vehicle_single_line" time="0.000" /><testcase classname="tests.test_iter23_invoice_column_alignment" name="test_bug_d_product_single_line" time="0.000" /><testcase classname="tests.test_iter23_invoice_column_alignment" name="test_bug_e_row_count_matches_expected" time="43.359" /><testcase classname="tests.test_iter23_invoice_column_alignment" name="test_regression_iter22_labels" time="0.110" /><testcase classname="tests.test_multi_company_iso" name="test_master_isolation[/customers-CustA-PYT-CustB-PYT]" time="15.769" /><testcase classname="tests.test_multi_company_iso" name="test_master_isolation[/vehicles-AP01PYT0001-TS01PYT0002]" time="0.197" /><testcase classname="tests.test_multi_company_iso" name="test_master_isolation[/drivers-DrvA-PYT-DrvB-PYT]" time="0.229" /><testcase classname="tests.test_multi_company_iso" name="test_master_isolation[/products-ProdA-PYT-ProdB-PYT]" time="0.200" /><testcase classname="tests.test_multi_company_iso" name="test_master_isolation[/parties-PtyA-PYT-PtyB-PYT]" time="0.214" /><testcase classname="tests.test_multi_company_iso" name="test_trip_and_invoice_isolation" time="1.266" /><testcase classname="tests.test_multi_company_iso" name="test_reports_are_company_scoped" time="1.956" /><testcase classname="tests.test_iter30_session_refresh" name="test_demo_session_autoprovision_from_scratch" time="0.012"><failure message="TypeError: name must be an instance of str">backend/tests/test_iter30_session_refresh.py:38: in test_demo_session_autoprovision_from_scratch
+    remaining = _run(arrange())
+                ^^^^^^^^^^^^^^^
+backend/tests/test_iter30_session_refresh.py:25: in _run
+    return asyncio.get_event_loop().run_until_complete(coro) if False else asyncio.new_event_loop().run_until_complete(coro)
+                                                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/asyncio/base_events.py:654: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+backend/tests/test_iter30_session_refresh.py:33: in arrange
+    db, client = _mongo_db()
+                 ^^^^^^^^^^^
+backend/tests/test_iter30_session_refresh.py:21: in _mongo_db
+    return client[db_name], client
+           ^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/motor/core.py:272: in __getitem__
+    return db_class(self, name)
+           ^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/motor/core.py:557: in __init__
+    delegate = _delegate if _delegate is not None else Database(client.delegate, name, **kwargs)
+                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/pymongo/database.py:137: in __init__
+    raise TypeError("name must be an instance of str")
+E   TypeError: name must be an instance of str</failure></testcase><testcase classname="tests.test_iter30_session_refresh" name="test_demo_session_expiry_is_30_days" time="0.094"><failure message="TypeError: name must be an instance of str">backend/tests/test_iter30_session_refresh.py:62: in test_demo_session_expiry_is_30_days
+    doc = _run(read())
+          ^^^^^^^^^^^^
+backend/tests/test_iter30_session_refresh.py:25: in _run
+    return asyncio.get_event_loop().run_until_complete(coro) if False else asyncio.new_event_loop().run_until_complete(coro)
+                                                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/asyncio/base_events.py:654: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+backend/tests/test_iter30_session_refresh.py:58: in read
+    db, client = _mongo_db()
+                 ^^^^^^^^^^^
+backend/tests/test_iter30_session_refresh.py:21: in _mongo_db
+    return client[db_name], client
+           ^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/motor/core.py:272: in __getitem__
+    return db_class(self, name)
+           ^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/motor/core.py:557: in __init__
+    delegate = _delegate if _delegate is not None else Database(client.delegate, name, **kwargs)
+                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/pymongo/database.py:137: in __init__
+    raise TypeError("name must be an instance of str")
+E   TypeError: name must be an instance of str</failure></testcase><testcase classname="tests.test_iter30_session_refresh" name="test_demo_session_refreshes_on_each_hit" time="0.098"><failure message="TypeError: name must be an instance of str">backend/tests/test_iter30_session_refresh.py:84: in test_demo_session_refreshes_on_each_hit
+    first = _run(read())
+            ^^^^^^^^^^^^
+backend/tests/test_iter30_session_refresh.py:25: in _run
+    return asyncio.get_event_loop().run_until_complete(coro) if False else asyncio.new_event_loop().run_until_complete(coro)
+                                                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/asyncio/base_events.py:654: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+backend/tests/test_iter30_session_refresh.py:80: in read
+    db, client = _mongo_db()
+                 ^^^^^^^^^^^
+backend/tests/test_iter30_session_refresh.py:21: in _mongo_db
+    return client[db_name], client
+           ^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/motor/core.py:272: in __getitem__
+    return db_class(self, name)
+           ^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/motor/core.py:557: in __init__
+    delegate = _delegate if _delegate is not None else Database(client.delegate, name, **kwargs)
+                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/pymongo/database.py:137: in __init__
+    raise TypeError("name must be an instance of str")
+E   TypeError: name must be an instance of str</failure></testcase><testcase classname="tests.test_iter30_session_refresh" name="test_oauth_rolling_refresh_extends_expiring_session" time="0.001"><failure message="TypeError: name must be an instance of str">backend/tests/test_iter30_session_refresh.py:132: in test_oauth_rolling_refresh_extends_expiring_session
+    orig_exp = _run(arrange())
+               ^^^^^^^^^^^^^^^
+backend/tests/test_iter30_session_refresh.py:25: in _run
+    return asyncio.get_event_loop().run_until_complete(coro) if False else asyncio.new_event_loop().run_until_complete(coro)
+                                                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/asyncio/base_events.py:654: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+backend/tests/test_iter30_session_refresh.py:104: in arrange
+    db, client = _mongo_db()
+                 ^^^^^^^^^^^
+backend/tests/test_iter30_session_refresh.py:21: in _mongo_db
+    return client[db_name], client
+           ^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/motor/core.py:272: in __getitem__
+    return db_class(self, name)
+           ^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/motor/core.py:557: in __init__
+    delegate = _delegate if _delegate is not None else Database(client.delegate, name, **kwargs)
+                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/pymongo/database.py:137: in __init__
+    raise TypeError("name must be an instance of str")
+E   TypeError: name must be an instance of str</failure></testcase><testcase classname="tests.test_iter30_session_refresh" name="test_expired_session_still_rejected" time="0.001"><failure message="TypeError: name must be an instance of str">backend/tests/test_iter30_session_refresh.py:195: in test_expired_session_still_rejected
+    _run(arrange())
+backend/tests/test_iter30_session_refresh.py:25: in _run
+    return asyncio.get_event_loop().run_until_complete(coro) if False else asyncio.new_event_loop().run_until_complete(coro)
+                                                                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/local/lib/python3.11/asyncio/base_events.py:654: in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+backend/tests/test_iter30_session_refresh.py:176: in arrange
+    db, client = _mongo_db()
+                 ^^^^^^^^^^^
+backend/tests/test_iter30_session_refresh.py:21: in _mongo_db
+    return client[db_name], client
+           ^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/motor/core.py:272: in __getitem__
+    return db_class(self, name)
+           ^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/motor/core.py:557: in __init__
+    delegate = _delegate if _delegate is not None else Database(client.delegate, name, **kwargs)
+                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/root/.venv/lib/python3.11/site-packages/pymongo/database.py:137: in __init__
+    raise TypeError("name must be an instance of str")
+E   TypeError: name must be an instance of str</failure></testcase><testcase classname="tests.test_iter9_lr_pdf.TestLRPdfFreightRemoved" name="test_freight_basis_not_on_page1" time="0.330" /><testcase classname="tests.test_iter9_lr_pdf.TestLRPdfFreightRemoved" name="test_freight_amount_not_on_page1" time="0.000" /><testcase classname="tests.test_iter9_lr_pdf.TestUnloadingDetailsColumnWise" name="test_unloading_section_title" time="0.000" /><testcase classname="tests.test_iter9_lr_pdf.TestUnloadingDetailsColumnWise" name="test_unloading_column_header_present[Date of Arrival]" time="0.000" /><testcase classname="tests.test_iter9_lr_pdf.TestUnloadingDetailsColumnWise" name="test_unloading_column_header_present[Arrival Time]" time="0.000" /><testcase classname="tests.test_iter9_lr_pdf.TestUnloadingDetailsColumnWise" name="test_unloading_column_header_present[Unloading Start]" time="0.000" /><testcase classname="tests.test_iter9_lr_pdf.TestUnloadingDetailsColumnWise" name="test_unloading_column_header_present[Unloading End]" time="0.000" /><testcase classname="tests.test_iter9_lr_pdf.TestUnloadingDetailsColumnWise" name="test_unloading_column_header_present[Date of Departure]" time="0.000" /><testcase classname="tests.test_iter9_lr_pdf.TestUnloadingDetailsColumnWise" name="test_unloading_column_header_present[Extra KM]" time="0.000" /><testcase classname="tests.test_iter9_lr_pdf.TestUnloadingDetailsColumnWise" name="test_unloading_column_header_present[Shortage]" time="0.000" /><testcase classname="tests.test_iter9_lr_pdf.TestUnloadingDetailsColumnWise" name="test_unloading_column_header_present[Temp]" time="0.000" /><testcase classname="tests.test_iter9_lr_pdf.TestUnloadingDetailsColumnWise" name="test_unloading_column_header_present[Seal]" time="0.000" /><testcase classname="tests.test_iter9_lr_pdf.TestUnloadingDetailsColumnWise" name="test_unloading_column_header_present[Remarks]" time="0.000" /><testcase classname="tests.test_iter9_lr_pdf.TestSiteOfficerSignatureColumnWise" name="test_site_officer_header_present[Site Officer Name]" time="0.000" /><testcase classname="tests.test_iter9_lr_pdf.TestSiteOfficerSignatureColumnWise" name="test_site_officer_header_present[Designation]" time="0.000" /><testcase classname="tests.test_iter9_lr_pdf.TestSiteOfficerSignatureColumnWise" name="test_site_officer_header_present[Mobile]" time="0.000" /><testcase classname="tests.test_iter9_lr_pdf.TestSiteOfficerSignatureColumnWise" name="test_site_officer_header_present[Signature]" time="0.000" /><testcase classname="tests.test_iter9_lr_pdf.TestSiteOfficerSignatureColumnWise" name="test_site_officer_header_present[Date]" time="0.000" /><testcase classname="tests.test_iter9_lr_pdf.TestSiteOfficerSignatureColumnWise" name="test_signature_stamp_and_date_time_combined" time="0.000" /><testcase classname="tests.test_iter9_lr_pdf.TestLRPdfRegression" name="test_two_pages" time="0.000" /><testcase classname="tests.test_iter9_lr_pdf.TestLRPdfRegression" name="test_page1_operational_data" time="0.000" /><testcase classname="tests.test_iter9_lr_pdf.TestLRPdfRegression" name="test_page2_terms_only" time="0.202" /><testcase classname="tests.test_iter31_lr_autogen" name="test_auth_ok" time="0.111" /><testcase classname="tests.test_iter31_lr_autogen" name="test_auto_lr_sequential_same_company" time="0.750" /><testcase classname="tests.test_iter31_lr_autogen" name="test_custom_lr_preserved_no_seq_increment" time="0.329" /><testcase classname="tests.test_iter31_lr_autogen" name="test_per_company_scope" time="0.532" /><testcase classname="tests.test_iter31_lr_autogen" name="test_get_trips_includes_lr_number" time="0.258" /><testcase classname="tests.test_iter31_lr_autogen" name="test_duplicate_resets_lr" time="0.308" /><testcase classname="tests.test_iter31_lr_autogen" name="test_lr_pdf_backward_compat_autoassign" time="0.441" /></testsuite></testsuites>

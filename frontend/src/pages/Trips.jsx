@@ -66,6 +66,7 @@ export default function Trips() {
             <thead className="bg-zinc-50 text-[10px] uppercase tracking-wider text-zinc-500">
               <tr>
                 <th className="text-left px-3 py-2 font-semibold">Date</th>
+                <th className="text-left px-3 py-2 font-semibold">LR No.</th>
                 <th className="text-left px-3 py-2 font-semibold">Customer</th>
                 <th className="text-left px-3 py-2 font-semibold">Vehicle</th>
                 <th className="text-left px-3 py-2 font-semibold">Route</th>
@@ -82,6 +83,7 @@ export default function Trips() {
               {trips.map((t) => (
                 <tr key={t.id} data-testid={`trip-row-${t.id}`} className="border-t border-zinc-100">
                   <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">{fmtDate(t.date)}</td>
+                  <td className="px-3 py-2 font-mono text-xs whitespace-nowrap text-zinc-700">{t.lr_number || <span className="text-zinc-300">—</span>}</td>
                   <td className="px-3 py-2">{custMap[t.customer_id] || "—"}</td>
                   <td className="px-3 py-2 font-mono text-xs">{t.vehicle_number}</td>
                   <td className="px-3 py-2 text-xs">{t.from_location} → {t.to_location}</td>
@@ -163,7 +165,7 @@ export default function Trips() {
                 </tr>
               ))}
               {trips.length === 0 && (
-                <tr><td colSpan={11} className="px-4 py-12 text-center text-zinc-400">No trips logged. Click "New Trip" to start.</td></tr>
+                <tr><td colSpan={12} className="px-4 py-12 text-center text-zinc-400">No trips logged. Click "New Trip" to start.</td></tr>
               )}
             </tbody>
           </table>

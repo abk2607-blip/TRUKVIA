@@ -61,6 +61,9 @@ async def create_trip(payload: Trip, request: Request, user=Depends(get_current_
             payload.vehicle_type = v.get("vehicle_type", "own")
             if payload.vehicle_type == "supplier":
                 payload.supplier_name = payload.supplier_name or v.get("supplier_name", "")
+    # Auto-assign LR number if not provided (per-company sequential)
+    if not (payload.lr_number or "").strip():
+        payload.lr_number = await _next_lr_number(user["user_id"], cid)
     payload = _compute_trip(payload)
     doc = payload.model_dump()
     doc["user_id"] = user["user_id"]
