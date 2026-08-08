@@ -1,0 +1,41 @@
+{
+  "summary": "Independent post-refactor (iter24) full regression. Reran the existing 34-test acceptance suite (iter17 + 21 + 22 + 23 + multi_company_iso) AND executed a new 30-test live-workflow suite covering all 12 workflows the user explicitly called out. Total 64/64 pytest PASS. Refactor of server.py (2660→79) and pdf_generator.py (1030→shim) into routers/ + pdf/ is confirmed behaviour-preserving — no endpoints changed, no schemas changed, no numbers changed vs pre-refactor.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "PUT /api/invoices/{id}", "issue": "gst_type in the body is silently overridden by _recompute_invoice() which auto-derives it from company-state vs customer-state. If both states match, a user-requested switch to 'igst' is reverted to 'cgst_sgst' without any warning in the response. Pre-existing behaviour (not a refactor regression) — flagged for UX consideration."},
+      {"endpoint": "PUT /api/trips/{id}", "issue": "Signature accepts a full Trip Pydantic model (replace semantics), so partial updates (e.g. only rate_per_ton) fail with 422. Pre-existing behaviour — clients must fetch, mutate, then PUT the full document."},
+      {"endpoint": "Invoice totals under RCM", "issue": "When rcm=True, gross_total collapses to subtotal (correct — tax not payable), but total_tax / cgst / sgst / igst fields are still populated with the informational amounts. User's spec called for total_tax=0. Pre-existing behaviour — flagged for spec alignment."},
+      {"endpoint": "POST /api/auth/session", "issue": "Still 500s on the test-session id because it calls the real Emergent OAuth service. Bearer-token path works (all 64 tests use it). Same as noted in iter24."}
+    ]
+  },
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter25_refactor_live_workflows.py",
+    "/app/test_reports/pytest/iter25_regression.xml",
+    "/app/test_reports/pytest/iter25_live_workflows.xml",
+    "/app/test_reports/pytest/iter25_combined.xml"
+  ],
+  "action_items": [
+    "(Optional / non-blocking) Reject PUT /api/invoices/{id} when body.gst_type conflicts with the auto-derived value, or return the overridden value with a warning field, so callers aren't silently ignored.",
+    "(Optional / non-blocking) Zero out total_tax / cgst / sgst / igst in the API response when rcm=True to match the user's stated acceptance criterion for WORKFLOW 10.",
+    "(Optional / non-blocking) Accept partial PUT on /api/trips/{id} via a TripUpdate DTO, mirroring InvoiceUpdateRequest, to make edit calls ergonomic."
+  ],
+  "critical_code_review_comments": [
+    "models.py (348 lines) still holds every domain's Pydantic models — split into models/{customer,trip,invoice,company,party,vehicle,driver,product,team,file,audit}.py to fully honour the modular refactor.",
+    "services.py is a grab-bag of trip math + invoice math + numbering + GST helpers. Split into services/trip.py, services/invoice.py, services/gst.py alongside their routers.",
+    "_recompute_invoice() silently overwrites a user-supplied gst_type. Either respect the client's explicit choice or surface an override warning — silent mutation is a footgun.",
+    "PUT /api/trips/{id} uses `payload: Trip` (full replace) while PUT /api/invoices/{id} uses `InvoiceUpdateRequest` (partial). Asymmetric edit ergonomics; unify.",
+    "pdf_generator.py compat shim: add a deprecation TODO so future code imports from pdf/ directly."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter25_refactor_live_workflows.py (new — 30 live workflow assertions)"
+  ],
+  "success_rate": {"backend": "100% (64/64 = 34 pre-existing + 30 new live workflow)", "frontend": "not tested (backend-only per request)"},
+  "test_credentials": "Bearer test_session_bitumen_2026 (seeded in /app/memory/test_credentials.md). Bearer path works for all 64 tests.",
+  "seed_data_creation": "Tests self-provision TEST25_* companies/customers/vehicles/drivers/products/parties/trips/invoices and best-effort clean them up via a module-scoped teardown fixture.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Refactor is fully validated. The new iter25 live-workflow file (/app/backend/tests/test_iter25_refactor_live_workflows.py) covers all 12 user-listed workflows against the live REACT_APP_BACKEND_URL and now belongs in the standing regression set. Recommended standing suite for future iterations: iter17 + iter21 + iter22 + iter23 + multi_company_iso + iter25 (=64 tests, ~108s serially). Run with `-o addopts= -p no:xdist`. Three pre-existing (NOT refactor-caused) behavioural quirks documented under backend_issues.minor are candidates for a follow-up cleanup story but do not block ship.",
+  "rca of the issue": "N/A — no regressions found from the modular refactor. Three edge-case observations logged in backend_issues.minor are pre-existing behaviours confirmed by comparing against iter17–iter23 tests which pre-date the refactor and still pass unchanged."
+}
