@@ -174,13 +174,16 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
   - `routers/ai.py`: 3 new endpoints — `POST /ai/parse-trip` (Gemini extracts structured trip JSON from Telugu/English transcript with fuzzy name→ID matching), `GET /ai/insights` + `POST /ai/insights/refresh` (Gemini generates 4-6 Telugu-English business bullets with 🟢/🟡/🔴 status icons; cached per company for 6h), `POST /ai/report` (NL query → structured spec → ReportLab PDF with metric×group_by table).
   - `routers/trips.py`: new `POST /trips/{id}/share-lr` — builds LR PDF, uploads to object storage `lr_shares/{user_id}/{tid}_{lr}.pdf`, returns `{public_url, whatsapp_url, whatsapp_text, lr_number}`.
   - `routers/files.py`: new `GET /files/public/{path:path}` — unauthenticated retrieval, restricted to `lr_shares/` or `public/` prefixes only.
-  - `components/VoiceTripButton.jsx` (new): Web Speech API wrapper (lang=`te-IN`), interim transcript display, click-to-stop, posts final transcript.
-  - `components/InsightsCard.jsx` (new): dark gradient card on Dashboard with bullets + Refresh button.
-  - `components/AIChatBubble.jsx`: added green PDF button (`ai-chat-report`) that generates PDF via `/ai/report`; downloads and opens in new tab.
-  - `pages/Trips.jsx`: green "WA" button per row (`share-lr-{id}`) opens WhatsApp deeplink with LR PDF URL.
-  - `pages/Dashboard.jsx`: `<InsightsCard />` rendered under header.
-  - `pages/TripForm.jsx`: `<VoiceTripButton />` in header (only when !isEdit) with onParsed merging into form state.
+  - `components/VoiceTripButton.jsx`, `InsightsCard.jsx` (new); `AIChatBubble.jsx` gets PDF report button; `Trips.jsx` gets WA share button per row; `Dashboard.jsx` gets Insights card; `TripForm.jsx` gets Voice button in header.
   - Tests: 6 new (`test_iter33_ai_extensions.py`) + 5 extras + 9 regression = **20/20 pass (100%)**.
+- [x] **Iter34 — Phase-4: Recurring Auto-Log + MoM Insights + WhatsApp Digest + Voice on Any Screen** (Feb 2026)
+  - `routers/trips.py`: `GET /trips/recurring-suggestions` (aggregate customer×from×to over 60d, count≥2) and `POST /trips/quick-repeat/{last_trip_id}` (clone as today's trip, blank LR, pending status). Result includes count_60d, avg_freight, last_trip_id.
+  - `routers/ai.py`: new `POST /ai/parse` unified endpoint with `context: trip|invoice|payment|expense` — each context has its own JSON schema and master-data hints; Telugu/English tolerant. `GET /ai/daily-digest` builds markdown-formatted WhatsApp text with today's stats + top-3 overdue + low-margin trips + returns `wa.me` deeplink. `/ai/insights` extended with prior-30d comparison (`stats_snapshot.mom.{revenue,profit,expense,trip_count}.{prev,curr,delta_pct,direction}`) and LLM system prompt now asks to include '↑ +12%'-style deltas in each bullet.
+  - `components/VoiceButton.jsx` (new): generic Telugu/English voice input; posts to `/ai/parse-trip` when context='trip' else `/ai/parse`. Testids `voice-btn-{context}-start|-stop|-parsing|-interim`.
+  - `components/RecurringTripsCard.jsx` (new): dashboard grid card, hidden when empty; each tile shows customer, route, count×, avg freight, vehicle.
+  - `Dashboard.jsx`: Daily Digest button in header + <RecurringTripsCard/> under Insights.
+  - `InvoiceCreate.jsx`, `InvoiceView.jsx` (payment modal), `TripForm.jsx` (expense section) — VoiceButton wired to each form's setter.
+  - Tests: 6 new (`test_iter34_recurring_digest_voice.py`) + full Playwright E2E = **100% pass** (0 issues).
 
 ## Backlog (P0-P1, requested but not yet built)
 - (all Phase-2 items delivered in Iter32 — searchable dropdowns, quick-add, supplier expansion, complete trip view)
