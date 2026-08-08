@@ -63,123 +63,168 @@ export default function Trips() {
       <div className="border border-zinc-200 bg-white rounded-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm" data-testid="trips-table">
-            <thead className="bg-zinc-50 text-[10px] uppercase tracking-wider text-zinc-500">
+            <thead className="bg-zinc-950 text-white text-[10px] uppercase tracking-[0.12em] sticky top-0 z-10">
               <tr>
-                <th className="text-left px-3 py-2 font-semibold">Date</th>
-                <th className="text-left px-3 py-2 font-semibold">LR No.</th>
-                <th className="text-left px-3 py-2 font-semibold">Customer</th>
-                <th className="text-left px-3 py-2 font-semibold">Vehicle</th>
-                <th className="text-left px-3 py-2 font-semibold">Route</th>
-                <th className="text-right px-3 py-2 font-semibold">Tons</th>
-                <th className="text-left px-3 py-2 font-semibold">Mode</th>
-                <th className="text-right px-3 py-2 font-semibold">Freight</th>
-                <th className="text-right px-3 py-2 font-semibold">Expense</th>
-                <th className="text-right px-3 py-2 font-semibold">Profit</th>
-                <th className="text-left px-3 py-2 font-semibold">Status</th>
-                <th className="px-3 py-2"></th>
+                <th className="text-left px-4 py-3 font-bold">Date · Time</th>
+                <th className="text-left px-4 py-3 font-bold">LR Number</th>
+                <th className="text-left px-4 py-3 font-bold">Customer</th>
+                <th className="text-left px-4 py-3 font-bold">Vehicle</th>
+                <th className="text-left px-4 py-3 font-bold">Route · Load</th>
+                <th className="text-right px-4 py-3 font-bold">Tons</th>
+                <th className="text-right px-4 py-3 font-bold">Freight</th>
+                <th className="text-right px-4 py-3 font-bold">Expense</th>
+                <th className="text-right px-4 py-3 font-bold">Profit</th>
+                <th className="text-center px-4 py-3 font-bold">Status</th>
+                <th className="px-4 py-3 font-bold text-center">Actions</th>
               </tr>
             </thead>
-            <tbody>
-              {trips.map((t) => (
-                <tr key={t.id} data-testid={`trip-row-${t.id}`} className="border-t border-zinc-100">
-                  <td className="px-3 py-2 font-mono text-xs whitespace-nowrap">{fmtDate(t.date)}</td>
-                  <td className="px-3 py-2 font-mono text-xs whitespace-nowrap text-zinc-700">{t.lr_number || <span className="text-zinc-300">—</span>}</td>
-                  <td className="px-3 py-2">{custMap[t.customer_id] || "—"}</td>
-                  <td className="px-3 py-2 font-mono text-xs">{t.vehicle_number}</td>
-                  <td className="px-3 py-2 text-xs">{t.from_location} → {t.to_location}</td>
-                  <td className="px-3 py-2 text-right font-mono">{Number(t.tons).toFixed(2)}</td>
-                  <td className="px-3 py-2 text-xs">
-                    {t.freight_mode === "per_ton" ? (
-                      <span className="telugu">టన్ను ({Number(t.rate_per_ton).toFixed(0)})</span>
-                    ) : (t.round_trip_kms > 0 && t.rate_per_km_per_ton > 0) ? (
-                      <span className="telugu">RT {Number(t.round_trip_kms).toFixed(0)}km × ₹{Number(t.rate_per_km_per_ton).toFixed(2)}</span>
+            <tbody className="divide-y divide-zinc-100">
+              {trips.map((t, idx) => {
+                const created = t.created_at ? new Date(t.created_at) : null;
+                const timeStr = created ? created.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false }) : "";
+                return (
+                <tr
+                  key={t.id}
+                  data-testid={`trip-row-${t.id}`}
+                  className={`${idx % 2 === 0 ? "bg-white" : "bg-zinc-50/60"} hover:bg-amber-50/40 transition-colors`}
+                >
+                  {/* Date · Time */}
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <div className="text-sm font-semibold text-zinc-900 font-mono">{fmtDate(t.date)}</div>
+                    {timeStr && <div className="text-[10px] text-zinc-400 font-mono mt-0.5">🕒 {timeStr}</div>}
+                  </td>
+                  {/* LR Number — highlighted badge */}
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    {t.lr_number ? (
+                      <span className="inline-block font-mono text-[11px] font-bold px-2 py-1 bg-indigo-50 text-indigo-800 border border-indigo-200 rounded-sm">
+                        {t.lr_number}
+                      </span>
                     ) : (
-                      <span className="telugu">Lump</span>
+                      <span className="text-zinc-300 text-xs">—</span>
                     )}
                   </td>
-                  <td className="px-3 py-2 text-right font-mono">{fmtCurrency(t.freight_amount)}</td>
-                  <td className="px-3 py-2 text-right font-mono text-rose-700">{fmtCurrency(t.total_expense)}</td>
-                  <td className={`px-3 py-2 text-right font-mono font-semibold ${t.profit >= 0 ? "text-emerald-700" : "text-rose-700"}`}>{fmtCurrency(t.profit)}</td>
-                  <td className="px-3 py-2">
+                  {/* Customer — highlighted */}
+                  <td className="px-4 py-3 max-w-[220px]">
+                    <div className="font-bold text-zinc-900 truncate leading-tight" title={custMap[t.customer_id] || ""}>
+                      {custMap[t.customer_id] || "—"}
+                    </div>
+                  </td>
+                  {/* Vehicle — chip */}
+                  <td className="px-4 py-3 whitespace-nowrap">
+                    <span className="inline-block font-mono text-[11px] font-bold px-2 py-1 bg-zinc-950 text-white rounded-sm tracking-wider">
+                      {t.vehicle_number}
+                    </span>
+                    {t.vehicle_type === "supplier" && (
+                      <div className="text-[9px] uppercase tracking-wider text-orange-600 font-bold mt-1">Supplier</div>
+                    )}
+                  </td>
+                  {/* Route + Load */}
+                  <td className="px-4 py-3 max-w-[220px]">
+                    <div className="text-xs text-zinc-800 font-medium truncate leading-tight" title={`${t.from_location || "?"} → ${t.to_location || "?"}`}>
+                      {t.from_location || "—"} <span className="text-zinc-400">→</span> {t.to_location || "—"}
+                    </div>
+                    {t.load_details && (
+                      <div className="text-[10px] text-zinc-500 truncate mt-0.5" title={t.load_details}>📦 {t.load_details}</div>
+                    )}
+                  </td>
+                  {/* Tons */}
+                  <td className="px-4 py-3 text-right whitespace-nowrap">
+                    <div className="font-mono font-semibold text-sm">{Number(t.tons).toFixed(2)}</div>
+                    <div className="text-[9px] uppercase text-zinc-400 tracking-wider">
+                      {t.freight_mode === "per_ton" ? `₹${Number(t.rate_per_ton).toFixed(0)}/T` : "Fixed"}
+                    </div>
+                  </td>
+                  {/* Freight */}
+                  <td className="px-4 py-3 text-right whitespace-nowrap font-mono text-sm font-semibold text-zinc-900">
+                    {fmtCurrency(t.freight_amount)}
+                  </td>
+                  {/* Expense */}
+                  <td className="px-4 py-3 text-right whitespace-nowrap font-mono text-sm text-rose-700">
+                    {fmtCurrency(t.total_expense)}
+                  </td>
+                  {/* Profit — emphasized */}
+                  <td className={`px-4 py-3 text-right whitespace-nowrap font-mono text-sm font-bold ${t.profit >= 0 ? "text-emerald-700" : "text-rose-700"}`}>
+                    {fmtCurrency(t.profit)}
+                  </td>
+                  {/* Status — pill */}
+                  <td className="px-4 py-3 text-center whitespace-nowrap">
                     {t.status === "invoiced" ? (
-                      <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider bg-emerald-50 text-emerald-700 px-2 py-0.5 rounded-sm border border-emerald-200"><CheckCircle2 size={10} /> Invoiced</span>
+                      <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider bg-emerald-100 text-emerald-800 px-2.5 py-1 rounded-full border border-emerald-300 font-bold">
+                        <CheckCircle2 size={10} /> Invoiced
+                      </span>
                     ) : (
-                      <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider bg-amber-50 text-amber-700 px-2 py-0.5 rounded-sm border border-amber-200"><Clock size={10} /> Pending</span>
+                      <span className="inline-flex items-center gap-1 text-[10px] uppercase tracking-wider bg-amber-100 text-amber-800 px-2.5 py-1 rounded-full border border-amber-300 font-bold">
+                        <Clock size={10} /> Pending
+                      </span>
                     )}
                   </td>
-                  <td className="px-3 py-2 text-right whitespace-nowrap">
-                    <a
-                      data-testid={`lr-${t.id}`}
-                      href={`${API}/trips/${t.id}/lr`}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-zinc-200 rounded-sm hover:bg-zinc-950 hover:text-white mr-1"
-                      title="Download LR PDF"
-                    >
-                      <FileText size={11} /> LR
-                    </a>
-                    <button
-                      data-testid={`ewaybill-${t.id}`}
-                      onClick={() => downloadEwayBill(t.id)}
-                      className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-zinc-200 rounded-sm hover:bg-zinc-950 hover:text-white mr-1"
-                      title="Download E-Way Bill JSON"
-                    >
-                      <Download size={11} /> E-Way
-                    </button>
-                    <button
-                      data-testid={`share-lr-${t.id}`}
-                      onClick={async () => {
-                        try {
-                          const { data } = await api.post(`/trips/${t.id}/share-lr`);
-                          window.open(data.whatsapp_url, "_blank");
-                          toast.success(`LR ${data.lr_number} ready to share`);
-                        } catch (e) { toast.error(e.response?.data?.detail || "Share failed"); }
-                      }}
-                      className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-emerald-300 text-emerald-700 rounded-sm hover:bg-emerald-50 mr-1"
-                      title="Share LR via WhatsApp"
-                    >
-                      <Share2 size={11} /> WA
-                    </button>
-                    {t.status === "pending" ? (
-                      <Link data-testid={`edit-trip-${t.id}`} to={`/trips/${t.id}/edit`} className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-zinc-200 rounded-sm hover:bg-zinc-950 hover:text-white mr-1" title="Edit">
-                        <Pencil size={11} /> Edit
-                      </Link>
-                    ) : (
-                      <Link data-testid={`edit-trip-${t.id}`} to={`/trips/${t.id}/edit`} className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-amber-300 text-amber-700 rounded-sm hover:bg-amber-50 mr-1" title="Edit (invoice will be recalculated)">
-                        <Pencil size={11} /> Edit*
-                      </Link>
-                    )}
-                    <Link data-testid={`view-trip-${t.id}`} to={`/trips/${t.id}/view`} className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-zinc-200 rounded-sm hover:bg-zinc-950 hover:text-white mr-1" title="View details">
-                      <Eye size={11} /> View
-                    </Link>
-                    <button
-                      data-testid={`duplicate-trip-${t.id}`}
-                      onClick={async () => {
-                        try {
-                          const { data } = await api.post(`/trips/${t.id}/duplicate`);
-                          toast.success("Trip duplicated");
-                          qc.invalidateQueries({ queryKey: ["trips"] });
-                          window.location.href = `/trips/${data.id}/edit`;
-                        } catch (e) { toast.error(e.response?.data?.detail || "Duplicate failed"); }
-                      }}
-                      className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-emerald-200 text-emerald-700 rounded-sm hover:bg-emerald-50 mr-1"
-                      title="Duplicate this trip"
-                    >
-                      <Copy size={11} /> Duplicate
-                    </button>
-                    <button
-                      data-testid={`delete-trip-${t.id}`}
-                      onClick={() => askDelete(t)}
-                      className="ml-1 inline-flex items-center gap-1 text-xs px-2 py-1 border border-rose-200 text-rose-700 rounded-sm hover:bg-rose-50"
-                      title="Delete trip"
-                    >
-                      <Trash2 size={11} />
-                    </button>
+                  {/* Actions — icon-only compact cluster */}
+                  <td className="px-2 py-3 whitespace-nowrap w-[220px]">
+                    <div className="flex items-center justify-end gap-0.5">
+                      <Link
+                        data-testid={`view-trip-${t.id}`}
+                        to={`/trips/${t.id}/view`}
+                        className="p-1.5 border border-zinc-200 rounded-sm text-zinc-600 hover:bg-zinc-950 hover:text-white transition"
+                        title="View details"
+                      ><Eye size={12} /></Link>
+                      <Link
+                        data-testid={`edit-trip-${t.id}`}
+                        to={`/trips/${t.id}/edit`}
+                        className={`p-1.5 border rounded-sm hover:bg-zinc-950 hover:text-white transition ${t.status === "invoiced" ? "border-amber-300 text-amber-700" : "border-zinc-200 text-zinc-600"}`}
+                        title={t.status === "invoiced" ? "Edit (invoice will recalc)" : "Edit"}
+                      ><Pencil size={12} /></Link>
+                      <a
+                        data-testid={`lr-${t.id}`}
+                        href={`${API}/trips/${t.id}/lr`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="p-1.5 border border-indigo-200 rounded-sm text-indigo-700 hover:bg-indigo-600 hover:text-white transition"
+                        title="LR PDF"
+                      ><FileText size={12} /></a>
+                      <button
+                        data-testid={`share-lr-${t.id}`}
+                        onClick={async () => {
+                          try {
+                            const { data } = await api.post(`/trips/${t.id}/share-lr`);
+                            window.open(data.whatsapp_url, "_blank");
+                            toast.success(`LR ${data.lr_number} ready to share`);
+                          } catch (e) { toast.error(e.response?.data?.detail || "Share failed"); }
+                        }}
+                        className="p-1.5 border border-emerald-300 rounded-sm text-emerald-700 hover:bg-emerald-600 hover:text-white transition"
+                        title="Share LR via WhatsApp"
+                      ><Share2 size={12} /></button>
+                      <button
+                        data-testid={`ewaybill-${t.id}`}
+                        onClick={() => downloadEwayBill(t.id)}
+                        className="p-1.5 border border-zinc-200 rounded-sm text-zinc-600 hover:bg-zinc-950 hover:text-white transition"
+                        title="E-Way Bill JSON"
+                      ><Download size={12} /></button>
+                      <button
+                        data-testid={`duplicate-trip-${t.id}`}
+                        onClick={async () => {
+                          try {
+                            const { data } = await api.post(`/trips/${t.id}/duplicate`);
+                            toast.success("Trip duplicated");
+                            qc.invalidateQueries({ queryKey: ["trips"] });
+                            window.location.href = `/trips/${data.id}/edit`;
+                          } catch (e) { toast.error(e.response?.data?.detail || "Duplicate failed"); }
+                        }}
+                        className="p-1.5 border border-emerald-200 rounded-sm text-emerald-700 hover:bg-emerald-50 transition"
+                        title="Duplicate"
+                      ><Copy size={12} /></button>
+                      <button
+                        data-testid={`delete-trip-${t.id}`}
+                        onClick={() => askDelete(t)}
+                        className="p-1.5 border border-rose-200 rounded-sm text-rose-700 hover:bg-rose-600 hover:text-white transition"
+                        title="Delete"
+                      ><Trash2 size={12} /></button>
+                    </div>
                   </td>
                 </tr>
-              ))}
+                );
+              })}
               {trips.length === 0 && (
-                <tr><td colSpan={12} className="px-4 py-12 text-center text-zinc-400">No trips logged. Click "New Trip" to start.</td></tr>
+                <tr><td colSpan={11} className="px-4 py-16 text-center text-zinc-400">No trips logged. Click "New Trip" to start.</td></tr>
               )}
             </tbody>
           </table>

@@ -49,7 +49,7 @@ async def list_trips(request: Request, user=Depends(get_current_user), customer_
         q["customer_id"] = customer_id
     if status:
         q["status"] = status
-    docs = await db.trips.find(q, {"_id": 0, "user_id": 0}).sort("date", -1).to_list(2000)
+    docs = await db.trips.find(q, {"_id": 0, "user_id": 0}).sort([("date", -1), ("created_at", -1)]).to_list(2000)
     return docs
 
 @router.post("/trips")

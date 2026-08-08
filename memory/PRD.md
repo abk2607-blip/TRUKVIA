@@ -184,6 +184,10 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
   - `Dashboard.jsx`: Daily Digest button in header + <RecurringTripsCard/> under Insights.
   - `InvoiceCreate.jsx`, `InvoiceView.jsx` (payment modal), `TripForm.jsx` (expense section) — VoiceButton wired to each form's setter.
   - Tests: 6 new (`test_iter34_recurring_digest_voice.py`) + full Playwright E2E = **100% pass** (0 issues).
+- [x] **Iter35 — Trip Log Redesign: Chronological Sort + Professional Layout** (Feb 2026)
+  - `routers/trips.py`: `GET /api/trips` now sorts by `[("date", -1), ("created_at", -1)]` — today's newest entries appear at the top, older records descend in date-then-created-time order.
+  - `pages/Trips.jsx` fully redesigned: dark sticky header row (bg-zinc-950 white text), Date + Time (24h format) column with clock icon, LR Number as indigo badge, Customer in bold, Vehicle in black chip with SUPPLIER pill, Route with → arrow + 📦 load, right-aligned mono financials, colored Status pills (rounded), zebra striping, hover state, 7 icon-only actions in a compact 220px column.
+  - Tests: 2 new (`test_iter35_trip_log_sort.py`) — same-date created-time ordering + across-date descending order both verified.
 
 ## Backlog (P0-P1, requested but not yet built)
 - (all Phase-2 items delivered in Iter32 — searchable dropdowns, quick-add, supplier expansion, complete trip view)
