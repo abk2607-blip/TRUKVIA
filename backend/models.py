@@ -42,10 +42,15 @@ class Customer(BaseModel):
     name: str
     address: str = ""
     phone: str = ""
+    email: str = ""
     gstin: str = ""
     pan: str = ""
     state: str = ""
     pincode: str = ""
+    opening_balance: float = 0.0
+    advance_balance: float = 0.0     # surplus payments; carried on the customer
+    notes: str = ""
+    reminder_enabled: bool = True
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
 
 class Expenses(BaseModel):

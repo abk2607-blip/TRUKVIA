@@ -2,7 +2,9 @@ from fastapi import APIRouter, HTTPException, Request, Response, Depends, Upload
 from fastapi.responses import StreamingResponse
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
-import io, os, uuid, secrets, re, requests, base64
+import io, os, uuid, secrets, re, requests, base64, logging
+
+logger = logging.getLogger(__name__)
 
 from db import db
 from pydantic import BaseModel
@@ -567,11 +569,14 @@ class AddPaymentRequest(BaseModel):
     received_by_driver: bool = False
     driver_id: Optional[str] = None
     allocations: Optional[list] = None        # [{invoice_id, amount}] — optional targeted allocation
+    photo_data_url: Optional[str] = None      # base64 data URL (data:image/jpeg;base64,...)
 
 
 @router.post("/customers/{cid}/add-payment")
 async def add_customer_payment(cid: str, payload: AddPaymentRequest, request: Request, user=Depends(get_current_user)):
-    """Add a payment against a customer. Allocates to invoices oldest-first (or per user allocations)."""
+    """Add a payment against a customer. Allocates to invoices oldest-first (or per user allocations).
+    Any surplus (amount > sum of outstanding balances) becomes an on-account advance on the customer.
+    Optional photo (data URL) is uploaded to object storage and its public URL attached to each applied payment record."""
     company_id = await _active_company_id(request, user)
     customer = await db.customers.find_one({"id": cid, "user_id": user["user_id"], "company_id": company_id}, {"_id": 0})
     if not customer:
@@ -580,6 +585,23 @@ async def add_customer_payment(cid: str, payload: AddPaymentRequest, request: Re
     if remaining <= 0:
         raise HTTPException(status_code=400, detail="Amount must be > 0")
     pay_date = payload.date or datetime.now(timezone.utc).date().isoformat()
+
+    # Optional photo upload — one photo shared across all applied invoice payments
+    photo_url = None
+    if payload.photo_data_url and payload.photo_data_url.startswith("data:"):
+        try:
+            header, b64 = payload.photo_data_url.split(",", 1)
+            mime = header.split(";")[0].replace("data:", "") or "image/jpeg"
+            ext = "jpg" if "jpeg" in mime or "jpg" in mime else "png"
+            data_bytes = base64.b64decode(b64)
+            obj_path = f"public/payment_photos/{user['user_id']}/{cid}_{secrets.token_hex(4)}.{ext}"
+            from storage_client import put_object
+            put_object(obj_path, data_bytes, mime)
+            frontend_base = _public_base_url(request)
+            photo_url = f"{frontend_base}/api/files/public/{obj_path}"
+        except Exception as e:
+            # Non-fatal: log but don't block payment
+            logger.warning(f"payment photo upload failed: {e}")
 
     # Get all invoices with balance, oldest first
     invs = await db.invoices.find(
@@ -614,6 +636,8 @@ async def add_customer_payment(cid: str, payload: AddPaymentRequest, request: Re
         elif payload.received_by_driver:
             note_bits.append("received-by-driver")
         new_pay = {"amount": pay, "date": pay_date, "mode": payload.mode, "note": " · ".join(note_bits)}
+        if photo_url:
+            new_pay["photo_url"] = photo_url
         inv_payments = inv.get("payments") or []
         inv_payments.append(new_pay)
         new_paid = float(inv.get("amount_paid", 0)) + pay
@@ -629,11 +653,63 @@ async def add_customer_payment(cid: str, payload: AddPaymentRequest, request: Re
 
     await _log_audit(user, "customer_payment", "create", entity_id=cid, entity_ref=f"₹{payload.amount} via {payload.mode}")
 
+    # Surplus → on-account advance
+    if remaining > 0.01:
+        cur_adv = float(customer.get("advance_balance", 0))
+        new_adv = round(cur_adv + remaining, 2)
+        await db.customers.update_one(
+            {"id": cid, "user_id": user["user_id"]},
+            {"$set": {"advance_balance": new_adv}}
+        )
+        customer["advance_balance"] = new_adv
+
     return {
         "applied": applied,
         "amount_total": payload.amount,
-        "amount_unallocated": round(remaining, 2),   # will appear as advance if > 0 (owner can allocate later)
+        "amount_unallocated": round(remaining, 2),
+        "advance_balance": float(customer.get("advance_balance", 0)),
+        "photo_url": photo_url,
         "date": pay_date,
         "mode": payload.mode,
     }
+
+
+
+# ============================================================================
+# Iter38 — Reminder Digest (nightly cron output) + manual trigger
+# ============================================================================
+
+@router.get("/reminders/digest")
+async def get_reminder_digest(request: Request, user=Depends(get_current_user)):
+    """Return the most recent nightly digest for this owner (or an empty payload)."""
+    doc = await db.reminder_digests.find_one({"user_id": user["user_id"]}, {"_id": 0}, sort=[("generated_at", -1)])
+    if not doc:
+        return {"digest": None, "message": "No digest yet — cron runs at 18:00 IST daily. Try /reminders/digest/run to generate now."}
+    return {"digest": doc}
+
+
+@router.post("/reminders/digest/run")
+async def run_reminder_digest_now(request: Request, user=Depends(get_current_user)):
+    """Force-run the nightly digest for the current owner (useful for testing / on-demand)."""
+    from scheduler import _nightly_reminder_digest
+    await _nightly_reminder_digest()
+    doc = await db.reminder_digests.find_one({"user_id": user["user_id"]}, {"_id": 0}, sort=[("generated_at", -1)])
+    return {"digest": doc, "message": "Digest regenerated"}
+
+
+class ReminderPref(BaseModel):
+    reminder_enabled: bool
+
+
+@router.put("/customers/{cid}/reminder-pref")
+async def set_reminder_pref(cid: str, payload: ReminderPref, request: Request, user=Depends(get_current_user)):
+    """Toggle a customer's reminder inclusion."""
+    company_id = await _active_company_id(request, user)
+    r = await db.customers.update_one(
+        {"id": cid, "user_id": user["user_id"], "company_id": company_id},
+        {"$set": {"reminder_enabled": bool(payload.reminder_enabled)}}
+    )
+    if r.matched_count == 0:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return {"ok": True, "reminder_enabled": payload.reminder_enabled}
 

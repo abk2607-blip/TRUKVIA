@@ -79,8 +79,18 @@ async def startup_event():
         logger.info("Object storage initialized")
     except Exception as e:
         logger.warning(f"Object storage init failed: {e}")
+    try:
+        from scheduler import start_scheduler
+        start_scheduler()
+    except Exception as e:
+        logger.warning(f"Scheduler init failed: {e}")
 
 
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
+    try:
+        from scheduler import stop_scheduler
+        stop_scheduler()
+    except Exception:
+        pass

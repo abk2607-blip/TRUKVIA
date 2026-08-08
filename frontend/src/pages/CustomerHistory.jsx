@@ -352,6 +352,7 @@ function AddPaymentDrawer({ customer, invoices, onClose, onSaved }) {
     amount: "", date: new Date().toISOString().slice(0, 10),
     mode: "Cash", note: "", received_by_driver: false,
   });
+  const [photoDataUrl, setPhotoDataUrl] = useState("");
   const [allocOn, setAllocOn] = useState(false);
   const [allocations, setAllocations] = useState({});
   const outstandingInvs = invoices.filter((i) => Number(i.balance_due || 0) > 0);
@@ -360,15 +361,31 @@ function AddPaymentDrawer({ customer, invoices, onClose, onSaved }) {
     mutationFn: async () => {
       const body = { ...form, amount: Number(form.amount || 0) };
       if (allocOn) body.allocations = Object.entries(allocations).filter(([, v]) => Number(v) > 0).map(([k, v]) => ({ invoice_id: k, amount: Number(v) }));
+      if (photoDataUrl) body.photo_data_url = photoDataUrl;
       return (await api.post(`/customers/${customer.id}/add-payment`, body)).data;
     },
     onSuccess: (d) => {
-      toast.success(`Payment applied — ${d.applied.length} invoice(s) updated`);
+      const bits = [`${d.applied.length} invoice(s) updated`];
+      if (d.amount_unallocated > 0.01) bits.push(`₹${d.amount_unallocated.toFixed(2)} added as advance`);
+      if (d.photo_url) bits.push("photo saved");
+      toast.success(`Payment applied — ${bits.join(", ")}`);
       onSaved?.();
       onClose?.();
     },
     onError: (e) => toast.error(e?.response?.data?.detail || "Payment failed"),
   });
+
+  const onPhotoPick = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 4 * 1024 * 1024) {
+      toast.error("Photo too large — keep it under 4MB");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => setPhotoDataUrl(reader.result);
+    reader.readAsDataURL(file);
+  };
 
   return (
     <div className="fixed inset-0 z-[70] flex" data-testid="add-payment-drawer">
@@ -404,6 +421,26 @@ function AddPaymentDrawer({ customer, invoices, onClose, onSaved }) {
             <input data-testid="pay-driver-toggle" type="checkbox" checked={form.received_by_driver} onChange={(e) => setForm({ ...form, received_by_driver: e.target.checked })} />
             <span className="text-xs font-semibold">Received By Driver</span>
           </label>
+
+          {/* Photo Capture */}
+          <div className="border border-zinc-200 rounded-sm p-3 bg-zinc-50">
+            <div className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider mb-2">Payment Receipt Photo (optional)</div>
+            {photoDataUrl ? (
+              <div className="relative">
+                <img src={photoDataUrl} alt="Receipt" className="max-h-48 rounded-sm border border-zinc-300" data-testid="pay-photo-preview" />
+                <button type="button" onClick={() => setPhotoDataUrl("")} data-testid="pay-photo-remove" className="absolute top-1 right-1 bg-zinc-950 text-white rounded-full p-1 hover:bg-rose-600">
+                  <X size={12} />
+                </button>
+              </div>
+            ) : (
+              <label className="cursor-pointer inline-flex items-center gap-2 text-xs uppercase tracking-wider font-bold px-3 py-1.5 border border-zinc-400 rounded-sm hover:bg-zinc-950 hover:text-white hover:border-zinc-950">
+                <Plus size={12} />
+                <span>Attach / Capture Photo</span>
+                <input data-testid="pay-photo-input" type="file" accept="image/*" capture="environment" onChange={onPhotoPick} className="hidden" />
+              </label>
+            )}
+            <div className="text-[10px] text-zinc-500 mt-1.5">Snap cash / cheque / UPI screenshot for audit trail.</div>
+          </div>
 
           {outstandingInvs.length > 0 && (
             <div className="border border-zinc-200 rounded-sm p-3 bg-zinc-50">
@@ -487,6 +524,81 @@ function BulkReminderModal({ onClose }) {
             )}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ---------- Party Details Tab (Iter38) ----------
+function PartyDetailsTab({ customer, onSaved }) {
+  const [editing, setEditing] = useState(false);
+  const [f, setF] = useState({
+    name: customer.name || "", phone: customer.phone || "", email: customer.email || "",
+    gstin: customer.gstin || "", pan: customer.pan || "",
+    address: customer.address || "", state: customer.state || "", pincode: customer.pincode || "",
+    opening_balance: customer.opening_balance || 0, notes: customer.notes || "",
+    reminder_enabled: customer.reminder_enabled !== false,
+  });
+  const save = useMutation({
+    mutationFn: async () => (await api.put(`/customers/${customer.id}`, {
+      ...f, opening_balance: Number(f.opening_balance || 0),
+    })).data,
+    onSuccess: () => { toast.success("Party updated"); setEditing(false); onSaved?.(); },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Save failed"),
+  });
+  const R = ({ label, value, editable, k, type = "text" }) => (
+    <div className="border-b border-zinc-100 py-2.5">
+      <div className="text-[10px] uppercase tracking-[0.12em] font-bold text-zinc-500">{label}</div>
+      {editing && editable ? (
+        <input data-testid={`pd-${k}`} type={type} value={f[k] || ""} onChange={(e) => setF({ ...f, [k]: e.target.value })} className={`${inputCls} mt-1`} />
+      ) : (
+        <div className="text-sm font-semibold text-zinc-900 mt-0.5">{value || <span className="text-zinc-300">—</span>}</div>
+      )}
+    </div>
+  );
+  return (
+    <div className="border border-zinc-200 bg-white rounded-sm p-5" data-testid="party-details-tab">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <div className="text-[11px] uppercase tracking-[0.12em] font-bold text-zinc-500">Party Profile</div>
+          <h3 className="text-xl font-black tracking-tight">{customer.name}</h3>
+        </div>
+        {!editing ? (
+          <button data-testid="pd-edit-btn" onClick={() => setEditing(true)} className="text-xs uppercase tracking-wider font-bold px-3 py-1.5 border border-zinc-950 rounded-sm hover:bg-zinc-950 hover:text-white">Quick Edit</button>
+        ) : (
+          <div className="flex gap-2">
+            <button onClick={() => { setEditing(false); setF({ ...customer }); }} className="text-xs uppercase tracking-wider font-bold px-3 py-1.5 border border-zinc-300 rounded-sm">Cancel</button>
+            <button data-testid="pd-save-btn" onClick={() => save.mutate()} disabled={save.isPending} className="text-xs uppercase tracking-wider font-bold px-3 py-1.5 bg-emerald-600 text-white rounded-sm hover:bg-emerald-700 disabled:opacity-50">{save.isPending ? "Saving…" : "Save"}</button>
+          </div>
+        )}
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6">
+        <R label="Name" value={customer.name} editable k="name" />
+        <R label="Primary Contact" value={customer.phone} editable k="phone" />
+        <R label="Email" value={customer.email} editable k="email" type="email" />
+        <R label="GSTIN" value={customer.gstin} editable k="gstin" />
+        <R label="PAN" value={customer.pan} editable k="pan" />
+        <R label="Pincode" value={customer.pincode} editable k="pincode" />
+        <R label="State" value={customer.state} editable k="state" />
+        <R label="Opening Balance (₹)" value={customer.opening_balance ? fmtCurrency(customer.opening_balance) : "0"} editable k="opening_balance" type="number" />
+        <div className="md:col-span-2">
+          <R label="Address" value={customer.address} editable k="address" />
+        </div>
+        <div className="md:col-span-2">
+          <R label="Notes" value={customer.notes} editable k="notes" />
+        </div>
+        <div className="md:col-span-2 pt-2">
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input data-testid="pd-reminder-toggle" type="checkbox" checked={f.reminder_enabled} disabled={!editing} onChange={(e) => setF({ ...f, reminder_enabled: e.target.checked })} />
+            <span className="text-xs font-semibold uppercase tracking-wider">Include in Nightly WhatsApp Reminder Digest</span>
+          </label>
+        </div>
+      </div>
+      <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-2 pt-4 border-t border-zinc-200">
+        <KV label="Advance on Account" value={fmtCurrency(customer.advance_balance || 0)} tone={customer.advance_balance > 0 ? "emerald" : "zinc"} />
+        <KV label="Opening Balance" value={fmtCurrency(customer.opening_balance || 0)} />
+        <KV label="Customer Since" value={fmtDate(customer.created_at) || "—"} />
+        <KV label="Party ID" value={customer.id.slice(-8).toUpperCase()} />
       </div>
     </div>
   );
@@ -594,6 +706,7 @@ export default function CustomerHistory() {
     { id: "trips", label: "Trip Ledger", te: "ట్రిప్‌లు" },
     { id: "invoices", label: "Invoice Ledger", te: "ఇన్వాయిస్‌లు" },
     { id: "monthly", label: "Monthly Balances", te: "మంత్లీ" },
+    { id: "details", label: "Party Details", te: "వివరాలు" },
   ];
 
   return (
@@ -626,6 +739,11 @@ export default function CustomerHistory() {
                     {history.customer.gstin && <span>GSTIN: <span className="font-mono text-zinc-700">{history.customer.gstin}</span></span>}
                     {history.customer.phone && <span>· {history.customer.phone}</span>}
                     {history.customer.state && <span>· {history.customer.state}</span>}
+                    {Number(history.customer.advance_balance || 0) > 0 && (
+                      <span data-testid="advance-chip" className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] uppercase tracking-wider font-bold bg-emerald-50 text-emerald-800 border border-emerald-300">
+                        Advance on Account · {fmtCurrency(history.customer.advance_balance)}
+                      </span>
+                    )}
                   </div>
                 </div>
                 <div className="flex gap-2 flex-shrink-0 flex-wrap">
@@ -666,6 +784,7 @@ export default function CustomerHistory() {
                   {tab === "trips" && <TripLedgerTab trips={history.trips} invoices={history.invoices} onOpen={openTxn} />}
                   {tab === "invoices" && <InvoiceLedgerTab invoices={history.invoices} trips={history.trips} onOpen={openTxn} />}
                   {tab === "monthly" && <MonthlyBalancesTab customerId={selectedId} />}
+                  {tab === "details" && <PartyDetailsTab customer={history.customer} onSaved={() => { qc.invalidateQueries({ queryKey: ["customer-history", selectedId] }); qc.invalidateQueries({ queryKey: ["customers", "with-balance"] }); }} />}
                 </>
               )}
             </>

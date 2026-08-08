@@ -1,0 +1,27 @@
+{
+  "summary": "Iter38 (Party Details / Advance Pool / Photo Capture / Nightly Digest Scheduler) — verified end-to-end. Backend: 5/5 iter38 pytest pass; 17/17 iter36+37 regression pass. Scheduler startup line '[cron] scheduler started — nightly_reminder_digest @ 18:00 IST' confirmed in supervisor log; digest job has already executed successfully (2 owners). Frontend Playwright: 5 tabs visible (ledger-tab-all/trips/invoices/monthly/details), Party Details tab renders Name/Primary Contact/Email/GSTIN/PAN/Pincode/State/Opening Balance/Address/Notes + pd-reminder-toggle; Quick Edit (pd-edit-btn) switches to inputs and pd-save-btn appears. Add Payment drawer exposes pay-photo-input (accept=image/*, capture=environment); setInputFiles upload → pay-photo-preview + pay-photo-remove render. Advance chip (data-testid=advance-chip) rendered 'Advance on Account · ₹ 7,500.00' in emerald in customer header after a surplus payment POST /add-payment (₹7500 to a customer with no outstanding → advance_balance=7500 persisted, chip visible on reload).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter38_party_details_advance.py",
+    "/app/backend/tests/test_iter36_customer_history.py",
+    "/app/backend/tests/test_iter36_extra.py",
+    "/app/backend/tests/test_iter37_history_extras.py",
+    "/app/test_reports/pytest/iter38.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "scheduler.py starts APScheduler on FastAPI startup (12:30 UTC = 18:00 IST) and job store initialized — verified in log.",
+    "add-payment surplus correctly bumps customer.advance_balance and returns advance_balance in response (₹7500 test surplus persisted).",
+    "photo upload uses public storage path /api/files/public/public/payment_photos/, photo_url returned with http prefix — verified via pytest test_add_payment_with_photo.",
+    "PartyDetailsTab is idempotent: Quick Edit toggles input state, Save/Cancel wired correctly.",
+    "Advance chip renders only when advance_balance > 0 — correctly hidden for zero-balance customers and shown for ₹7500 seeded case."
+  ],
+  "updated_files": ["/app/test_reports/iteration_37.json"],
+  "success_rate": {"backend": "100% (5/5 iter38 + 17/17 iter36+37 regression)", "frontend": "100% (all iter38 selectors present and functional)"},
+  "test_credentials": "Bearer test_session_bitumen_2026 (see /app/memory/test_credentials.md)",
+  "seed_data_creation": "Posted a ₹7500 surplus payment to customer cust_8a3505128af84530 (TEST_Iter36_Hist) to seed advance_balance and validate the emerald advance-chip in header (persisted). No cleanup performed.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter38 all green. TEST_Iter38 customer exists under a different tenant/company than default 'TEST Iter7 Co' visible in the UI (backend test seeded it under its own context). To visually verify advance chip in default UI, POST /customers/{id}/add-payment with amount>outstanding to any customer (chip appears once advance_balance > 0). Scheduler runs at 18:00 IST; use POST /reminders/digest/run to trigger manually. Photo upload accepts data URLs; frontend uses <input type=file capture=environment>. Regression from earlier iter36 (AI chat bubble z-index blocking pay-save-btn) is still an OPEN low-priority UX bug from iter36 report — not re-tested here as it was reported previously; consider hiding ai-chat-open when any drawer is open."
+}
