@@ -188,6 +188,14 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
   - `routers/trips.py`: `GET /api/trips` now sorts by `[("date", -1), ("created_at", -1)]` — today's newest entries appear at the top, older records descend in date-then-created-time order.
   - `pages/Trips.jsx` fully redesigned: dark sticky header row (bg-zinc-950 white text), Date + Time (24h format) column with clock icon, LR Number as indigo badge, Customer in bold, Vehicle in black chip with SUPPLIER pill, Route with → arrow + 📦 load, right-aligned mono financials, colored Status pills (rounded), zebra striping, hover state, 7 icon-only actions in a compact 220px column.
   - Tests: 2 new (`test_iter35_trip_log_sort.py`) — same-date created-time ordering + across-date descending order both verified.
+- [x] **Iter36 — Customer Transaction History (myBillBook-style Ledger)** (Feb 2026)
+  - `models.py`: Trip gets 2 new fields — `customer_diesel_received` and `customer_advance_received` (informational tracking).
+  - `routers/customers.py`: 3 new endpoints — `GET /customers/{id}/transactions` (unified Trips+Invoices+Payments list with 12-key summary and filters: date_from/to, txn_type, invoice_status, payment_status, vehicle_number, product_id, from/to_location); `GET /customers/{id}/statement.pdf` (ReportLab statement w/ header + summary block + trip table + invoice table); `POST /customers/{id}/share-statement` (uploads PDF to `lr_shares/`, returns wa.me deeplink). New `_public_base_url()` helper reads `frontend/.env` when backend env lacks REACT_APP_BACKEND_URL.
+  - `pages/CustomerHistory.jsx` (new): split-panel like myBillBook — left CustomersList (search + balance chips), right panel with customer header + summary strip (10 KPIs + Outstanding pill) + FilterBar + TransactionsTable (dark header, TRIP/INVOICE/PAYMENT type icons, LR badges, clickable rows navigate to underlying entity).
+  - `pages/TripForm.jsx`: new "Received From Customer" section with `trip-customer-diesel` and `trip-customer-advance` inputs.
+  - `pages/Customers.jsx`: 'History' button per row → `/customers/history/{id}`.
+  - `App.js` + `Layout.jsx`: new routes and sidebar link.
+  - Tests: 5 iter36 tests + 7 extras = 12/12 pass. Frontend E2E: 100% success, 0 issues.
 
 ## Backlog (P0-P1, requested but not yet built)
 - (all Phase-2 items delivered in Iter32 — searchable dropdowns, quick-add, supplier expansion, complete trip view)
