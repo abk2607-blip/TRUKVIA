@@ -1,0 +1,28 @@
+{
+  "summary": "Iter30 acceptance for session-timeout fix (issue #1). All 5 new iter30 tests pass + 34/34 regression (iter17+21+22+23+multi_company_iso) still green. Demo token self-heals: db.user_sessions row deleted then GET /api/auth/me returns 200 with user_id 'user_demo_...', expires_at is ~30 days out and refreshes on every hit. OAuth rolling refresh verified: a manually-seeded session with 2-day expiry gets extended to ~7 days on first /auth/me hit, last_refreshed_at is populated, and the anti-thrash window blocks a second refresh within 4 minutes. Expired sessions (expires_at in the past) still 401 correctly. Playwright: demo-login-button -> /dashboard, /trips, /invoices, /trips/templates all render with no 401 redirects; after simulated inactivity, in-page fetch of /api/auth/me returns 200.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter30_session_refresh.py",
+    "/app/test_reports/pytest/iter30_regression.xml"
+  ],
+  "action_items": [
+    "Before production: set DEMO_TOKEN_DISABLED=1 in backend/.env to disable demo self-provisioning (kill-switch already coded in auth.py).",
+    "Iter28 pytest file has an unrelated collection error — skipped as instructed; main agent may want to fix that fixture separately.",
+    "Issues #2-#8 from the user report still pending — separate iterations as agreed."
+  ],
+  "critical_code_review_comments": [
+    "auth.py rolling-refresh logic is correctly gated by (a) remaining < 6d and (b) last_refreshed_at older than 4 min — good anti-thrash design.",
+    "Demo token constant is hardcoded but properly gated by DEMO_TOKEN_DISABLED env flag — acceptable for preview, must be flipped on before prod.",
+    "_ensure_demo_session() uses find_one({'session_token_demo': True}) to locate the demo user — small risk if multiple rows accidentally get that flag; consider a stable user_id lookup as the primary key instead.",
+    "get_current_user() catches all exceptions during rolling refresh silently — acceptable to avoid breaking auth on refresh failure, but consider logging."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter30_session_refresh.py"],
+  "success_rate": {"backend": "100% (5/5 iter30 + 34/34 regression)", "frontend": "100% (demo flow + all 4 routes + post-inactivity auth check)"},
+  "test_credentials": "Bearer test_session_bitumen_2026 — now auto-provisioning, guaranteed self-healing.",
+  "seed_data_creation": "Temporary iter30_oauth_test_token / iter30_expired_token sessions + users created and cleaned up within tests.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter30 verifies auth.py changes only. Next iterations should tackle user issues #2-#8 (Vehicle form Save button visibility, auto LR number generation, LR in Trip list, Quick-Add masters from Trip form, Supplier vehicle enhancements, searchable dropdowns, complete Trip View). Regression command: `REACT_APP_BACKEND_URL=<url> pytest backend/tests/test_iter17*.py backend/tests/test_iter21*.py backend/tests/test_iter22*.py backend/tests/test_iter23*.py backend/tests/test_multi_company_iso.py backend/tests/test_iter30_session_refresh.py -o addopts=''`.",
+  "rca of the issue": "Original bug: demo login button only worked while a pre-seeded db.user_sessions row (TTL ~7 days) was still alive; once expired/cleaned by a testing agent, users saw 'session expired' with no self-heal. Real Google OAuth sessions also had a hard 7-day cap with no extension, so long testing/data-entry sessions >15 min could hit intermittent 401s if cache/state cleared. Fix in /app/backend/auth.py: (1) DEMO_TOKEN constant + _ensure_demo_session() upserts a fresh 30-day session on every request bearing the demo token; (2) rolling refresh in get_current_user() bumps expires_at by +7d whenever session has <6d left AND last_refreshed_at is >4min old, preventing active users from being logged out. Verified end-to-end via pytest (delete row → auth/me 200) + Playwright (demo click → 4 protected routes + post-inactivity refetch)."
+}
