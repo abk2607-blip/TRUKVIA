@@ -482,7 +482,12 @@ async def dashboard_insights(request: Request, user=Depends(get_current_user)):
         try:
             gen = datetime.fromisoformat(cache["generated_at"])
             if (now - gen).total_seconds() < 6 * 3600:
-                return {"insights": cache["insights"], "generated_at": cache["generated_at"], "cached": True}
+                return {
+                    "insights": cache["insights"],
+                    "generated_at": cache["generated_at"],
+                    "stats_snapshot": cache.get("stats_snapshot") or {},
+                    "cached": True,
+                }
         except Exception:
             pass
 

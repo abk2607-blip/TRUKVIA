@@ -170,6 +170,17 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
   - Supplier Panel expansion — added 3 new backend fields: `supplier_diesel`, `supplier_shortage_deduction`, `supplier_other_income`. New formula: `net_payable = supplier_freight − advance − diesel − shortage − other_recoveries + other_income`. `total_expense` now equals `net_payable`.
   - `TripView.jsx`: Loading/Unloading, Halting, LR/Weighbridge/Consignor and Notes sections ALWAYS render (previously conditional on empty). Supplier settlement shows all 5 deduction/income rows with new formula caption.
   - Tests: 2 new (`test_iter32_supplier_settlement.py`) + iter8 updated + full frontend regression = **100% success** (only pre-existing invoice-recompute cgst test unrelated).
+- [x] **Iter33 — Phase-3 AI Bundle: Voice Assistant + Smart Insights + Report-by-Chat + LR WhatsApp Share** (Feb 2026)
+  - `routers/ai.py`: 3 new endpoints — `POST /ai/parse-trip` (Gemini extracts structured trip JSON from Telugu/English transcript with fuzzy name→ID matching), `GET /ai/insights` + `POST /ai/insights/refresh` (Gemini generates 4-6 Telugu-English business bullets with 🟢/🟡/🔴 status icons; cached per company for 6h), `POST /ai/report` (NL query → structured spec → ReportLab PDF with metric×group_by table).
+  - `routers/trips.py`: new `POST /trips/{id}/share-lr` — builds LR PDF, uploads to object storage `lr_shares/{user_id}/{tid}_{lr}.pdf`, returns `{public_url, whatsapp_url, whatsapp_text, lr_number}`.
+  - `routers/files.py`: new `GET /files/public/{path:path}` — unauthenticated retrieval, restricted to `lr_shares/` or `public/` prefixes only.
+  - `components/VoiceTripButton.jsx` (new): Web Speech API wrapper (lang=`te-IN`), interim transcript display, click-to-stop, posts final transcript.
+  - `components/InsightsCard.jsx` (new): dark gradient card on Dashboard with bullets + Refresh button.
+  - `components/AIChatBubble.jsx`: added green PDF button (`ai-chat-report`) that generates PDF via `/ai/report`; downloads and opens in new tab.
+  - `pages/Trips.jsx`: green "WA" button per row (`share-lr-{id}`) opens WhatsApp deeplink with LR PDF URL.
+  - `pages/Dashboard.jsx`: `<InsightsCard />` rendered under header.
+  - `pages/TripForm.jsx`: `<VoiceTripButton />` in header (only when !isEdit) with onParsed merging into form state.
+  - Tests: 6 new (`test_iter33_ai_extensions.py`) + 5 extras + 9 regression = **20/20 pass (100%)**.
 
 ## Backlog (P0-P1, requested but not yet built)
 - (all Phase-2 items delivered in Iter32 — searchable dropdowns, quick-add, supplier expansion, complete trip view)
