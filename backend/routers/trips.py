@@ -502,3 +502,91 @@ async def share_lr_whatsapp(tid: str, request: Request, user=Depends(get_current
 
 # ==================== Audit Logs ====================
 
+
+
+# ============================================================================
+# Recurring Trip Suggestions (Iter34) — One-tap repeat
+# ============================================================================
+
+@router.get("/trips/recurring-suggestions")
+async def recurring_suggestions(request: Request, user=Depends(get_current_user)):
+    """Detect (customer × from × to) combos with ≥2 occurrences in the last 60 days.
+    Return the top 5 suggestions with the most recent trip snapshot so the UI can offer 1-tap repeat."""
+    cid = await _active_company_id(request, user)
+    sixty_ago = (datetime.now(timezone.utc).date() - timedelta(days=60)).isoformat()
+    trips = await db.trips.find(
+        {"user_id": user["user_id"], "company_id": cid, "date": {"$gte": sixty_ago}},
+        {"_id": 0}
+    ).sort("date", -1).to_list(1000)
+    buckets: dict = {}
+    for t in trips:
+        key = (t.get("customer_id") or "", (t.get("from_location") or "").strip().lower(), (t.get("to_location") or "").strip().lower())
+        if not key[0] or not key[1] or not key[2]:
+            continue
+        b = buckets.setdefault(key, {"count": 0, "last": None, "avg_freight": 0.0, "sum_freight": 0.0})
+        b["count"] += 1
+        b["sum_freight"] += float(t.get("freight_amount", 0))
+        if b["last"] is None or (t.get("date") or "") > (b["last"].get("date") or ""):
+            b["last"] = t
+
+    customers = {c["id"]: c["name"] for c in await db.customers.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "id": 1, "name": 1}).to_list(2000)}
+    out = []
+    for (cid_key, from_l, to_l), b in buckets.items():
+        if b["count"] < 2:
+            continue
+        last = b["last"] or {}
+        out.append({
+            "customer_id": cid_key,
+            "customer_name": customers.get(cid_key, "—"),
+            "from_location": last.get("from_location") or from_l.title(),
+            "to_location": last.get("to_location") or to_l.title(),
+            "count_60d": b["count"],
+            "avg_freight": round(b["sum_freight"] / b["count"], 2),
+            "last_date": last.get("date"),
+            "last_trip_id": last.get("id"),
+            "vehicle_number": last.get("vehicle_number"),
+            "load_details": last.get("load_details"),
+            "tons": last.get("tons"),
+            "rate_per_ton": last.get("rate_per_ton"),
+            "freight_mode": last.get("freight_mode"),
+        })
+    out.sort(key=lambda x: (-x["count_60d"], x["last_date"] or ""), reverse=False)
+    out.sort(key=lambda x: -x["count_60d"])
+    return out[:5]
+
+
+@router.post("/trips/quick-repeat/{last_trip_id}")
+async def quick_repeat_trip(last_trip_id: str, request: Request, user=Depends(get_current_user)):
+    """One-tap: clone the given (last) trip for today with a fresh id and blank lr_number."""
+    src = await db.trips.find_one({"id": last_trip_id, "user_id": user["user_id"]}, {"_id": 0})
+    if not src:
+        raise HTTPException(status_code=404, detail="Source trip not found")
+    cid = await _active_company_id(request, user)
+    src.pop("id", None)
+    src.pop("user_id", None)
+    src["id"] = "trip_" + secrets.token_hex(8)
+    src["date"] = datetime.now(timezone.utc).date().isoformat()
+    src["lr_number"] = ""
+    src["invoice_id"] = None
+    src["status"] = "pending"
+    src["amount_received"] = 0
+    src["company_id"] = cid
+    src["created_at"] = datetime.now(timezone.utc).isoformat()
+    src["updated_at"] = src["created_at"]
+    # Recompute using services
+    try:
+        model = Trip(**{k: v for k, v in src.items() if k in Trip.model_fields})
+        model = _compute_trip(model)
+        merged = model.model_dump()
+        for k in ("id", "date", "lr_number", "invoice_id", "status", "amount_received", "company_id", "created_at", "updated_at"):
+            merged[k] = src[k]
+        src = merged
+    except Exception:
+        pass
+    doc = {**src, "user_id": user["user_id"]}
+    await db.trips.insert_one(doc)
+    doc.pop("_id", None)
+    doc.pop("user_id", None)
+    await _log_audit(user, "trip", "create", entity_id=doc["id"], entity_ref=f"quick-repeat from {last_trip_id}")
+    return doc
+

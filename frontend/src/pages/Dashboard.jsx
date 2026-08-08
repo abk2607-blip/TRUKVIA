@@ -2,10 +2,12 @@ import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { api, fmtCurrency, fmtDate } from "@/api";
 import { Link } from "react-router-dom";
-import { TrendingUp, TrendingDown, Truck, FileText, Users, Wallet, ArrowUpRight, MessageCircle, AlertTriangle } from "lucide-react";
+import { TrendingUp, TrendingDown, Truck, FileText, Users, Wallet, ArrowUpRight, MessageCircle, AlertTriangle, Share2, Loader2 } from "lucide-react";
 import InsightsCard from "@/components/InsightsCard";
+import RecurringTripsCard from "@/components/RecurringTripsCard";
 
 export default function Dashboard() {
+  const [digestLoading, setDigestLoading] = React.useState(false);
   const { data, isLoading } = useQuery({
     queryKey: ["dashboard"],
     queryFn: async () => (await api.get("/dashboard")).data,
@@ -40,6 +42,26 @@ export default function Dashboard() {
           </h1>
         </div>
         <div className="flex gap-2">
+          <button
+            data-testid="daily-digest-btn"
+            disabled={digestLoading}
+            onClick={async () => {
+              setDigestLoading(true);
+              try {
+                const { data: d } = await api.get("/ai/daily-digest");
+                window.open(d.whatsapp_url, "_blank");
+              } catch (e) {
+                console.error(e);
+              } finally {
+                setDigestLoading(false);
+              }
+            }}
+            className="px-3 py-2 text-xs uppercase tracking-wider font-semibold border border-emerald-500 text-emerald-800 bg-emerald-50 rounded-sm hover:bg-emerald-100 inline-flex items-center gap-2 disabled:opacity-50"
+            title="Send today's business digest via WhatsApp"
+          >
+            {digestLoading ? <Loader2 size={12} className="animate-spin" /> : <Share2 size={12} />}
+            Daily Digest
+          </button>
           <Link to="/trips/new" data-testid="quick-new-trip" className="px-3 py-2 text-xs uppercase tracking-wider font-semibold bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 transition-colors">
             + New Trip
           </Link>
@@ -51,6 +73,9 @@ export default function Dashboard() {
 
       {/* AI Smart Insights */}
       <InsightsCard />
+
+      {/* Recurring / One-Tap Trips */}
+      <RecurringTripsCard />
 
       {/* KPI Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

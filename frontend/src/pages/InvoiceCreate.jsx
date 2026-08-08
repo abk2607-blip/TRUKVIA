@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, fmtCurrency, fmtDate } from "@/api";
 import { toast } from "sonner";
 import { ArrowLeft } from "lucide-react";
+import VoiceButton from "@/components/VoiceButton";
 
 export default function InvoiceCreate() {
   const nav = useNavigate();
@@ -80,13 +81,21 @@ export default function InvoiceCreate() {
     <div className="space-y-6" data-testid="invoice-create-page">
       <header className="flex items-center gap-3 border-b border-zinc-200 pb-4">
         <button onClick={() => nav(-1)} className="p-2 border border-zinc-200 rounded-sm"><ArrowLeft size={16} /></button>
-        <div>
+        <div className="flex-1">
           <div className="text-[11px] uppercase tracking-[0.15em] text-zinc-500 font-bold">New</div>
           <h1 className="text-3xl font-black tracking-tighter">
             <span className="telugu">కొత్త ఇన్వాయిస్</span>
             <span className="text-zinc-400"> · Create Invoice</span>
           </h1>
         </div>
+        <VoiceButton
+          context="invoice"
+          onParsed={(p) => {
+            if (p.customer_id) setCustomerId(p.customer_id);
+            if (p.invoice_date) setInvoiceDate(p.invoice_date);
+            if (p.notes) setNotes(p.notes);
+          }}
+        />
       </header>
 
       <section className="border border-zinc-200 bg-white rounded-sm p-5 space-y-4">

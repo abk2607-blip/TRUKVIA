@@ -7,6 +7,7 @@ import { ArrowLeft, FileText } from "lucide-react";
 import FileAttachments from "@/components/FileAttachments";
 import SearchableSelect from "@/components/SearchableSelect";
 import VoiceTripButton from "@/components/VoiceTripButton";
+import VoiceButton from "@/components/VoiceButton";
 import {
   QuickAddCustomer,
   QuickAddDriver,
@@ -557,6 +558,27 @@ export default function TripForm() {
 
         {/* Expenses */}
         <Section title="ఖర్చులు · Expenses">
+          <div className="flex justify-end mb-2">
+            <VoiceButton
+              context="expense"
+              size="sm"
+              onParsed={(p) => {
+                const num = (v) => (v === "" || v === null || v === undefined ? null : Number(v));
+                setForm((f) => ({
+                  ...f,
+                  expenses: {
+                    ...f.expenses,
+                    diesel: num(p.diesel) ?? f.expenses.diesel,
+                    toll: num(p.toll) ?? f.expenses.toll,
+                    batta: num(p.batta) ?? f.expenses.batta,
+                    repair: num(p.repair) ?? f.expenses.repair,
+                    other: num(p.other) ?? f.expenses.other,
+                    other_desc: p.other_desc || f.expenses.other_desc,
+                  },
+                }));
+              }}
+            />
+          </div>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
             {[
               ["diesel", "Diesel · డీజిల్"],

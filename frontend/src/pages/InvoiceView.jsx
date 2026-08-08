@@ -4,6 +4,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, API, fmtCurrency, fmtDate } from "@/api";
 import { toast } from "sonner";
 import { ArrowLeft, Download, Printer, Trash2, Plus, MessageCircle, Mail } from "lucide-react";
+import VoiceButton from "@/components/VoiceButton";
 
 export default function InvoiceView() {
   const { id } = useParams();
@@ -384,7 +385,22 @@ export default function InvoiceView() {
       {showPay && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4 no-print" data-testid="payment-modal">
           <div className="bg-white w-full max-w-md border border-zinc-950 rounded-sm p-5">
-            <h3 className="font-bold mb-3">Record Payment</h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="font-bold">Record Payment</h3>
+              <VoiceButton
+                context="payment"
+                size="sm"
+                onParsed={(p) => {
+                  setPay((prev) => ({
+                    ...prev,
+                    amount: p.amount ? String(p.amount) : prev.amount,
+                    date: p.date || prev.date,
+                    mode: p.mode || prev.mode,
+                    note: p.note || prev.note,
+                  }));
+                }}
+              />
+            </div>
             <div className="space-y-3">
               <div>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Amount *</label>

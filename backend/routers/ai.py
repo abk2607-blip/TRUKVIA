@@ -508,15 +508,43 @@ async def dashboard_insights(request: Request, user=Depends(get_current_user)):
             low_profit.append({"date": t.get("date"), "vehicle": t.get("vehicle_number"), "freight": f, "profit": p, "margin_pct": round(margin, 1)})
     low_profit = sorted(low_profit, key=lambda x: x["margin_pct"])[:5]
 
+    # Month-over-month comparison — prior 30 days
+    sixty_ago = (now - timedelta(days=60)).date().isoformat()
+    prev_trips = await db.trips.find(
+        {"user_id": user["user_id"], "company_id": cid, "date": {"$gte": sixty_ago, "$lt": thirty_ago}},
+        {"_id": 0}
+    ).to_list(500)
+
+    def _delta(cur: float, prev: float):
+        if prev == 0:
+            return {"prev": prev, "curr": cur, "delta_pct": None, "direction": "up" if cur > 0 else "flat"}
+        d = round((cur - prev) / prev * 100, 1)
+        return {"prev": round(prev, 2), "curr": round(cur, 2), "delta_pct": d, "direction": "up" if d >= 0 else "down"}
+
+    cur_revenue = sum(float(t.get("freight_amount", 0)) for t in trips)
+    prev_revenue = sum(float(t.get("freight_amount", 0)) for t in prev_trips)
+    cur_profit = sum(float(t.get("profit", 0)) for t in trips)
+    prev_profit = sum(float(t.get("profit", 0)) for t in prev_trips)
+    cur_expense = sum(float(t.get("total_expense", 0)) for t in trips)
+    prev_expense = sum(float(t.get("total_expense", 0)) for t in prev_trips)
+    mom = {
+        "revenue": _delta(cur_revenue, prev_revenue),
+        "profit": _delta(cur_profit, prev_profit),
+        "expense": _delta(cur_expense, prev_expense),
+        "trip_count": _delta(len(trips), len(prev_trips)),
+    }
+
     system = (
         "You are a business advisor for a Bitumen transport company. Given the JSON stats below, "
         "produce 4-6 SHORT bullet insights in mixed Telugu+English (short, action-oriented). "
         "Each bullet MUST be one line, prefixed with a status icon (🟢 good / 🟡 warn / 🔴 urgent). "
+        "IMPORTANT: For every applicable bullet include a Month-over-Month delta like '↑ +12% vs last 30d' or '↓ -8% vs last 30d' using the `month_over_month` block. "
         "Focus on: cash flow, receivables, low-profit vehicles/trips, stuck payments, growth opportunities. "
         "Include ₹ figures where relevant. Do NOT invent numbers. Return only the bullets, one per line."
     )
     ctx = {
         "overall": dash,
+        "month_over_month": mom,
         "overdue_invoices_15d+": overdue[:8],
         "vehicle_performance_30d": veh_perf[:8],
         "route_performance_30d": routes[:5],
@@ -544,6 +572,7 @@ async def dashboard_insights(request: Request, user=Depends(get_current_user)):
             "profit_30d": sum(float(t.get("profit", 0)) for t in trips),
             "low_margin_count": len(low_profit),
             "overdue_15d_count": len(overdue),
+            "mom": mom,
         },
     }
     await db.ai_insight_cache.replace_one(
@@ -710,3 +739,149 @@ async def natural_language_report(payload: ReportQuery, request: Request, user=D
         buf, media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="{filename}"', "X-Report-Spec": json.dumps(spec)},
     )
+
+
+# ============================================================================
+# Voice on Any Screen (Iter34) — extend parse to invoice / payment / expense
+# ============================================================================
+
+class ParseAnyRequest(BaseModel):
+    transcript: str
+    context: str = "trip"  # trip | invoice | payment | expense
+
+
+@router.post("/ai/parse")
+async def parse_any_from_voice(payload: ParseAnyRequest, request: Request, user=Depends(get_current_user)):
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(status_code=503, detail="AI not configured")
+    cid = await _active_company_id(request, user)
+    text = (payload.transcript or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Empty transcript")
+
+    ctx = payload.context.lower().strip()
+    if ctx == "invoice":
+        customers = await db.customers.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
+        schema = (
+            '{"customer_name":"","invoice_date":"YYYY-MM-DD","due_date":"YYYY-MM-DD",'
+            '"tax_mode":"cgst_sgst|igst|no_tax","gst_rate":0,"notes":"","reference_no":""}'
+        )
+        hints = f"Customers: {[c['name'] for c in customers][:40]}\n"
+    elif ctx == "payment":
+        customers = await db.customers.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
+        schema = (
+            '{"customer_name":"","invoice_ref":"","amount":0,"date":"YYYY-MM-DD",'
+            '"mode":"Cash|UPI|Bank Transfer|Cheque","note":""}'
+        )
+        hints = f"Customers: {[c['name'] for c in customers][:40]}\n"
+    elif ctx == "expense":
+        schema = (
+            '{"diesel":0,"toll":0,"batta":0,"repair":0,"firewood":0,"other":0,"other_desc":"",'
+            '"notes":""}'
+        )
+        hints = ""
+    else:
+        # trip context — reuse existing parse-trip
+        return await parse_trip_from_voice(ParseTripRequest(transcript=text), request, user)
+
+    system = (
+        "You are a Telugu/English speech-to-JSON parser for a Bitumen transport accounting app. "
+        f"Extract only fields clearly mentioned for a {ctx} entry. Return STRICT JSON:\n{schema}\n"
+        "Rules: Numbers in Telugu are converted to digits. Customer names should be matched (case-insensitive substring) "
+        f"from these master data:\n{hints}"
+        f"Today: {now_utc().date().isoformat()}. Return ONLY the JSON object."
+    )
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"parse-{ctx}-{user['user_id']}", system_message=system).with_model("gemini", "gemini-3-flash-preview")
+    response = await chat.send_message(UserMessage(text=text))
+    raw = response if isinstance(response, str) else (getattr(response, "content", None) or getattr(response, "text", "") or str(response))
+    raw = (raw or "").strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`").split("\n", 1)[-1]
+        if raw.endswith("```"):
+            raw = raw.rsplit("```", 1)[0]
+    try:
+        data = json.loads(raw)
+    except Exception:
+        i, j = raw.find("{"), raw.rfind("}")
+        data = json.loads(raw[i:j + 1]) if i >= 0 else {}
+
+    # Resolve customer_name → customer_id for invoice/payment contexts
+    if ctx in ("invoice", "payment") and data.get("customer_name"):
+        c = next((c for c in customers if data["customer_name"].lower() in c["name"].lower() or c["name"].lower() in data["customer_name"].lower()), None)
+        if c:
+            data["customer_id"] = c["id"]
+    return {"parsed": data, "transcript": text, "context": ctx}
+
+
+# ============================================================================
+# WhatsApp Daily Digest (Iter34)
+# ============================================================================
+
+@router.get("/ai/daily-digest")
+async def daily_digest(request: Request, user=Depends(get_current_user)):
+    from datetime import datetime, timezone, timedelta
+    import urllib.parse
+    cid = await _active_company_id(request, user)
+    today = datetime.now(timezone.utc).date()
+    yday = today - timedelta(days=1)
+    company = await db.companies.find_one({"id": cid, "user_id": user["user_id"]}, {"_id": 0}) or {}
+
+    # Today's stats
+    today_trips = await db.trips.find({"user_id": user["user_id"], "company_id": cid, "date": today.isoformat()}, {"_id": 0}).to_list(500)
+    yday_trips = await db.trips.find({"user_id": user["user_id"], "company_id": cid, "date": yday.isoformat()}, {"_id": 0}).to_list(500)
+    today_freight = sum(float(t.get("freight_amount", 0)) for t in today_trips)
+    today_profit = sum(float(t.get("profit", 0)) for t in today_trips)
+    yday_freight = sum(float(t.get("freight_amount", 0)) for t in yday_trips)
+    yday_profit = sum(float(t.get("profit", 0)) for t in yday_trips)
+
+    # Overdue receivables — top 3
+    overdue = await _tool_list_overdue_invoices(user["user_id"], cid, min_days=1)
+    top_overdue = overdue[:3]
+    total_outstanding = sum(float(i.get("balance_due", 0)) for i in overdue)
+
+    # Low-margin trips last 7 days
+    seven_ago = (today - timedelta(days=7)).isoformat()
+    recent_trips = await db.trips.find({"user_id": user["user_id"], "company_id": cid, "date": {"$gte": seven_ago}}, {"_id": 0}).to_list(500)
+    low_margin = []
+    for t in recent_trips:
+        f = float(t.get("freight_amount", 0))
+        p = float(t.get("profit", 0))
+        if f > 0 and (p / f * 100) < 10:
+            low_margin.append({"vehicle": t.get("vehicle_number"), "profit": p, "date": t.get("date"), "margin": round(p / f * 100, 1)})
+    low_margin = sorted(low_margin, key=lambda x: x["margin"])[:3]
+
+    lines = [
+        f"*📊 Daily Digest — {company.get('name', 'Business')}*",
+        f"Date: {today.isoformat()}",
+        "",
+        f"*💰 Today:* Trips {len(today_trips)}  |  Freight ₹{today_freight:,.0f}  |  Profit ₹{today_profit:,.0f}",
+        f"*📅 Yesterday:* Trips {len(yday_trips)}  |  Freight ₹{yday_freight:,.0f}  |  Profit ₹{yday_profit:,.0f}",
+        "",
+        f"*🔴 Outstanding:* ₹{total_outstanding:,.0f} across {len(overdue)} invoices",
+    ]
+    if top_overdue:
+        lines.append("Top 3:")
+        for i in top_overdue:
+            lines.append(f"  · {i.get('customer_name', '')} — ₹{float(i.get('balance_due', 0)):,.0f} ({i.get('invoice_number', '')})")
+    if low_margin:
+        lines.append("")
+        lines.append("*⚠ Low-margin trips (7d):*")
+        for lm in low_margin:
+            lines.append(f"  · {lm['vehicle']} — margin {lm['margin']}% ({lm['date']})")
+    lines.append("")
+    lines.append(f"— Sent by {company.get('name', 'Bitumen Accounting App')}")
+    text = "\n".join(lines)
+
+    return {
+        "text": text,
+        "whatsapp_url": f"https://wa.me/?text={urllib.parse.quote(text)}",
+        "stats": {
+            "today_trips": len(today_trips), "today_profit": today_profit,
+            "yesterday_profit": yday_profit,
+            "outstanding": total_outstanding,
+            "overdue_count": len(overdue),
+            "low_margin_count": len(low_margin),
+        },
+    }
+
