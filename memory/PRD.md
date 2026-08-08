@@ -137,7 +137,12 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
   - **Use Template picker** in TripForm auto-fills fields via `POST /api/trips/from-template/{tid}`.
   - **Duplicate Trip** button on every trip row → `POST /api/trips/{id}/duplicate` clones a trip and resets variable fields (date/tons/expenses/invoice/status).
   - **AI Chat** (`routers/ai.py`): floating chat bubble bottom-right of every page. Streaming SSE via `POST /api/ai/chat` using Gemini 3 Flash Preview through Emergent Universal Key. Tool-calling: get_dashboard, list_customers, list_overdue_invoices, list_recent_trips, vehicle_profit_summary, route_profit_summary, customer_ledger, gst_summary. Every tool receives resolved (user_id, active_company_id) — model cannot bypass multi-tenant scoping. Chat history persisted in `chat_sessions` + `chat_messages` collections. Audit log stamped for every chat.
-  - Tests: 14/14 in `tests/test_iter26_phase1_ai_templates.py` covering CRUD, isolation, duplicate reset, from-template prefill, SSE streaming, session history, multi-company AI scoping. Regression Iter17+21+22+23+25+multi_company_iso = **78/78 pass**. Frontend Playwright smoke: templates page loads, template form save works, Duplicate button present, chat bubble opens and streams within 15s.
+  - Tests: 14/14 in `tests/test_iter26_phase1_ai_templates.py`.  Full regression **78/78 pass**.
+- [x] **Iter27 — CORS fix: Static Preview Login "Network Error"** (Feb 2026)
+  - Frontend axios client: `withCredentials: false` (Bearer token in `Authorization` header is our sole auth channel — no cookies needed).
+  - Backend `server.py` CORS: `allow_credentials=False` + `allow_origins=['*']` (valid combination, per CORS spec).
+  - Root cause: browsers reject `Access-Control-Allow-Origin: *` when the request is credentialed, so every /api/* call from the static preview domain was being blocked at the browser layer → "Network Error" toast.
+  - Testing agent verified: preflight + POST bogus + POST bearer + GET /dashboard from static origin all succeed at CORS layer. 78/78 regression still pass.
 
 ## Backlog (P1)
 - [ ] Drivers & Vehicles master (currently free-text)
