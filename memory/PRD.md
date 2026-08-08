@@ -152,8 +152,13 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
   - `AIChatBubble.jsx` switched from `process.env.REACT_APP_BACKEND_URL` to `import { API } from '@/api'` so all ad-hoc `fetch()` calls also use the resolved base.
   - Effective on the dynamic preview URL immediately (hot reload); takes effect on the static preview URL after the next platform rebuild.
   - Tests: 41/41 pytest pass, Playwright dynamic-URL flow (demo login → dashboard → AI chat SSE) green.
+- [x] **Iter30 — Session Timeout / Demo Token Self-Heal** (Feb 2026)
+  - `/app/backend/auth.py`: `DEMO_TOKEN='test_session_bitumen_2026'` constant + `_ensure_demo_session()` upsert. Every request bearing the demo token idempotently creates or refreshes a `user_sessions` row with a 30-day expiry. The demo button now works reliably forever.
+  - Rolling refresh for ALL sessions: when `expires_at` is <6 days away and last_refreshed_at is >4 min old, extend `expires_at` by +7 days. Active users never bounce mid-form.
+  - `DEMO_TOKEN_DISABLED=1` env kill-switch for production.
+  - Tests: 5 new + 34 regression = **39/39 pass**. Playwright: demo → 4 routes → post-inactivity /auth/me still 200.
 
-## Backlog (P1)
+## Backlog (P0-P1, requested but not yet built)
 - [ ] Drivers & Vehicles master (currently free-text)
 - [ ] CSV / Excel export of trips & invoices
 - [ ] Payment reminders / SMS to customers
