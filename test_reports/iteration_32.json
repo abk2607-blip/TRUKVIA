@@ -1,0 +1,37 @@
+{
+  "summary": "Iter32 Phase-2 (SearchableSelect + QuickAdd modals + Supplier settlement expansion + TripView always-render) fully verified. Backend: 2/2 new iter32 tests pass; iter8 supplier compute tests pass with updated formula (net=12500 for 20000-5000-2000-800-200+500, profit=17500). Frontend: All 4 SearchableSelect fields (customer/vehicle/driver/product) with search, +Add-New, and 4 QuickAdd modals verified; each modal creates entity and auto-selects it in the form without page reload. Vehicle QuickAdd with type=supplier triggers the 5-input Supplier Settlement section (trip-supplier-{advance,diesel,shortage,recovery,income}) with live Net Payable card showing 'Freight − Advance − Diesel − Shortage − Recoveries + Income'. TripView (/trips/:id/view) always renders Loading&Unloading, Halting, LR/Weighbridge/Consignor, Notes sections — even for a trip created with empty optional fields (verified 28 em-dash '—' placeholders). Full supplier trip shows all settlement rows including Diesel, Shortage, Other Recoveries, Other Income, Advance, Net Payable.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/invoices (edit invoiced trip recompute)", "issue": "test_iter8_features.TestInvoiceRecompute.test_edit_invoiced_trip_recomputes_invoice fails — cgst_amount=0 (expected 375). Pre-existing per iter31 context note; unrelated to Phase-2."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter32_supplier_settlement.py",
+    "/app/test_reports/pytest/iter32.xml"
+  ],
+  "action_items": [
+    "Review request spec mentioned supplier input testids as 'supplier-advance/diesel/shortage/recovery/income' but the implementation uses 'trip-supplier-*' prefix. Actual implementation prefix is consistent with rest of TripForm (trip-*); no functional bug, but update spec/docs OR add duplicate testids if external automation relies on the shorter names.",
+    "Pre-existing failing test test_iter8_features.TestInvoiceRecompute.test_edit_invoiced_trip_recomputes_invoice (cgst=0) — NOT introduced by iter32. Same status as iter31 context. Investigate in a separate iteration if needed.",
+    "test_iter15_multicompany.py + test_iter30_session_refresh.py fail when run without DB_NAME env exposed to pytest (mongo direct-access tests). Documented in iter31 context — no regression."
+  ],
+  "critical_code_review_comments": [
+    "SearchableSelect: proper click-outside handler, focus mgmt, and testids — clean. Filter matches label OR meta (good).",
+    "TripForm QuickAdd onCreated callbacks for vehicle correctly propagates vehicle_type='supplier' so section renders — verified end-to-end.",
+    "services._compute_trip supplier branch formula matches spec exactly: net = freight - advance - diesel - shortage - other_recoveries + other_income; total_expense=net; profit=freight_amount - total_expense.",
+    "Trip model defaults for new fields are 0.0 → backward compatibility verified (test_supplier_fields_default_zero_backward_compat).",
+    "TripView.jsx uses unconditional section rendering with '—' placeholder for empty values (28 em-dashes seen on empty trip). Meets acceptance criteria."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (iter32: 2/2, iter8 supplier compute: 6/6; only unrelated pre-existing invoice-recompute test fails)", "frontend": "100% (all 4 quickadds create+auto-select; supplier section + live compute; TripView always-render on empty trip)"},
+  "test_credentials": "Bearer test_session_bitumen_2026 / cookie session_token=test_session_bitumen_2026 (self-provisioning demo session via 'Continue as Demo').",
+  "seed_data_creation": "Created via test flow: TEST_ACME_* customer, AP99T*/AP99VW*/AP99EMP* vehicles, TEST_Drv_*/TEST_Prd_* driver/product, and 2 trips (supplier full + own minimal). Trips deleted post-test; masters left (marked TEST_ prefix).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter32 = Phase 2 (SearchableSelect, QuickAdd modals, Supplier expanded settlement, TripView always-render) is complete. Testid pattern for supplier settlement inputs on /trips/new is trip-supplier-{advance,diesel,shortage,recovery,income} (NOT bare supplier-* as originally spec'd). TripView route is /trips/:id/view. Backend formula for supplier net_payable: freight - advance - diesel - shortage_deduction - other_recoveries + other_income. Regression: iter31 LR autogen + iter22/23 invoice PDF + iter25 workflows all pass. Known pre-existing failure: test_iter8_features::TestInvoiceRecompute::test_edit_invoiced_trip_recomputes_invoice (cgst=0)."
+}

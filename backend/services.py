@@ -78,11 +78,19 @@ def _compute_trip(t: Trip) -> Trip:
             elif t.supplier_fixed_amount > 0:
                 t.supplier_freight = round(t.supplier_fixed_amount, 2)
         # else keep manually entered supplier_freight
-        # Net payable = freight − advance − other recoveries (for settlement)
-        t.supplier_net_payable = round(t.supplier_freight - t.supplier_advance - t.supplier_other_recoveries, 2)
-        # Profit formula (as per user spec): Customer Freight − (Supplier Freight − Supplier Advance)
-        # total_expense reflects the supplier cost portion after advance
-        t.total_expense = round(t.supplier_freight - t.supplier_advance, 2)
+        # Net payable = freight − advance − diesel − shortage − other_recoveries + other_income
+        t.supplier_net_payable = round(
+            t.supplier_freight
+            - t.supplier_advance
+            - t.supplier_diesel
+            - t.supplier_shortage_deduction
+            - t.supplier_other_recoveries
+            + t.supplier_other_income,
+            2,
+        )
+        # Profit formula: Customer Freight − (Supplier Freight − Advance − Diesel − Shortage + OtherIncome − OtherRecoveries)
+        # Simpler: profit = customer_billable − supplier_net_payable
+        t.total_expense = round(t.supplier_net_payable, 2)
     else:
         t.total_expense = round(own_expense_net, 2)
         t.supplier_net_payable = 0.0

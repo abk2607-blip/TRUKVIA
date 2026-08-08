@@ -27,9 +27,12 @@ export default function TripView() {
   const isSupplier = trip.vehicle_type === "supplier";
   const supFreight = Number(trip.supplier_freight || 0);
   const supAdvance = Number(trip.supplier_advance || 0);
+  const supDiesel = Number(trip.supplier_diesel || 0);
+  const supShortage = Number(trip.supplier_shortage_deduction || 0);
   const supOther = Number(trip.supplier_other_recoveries || 0);
-  const netPayable = supFreight - supAdvance - supOther;
-  const supplierProfit = Number(trip.freight_amount || 0) - (supFreight - supAdvance);
+  const supIncome = Number(trip.supplier_other_income || 0);
+  const netPayable = supFreight - supAdvance - supDiesel - supShortage - supOther + supIncome;
+  const supplierProfit = Number(trip.freight_amount || 0) - netPayable;
   const e = trip.expenses || {};
 
   return (
@@ -107,35 +110,31 @@ export default function TripView() {
         </Grid2>
       </Section>
 
-      {/* Loading / Unloading */}
-      {(trip.loaded_qty || trip.unloaded_qty || trip.loading_date || trip.unloading_date) ? (
-        <Section title="Loading & Unloading · లోడ్/అన్‌లోడ్">
-          <Grid2>
-            <Row k="Loading Date" v={trip.loading_date ? fmtDate(trip.loading_date) : "—"} />
-            <Row k="Unloading Date" v={trip.unloading_date ? fmtDate(trip.unloading_date) : "—"} />
-            <Row k="Loaded Qty" v={`${Number(trip.loaded_qty || 0).toFixed(3)} MT`} mono />
-            <Row k="Unloaded Qty" v={`${Number(trip.unloaded_qty || 0).toFixed(3)} MT`} mono />
-            <Row k="Shortage Qty" v={`${Number(trip.shortage_qty || 0).toFixed(3)} MT`} mono />
-            <Row k="Excess Qty" v={`${Number(trip.excess_qty || 0).toFixed(3)} MT`} mono />
-            <Row k="Product Rate" v={trip.product_rate_per_mt ? `₹ ${Number(trip.product_rate_per_mt).toFixed(2)} / MT` : "—"} mono />
-            <Row k="Shortage Amount" v={fmtCurrency(trip.shortage_amount)} mono strong />
-            <Row k="Excess Amount" v={fmtCurrency(trip.excess_amount)} mono strong />
-          </Grid2>
-        </Section>
-      ) : null}
+      {/* Loading / Unloading — always render */}
+      <Section title="Loading & Unloading · లోడ్/అన్‌లోడ్">
+        <Grid2>
+          <Row k="Loading Date" v={trip.loading_date ? fmtDate(trip.loading_date) : "—"} />
+          <Row k="Unloading Date" v={trip.unloading_date ? fmtDate(trip.unloading_date) : "—"} />
+          <Row k="Loaded Qty" v={`${Number(trip.loaded_qty || 0).toFixed(3)} MT`} mono />
+          <Row k="Unloaded Qty" v={`${Number(trip.unloaded_qty || 0).toFixed(3)} MT`} mono />
+          <Row k="Shortage Qty" v={`${Number(trip.shortage_qty || 0).toFixed(3)} MT`} mono />
+          <Row k="Excess Qty" v={`${Number(trip.excess_qty || 0).toFixed(3)} MT`} mono />
+          <Row k="Product Rate" v={trip.product_rate_per_mt ? `₹ ${Number(trip.product_rate_per_mt).toFixed(2)} / MT` : "—"} mono />
+          <Row k="Shortage Amount" v={fmtCurrency(trip.shortage_amount)} mono strong />
+          <Row k="Excess Amount" v={fmtCurrency(trip.excess_amount)} mono strong />
+        </Grid2>
+      </Section>
 
-      {/* Halting Charges */}
-      {(trip.halting_amount || trip.loading_date && trip.unloading_date) ? (
-        <Section title="Halting / Waiting Charges · హాల్టింగ్">
-          <Grid2>
-            <Row k="Total Days" v={trip.total_halting_days || 0} mono />
-            <Row k="Grace Days" v={trip.grace_days || 4} mono />
-            <Row k="Chargeable Days" v={trip.chargeable_halting_days || 0} mono />
-            <Row k="Halting Rate / Day" v={fmtCurrency(trip.halting_rate_per_day)} mono />
-            <Row k="Halting Amount" v={fmtCurrency(trip.halting_amount)} mono strong />
-          </Grid2>
-        </Section>
-      ) : null}
+      {/* Halting Charges — always render */}
+      <Section title="Halting / Waiting Charges · హాల్టింగ్">
+        <Grid2>
+          <Row k="Total Days" v={trip.total_halting_days || 0} mono />
+          <Row k="Grace Days" v={trip.grace_days || 4} mono />
+          <Row k="Chargeable Days" v={trip.chargeable_halting_days || 0} mono />
+          <Row k="Halting Rate / Day" v={fmtCurrency(trip.halting_rate_per_day)} mono />
+          <Row k="Halting Amount" v={fmtCurrency(trip.halting_amount)} mono strong />
+        </Grid2>
+      </Section>
 
       {/* Freight (Customer Billing) */}
       <Section title="Customer Freight · బిల్లింగ్">
@@ -154,7 +153,7 @@ export default function TripView() {
         </Grid2>
       </Section>
 
-      {/* Supplier detailed section */}
+      {/* Supplier detailed section — always render for supplier vehicles */}
       {isSupplier && (
         <Section title="Supplier Freight & Settlement · సప్లయర్ వివరాలు">
           <Grid2>
@@ -175,18 +174,21 @@ export default function TripView() {
             )}
             <Row k="Supplier Freight" v={fmtCurrency(supFreight)} mono strong />
             <Row k="Less: Advance Paid" v={fmtCurrency(supAdvance)} mono />
+            <Row k="Less: Diesel Funded" v={fmtCurrency(trip.supplier_diesel)} mono />
+            <Row k="Less: Shortage Deduction" v={fmtCurrency(trip.supplier_shortage_deduction)} mono />
             <Row k="Less: Other Recoveries" v={fmtCurrency(supOther)} mono />
+            <Row k="Add: Other Income / Bonus" v={fmtCurrency(trip.supplier_other_income)} mono />
           </Grid2>
           <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
             <div className="border border-rose-200 bg-rose-50 p-3 rounded-sm">
               <div className="text-[10px] uppercase tracking-wider text-zinc-600 font-bold">Net Amount Payable to Supplier</div>
               <div className="font-mono text-2xl font-bold text-rose-800">{fmtCurrency(netPayable)}</div>
-              <div className="text-[10px] text-zinc-500 mt-1">Freight − Advance − Other Recoveries</div>
+              <div className="text-[10px] text-zinc-500 mt-1">Freight − Advance − Diesel − Shortage − Recoveries + Income</div>
             </div>
             <div className={`border p-3 rounded-sm ${supplierProfit >= 0 ? "border-emerald-300 bg-emerald-50" : "border-rose-300 bg-rose-50"}`}>
               <div className="text-[10px] uppercase tracking-wider text-zinc-600 font-bold">Trip Profit</div>
               <div className={`font-mono text-2xl font-bold ${supplierProfit >= 0 ? "text-emerald-800" : "text-rose-800"}`}>{fmtCurrency(supplierProfit)}</div>
-              <div className="text-[10px] text-zinc-500 mt-1">Customer Freight − (Supplier Freight − Advance)</div>
+              <div className="text-[10px] text-zinc-500 mt-1">Customer Freight − Net Payable</div>
             </div>
           </div>
         </Section>
@@ -232,29 +234,29 @@ export default function TripView() {
         )}
       </Section>
 
-      {/* LR Fields */}
-      {(trip.lr_number || trip.external_invoice_no || trip.waybill_no || trip.gross_weight) && (
-        <Section title="LR / Weighbridge">
-          <Grid2>
-            <Row k="LR Number" v={trip.lr_number || "—"} mono />
-            <Row k="LR Time" v={trip.lr_time || "—"} />
-            <Row k="External Invoice #" v={trip.external_invoice_no || "—"} />
-            <Row k="Customer Invoice #" v={trip.customer_invoice_no || "—"} />
-            <Row k="Purchased At" v={trip.customer_purchased_at || "—"} />
-            <Row k="Invoice Value" v={fmtCurrency(trip.invoice_value)} mono />
-            <Row k="Waybill No" v={trip.waybill_no || "—"} />
-            <Row k="Gross Wt" v={`${Number(trip.gross_weight || 0).toFixed(3)} MT`} mono />
-            <Row k="Tare Wt" v={`${Number(trip.tare_weight || 0).toFixed(3)} MT`} mono />
-            <Row k="Seal Numbers" v={trip.seal_numbers || "—"} />
-          </Grid2>
-        </Section>
-      )}
+      {/* LR / Weighbridge / Consignor — always render */}
+      <Section title="LR / Weighbridge / Consignor">
+        <Grid2>
+          <Row k="LR Number" v={trip.lr_number || "—"} mono />
+          <Row k="LR Time" v={trip.lr_time || "—"} />
+          <Row k="External Invoice #" v={trip.external_invoice_no || "—"} />
+          <Row k="Customer Invoice #" v={trip.customer_invoice_no || "—"} />
+          <Row k="Purchased At" v={trip.customer_purchased_at || "—"} />
+          <Row k="Invoice Value" v={fmtCurrency(trip.invoice_value)} mono />
+          <Row k="Waybill No" v={trip.waybill_no || "—"} />
+          <Row k="Gross Wt" v={`${Number(trip.gross_weight || 0).toFixed(3)} MT`} mono />
+          <Row k="Tare Wt" v={`${Number(trip.tare_weight || 0).toFixed(3)} MT`} mono />
+          <Row k="Seal Numbers" v={trip.seal_numbers || "—"} />
+          <Row k="Consignor" v={trip.consignor_name || "—"} />
+          <Row k="Consignor Address" v={trip.consignor_address || "—"} />
+          <Row k="Site Location" v={trip.consignee_site_location || "—"} />
+          <Row k="Site Contact" v={trip.consignee_site_contact || "—"} />
+        </Grid2>
+      </Section>
 
-      {trip.notes && (
-        <Section title="Notes · గమనికలు">
-          <div className="text-sm whitespace-pre-wrap">{trip.notes}</div>
-        </Section>
-      )}
+      <Section title="Notes · గమనికలు">
+        <div className="text-sm whitespace-pre-wrap">{trip.notes || <span className="text-zinc-400">—</span>}</div>
+      </Section>
 
       <Section title="Attachments">
         <FileAttachments linkedType="trip" linkedId={trip.id} category="trip_attachment" title="Trip Files" />

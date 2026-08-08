@@ -5,6 +5,13 @@ import { api, API, fmtCurrency } from "@/api";
 import { toast } from "sonner";
 import { ArrowLeft, FileText } from "lucide-react";
 import FileAttachments from "@/components/FileAttachments";
+import SearchableSelect from "@/components/SearchableSelect";
+import {
+  QuickAddCustomer,
+  QuickAddDriver,
+  QuickAddVehicle,
+  QuickAddProduct,
+} from "@/components/QuickAddModals";
 
 const EMPTY = {
   customer_id: "",
@@ -24,7 +31,10 @@ const EMPTY = {
   supplier_material: "",
   supplier_quantity: 0,
   supplier_advance: 0,
+  supplier_diesel: 0,
+  supplier_shortage_deduction: 0,
   supplier_other_recoveries: 0,
+  supplier_other_income: 0,
   supplier_net_payable: 0,
   driver_id: "",
   driver_name: "",
@@ -97,6 +107,7 @@ export default function TripForm() {
   const { data: vehicles = [] } = useQuery({ queryKey: ["vehicles"], queryFn: async () => (await api.get("/vehicles")).data });
   const { data: templates = [] } = useQuery({ queryKey: ["templates"], queryFn: async () => (await api.get("/templates")).data });
   const [selectedTemplate, setSelectedTemplate] = useState("");
+  const [qaOpen, setQaOpen] = useState(null); // 'customer' | 'vehicle' | 'driver' | 'product' | null
 
   const { data: trip } = useQuery({
     queryKey: ["trip", id],
@@ -124,7 +135,10 @@ export default function TripForm() {
         supplier_rate_per_km_per_ton: Number(form.supplier_rate_per_km_per_ton || 0),
         supplier_quantity: Number(form.supplier_quantity || 0),
         supplier_advance: Number(form.supplier_advance || 0),
+        supplier_diesel: Number(form.supplier_diesel || 0),
+        supplier_shortage_deduction: Number(form.supplier_shortage_deduction || 0),
         supplier_other_recoveries: Number(form.supplier_other_recoveries || 0),
+        supplier_other_income: Number(form.supplier_other_income || 0),
         loaded_qty: Number(form.loaded_qty || 0),
         unloaded_qty: Number(form.unloaded_qty || 0),
         excess_qty: Number(form.excess_qty || 0),
@@ -178,8 +192,14 @@ export default function TripForm() {
       supplierFreightLive = Number(form.supplier_fixed_amount);
     }
   }
-  const supplierNetPayable = supplierFreightLive - Number(form.supplier_advance || 0) - Number(form.supplier_other_recoveries || 0);
-  const supplierProfit = freight - (supplierFreightLive - Number(form.supplier_advance || 0));
+  const supplierNetPayable =
+    supplierFreightLive
+    - Number(form.supplier_advance || 0)
+    - Number(form.supplier_diesel || 0)
+    - Number(form.supplier_shortage_deduction || 0)
+    - Number(form.supplier_other_recoveries || 0)
+    + Number(form.supplier_other_income || 0);
+  const supplierProfit = freight - supplierNetPayable;
 
   // Loading/Unloading auto-diff
   const loadedQ = Number(form.loaded_qty || 0);
@@ -289,63 +309,79 @@ export default function TripForm() {
               <input type="date" data-testid="trip-date" required value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className={inputCls} />
             </Field>
             <Field label="Customer · కస్టమర్" required>
-              <select data-testid="trip-customer" required value={form.customer_id} onChange={(e) => setForm({ ...form, customer_id: e.target.value })} className={inputCls}>
-                <option value="">-- Select Customer --</option>
-                {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-              </select>
+              <SearchableSelect
+                dataTestId="trip-customer"
+                value={form.customer_id}
+                onChange={(v) => setForm({ ...form, customer_id: v })}
+                onCreateNew={() => setQaOpen("customer")}
+                createLabel="+ Add New Customer"
+                placeholder="Search customer…"
+                options={customers.map((c) => ({
+                  value: c.id,
+                  label: c.name,
+                  meta: [c.gstin, c.state, c.phone].filter(Boolean).join(" · "),
+                }))}
+              />
             </Field>
             <Field label="Vehicle No · వాహనం" required>
-              {vehicles.length > 0 ? (
-                <>
-                  <select
-                    data-testid="trip-vehicle-select"
-                    value={vehicles.find((v) => v.vehicle_number === form.vehicle_number)?.id || ""}
-                    onChange={(e) => {
-                      const v = vehicles.find((x) => x.id === e.target.value);
-                      if (v) {
-                        setForm({
-                          ...form,
-                          vehicle_id: v.id,
-                          vehicle_number: v.vehicle_number,
-                          vehicle_type: v.vehicle_type || "own",
-                          supplier_name: v.vehicle_type === "supplier" ? (v.supplier_name || "") : "",
-                        });
-                      } else {
-                        setForm({ ...form, vehicle_id: "", vehicle_number: "" });
-                      }
-                    }}
-                    className={inputCls}
-                  >
-                    <option value="">-- Select from Master --</option>
-                    {vehicles.map((v) => <option key={v.id} value={v.id}>{v.vehicle_number}{v.vehicle_type === "supplier" ? " · Supplier" : ""}{v.owner_name ? ` · ${v.owner_name}` : ""}</option>)}
-                  </select>
-                  <input data-testid="trip-vehicle" required value={form.vehicle_number} onChange={(e) => setForm({ ...form, vehicle_number: e.target.value.toUpperCase() })} className={`${inputCls} mt-1`} placeholder="Or type: AP16TA1234" />
-                </>
-              ) : (
-                <input data-testid="trip-vehicle" required value={form.vehicle_number} onChange={(e) => setForm({ ...form, vehicle_number: e.target.value.toUpperCase() })} className={inputCls} placeholder="AP16TA1234" />
-              )}
+              <SearchableSelect
+                dataTestId="trip-vehicle-select"
+                value={vehicles.find((v) => v.vehicle_number === form.vehicle_number)?.id || ""}
+                onChange={(vid, opt) => {
+                  const v = vehicles.find((x) => x.id === vid);
+                  if (v) {
+                    setForm({
+                      ...form,
+                      vehicle_id: v.id,
+                      vehicle_number: v.vehicle_number,
+                      vehicle_type: v.vehicle_type || "own",
+                      supplier_name: v.vehicle_type === "supplier" ? (v.supplier_name || "") : "",
+                    });
+                  } else {
+                    setForm({ ...form, vehicle_id: "", vehicle_number: "" });
+                  }
+                }}
+                onCreateNew={() => setQaOpen("vehicle")}
+                createLabel="+ Add New Vehicle"
+                placeholder="Search vehicle…"
+                options={vehicles.map((v) => ({
+                  value: v.id,
+                  label: v.vehicle_number,
+                  meta: [v.vehicle_type === "supplier" ? "Supplier" : "Own", v.owner_name || v.supplier_name].filter(Boolean).join(" · "),
+                }))}
+              />
+              <input
+                data-testid="trip-vehicle"
+                required
+                value={form.vehicle_number}
+                onChange={(e) => setForm({ ...form, vehicle_number: e.target.value.toUpperCase() })}
+                className={`${inputCls} mt-1`}
+                placeholder="Or type new: AP16TA1234"
+              />
             </Field>
             <Field label="Driver · డ్రైవర్">
-              <select
-                data-testid="trip-driver"
+              <SearchableSelect
+                dataTestId="trip-driver"
                 value={form.driver_id || ""}
-                onChange={(e) => {
-                  const id = e.target.value;
-                  const d = drivers.find((x) => x.id === id);
-                  setForm({ ...form, driver_id: id, driver_name: d?.name || "" });
+                onChange={(did) => {
+                  const d = drivers.find((x) => x.id === did);
+                  setForm({ ...form, driver_id: did, driver_name: d?.name || "", driver_mobile: d?.phone || form.driver_mobile });
                 }}
-                className={inputCls}
-              >
-                <option value="">-- Select Driver --</option>
-                {drivers.map((d) => <option key={d.id} value={d.id}>{d.name}{d.phone ? ` · ${d.phone}` : ""}</option>)}
-              </select>
+                onCreateNew={() => setQaOpen("driver")}
+                createLabel="+ Add New Driver"
+                placeholder="Search driver…"
+                options={drivers.map((d) => ({
+                  value: d.id,
+                  label: d.name,
+                  meta: d.phone || "",
+                }))}
+              />
             </Field>
             <Field label="Product / Load · లోడ్">
-              <select
-                data-testid="trip-product"
+              <SearchableSelect
+                dataTestId="trip-product"
                 value={form.product_id || ""}
-                onChange={(e) => {
-                  const pid = e.target.value;
+                onChange={(pid) => {
                   const p = products.find((x) => x.id === pid);
                   if (p) {
                     setForm({
@@ -359,12 +395,16 @@ export default function TripForm() {
                     setForm({ ...form, product_id: "" });
                   }
                 }}
-                className={inputCls}
-              >
-                <option value="">-- Custom / Type Below --</option>
-                {products.map((p) => <option key={p.id} value={p.id}>{p.name} (HSN {p.hsn_sac})</option>)}
-              </select>
-              <input data-testid="trip-load" value={form.load_details} onChange={(e) => setForm({ ...form, load_details: e.target.value, product_id: "" })} className={`${inputCls} mt-1`} placeholder="Load details" />
+                onCreateNew={() => setQaOpen("product")}
+                createLabel="+ Add New Product"
+                placeholder="Search product…"
+                options={products.map((p) => ({
+                  value: p.id,
+                  label: p.name,
+                  meta: `HSN ${p.hsn_sac}${p.default_rate ? ` · ₹${p.default_rate}/MT` : ""}`,
+                }))}
+              />
+              <input data-testid="trip-load" value={form.load_details} onChange={(e) => setForm({ ...form, load_details: e.target.value, product_id: "" })} className={`${inputCls} mt-1`} placeholder="Or type free-text load details" />
             </Field>
             <Field label="Tons · టన్నులు" required>
               <input data-testid="trip-tons" required type="number" step="0.01" min="0" value={form.tons} onChange={(e) => setForm({ ...form, tons: e.target.value })} className={inputCls} />
@@ -581,8 +621,17 @@ export default function TripForm() {
               <Field label="Supplier Advance (₹)">
                 <input data-testid="trip-supplier-advance" type="number" step="0.01" min="0" value={form.supplier_advance} onChange={(e) => setForm({ ...form, supplier_advance: e.target.value })} className={inputCls} />
               </Field>
+              <Field label="Supplier Diesel (₹)">
+                <input data-testid="trip-supplier-diesel" type="number" step="0.01" min="0" value={form.supplier_diesel} onChange={(e) => setForm({ ...form, supplier_diesel: e.target.value })} className={inputCls} placeholder="Diesel we paid on behalf" />
+              </Field>
+              <Field label="Shortage Deduction (₹)">
+                <input data-testid="trip-supplier-shortage" type="number" step="0.01" min="0" value={form.supplier_shortage_deduction} onChange={(e) => setForm({ ...form, supplier_shortage_deduction: e.target.value })} className={inputCls} placeholder="Deducted from supplier" />
+              </Field>
               <Field label="Other Recoveries (₹)">
-                <input data-testid="trip-supplier-recovery" type="number" step="0.01" min="0" value={form.supplier_other_recoveries} onChange={(e) => setForm({ ...form, supplier_other_recoveries: e.target.value })} className={inputCls} placeholder="Damages, shortage etc." />
+                <input data-testid="trip-supplier-recovery" type="number" step="0.01" min="0" value={form.supplier_other_recoveries} onChange={(e) => setForm({ ...form, supplier_other_recoveries: e.target.value })} className={inputCls} placeholder="Damages, penalties etc." />
+              </Field>
+              <Field label="Other Income / Bonus (₹)">
+                <input data-testid="trip-supplier-income" type="number" step="0.01" min="0" value={form.supplier_other_income} onChange={(e) => setForm({ ...form, supplier_other_income: e.target.value })} className={inputCls} placeholder="Excess bonus paid to supplier" />
               </Field>
             </div>
             <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3">
@@ -593,12 +642,12 @@ export default function TripForm() {
               <div className="border border-zinc-200 p-3 rounded-sm text-center">
                 <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">Net Payable to Supplier</div>
                 <div className="font-mono text-lg font-bold text-rose-700">{fmtCurrency(supplierNetPayable)}</div>
-                <div className="text-[10px] text-zinc-500 mt-1">Freight − Advance − Recoveries</div>
+                <div className="text-[10px] text-zinc-500 mt-1">Freight − Advance − Diesel − Shortage − Recoveries + Income</div>
               </div>
               <div className={`border p-3 rounded-sm text-center ${supplierProfit >= 0 ? "border-emerald-300 bg-emerald-50" : "border-rose-300 bg-rose-50"}`}>
                 <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">Trip Profit</div>
                 <div className={`font-mono text-lg font-bold ${supplierProfit >= 0 ? "text-emerald-800" : "text-rose-800"}`}>{fmtCurrency(supplierProfit)}</div>
-                <div className="text-[10px] text-zinc-500 mt-1">Customer − (Supplier Freight − Advance)</div>
+                <div className="text-[10px] text-zinc-500 mt-1">Customer Freight − Net Payable</div>
               </div>
             </div>
           </Section>
@@ -714,6 +763,44 @@ export default function TripForm() {
           </button>
         </div>
       </form>
+
+      {qaOpen === "customer" && (
+        <QuickAddCustomer
+          onCreated={(c) => setForm((f) => ({ ...f, customer_id: c.id }))}
+          onClose={() => setQaOpen(null)}
+        />
+      )}
+      {qaOpen === "vehicle" && (
+        <QuickAddVehicle
+          prefillNumber={form.vehicle_number}
+          onCreated={(v) => setForm((f) => ({
+            ...f,
+            vehicle_id: v.id,
+            vehicle_number: v.vehicle_number,
+            vehicle_type: v.vehicle_type || "own",
+            supplier_name: v.vehicle_type === "supplier" ? (v.supplier_name || "") : "",
+          }))}
+          onClose={() => setQaOpen(null)}
+        />
+      )}
+      {qaOpen === "driver" && (
+        <QuickAddDriver
+          onCreated={(d) => setForm((f) => ({ ...f, driver_id: d.id, driver_name: d.name, driver_mobile: d.phone || f.driver_mobile }))}
+          onClose={() => setQaOpen(null)}
+        />
+      )}
+      {qaOpen === "product" && (
+        <QuickAddProduct
+          onCreated={(p) => setForm((f) => ({
+            ...f,
+            product_id: p.id,
+            load_details: p.name,
+            hsn_sac: p.hsn_sac,
+            rate_per_ton: f.freight_mode === "per_ton" && p.default_rate ? p.default_rate : f.rate_per_ton,
+          }))}
+          onClose={() => setQaOpen(null)}
+        />
+      )}
     </div>
   );
 }

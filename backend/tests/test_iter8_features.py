@@ -87,10 +87,10 @@ class TestSupplierCompute:
                          rate_per_ton=1200)
         try:
             assert t["supplier_freight"] == 20000, t
-            assert t["supplier_net_payable"] == 14500, t   # 20000-5000-500
-            assert t["total_expense"] == 15000, t          # 20000-5000
+            assert t["supplier_net_payable"] == 14500, t   # 20000-5000-500 (no diesel/shortage/income)
+            assert t["total_expense"] == 14500, t          # now equals net_payable (all deductions applied)
             assert t["freight_amount"] == 24000
-            assert t["profit"] == 9000                      # 24000 - 15000
+            assert t["profit"] == 9500                      # 24000 - 14500
         finally:
             _cleanup_trip(t["id"])
 
@@ -131,7 +131,7 @@ class TestSupplierCompute:
                          rate_per_ton=1000)
         try:
             assert t["supplier_freight"] == 7777, t
-            assert t["total_expense"] == 6777  # 7777 - 1000
+            assert t["total_expense"] == 6777  # 7777 - 1000 (only advance; no other deductions)
             # profit = 10000 - 6777 = 3223
             assert t["profit"] == 3223
         finally:
