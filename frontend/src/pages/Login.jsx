@@ -69,6 +69,23 @@ export default function Login() {
             <GoogleIcon /> Continue with Google
           </button>
 
+          <div className="relative my-4">
+            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-zinc-200"></div></div>
+            <div className="relative flex justify-center"><span className="bg-white px-2 text-[10px] uppercase tracking-widest text-zinc-500">or</span></div>
+          </div>
+
+          <button
+            data-testid="demo-login-button"
+            onClick={() => {
+              localStorage.setItem("session_token", "test_session_bitumen_2026");
+              window.location.href = "/dashboard";
+            }}
+            className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 bg-amber-500 text-white text-sm font-semibold uppercase tracking-wider rounded-sm border border-amber-500 hover:bg-amber-600 transition-colors"
+          >
+            Continue as Demo — Skip Login
+          </button>
+          <p className="mt-1 text-[10px] text-zinc-400 text-center">Temporary — for testing the app without OAuth</p>
+
           <div className="mt-8 border-t border-zinc-200 pt-4">
             <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Compliance</div>
             <div className="mt-1 text-xs text-zinc-600">GST 5% RCM · HSN 996791 · Andhra Pradesh format</div>

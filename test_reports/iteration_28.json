@@ -1,0 +1,25 @@
+{
+  "summary": "Iter28 acceptance: verified (a) trip_import cid-shadow bug FIXED — imported trips are correctly stamped with company_id (not customer_id) and are visible via GET /api/trips; (b) multi-company isolation of imports — trips imported under Company A do NOT leak to Company B; (c) /api/auth/me returns 200 with test session; (d) Playwright demo-login-button flow — button visible on /login, click navigates to /dashboard, localStorage.session_token == 'test_session_bitumen_2026', dashboard renders with sidebar + KPI cards. Full regression 37/37 pytest green (34 prior + 3 new).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter28_import_and_demo.py",
+    "/app/test_reports/pytest/iter28_full.xml"
+  ],
+  "action_items": [
+    "Static preview URL (.preview.static.emergentagent.com) still needs a rebuild with correct REACT_APP_BACKEND_URL to fix the 404 sign-in issue there. The dynamic preview URL works fine and the demo-login bypass works on both. This is outside the sub-agent's scope (build/deploy)."
+  ],
+  "critical_code_review_comments": [
+    "trips.py line 30-34 TRIP_IMPORT_COLUMNS is fine; the fix (cid -> cust_id at line 230) correctly resolves the shadow. Consider adding a unit-level assertion `assert cid == active_company_id` after loop to prevent regressions.",
+    "The demo login bypass is intentional/temporary — flag for removal before production. Currently anybody with the URL can access owner@vbklogistics.test data.",
+    "routers/trips.py file is 449 lines — approaching 700-line split threshold; import + eway_bill + LR PDF could later be split into separate router modules."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (37/37)", "frontend": "100% (demo login flow)"},
+  "test_credentials": "Bearer test_session_bitumen_2026 (user_id=test-user-bitumen, email=owner@vbklogistics.test) — session already seeded in MongoDB.",
+  "seed_data_creation": "Created + cleaned up test companies (TEST_ImportCoA, TEST_ImportCoB) and customer IMPORT_TEST_CUSTOMER during pytest.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter28 verified the cid shadow-bug fix (trips.py:230 cid->cust_id) and demo-login-button flow. Both are fully working. When running the full regression, prefer sequential execution (add `-o addopts=` to override pytest-xdist parallel) — multi_company_iso and other tests share entity names and can collide in parallel workers. Static preview URL sign-in 404 is a build/deploy issue outside code scope.",
+  "rca of the issue": "cid shadow bug in trips.py trip_import: outer `cid = await _active_company_id(...)` was overwritten inside loop by `cid = cust_by_name.get(cname.lower())`, so d['company_id'] = cid was setting company_id to the customer's id — imported trips were invisible to list endpoints filtering by (user_id, company_id). Fix: renamed inner variable to `cust_id`. Verified by asserting trip.company_id == active_company_id and trip.company_id != cust_id in test_iter28_import_and_demo.py."
+}

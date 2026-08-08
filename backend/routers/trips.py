@@ -227,8 +227,8 @@ async def trip_import(request: Request, file: UploadFile = File(...), user=Depen
             cname = str(r.get("customer_name") or "").strip()
             if not cname:
                 raise ValueError("customer_name empty")
-            cid = cust_by_name.get(cname.lower())
-            if not cid:
+            cust_id = cust_by_name.get(cname.lower())
+            if not cust_id:
                 raise ValueError(f"customer '{cname}' not found — please add it first")
             date_val = r.get("date")
             if pd.isna(date_val):
@@ -251,7 +251,7 @@ async def trip_import(request: Request, file: UploadFile = File(...), user=Depen
                     return 0.0
 
             trip = Trip(
-                customer_id=cid,
+                customer_id=cust_id,
                 date=date_str,
                 vehicle_number=str(r.get("vehicle_number") or "").strip().upper(),
                 driver_id=driver_by_name.get(str(r.get("driver_name") or "").strip().lower()),
