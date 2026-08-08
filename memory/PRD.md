@@ -193,9 +193,13 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
   - `routers/customers.py`: 3 new endpoints — `GET /customers/{id}/transactions` (unified Trips+Invoices+Payments list with 12-key summary and filters: date_from/to, txn_type, invoice_status, payment_status, vehicle_number, product_id, from/to_location); `GET /customers/{id}/statement.pdf` (ReportLab statement w/ header + summary block + trip table + invoice table); `POST /customers/{id}/share-statement` (uploads PDF to `lr_shares/`, returns wa.me deeplink). New `_public_base_url()` helper reads `frontend/.env` when backend env lacks REACT_APP_BACKEND_URL.
   - `pages/CustomerHistory.jsx` (new): split-panel like myBillBook — left CustomersList (search + balance chips), right panel with customer header + summary strip (10 KPIs + Outstanding pill) + FilterBar + TransactionsTable (dark header, TRIP/INVOICE/PAYMENT type icons, LR badges, clickable rows navigate to underlying entity).
   - `pages/TripForm.jsx`: new "Received From Customer" section with `trip-customer-diesel` and `trip-customer-advance` inputs.
-  - `pages/Customers.jsx`: 'History' button per row → `/customers/history/{id}`.
-  - `App.js` + `Layout.jsx`: new routes and sidebar link.
-  - Tests: 5 iter36 tests + 7 extras = 12/12 pass. Frontend E2E: 100% success, 0 issues.
+  - Tests: 5 iter36 + 7 extras = 12/12 pass.
+- [x] **Iter37 — Customer History Extras: Balance Chips + Aging + Tabs + Add Payment + Bulk Reminders** (Feb 2026)
+  - `routers/customers.py`: `GET /customers?with_balance=true` includes `outstanding_balance` per customer. `summary.aging` (0_30/31_60/61_90/90_plus). New endpoints: `GET /customers/bulk-reminder` (per-customer WhatsApp deeplinks), `GET /customers/{id}/monthly-balances` (monthly aggregate), `POST /customers/{id}/add-payment` (oldest-first or targeted allocation, updates each invoice's amount_paid + balance_due + payment_status).
+  - `pages/CustomerHistory.jsx` fully redesigned: 4 tabs (All·Passbook / Trip Ledger / Invoice Ledger drill-down / Monthly Balances), month-grouping in All (collapsible headers), Aging cards (4 buckets), Add Payment right-drawer with 6 payment modes + Received-by-Driver toggle + Choose-Allocations, Bulk Reminders modal with per-customer send + Send All. Balance chip shown in left panel per customer.
+  - `pages/TripForm.jsx`: reads `?customer_id=...` URL param and pre-fills the customer picker.
+  - Z-index bumped to `z-[70]` on drawer & modal so AI chat bubble no longer blocks the Save button.
+  - Tests: 5 iter37 pytest = 100% pass. Frontend E2E: all major flows verified via Playwright.
 
 ## Backlog (P0-P1, requested but not yet built)
 - (all Phase-2 items delivered in Iter32 — searchable dropdowns, quick-add, supplier expansion, complete trip view)

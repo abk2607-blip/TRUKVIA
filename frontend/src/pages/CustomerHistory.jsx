@@ -126,7 +126,8 @@ function groupByMonth(txns) {
     const d = (t.date || "").slice(0, 7);
     if (!groups[d]) {
       const [y, m] = d.split("-");
-      groups[d] = { key: d, label: `${monthNames[Number(m)-1] || "?"} ${y || ""}`, items: [], total: 0 };
+      const label = (d && y && m) ? `${monthNames[Number(m)-1] || "?"} ${y}` : "Undated";
+      groups[d] = { key: d || "undated", label, items: [], total: 0 };
     }
     groups[d].items.push(t);
     if (t.type === "payment") groups[d].total += Number(t.amount || 0);
@@ -370,7 +371,7 @@ function AddPaymentDrawer({ customer, invoices, onClose, onSaved }) {
   });
 
   return (
-    <div className="fixed inset-0 z-50 flex" data-testid="add-payment-drawer">
+    <div className="fixed inset-0 z-[70] flex" data-testid="add-payment-drawer">
       <div className="flex-1 bg-zinc-900/40 backdrop-blur-sm" onClick={onClose}></div>
       <div className="w-full max-w-md bg-white border-l border-zinc-950 h-full flex flex-col">
         <div className="px-5 py-3 border-b border-zinc-200 flex items-center justify-between">
@@ -444,7 +445,7 @@ function BulkReminderModal({ onClose }) {
   });
   const reminders = data?.reminders || [];
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4" data-testid="bulk-reminder-modal">
+    <div className="fixed inset-0 z-[70] flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4" data-testid="bulk-reminder-modal">
       <div className="bg-white w-full max-w-3xl max-h-[90vh] border border-zinc-950 rounded-sm flex flex-col">
         <div className="px-5 py-3 border-b border-zinc-200 flex items-center justify-between">
           <div>
