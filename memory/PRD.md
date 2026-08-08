@@ -143,6 +143,10 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
   - Backend `server.py` CORS: `allow_credentials=False` + `allow_origins=['*']` (valid combination, per CORS spec).
   - Root cause: browsers reject `Access-Control-Allow-Origin: *` when the request is credentialed, so every /api/* call from the static preview domain was being blocked at the browser layer → "Network Error" toast.
   - Testing agent verified: preflight + POST bogus + POST bearer + GET /dashboard from static origin all succeed at CORS layer. 78/78 regression still pass.
+- [x] **Iter28 — Trip Import Shadow Bug + Demo Login Bypass** (Feb 2026)
+  - CRITICAL DATA-INTEGRITY FIX: `routers/trips.py` `trip_import()` inner variable `cid` was shadowing the outer active-company id and stamping every imported trip with the CUSTOMER id instead of the company id — trips became invisible to all list views. Fix: renamed inner variable to `cust_id`. Verified by asserting `trip.company_id == active_company_id` after import.
+  - New "Continue as Demo — Skip Login" button on Login page (`data-testid=demo-login-button`) — seeds `session_token=test_session_bitumen_2026` and redirects to /dashboard. Auto-provisions a test user. Works on BOTH static and dynamic preview URLs (the static-URL sign-in 404 is a build/deploy concern outside code scope).
+  - Tests: 3 new + 34 regression = **37/37 pass**. Testing agent confirmed no data leaks across companies via import.
 
 ## Backlog (P1)
 - [ ] Drivers & Vehicles master (currently free-text)
