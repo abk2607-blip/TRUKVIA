@@ -4,7 +4,9 @@ from typing import List, Optional
 from datetime import datetime, timezone, timedelta
 import io, os, uuid, secrets, re, requests, base64
 
+import logging
 from db import db
+logger = logging.getLogger(__name__)
 from models import (
     Company, Customer, Expenses, Driver, Trip, Product, Party, Vehicle,
     MaintenanceLog, Fuel, Payment, Invoice, TeamMember, ROLE_PERMISSIONS,
@@ -89,7 +91,6 @@ async def bulk_upload(
 ):
     """Upload multiple files. Auto-tag vehicle_number and date from filename pattern
     like 'AP16TA1234_2026-02-05_anything.jpg' or 'AP16TA1234-2026-02-05.png'."""
-    import re
     cid = await _active_company_id(request, user)
     results = []
     veh_re = re.compile(r"([A-Z]{2}[-\s]?\d{1,2}[-\s]?[A-Z]{1,3}[-\s]?\d{1,4})", re.IGNORECASE)

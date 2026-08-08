@@ -26,8 +26,17 @@ from services import (
 
 router = APIRouter(prefix="/api")
 
+TRIP_IMPORT_COLUMNS = [
+    "date", "customer_name", "vehicle_number", "driver_name",
+    "load_details", "tons", "from_location", "to_location",
+    "freight_mode", "rate_per_ton", "fixed_amount",
+    "diesel", "toll", "batta", "repair", "other", "notes",
+]
+
+
 import pandas as pd
-from pdf import build_lr_pdf
+from pdf import build_lr_pdf, build_invoice_pdf
+
 
 @router.get("/trips")
 async def list_trips(request: Request, user=Depends(get_current_user), customer_id: Optional[str] = None, status: Optional[str] = None):
@@ -350,7 +359,6 @@ async def eway_bill(tid: str, user=Depends(get_current_user)):
 
 @router.get("/trips/{tid}/lr")
 async def trip_lr_pdf(tid: str, user=Depends(get_current_user)):
-    from pdf_generator import build_lr_pdf
     trip = await db.trips.find_one({"id": tid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found")

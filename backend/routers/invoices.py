@@ -4,7 +4,9 @@ from typing import List, Optional
 from datetime import datetime, timezone, timedelta
 import io, os, uuid, secrets, re, requests, base64
 
+import logging
 from db import db
+logger = logging.getLogger(__name__)
 from models import (
     Company, Customer, Expenses, Driver, Trip, Product, Party, Vehicle,
     MaintenanceLog, Fuel, Payment, Invoice, TeamMember, ROLE_PERMISSIONS,
@@ -27,6 +29,7 @@ from services import (
 router = APIRouter(prefix="/api")
 
 from pdf import build_invoice_pdf
+from storage_client import put_object, APP_NAME
 
 @router.get("/invoices")
 async def list_invoices(request: Request, user=Depends(get_current_user)):
@@ -40,7 +43,6 @@ async def list_overdue_invoices(request: Request, days: int = 30, user=Depends(g
     """List invoices with outstanding balance older than `days` days."""
     uid = user["user_id"]
     cid = await _active_company_id(request, user)
-    from datetime import timedelta
     cutoff = (now_utc().date() - timedelta(days=days)).isoformat()
     docs = await db.invoices.find({
         "user_id": uid,

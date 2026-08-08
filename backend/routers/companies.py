@@ -102,7 +102,6 @@ async def save_company(payload: Company, request: Request, user=Depends(get_curr
 
 @router.post("/company/logo")
 async def upload_logo(request: Request, file: UploadFile = File(...), user=Depends(get_current_user)):
-    import base64
     cid = await _active_company_id(request, user)
     content = await file.read()
     if len(content) > 1024 * 1024:

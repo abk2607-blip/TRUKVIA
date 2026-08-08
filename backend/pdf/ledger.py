@@ -84,21 +84,7 @@ def build_ledger_pdf(company: dict, ledger: dict) -> bytes:
     return buf.getvalue()
 
 
-LR_TERMS_EN = [
-    "Check all the seals for non-tampering and seal No. mentioned in G.C. copy.",
-    "Check cabin, tool box and under chassis of the truck for any unwanted material.",
-    "Ask the truck crew to remove all external materials like firewood, diesel and water cans before weighment of the truck.",
-    "Check the diesel tank and cabin for any compartments which can be used to store unwanted materials to adjust weight.",
-    "Ensure all the wheels of the truck are completely and fully placed well inside the weigh bridge platform.",
-    "Ask the truck crew to come out of the truck while weighing the truck for Gross Weight and take the driver's signature for record.",
-    "Adopt the standard procedure for testing the product.",
-    "After unloading and weighment, vehicle to be physically checked through the manhole opening of the tank to ensure complete unloading of the product.",
-    "To ensure complete unloading of the product make use of ramp and drums.",
-    "All details in the unloading details sections in the G.C. to be filled without fail, acknowledgement with seal, stamp and signature and a separate detail of the above information to be maintained at the site.",
-    "Signature of the driver is mandatory on loading and unloading slip.",
-    "We are not responsible for quality and quantity once the vehicle is unloaded.",
-    "In the WhatsApp group created for coordination and sharing of loading documents & photos of seals — please ask site officials to take photos/videos of vehicle manholes after unloading and post there to prevent malpractice.",
-]
+
 LR_TERMS_TE = [
     "అన్ని సీళ్లు తారుమారు కాకుండా ఉన్నాయా అని పరిశీలించండి, G.C.లోని సీలు నంబర్‌తో సరిపోల్చండి.",
     "ట్రక్ కేబిన్, టూల్‌బాక్స్, ఛాసీ కింద అనవసరమైన సామాన్లు లేకుండా చూడండి.",
@@ -114,5 +100,3 @@ LR_TERMS_TE = [
     "వాహనం అన్‌లోడ్ అయిన తర్వాత క్వాలిటీ / క్వాంటిటీకి మేం బాధ్యులం కాదు.",
     "వాట్సాప్ గ్రూప్‌లో అన్‌లోడింగ్ తర్వాత మ్యాన్‌హోల్ ఫోటోలు/వీడియోలు పోస్ట్ చేయమని సైట్ అధికారులను అడగండి — అపరాధాలు జరగకుండా ఉండేందుకు.",
 ]
-
-

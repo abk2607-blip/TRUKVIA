@@ -76,11 +76,3 @@ async def delete_driver(did: str, request: Request, user=Depends(get_current_use
     return {"ok": True}
 
 # ==================== Trip Bulk Import ====================
-
-TRIP_IMPORT_COLUMNS = [
-    "date", "customer_name", "vehicle_number", "driver_name",
-    "load_details", "tons", "from_location", "to_location",
-    "freight_mode", "rate_per_ton", "fixed_amount",
-    "diesel", "toll", "batta", "repair", "other", "notes",
-]
-

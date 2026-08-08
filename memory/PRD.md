@@ -126,6 +126,11 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
   - Rebalanced column widths [6,22,26,27,31,15,27,32]mm — Date now fits '2026-07-31', Tons fits '32.53', Vehicle fits 'AP39UK5117', Load fits 'BITUMEN VG 30' — all on single lines. Header 'Load / Product' shortened to 'Load'.
   - Explicit `ALIGN CENTER` for #/Date/Tons columns, `RIGHT` for Amount, and uniform 6pt top/bottom padding for even row heights.
   - Tests: 7/7 in `tests/test_iter23_invoice_column_alignment.py`. Full regression Iter17+21+22+23 = **27/27 pass**.
+- [x] **Iter24 — Backend Modular Refactor** (Feb 2026)
+  - Split monolithic `server.py` (2,660 lines) → 79-line glue file + 15 routers under `routers/` + shared modules (`db.py`, `models.py`, `auth.py`, `company.py`, `audit.py`, `services.py`).
+  - Split `pdf_generator.py` (1,030 lines) → `pdf/` package with `_base.py`, `invoice.py`, `lr.py`, `ledger.py`, `owner.py`. `pdf_generator.py` kept as 12-line backwards-compat shim.
+  - Zero functional change: every endpoint URL, request body, response schema, MongoDB collection, and Pydantic model preserved. Multi-company X-Company-Id scoping still works.
+  - Every file now <500 lines. Testing agent verified 34/34 pytest + 23/23 smoke endpoints all pass → GREEN LIGHT.
 
 ## Backlog (P1)
 - [ ] Drivers & Vehicles master (currently free-text)
