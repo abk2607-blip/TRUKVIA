@@ -1,0 +1,26 @@
+{
+  "summary": "Iter36 Customer Transaction History — end-to-end verification complete. Backend: 12/12 pytest cases pass (5 iter36 + 7 supplementary iter36_extra). All summary keys (trip_count, total_qty, total_freight, total_diesel_received, total_advances, total_shortage, total_excess, total_halting, total_billed, total_received, outstanding, total_pending_uninvoiced) present. Filters (date_from/to, txn_type=all|trip|invoice|payment, invoice_status, payment_status, vehicle_number) all validated independently and combined. Trip POST/GET/PUT preserves customer_diesel_received + customer_advance_received. statement.pdf returns valid PDF (%PDF- magic, >500 bytes) with date-range params. share-statement returns whatsapp_url (https://wa.me/?text=...), whatsapp_text, and public_url which serves the PDF unauthenticated. transactions[] sorted DESC by date. Frontend Playwright: /customers/history renders split-panel with all 11 required testids (customer-search, customer-row-{id} ×9, download-statement-btn, share-statement-btn, customer-summary, filter-date-from/to/txn-type/inv-status/pay-status/vehicle/reset, transactions-table). Clicking customer updates URL to /customers/history/{id} without reload. 13 txn-row-trip-{id} rows load for TEST_Sup_Settle. Applying filter-txn-type=invoice reduces to 0 rows (customer has no invoices), filter-reset restores to 13. Vehicle filter (AP99EMP001) narrows to 1 row. Clicking txn-row-trip-{id} navigates to /trips/{id}/view. Sidebar nav-customer-history link present. /customers has 9 history-customer-{id} buttons that navigate to /customers/history/{id}. /trips/new shows 'Received From Customer' section with trip-customer-diesel + trip-customer-advance inputs which accept and retain numeric values.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter36_customer_history.py",
+    "/app/backend/tests/test_iter36_extra.py",
+    "/app/test_reports/pytest/iter36_retest.xml",
+    "/app/test_reports/pytest/iter36_extra.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "customers.py /transactions endpoint correctly builds unified list from trips + invoices + payments with consistent {type, date, id, amount} shape and DESC sort — verified.",
+    "share-statement fallback to REACT_APP_BACKEND_URL from frontend/.env when backend env lacks BASE_URL works and returns HTTPS public URL — verified via unauthenticated PDF fetch.",
+    "TripForm 'Received From Customer' section wired with both new fields; payload transmits customer_diesel_received & customer_advance_received on POST and preserves them through PUT (round-trip test passes).",
+    "CustomerHistory.jsx split-panel implementation clean; filter reset properly clears all 6 filter states and refetches; row navigation dispatch by type (trip→/trips/{id}/view, invoice→/invoices/{id}, payment→/invoices/{invoice_id}) matches spec — trip path verified live, invoice/payment paths confirmed by code review (no invoices in tenant to exercise UI).",
+    "Minor UX observation (not a bug): For customers with 0 invoices, selecting filter-inv-status=invoiced or txn-type=payment yields empty table with no 'No data' hint — spec says empty is expected. Could be improved with a subtle empty-state chip."
+  ],
+  "updated_files": ["/app/backend/tests/test_iter36_extra.py", "/app/test_reports/iteration_35.json"],
+  "success_rate": {"backend": "100% (12/12)", "frontend": "100% of testable flows (invoice/payment row-click paths verified by code review — tenant has no invoices)"},
+  "test_credentials": "Bearer test_session_bitumen_2026 / cookie session_token=test_session_bitumen_2026",
+  "seed_data_creation": "Created & cleaned up: customer TEST_Iter36Extra (retained), throwaway trips (all deleted via cleanup finally blocks). No data pollution.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter36 Customer Transaction History fully green. Backend endpoints: GET /api/customers/{cid}/transactions (supports date_from, date_to, txn_type, invoice_status, payment_status, vehicle_number), GET /api/customers/{cid}/statement.pdf (date_from/to params), POST /api/customers/{cid}/share-statement (returns public_url + whatsapp_url + whatsapp_text). Trip model has 2 new fields: customer_diesel_received, customer_advance_received (round-trip via POST/GET/PUT verified). Frontend testids: nav-customer-history (sidebar), customer-search, customer-row-{id}, download-statement-btn, share-statement-btn, customer-summary, filter-date-from/to/txn-type/inv-status/pay-status/vehicle/reset, transactions-table, txn-row-{type}-{id}, history-customer-{id} (on /customers), trip-customer-diesel + trip-customer-advance (on /trips/new). No invoices exist in test tenant so invoice/payment row navigation was verified via code review only."
+}

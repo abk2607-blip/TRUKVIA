@@ -13,6 +13,7 @@ const nav = [
   { to: "/trips", te: "ట్రిప్స్", en: "Trips", icon: Truck, testid: "nav-trips" },
   { to: "/trips/templates", te: "ట్రిప్ టెంప్లేట్‌లు", en: "Trip Templates", icon: LayoutTemplate, testid: "nav-templates" },
   { to: "/customers", te: "కస్టమర్లు", en: "Customers", icon: Users, testid: "nav-customers" },
+  { to: "/customers/history", te: "కస్టమర్ లావాదేవీలు", en: "Customer History", icon: FileText, testid: "nav-customer-history" },
   { to: "/parties", te: "కన్‌సైనర్/కన్‌సైనీ", en: "Consignor/Consignee", icon: MapPin, testid: "nav-parties" },
   { to: "/vehicles", te: "వాహనాలు", en: "Vehicles", icon: Car, testid: "nav-vehicles" },
   { to: "/drivers", te: "డ్రైవర్లు", en: "Drivers", icon: UserCog, testid: "nav-drivers" },

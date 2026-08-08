@@ -478,10 +478,21 @@ async def share_lr_whatsapp(tid: str, request: Request, user=Depends(get_current
         raise HTTPException(status_code=502, detail=f"LR upload failed: {e}")
 
     # Public retrieval goes through our GET /api/files/public/{path}
-    frontend_base = os.environ.get("REACT_APP_BACKEND_URL") or str(request.base_url).rstrip("/")
+    frontend_base = os.environ.get("REACT_APP_BACKEND_URL")
+    if not frontend_base:
+        try:
+            with open("/app/frontend/.env", "r") as f:
+                for line in f:
+                    if line.startswith("REACT_APP_BACKEND_URL="):
+                        frontend_base = line.split("=", 1)[1].strip().strip('"').strip("'")
+                        break
+        except Exception:
+            pass
+    if not frontend_base:
+        frontend_base = str(request.base_url).rstrip("/")
     if not frontend_base.startswith("http"):
         frontend_base = f"https://{frontend_base}"
-    public_url = f"{frontend_base}/api/files/public/{obj_path}"
+    public_url = f"{frontend_base.rstrip('/')}/api/files/public/{obj_path}"
 
     msg = (
         f"*LR from {company.get('name', 'Our Company')}*\n"

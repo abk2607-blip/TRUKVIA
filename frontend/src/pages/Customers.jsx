@@ -1,8 +1,9 @@
 import React, { useState } from "react";
+import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, X } from "lucide-react";
+import { Plus, Pencil, Trash2, X, FileText } from "lucide-react";
 import { StateSelect } from "@/lib/states";
 
 const EMPTY = { name: "", address: "", phone: "", gstin: "", pan: "", state: "" };
@@ -76,6 +77,9 @@ export default function Customers() {
                 <td className="px-4 py-3">{c.phone || "—"}</td>
                 <td className="px-4 py-3">{c.state || "—"}</td>
                 <td className="px-4 py-3 text-right">
+                  <Link data-testid={`history-customer-${c.id}`} to={`/customers/history/${c.id}`} className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-indigo-300 text-indigo-700 rounded-sm mr-2 hover:bg-indigo-600 hover:text-white transition">
+                    <FileText size={12} /> History
+                  </Link>
                   <button data-testid={`edit-customer-${c.id}`} onClick={() => openEdit(c)} className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-zinc-200 rounded-sm mr-2 hover:bg-zinc-950 hover:text-white">
                     <Pencil size={12} /> Edit
                   </button>

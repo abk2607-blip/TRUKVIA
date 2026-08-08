@@ -143,6 +143,9 @@ class Trip(BaseModel):
     total_expense: float = 0.0
     profit: float = 0.0
     net_settlement: float = 0.0
+    # ---- Customer-provided (Iter36) ----
+    customer_diesel_received: float = 0.0    # Diesel/fuel provided by customer against this trip
+    customer_advance_received: float = 0.0   # Cash advance received from customer against this trip
     invoice_id: Optional[str] = None
     status: Literal["pending", "invoiced"] = "pending"
     notes: str = ""

@@ -94,6 +94,8 @@ const EMPTY = {
   gross_weight: 0,
   tare_weight: 0,
   seal_numbers: "",
+  customer_diesel_received: 0,
+  customer_advance_received: 0,
 };
 
 export default function TripForm() {
@@ -159,6 +161,8 @@ export default function TripForm() {
         invoice_value: Number(form.invoice_value || 0),
         gross_weight: Number(form.gross_weight || 0),
         tare_weight: Number(form.tare_weight || 0),
+        customer_diesel_received: Number(form.customer_diesel_received || 0),
+        customer_advance_received: Number(form.customer_advance_received || 0),
         expenses: Object.fromEntries(Object.entries(form.expenses).map(([k, v]) => [k, k === "other_desc" ? v : Number(v || 0)])),
       };
       if (isEdit) return (await api.put(`/trips/${id}`, payload)).data;
@@ -553,6 +557,35 @@ export default function TripForm() {
           </div>
           <div className="mt-3 text-[11px] text-zinc-500 bg-zinc-50 border border-zinc-200 rounded-sm p-2">
             <span className="font-bold">Rule:</span> First {form.grace_days || 4} days = grace period (free). From day {(Number(form.grace_days) || 4) + 1} onwards, halting is charged at ₹{Number(form.halting_rate_per_day || 0).toLocaleString("en-IN")} / day. All fields editable if customer contract differs.
+          </div>
+        </Section>
+
+        {/* Customer-Provided (Diesel/Advance) */}
+        <Section title="కస్టమర్ నుండి · Received From Customer">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <Field label="Diesel Received from Customer (₹)">
+              <input
+                data-testid="trip-customer-diesel"
+                type="number" step="0.01" min="0"
+                value={form.customer_diesel_received}
+                onChange={(e) => setForm({ ...form, customer_diesel_received: e.target.value })}
+                className={inputCls}
+                placeholder="₹ value of fuel provided by customer"
+              />
+            </Field>
+            <Field label="Advance Received from Customer (₹)">
+              <input
+                data-testid="trip-customer-advance"
+                type="number" step="0.01" min="0"
+                value={form.customer_advance_received}
+                onChange={(e) => setForm({ ...form, customer_advance_received: e.target.value })}
+                className={inputCls}
+                placeholder="Cash / bank advance against this trip"
+              />
+            </Field>
+          </div>
+          <div className="mt-2 text-[11px] text-zinc-500">
+            These reduce the customer's balance when the invoice is settled. They appear in Customer Transaction History.
           </div>
         </Section>
 
