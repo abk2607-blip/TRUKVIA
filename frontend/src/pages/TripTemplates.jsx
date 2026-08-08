@@ -95,13 +95,11 @@ export default function TripTemplates() {
           <Field label="Freight Mode">
             <select className={inputCls} value={editing.freight_mode} onChange={F("freight_mode")}>
               <option value="per_ton">Per Ton</option>
-              <option value="round_trip">Per KM per Ton</option>
-              <option value="fixed">Fixed</option>
+              <option value="fixed">Fixed / Round Trip</option>
             </select>
           </Field>
           {editing.freight_mode === "per_ton" && <Field label="Rate per Ton (₹)"><input type="number" className={inputCls} value={editing.rate_per_ton} onChange={F("rate_per_ton")} /></Field>}
-          {editing.freight_mode === "round_trip" && <Field label="Rate per KM per Ton (₹)"><input type="number" className={inputCls} value={editing.rate_per_km_per_ton} onChange={F("rate_per_km_per_ton")} /></Field>}
-          {editing.freight_mode === "fixed" && <Field label="Fixed Amount (₹)"><input type="number" className={inputCls} value={editing.fixed_amount} onChange={F("fixed_amount")} /></Field>}
+          {editing.freight_mode === "fixed" && <Field label="Fixed Amount / Round Trip (₹)"><input type="number" className={inputCls} value={editing.fixed_amount} onChange={F("fixed_amount")} /></Field>}
           <Field label="HSN / SAC"><input className={inputCls} value={editing.hsn_sac} onChange={F("hsn_sac")} /></Field>
           <Field label="GST Type">
             <select className={inputCls} value={editing.gst_type} onChange={F("gst_type")}>

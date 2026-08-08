@@ -131,6 +131,13 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
   - Split `pdf_generator.py` (1,030 lines) → `pdf/` package with `_base.py`, `invoice.py`, `lr.py`, `ledger.py`, `owner.py`. `pdf_generator.py` kept as 12-line backwards-compat shim.
   - Zero functional change: every endpoint URL, request body, response schema, MongoDB collection, and Pydantic model preserved. Multi-company X-Company-Id scoping still works.
   - Every file now <500 lines. Testing agent verified 34/34 pytest + 23/23 smoke endpoints all pass → GREEN LIGHT.
+- [x] **Iter25 — Full Regression Verification** (Feb 2026) — 30 live-workflow assertions across 12 workflows (Login, Multi-Company Switching, Masters CRUD, Trip Create/Edit, Invoice Gen/Edit, PDF Gen/Download, all reports, GST calc, Profit calc, Print formats) + 34 existing pytest = 64/64 green.
+- [x] **Iter26 — Phase 1: AI Business Assistant + Trip Templates + Duplicate Trip** (Feb 2026)
+  - **Trip Templates** (`routers/templates.py`): company-shared CRUD at `/api/templates`. Fields: name, customer_id, from/to_location, load_details, product_type, round_trip_kms, freight_mode, rates, hsn_sac, gst_type, halting_rate_per_day, remarks. New `/trips/templates` page (Sidebar link `nav-templates`).
+  - **Use Template picker** in TripForm auto-fills fields via `POST /api/trips/from-template/{tid}`.
+  - **Duplicate Trip** button on every trip row → `POST /api/trips/{id}/duplicate` clones a trip and resets variable fields (date/tons/expenses/invoice/status).
+  - **AI Chat** (`routers/ai.py`): floating chat bubble bottom-right of every page. Streaming SSE via `POST /api/ai/chat` using Gemini 3 Flash Preview through Emergent Universal Key. Tool-calling: get_dashboard, list_customers, list_overdue_invoices, list_recent_trips, vehicle_profit_summary, route_profit_summary, customer_ledger, gst_summary. Every tool receives resolved (user_id, active_company_id) — model cannot bypass multi-tenant scoping. Chat history persisted in `chat_sessions` + `chat_messages` collections. Audit log stamped for every chat.
+  - Tests: 14/14 in `tests/test_iter26_phase1_ai_templates.py` covering CRUD, isolation, duplicate reset, from-template prefill, SSE streaming, session history, multi-company AI scoping. Regression Iter17+21+22+23+25+multi_company_iso = **78/78 pass**. Frontend Playwright smoke: templates page loads, template form save works, Duplicate button present, chat bubble opens and streams within 15s.
 
 ## Backlog (P1)
 - [ ] Drivers & Vehicles master (currently free-text)

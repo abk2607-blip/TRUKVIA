@@ -363,7 +363,7 @@ class TripTemplate(BaseModel):
     load_details: str = ""                             # material / product free text
     product_type: str = ""                             # VG-30 / VG-40 / CRMB / PMB / Emulsion …
     round_trip_kms: float = 0.0
-    freight_mode: Literal["per_ton", "round_trip", "fixed"] = "per_ton"
+    freight_mode: Literal["per_ton", "fixed"] = "per_ton"
     rate_per_ton: float = 0.0
     rate_per_km_per_ton: float = 0.0
     fixed_amount: float = 0.0

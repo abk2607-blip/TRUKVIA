@@ -345,6 +345,7 @@ async def ai_chat(payload: ChatRequest, request: Request, user=Depends(get_curre
         except Exception as e:
             logger.exception("AI chat failed")
             yield f"data: {json.dumps({'type':'error','message':str(e)})}\n\n"
+            yield f"data: {json.dumps({'type':'done','session_id':sid})}\n\n"
         finally:
             final = "".join(assistant_buf).strip()
             if final:
