@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, API, fmtCurrency } from "@/api";
 import { toast } from "sonner";
@@ -102,6 +102,8 @@ export default function TripForm() {
   const nav = useNavigate();
   const qc = useQueryClient();
   const { id } = useParams();
+  const [searchParams] = useSearchParams();
+  const prefillCustomer = searchParams.get("customer_id");
   const isEdit = Boolean(id);
   const [form, setForm] = useState(EMPTY);
 
@@ -122,6 +124,12 @@ export default function TripForm() {
   useEffect(() => {
     if (trip) setForm({ ...EMPTY, ...trip, expenses: { ...EMPTY.expenses, ...(trip.expenses || {}) } });
   }, [trip]);
+
+  useEffect(() => {
+    if (!isEdit && prefillCustomer) {
+      setForm((f) => ({ ...f, customer_id: prefillCustomer }));
+    }
+  }, [prefillCustomer, isEdit]);
 
   const save = useMutation({
     mutationFn: async () => {

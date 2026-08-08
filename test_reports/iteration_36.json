@@ -1,0 +1,42 @@
+{
+  "summary": "Iter37 Customer History extras — verified end-to-end. Backend: 5/5 iter37 tests pass, 12/12 iter36 regression tests pass. Endpoints verified: GET /customers?with_balance=true (outstanding_balance field present only with flag), GET /customers/{id}/transactions.summary.aging (0_30/31_60/61_90/90_plus keys), GET /customers/bulk-reminder (reminders[], total_customers, total_outstanding, wa.me URLs), GET /customers/{id}/monthly-balances (month/trip_count/quantity/freight/billed/received/balance, DESC), POST /customers/{id}/add-payment (allocates oldest-first, updates invoice amount_paid/balance_due/payment_status; returns applied[]/amount_total/amount_unallocated). Frontend Playwright: /customers/history renders left panel balance chips (inline in customer-row-{id}), 4-tab strip (ledger-tab-all|trips|invoices|monthly), month-header-{YYYY-MM} with collapsible chevron, trip-ledger-table, invoice-ledger-table with invoice-expand-{id} drill-down, monthly-balances-grid, aging-buckets (4 sub-cards aging-0_30 … aging-90_plus), header actions (add-payment-btn, add-trip-btn, download-statement-btn, share-statement-btn), Add Payment drawer (add-payment-drawer) with pay-amount/pay-mode/pay-date/pay-note/pay-driver-toggle/pay-save-btn — POST /add-payment succeeded (toast confirmed, drawer closed, Received went from 15,000→15,000/+1). Bulk Reminders (bulk-reminder-btn) opens bulk-reminder-modal (empty state '🎉' when no positive balances — expected). Trip pre-fill via /trips/new?customer_id=cust_xxx pre-selects target customer (verified: trip-customer button text = 'TEST_Iter37').",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "AddPaymentDrawer", "issue": "AI chat bubble (fixed bottom-right, z-50) intercepts pointer events on Save Payment button — Playwright forced-timeout after 30s waiting for stable clickable element; user's click at bottom-right of drawer will hit AI bubble instead of Save. Test workaround: hide ai-chat-open element before click. Fix: raise drawer z-index above 50, or hide ai-chat-open when a drawer/modal is open.", "selector": "[data-testid=pay-save-btn] blocked by [data-testid=ai-chat-open]", "priority": "HIGH"},
+      {"component": "MonthGrouping", "issue": "Transactions with missing/invalid date get grouped under a '?' month-header (e.g., TEST_Iter37 shows '? · 4 TXNS · ₹ 0.00' for 4 invoices with no valid date). Consider labelling as 'Undated' and validating invoice.date on create.", "selector": "[data-testid=month-header-?]", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "CustomerHistory left panel", "issues": ["Balance chip is rendered inline within customer-row-{id} button (no dedicated cust-balance-{id} testid) — functional but harder to target in tests."]},
+      {"screen": "Payment drawer & Bulk-reminder modal", "issues": ["Actual data-testid names diverge from review-spec naming (spec: payment-amount/mode/date/note/received-by-driver/choose-allocations/save, bulk-reminders-btn, wa-reminder-*, wa-send-all; actual: pay-amount/mode/date/note/driver-toggle/alloc-toggle/save-btn, bulk-reminder-btn, reminder-send-*, send-all-reminders). Elements exist & functional — only naming mismatch."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter37_history_extras.py",
+    "/app/backend/tests/test_iter36_customer_history.py",
+    "/app/backend/tests/test_iter36_extra.py",
+    "/app/test_reports/pytest/iter37.xml"
+  ],
+  "action_items": [
+    "HIGH: Fix z-index/pointer-events so AI chat bubble does not block the Add-Payment drawer's Save button (hide ai-chat-open while drawer/modal open OR raise drawer stacking above z-50).",
+    "LOW: Optionally add dedicated data-testid=cust-balance-{id} on the balance amount inside customer-row-{id} for testability.",
+    "LOW: Align data-testid names in AddPaymentDrawer & BulkReminderModal with the review spec (payment-*, wa-*, bulk-reminders-btn) OR update the spec — current names are internally consistent but differ from PRD.",
+    "LOW: Handle transactions with missing dates in month grouping (label 'Undated' instead of '?')."
+  ],
+  "critical_code_review_comments": [
+    "customers.py: add-payment allocates oldest-first correctly and updates invoice.amount_paid/balance_due/payment_status; verified with a partial 5000 payment on a 15000 invoice (payment_status → partial). Toast reports invoice count updated.",
+    "bulk-reminder correctly excludes customers with balance <= 0 (TEST_Iter37 has -15000 → excluded → modal shows empty-state 🎉).",
+    "aging bucket keys use underscore syntax (0_30/31_60/61_90/90_plus); frontend renders these correctly.",
+    "TripForm.jsx correctly reads ?customer_id via useSearchParams and pre-fills form state (line 105-130) — verified.",
+    "AIChatBubble uses z-50 which conflicts with drawer inner content; drawer container is z-50 too (line 373 fixed inset-0 z-50). The floating bubble stacks over the drawer's right column at the bottom-right corner. Real user-facing bug on desktop."
+  ],
+  "updated_files": ["/app/test_reports/iteration_36.json"],
+  "success_rate": {"backend": "100% (5/5 iter37 + 12/12 iter36 regression)", "frontend": "~95% (all major flows work; 1 HIGH z-index bug affecting payment save on desktop)"},
+  "test_credentials": "Bearer test_session_bitumen_2026 / cookie session_token=test_session_bitumen_2026",
+  "seed_data_creation": "Created 1 test payment of ₹1 UPI on TEST_Iter37 during drawer flow verification. No cleanup performed (payment is legitimate transaction record). TEST_Iter37 customer already existed from prior test runs.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter37 backend fully green. Frontend flows functional; the ONE material bug is AI chat bubble (data-testid=ai-chat-open, fixed bottom-6 right-6 z-50) intercepting clicks on the Add-Payment drawer's Save button (pay-save-btn). To reproduce: open /customers/history, click any customer, click add-payment-btn, fill amount and try clicking Save — Playwright times out with 'ai-chat-open intercepts pointer events'. Fix in AIChatBubble.jsx or CustomerHistory drawer z-index. Actual testids differ from PRD naming: pay-* (not payment-*), bulk-reminder-btn (not bulk-reminders-btn), reminder-send-*/send-all-reminders (not wa-reminder-*/wa-send-all). Aging bucket testids use underscore keys: aging-0_30, aging-31_60, aging-61_90, aging-90_plus.",
+  "rca of the issue": "AIChatBubble.jsx defines a fixed-position floating button at 'bottom-6 right-6 z-50'. The Add-Payment drawer (CustomerHistory.jsx line 373) also uses z-50 for its overlay container. The drawer's right column places the Save Payment button (pay-save-btn) near the bottom-right of the viewport, where the AI chat bubble sits in the same stacking context. Without an explicit higher z-index on the drawer's inner content OR a pointer-events:none conditional on ai-chat-open when a modal/drawer is mounted, the bubble wins pointer-event capture. Mitigation: (a) bump drawer container to z-[60], (b) hide ai-chat-open when window has an open drawer/modal (react context flag), or (c) move ai-chat-open to bottom-left."
+}

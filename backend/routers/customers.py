@@ -5,6 +5,7 @@ from datetime import datetime, timezone, timedelta
 import io, os, uuid, secrets, re, requests, base64
 
 from db import db
+from pydantic import BaseModel
 from models import (
     Company, Customer, Expenses, Driver, Trip, Product, Party, Vehicle,
     MaintenanceLog, Fuel, Payment, Invoice, TeamMember, ROLE_PERMISSIONS,
@@ -29,10 +30,20 @@ router = APIRouter(prefix="/api")
 # ==================== Customers ====================
 
 @router.get("/customers")
-async def list_customers(request: Request, user=Depends(get_current_user)):
+async def list_customers(request: Request, user=Depends(get_current_user), with_balance: bool = False):
     cid = await _active_company_id(request, user)
     await _backfill_to_default(user["user_id"])
     docs = await db.customers.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(1000)
+    if with_balance:
+        invs = await db.invoices.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "customer_id": 1, "balance_due": 1, "total_amount": 1, "gross_total": 1, "amount_paid": 1}).to_list(5000)
+        bal_map: dict = {}
+        for i in invs:
+            k = i.get("customer_id")
+            if not k:
+                continue
+            bal_map[k] = bal_map.get(k, 0.0) + float(i.get("balance_due", 0))
+        for c in docs:
+            c["outstanding_balance"] = round(bal_map.get(c["id"], 0.0), 2)
     return docs
 
 @router.post("/customers")
@@ -140,11 +151,36 @@ async def customer_transactions(
     total_shortage = sum(float(t.get("shortage_amount", 0)) for t in trips)
     total_excess = sum(float(t.get("excess_amount", 0)) for t in trips)
     total_halting = sum(float(t.get("halting_amount", 0)) for t in trips)
-    total_billed = sum(float(inv.get("total", 0)) for inv in invoices)
+    total_billed = sum(float(inv.get("total_amount", inv.get("gross_total", 0))) for inv in invoices)
     total_received = sum(float(inv.get("amount_paid", 0)) for inv in invoices)
     outstanding = sum(float(inv.get("balance_due", 0)) for inv in invoices)
     # Uninvoiced billable freight (pending trips)
     total_pending_freight = sum(_trip_billable(t) for t in trips if t.get("status") != "invoiced")
+
+    # Aging buckets (based on invoice date vs today)
+    today = datetime.now(timezone.utc).date()
+    aging = {"0_30": 0.0, "31_60": 0.0, "61_90": 0.0, "90_plus": 0.0}
+    for inv in invoices:
+        bal = float(inv.get("balance_due", 0))
+        if bal <= 0:
+            continue
+        try:
+            dt = datetime.fromisoformat(inv.get("date", ""))
+        except Exception:
+            try:
+                dt = datetime.strptime(inv.get("date", ""), "%Y-%m-%d")
+            except Exception:
+                continue
+        days = (today - dt.date()).days
+        if days <= 30:
+            aging["0_30"] += bal
+        elif days <= 60:
+            aging["31_60"] += bal
+        elif days <= 90:
+            aging["61_90"] += bal
+        else:
+            aging["90_plus"] += bal
+    aging = {k: round(v, 2) for k, v in aging.items()}
 
     summary = {
         "trip_count": len(trips),
@@ -161,6 +197,7 @@ async def customer_transactions(
         "total_pending_uninvoiced": round(total_pending_freight, 2),
         "invoice_count": len(invoices),
         "payment_count": len(payments),
+        "aging": aging,
     }
 
     # Unified transaction list (sorted DESC by date)
@@ -195,7 +232,7 @@ async def customer_transactions(
                 "date": inv.get("date"),
                 "id": inv.get("id"),
                 "ref": inv.get("invoice_number"),
-                "amount": inv.get("total"),
+                "amount": inv.get("total_amount") or inv.get("gross_total"),
                 "amount_paid": inv.get("amount_paid", 0),
                 "balance_due": inv.get("balance_due", 0),
                 "status": inv.get("payment_status"),   # unpaid | partial | paid
@@ -252,7 +289,7 @@ async def customer_statement_pdf(
 
     total_qty = sum(float(t.get("tons", 0)) for t in trips)
     total_freight = sum(float(t.get("freight_amount", 0)) for t in trips)
-    total_billed = sum(float(inv.get("total", 0)) for inv in invoices)
+    total_billed = sum(float(inv.get("total_amount", inv.get("gross_total", 0))) for inv in invoices)
     total_received = sum(float(inv.get("amount_paid", 0)) for inv in invoices)
     outstanding = sum(float(inv.get("balance_due", 0)) for inv in invoices)
 
@@ -321,7 +358,7 @@ async def customer_statement_pdf(
     for i in invoices:
         inv_rows.append([
             i.get("date", ""), i.get("invoice_number", ""),
-            f"₹{float(i.get('total', 0)):,.2f}", f"₹{float(i.get('amount_paid', 0)):,.2f}",
+            f"₹{float(i.get('total_amount') or i.get('gross_total', 0)):,.2f}", f"₹{float(i.get('amount_paid', 0)):,.2f}",
             f"₹{float(i.get('balance_due', 0)):,.2f}", str(i.get("payment_status", "")).upper(),
         ])
     it = Table(inv_rows, hAlign="LEFT", repeatRows=1, colWidths=[22 * mm, 30 * mm, 28 * mm, 28 * mm, 28 * mm, 22 * mm])
@@ -402,3 +439,201 @@ async def share_customer_statement(
         "whatsapp_url": f"https://wa.me/?text={urllib.parse.quote(msg)}",
         "whatsapp_text": msg,
     }
+
+
+# ============================================================================
+# Iter37 — Bulk WhatsApp Payment Reminders + Monthly Balances + Add Payment
+# ============================================================================
+
+@router.get("/customers/bulk-reminder")
+async def bulk_reminder_previews(request: Request, user=Depends(get_current_user)):
+    """Return one WhatsApp deeplink per customer with an outstanding balance."""
+    import urllib.parse
+    cid = await _active_company_id(request, user)
+    company = await db.companies.find_one({"id": cid, "user_id": user["user_id"]}, {"_id": 0}) or {}
+
+    # Build a customer_id -> {balance, oldest_days} map from unpaid invoices
+    invs = await db.invoices.find(
+        {"user_id": user["user_id"], "company_id": cid, "balance_due": {"$gt": 0}},
+        {"_id": 0}
+    ).to_list(5000)
+    today = datetime.now(timezone.utc).date()
+    per_cust: dict = {}
+    for i in invs:
+        k = i.get("customer_id")
+        if not k:
+            continue
+        b = per_cust.setdefault(k, {"balance": 0.0, "invoices": [], "oldest_days": 0})
+        b["balance"] += float(i.get("balance_due", 0))
+        try:
+            dt = datetime.fromisoformat(i["date"]).date()
+        except Exception:
+            try:
+                dt = datetime.strptime(i["date"], "%Y-%m-%d").date()
+            except Exception:
+                dt = today
+        days = (today - dt).days
+        b["oldest_days"] = max(b["oldest_days"], days)
+        b["invoices"].append({"number": i.get("invoice_number"), "amount": float(i.get("balance_due", 0)), "date": i.get("date"), "days": days})
+
+    customers = await db.customers.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0}).to_list(2000)
+    cust_map = {c["id"]: c for c in customers}
+
+    out = []
+    for kid, info in per_cust.items():
+        cust = cust_map.get(kid) or {}
+        top = sorted(info["invoices"], key=lambda x: -x["days"])[:3]
+        msg_lines = [
+            f"*Payment Reminder — {company.get('name', 'Our Company')}*",
+            f"Dear {cust.get('name', 'Customer')},",
+            "",
+            f"You have an outstanding balance of *₹{info['balance']:,.2f}*.",
+            f"Oldest bill is {info['oldest_days']} days old.",
+            "",
+            "Pending invoices:",
+        ]
+        for t in top:
+            msg_lines.append(f"  · {t['number']} — ₹{t['amount']:,.2f} ({t['days']}d old)")
+        msg_lines.append("")
+        msg_lines.append("Please arrange payment at your earliest convenience.")
+        msg = "\n".join(msg_lines)
+        phone = (cust.get("phone") or "").strip().replace(" ", "").replace("-", "")
+        # wa.me format: 91xxxxxxxxxx or empty (opens chat picker)
+        wa_target = phone if phone else ""
+        # Strip leading + / 0 / country prefix duplicates
+        if wa_target.startswith("+"):
+            wa_target = wa_target[1:]
+        if len(wa_target) == 10:
+            wa_target = "91" + wa_target
+        out.append({
+            "customer_id": kid,
+            "customer_name": cust.get("name", ""),
+            "phone": cust.get("phone", ""),
+            "balance": round(info["balance"], 2),
+            "oldest_days": info["oldest_days"],
+            "invoice_count": len(info["invoices"]),
+            "message": msg,
+            "whatsapp_url": f"https://wa.me/{wa_target}?text={urllib.parse.quote(msg)}",
+        })
+    out.sort(key=lambda x: -x["balance"])
+    return {"reminders": out, "total_customers": len(out), "total_outstanding": round(sum(r["balance"] for r in out), 2)}
+
+
+@router.get("/customers/{cid}/monthly-balances")
+async def monthly_balances(cid: str, request: Request, user=Depends(get_current_user)):
+    """Aggregate customer transactions by YYYY-MM for the Monthly Balances tab."""
+    company_id = await _active_company_id(request, user)
+    trips = await db.trips.find({"user_id": user["user_id"], "company_id": company_id, "customer_id": cid}, {"_id": 0, "date": 1, "freight_amount": 1, "tons": 1, "status": 1}).to_list(5000)
+    invoices = await db.invoices.find({"user_id": user["user_id"], "company_id": company_id, "customer_id": cid}, {"_id": 0, "date": 1, "total_amount": 1, "gross_total": 1, "amount_paid": 1, "balance_due": 1, "payments": 1}).to_list(5000)
+
+    months: dict = {}
+
+    def _key(dstr):
+        return (dstr or "")[:7] or "unknown"
+
+    for t in trips:
+        k = _key(t.get("date"))
+        m = months.setdefault(k, {"month": k, "trip_count": 0, "quantity": 0.0, "freight": 0.0, "billed": 0.0, "received": 0.0, "balance": 0.0})
+        m["trip_count"] += 1
+        m["quantity"] += float(t.get("tons", 0))
+        m["freight"] += float(t.get("freight_amount", 0))
+    for inv in invoices:
+        k = _key(inv.get("date"))
+        m = months.setdefault(k, {"month": k, "trip_count": 0, "quantity": 0.0, "freight": 0.0, "billed": 0.0, "received": 0.0, "balance": 0.0})
+        m["billed"] += float(inv.get("total_amount", inv.get("gross_total", 0)))
+        m["received"] += float(inv.get("amount_paid", 0))
+        m["balance"] += float(inv.get("balance_due", 0))
+        # count payments in the same month based on payment date
+        for p in (inv.get("payments") or []):
+            pk = _key(p.get("date"))
+            if pk != k:
+                pm = months.setdefault(pk, {"month": pk, "trip_count": 0, "quantity": 0.0, "freight": 0.0, "billed": 0.0, "received": 0.0, "balance": 0.0})
+                # Don't double count; keep received in invoice-month
+                pm.setdefault("_", 0)
+
+    rows = list(months.values())
+    for m in rows:
+        for k in ("quantity", "freight", "billed", "received", "balance"):
+            m[k] = round(m[k], 2)
+    rows.sort(key=lambda x: x["month"], reverse=True)
+    return {"months": rows}
+
+
+class AddPaymentRequest(BaseModel):
+    amount: float
+    date: str = ""
+    mode: str = "Cash"                        # Cash | Cheque | UPI | Bank Transfer | Fuel | Others
+    note: str = ""
+    received_by_driver: bool = False
+    driver_id: Optional[str] = None
+    allocations: Optional[list] = None        # [{invoice_id, amount}] — optional targeted allocation
+
+
+@router.post("/customers/{cid}/add-payment")
+async def add_customer_payment(cid: str, payload: AddPaymentRequest, request: Request, user=Depends(get_current_user)):
+    """Add a payment against a customer. Allocates to invoices oldest-first (or per user allocations)."""
+    company_id = await _active_company_id(request, user)
+    customer = await db.customers.find_one({"id": cid, "user_id": user["user_id"], "company_id": company_id}, {"_id": 0})
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    remaining = float(payload.amount)
+    if remaining <= 0:
+        raise HTTPException(status_code=400, detail="Amount must be > 0")
+    pay_date = payload.date or datetime.now(timezone.utc).date().isoformat()
+
+    # Get all invoices with balance, oldest first
+    invs = await db.invoices.find(
+        {"user_id": user["user_id"], "company_id": company_id, "customer_id": cid, "balance_due": {"$gt": 0}},
+        {"_id": 0}
+    ).sort("date", 1).to_list(2000)
+
+    # Build allocation map
+    alloc_map: dict = {}
+    if payload.allocations:
+        for a in payload.allocations:
+            if a.get("invoice_id"):
+                alloc_map[a["invoice_id"]] = float(a.get("amount", 0))
+
+    applied = []
+    for inv in invs:
+        if remaining <= 0:
+            break
+        # Use explicit allocation if provided; else oldest-first fill
+        if payload.allocations:
+            ask = alloc_map.get(inv["id"], 0)
+            if ask <= 0:
+                continue
+            pay = min(ask, remaining, float(inv["balance_due"]))
+        else:
+            pay = min(remaining, float(inv["balance_due"]))
+        if pay <= 0:
+            continue
+        note_bits = [payload.note] if payload.note else []
+        if payload.received_by_driver and payload.driver_id:
+            note_bits.append(f"received-by-driver:{payload.driver_id}")
+        elif payload.received_by_driver:
+            note_bits.append("received-by-driver")
+        new_pay = {"amount": pay, "date": pay_date, "mode": payload.mode, "note": " · ".join(note_bits)}
+        inv_payments = inv.get("payments") or []
+        inv_payments.append(new_pay)
+        new_paid = float(inv.get("amount_paid", 0)) + pay
+        inv_total = float(inv.get("total_amount") or inv.get("gross_total") or inv.get("total") or 0)
+        new_balance = inv_total - new_paid
+        new_status = "paid" if new_balance <= 0.01 else ("partial" if new_paid > 0 else "unpaid")
+        await db.invoices.update_one(
+            {"id": inv["id"], "user_id": user["user_id"]},
+            {"$set": {"payments": inv_payments, "amount_paid": round(new_paid, 2), "balance_due": round(max(new_balance, 0), 2), "payment_status": new_status}},
+        )
+        applied.append({"invoice_id": inv["id"], "invoice_number": inv.get("invoice_number"), "amount": pay})
+        remaining -= pay
+
+    await _log_audit(user, "customer_payment", "create", entity_id=cid, entity_ref=f"₹{payload.amount} via {payload.mode}")
+
+    return {
+        "applied": applied,
+        "amount_total": payload.amount,
+        "amount_unallocated": round(remaining, 2),   # will appear as advance if > 0 (owner can allocate later)
+        "date": pay_date,
+        "mode": payload.mode,
+    }
+
