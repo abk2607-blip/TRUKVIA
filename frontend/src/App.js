@@ -23,6 +23,7 @@ import InvoiceCreate from "@/pages/InvoiceCreate";
 import InvoiceView from "@/pages/InvoiceView";
 import Settings from "@/pages/Settings";
 import TripImport from "@/pages/TripImport";
+import TripTemplates from "@/pages/TripTemplates";
 import Layout from "@/components/Layout";
 
 function Protected({ children }) {
@@ -52,6 +53,7 @@ function AppRouter() {
       <Route path="/trips" element={<Protected><Trips /></Protected>} />
       <Route path="/trips/new" element={<Protected><TripForm /></Protected>} />
       <Route path="/trips/import" element={<Protected><TripImport /></Protected>} />
+      <Route path="/trips/templates" element={<Protected><TripTemplates /></Protected>} />
       <Route path="/trips/:id/edit" element={<Protected><TripForm /></Protected>} />
       <Route path="/trips/:id/view" element={<Protected><TripView /></Protected>} />
       <Route path="/customers" element={<Protected><Customers /></Protected>} />

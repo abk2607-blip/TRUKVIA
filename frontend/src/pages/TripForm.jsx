@@ -95,6 +95,8 @@ export default function TripForm() {
   const { data: drivers = [] } = useQuery({ queryKey: ["drivers"], queryFn: async () => (await api.get("/drivers")).data });
   const { data: products = [] } = useQuery({ queryKey: ["products"], queryFn: async () => (await api.get("/products")).data });
   const { data: vehicles = [] } = useQuery({ queryKey: ["vehicles"], queryFn: async () => (await api.get("/vehicles")).data });
+  const { data: templates = [] } = useQuery({ queryKey: ["templates"], queryFn: async () => (await api.get("/templates")).data });
+  const [selectedTemplate, setSelectedTemplate] = useState("");
 
   const { data: trip } = useQuery({
     queryKey: ["trip", id],
@@ -242,6 +244,36 @@ export default function TripForm() {
       </header>
 
       <form onSubmit={(e) => { e.preventDefault(); save.mutate(); }} className="space-y-6">
+        {!isEdit && templates.length > 0 && (
+          <div data-testid="template-picker" className="border border-emerald-300 bg-emerald-50 rounded-sm p-4 flex flex-col sm:flex-row sm:items-center gap-3">
+            <div className="text-sm text-emerald-900 flex-1">
+              <div className="font-bold uppercase tracking-wider text-xs mb-1">⚡ Quick Start from Template</div>
+              <div className="text-xs">Select a saved route/customer template to pre-fill this trip.</div>
+            </div>
+            <select
+              data-testid="template-picker-select"
+              value={selectedTemplate}
+              onChange={async (e) => {
+                const tid = e.target.value;
+                setSelectedTemplate(tid);
+                if (!tid) return;
+                try {
+                  const { data } = await api.post(`/trips/from-template/${tid}`);
+                  setForm(prev => ({
+                    ...prev,
+                    ...data,
+                    expenses: { ...(prev.expenses || {}) },
+                  }));
+                  toast.success("Template applied — fill in vehicle, driver, tons");
+                } catch (err) { toast.error(err.response?.data?.detail || "Template apply failed"); }
+              }}
+              className={inputCls + " sm:w-72"}
+            >
+              <option value="">— Choose a template —</option>
+              {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          </div>
+        )}
         {isEdit && form.status === "invoiced" && (
           <div data-testid="invoiced-edit-warning" className="border border-amber-300 bg-amber-50 rounded-sm p-4 text-sm">
             <div className="font-bold text-amber-900 uppercase tracking-wider text-xs mb-1">⚠ Invoiced Trip</div>

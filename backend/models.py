@@ -345,3 +345,48 @@ class AuditLog(BaseModel):
     changes: dict = Field(default_factory=dict)   # {field: {old, new}}
     user_email: str = ""
     user_name: str = ""
+
+
+# ==================== Trip Template ====================
+
+class TripTemplate(BaseModel):
+    """Company-shared reusable trip template.
+
+    Stores the recurring parts of a trip so an operator can populate a Trip Sheet
+    with a single click and only edit variable fields (vehicle, driver, date, tons).
+    """
+    id: str = Field(default_factory=lambda: new_id("tpl_"))
+    name: str                                          # e.g. "IOCL Vizag → Medak — Bitumen VG 30"
+    customer_id: str = ""
+    from_location: str = ""
+    to_location: str = ""
+    load_details: str = ""                             # material / product free text
+    product_type: str = ""                             # VG-30 / VG-40 / CRMB / PMB / Emulsion …
+    round_trip_kms: float = 0.0
+    freight_mode: Literal["per_ton", "round_trip", "fixed"] = "per_ton"
+    rate_per_ton: float = 0.0
+    rate_per_km_per_ton: float = 0.0
+    fixed_amount: float = 0.0
+    hsn_sac: str = "996791"
+    gst_type: Literal["cgst_sgst", "igst", "rcm"] = "cgst_sgst"
+    halting_rate_per_day: float = 0.0
+    remarks: str = ""                                  # default notes / remarks
+    is_active: bool = True
+    created_by: str = ""                               # user_id of creator (audit)
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+
+
+class ChatSession(BaseModel):
+    """A single conversation thread with the AI business assistant (per company)."""
+    id: str = Field(default_factory=lambda: new_id("chat_"))
+    title: str = "New chat"
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+
+
+class ChatMessage(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("msg_"))
+    session_id: str
+    role: Literal["user", "assistant", "system"] = "user"
+    content: str = ""
+    tool_calls: list = Field(default_factory=list)
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())

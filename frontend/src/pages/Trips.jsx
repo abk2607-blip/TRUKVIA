@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, API, fmtCurrency, fmtDate } from "@/api";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { Plus, CheckCircle2, Clock, Download, FileText, Trash2, Eye, Pencil } from "lucide-react";
+import { Plus, CheckCircle2, Clock, Download, FileText, Trash2, Eye, Pencil, Copy } from "lucide-react";
 
 const downloadEwayBill = async (tripId) => {
   const { api: ax } = await import("@/api");
@@ -136,6 +136,21 @@ export default function Trips() {
                     <Link data-testid={`view-trip-${t.id}`} to={`/trips/${t.id}/view`} className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-zinc-200 rounded-sm hover:bg-zinc-950 hover:text-white mr-1" title="View details">
                       <Eye size={11} /> View
                     </Link>
+                    <button
+                      data-testid={`duplicate-trip-${t.id}`}
+                      onClick={async () => {
+                        try {
+                          const { data } = await api.post(`/trips/${t.id}/duplicate`);
+                          toast.success("Trip duplicated");
+                          qc.invalidateQueries({ queryKey: ["trips"] });
+                          window.location.href = `/trips/${data.id}/edit`;
+                        } catch (e) { toast.error(e.response?.data?.detail || "Duplicate failed"); }
+                      }}
+                      className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-emerald-200 text-emerald-700 rounded-sm hover:bg-emerald-50 mr-1"
+                      title="Duplicate this trip"
+                    >
+                      <Copy size={11} /> Duplicate
+                    </button>
                     <button
                       data-testid={`delete-trip-${t.id}`}
                       onClick={() => askDelete(t)}

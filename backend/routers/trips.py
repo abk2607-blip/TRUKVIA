@@ -117,6 +117,72 @@ async def delete_trip(tid: str, request: Request, reason: str = "", user=Depends
     return {"ok": True, "linked_invoice_id": linked_invoice_id}
 
 
+@router.post("/trips/{tid}/duplicate")
+async def duplicate_trip(tid: str, request: Request, user=Depends(get_current_user)):
+    """Clone an existing trip. Variable fields (date, tons, invoice link, status,
+    supplier/customer advances, halting days, LR number) are reset so the user
+    only needs to fill in vehicle/driver/date/tons for the new trip."""
+    cid = await _active_company_id(request, user)
+    src = await db.trips.find_one({"id": tid, "user_id": user["user_id"], "company_id": cid}, {"_id": 0})
+    if not src:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    src.pop("id", None)
+    src.pop("invoice_id", None)
+    src["status"] = "pending"
+    src["lr_number"] = ""
+    src["date"] = now_utc().date().isoformat()
+    # Reset one-off numeric fields but keep rate/route/product info
+    for f in ("tons", "total_halting_days", "chargeable_halting_days", "halting_amount",
+              "shortage_qty", "excess_qty", "shortage_amount", "excess_amount",
+              "supplier_advance", "supplier_other_recoveries"):
+        if f in src:
+            src[f] = 0
+    if isinstance(src.get("expenses"), dict):
+        exp = src["expenses"]
+        for f in ("cash_advance_received", "diesel_from_customer_qty",
+                  "diesel_from_customer_rate", "diesel_from_customer_amount",
+                  "diesel", "toll", "batta", "repair", "other", "firewood", "shortage_amount"):
+            if f in exp:
+                exp[f] = 0
+    trip = Trip(**{k: v for k, v in src.items() if k in Trip.model_fields})
+    trip = _compute_trip(trip)
+    doc = trip.model_dump()
+    doc["user_id"] = user["user_id"]
+    doc["company_id"] = cid
+    await db.trips.insert_one(doc)
+    doc.pop("_id", None)
+    doc.pop("user_id", None)
+    await _log_audit(user, "trip", "create", entity_id=doc["id"], entity_ref=doc.get("vehicle_number", ""), reason=f"Duplicated from {tid}")
+    return doc
+
+
+@router.post("/trips/from-template/{tid}")
+async def trip_from_template(tid: str, request: Request, user=Depends(get_current_user)):
+    """Return a pre-populated Trip payload from a saved template. Client saves via POST /trips."""
+    cid = await _active_company_id(request, user)
+    tpl = await db.templates.find_one({"id": tid, "company_id": cid}, {"_id": 0, "user_id": 0})
+    if not tpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+    return {
+        "customer_id": tpl.get("customer_id", ""),
+        "from_location": tpl.get("from_location", ""),
+        "to_location": tpl.get("to_location", ""),
+        "load_details": tpl.get("load_details", ""),
+        "product_type": tpl.get("product_type", ""),
+        "round_trip_kms": tpl.get("round_trip_kms", 0),
+        "freight_mode": tpl.get("freight_mode", "per_ton"),
+        "rate_per_ton": tpl.get("rate_per_ton", 0),
+        "rate_per_km_per_ton": tpl.get("rate_per_km_per_ton", 0),
+        "fixed_amount": tpl.get("fixed_amount", 0),
+        "hsn_sac": tpl.get("hsn_sac", "996791"),
+        "halting_rate_per_day": tpl.get("halting_rate_per_day", 0),
+        "notes": tpl.get("remarks", ""),
+        "date": now_utc().date().isoformat(),
+    }
+
+
+
+
 @router.get("/trips/import/template")
 async def trip_import_template():
     df = pd.DataFrame([{c: "" for c in TRIP_IMPORT_COLUMNS}])

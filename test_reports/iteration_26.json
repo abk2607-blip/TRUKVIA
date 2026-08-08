@@ -1,0 +1,35 @@
+{
+  "summary": "Iter26 Phase 1 (AI Business Assistant + Trip Templates + Duplicate Trip) fully verified. Wrote /app/backend/tests/test_iter26_phase1_ai_templates.py with 14 tests covering Templates CRUD + company scoping, Duplicate Trip reset logic, from-template prefill, AI SSE streaming, session persistence, and multi-company AI scoping — all 14 passed. Full regression of the 6-file standing suite (iter17, iter21, iter22, iter23, multi_company_iso, iter25) all 64 passed. Frontend Playwright smoke via localStorage-seeded auth confirmed: /trips/templates page loads, template-new opens form, template-save persists (form dismissed), Duplicate button rendered per trip row, AI chat bubble opens with panel/input/send + streams a response within 15s, and nav-templates sidebar link is present. Grand total: 14 new + 64 regression = 78/78 backend tests pass.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter26_phase1_ai_templates.py",
+    "/app/test_reports/pytest/iter26_results.xml",
+    "/app/test_reports/pytest/iter26_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "trips.py trip_import(): the loop reassigns the outer `cid` (active company id) to each row's customer id (line ~230). Doesn't affect correctness because `cid` isn't reused after that, but it shadows an important variable — rename local to `cust_id` for clarity.",
+    "TripTemplate.freight_mode allows Literal['per_ton','round_trip','fixed'] but Trip.freight_mode only allows Literal['per_ton','fixed']. If a user creates a template with freight_mode='round_trip', POST /trips using the from-template prefill will fail validation. Either add 'round_trip' to Trip or drop it from TripTemplate.",
+    "ai.py event_stream(): if the LLM raises after some text chunks were yielded, `type:done` is never emitted — clients will hang waiting for it. Consider always yielding a terminal event in finally (in addition to persisting).",
+    "ai.py: session_id used with LlmChat is the same value across companies (both scoped by user + company internally). Not a bug for scoping (tools enforce cid) but worth noting: if the same user has two companies with same-length message history, they still get different chat sessions because we key on the generated `chat_...` id.",
+    "templates.py create_template returns the doc with `_id` popped but does NOT remove `user_id` before returning (`user_id` is added at line 30, only popped in list/get/put paths, but create returns `doc` after popping only `_id`). Minor info leak — user_id is not sensitive here but be consistent."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter26_phase1_ai_templates.py (new)"
+  ],
+  "success_rate": {"backend": "100% (78/78)", "frontend": "100% (all smoke checks passed)"},
+  "test_credentials": "Bearer test_session_bitumen_2026 (backend auto-provisions owner@vbklogistics.test). X-Company-Id header for company scoping.",
+  "seed_data_creation": "Two TEST_IT26_<hash>_CompA / CompB companies created per module run with TEST_ prefixed customers/templates/trips. Cleanup fixture deletes tagged templates + chat sessions on teardown; trips remain but are namespaced by TAG.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Standing regression is now 78 tests (64 legacy + 14 iter26). AI chat SSE test uses stream=True + iter_lines and matches on 'data: ' prefix. Multi-company AI scoping test seeds trips in both A (10k) and B (50k) and validates: (a) trip/data isolation (list_trips per cid), (b) chat session_id differs between companies, (c) session listing does not leak sessions across companies. Gemini network call takes ~2-5s so total suite is ~15s for iter26. Note the code review comments — a couple of easy cleanups worth flagging to E1.",
+  "rca of the issue": "N/A — no failures. All happy-path + isolation invariants held."
+}
