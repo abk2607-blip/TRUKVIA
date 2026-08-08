@@ -147,6 +147,11 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
   - CRITICAL DATA-INTEGRITY FIX: `routers/trips.py` `trip_import()` inner variable `cid` was shadowing the outer active-company id and stamping every imported trip with the CUSTOMER id instead of the company id — trips became invisible to all list views. Fix: renamed inner variable to `cust_id`. Verified by asserting `trip.company_id == active_company_id` after import.
   - New "Continue as Demo — Skip Login" button on Login page (`data-testid=demo-login-button`) — seeds `session_token=test_session_bitumen_2026` and redirects to /dashboard. Auto-provisions a test user. Works on BOTH static and dynamic preview URLs (the static-URL sign-in 404 is a build/deploy concern outside code scope).
   - Tests: 3 new + 34 regression = **37/37 pass**. Testing agent confirmed no data leaks across companies via import.
+- [x] **Iter29 — Runtime Backend-URL Fallback (static→dynamic host mapping)** (Feb 2026)
+  - `api.js` gained `_resolveBackendUrl()` runtime helper: env → static-to-dynamic hostname map → empty. Static preview URL bundles compiled without REACT_APP_BACKEND_URL now self-heal at runtime by mapping `.preview.static.emergentagent.com` to `.preview.emergentagent.com`.
+  - `AIChatBubble.jsx` switched from `process.env.REACT_APP_BACKEND_URL` to `import { API } from '@/api'` so all ad-hoc `fetch()` calls also use the resolved base.
+  - Effective on the dynamic preview URL immediately (hot reload); takes effect on the static preview URL after the next platform rebuild.
+  - Tests: 41/41 pytest pass, Playwright dynamic-URL flow (demo login → dashboard → AI chat SSE) green.
 
 ## Backlog (P1)
 - [ ] Drivers & Vehicles master (currently free-text)
