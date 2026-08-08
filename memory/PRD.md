@@ -197,9 +197,14 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - [x] **Iter37 — Customer History Extras: Balance Chips + Aging + Tabs + Add Payment + Bulk Reminders** (Feb 2026)
   - `routers/customers.py`: `GET /customers?with_balance=true` includes `outstanding_balance` per customer. `summary.aging` (0_30/31_60/61_90/90_plus). New endpoints: `GET /customers/bulk-reminder` (per-customer WhatsApp deeplinks), `GET /customers/{id}/monthly-balances` (monthly aggregate), `POST /customers/{id}/add-payment` (oldest-first or targeted allocation, updates each invoice's amount_paid + balance_due + payment_status).
   - `pages/CustomerHistory.jsx` fully redesigned: 4 tabs (All·Passbook / Trip Ledger / Invoice Ledger drill-down / Monthly Balances), month-grouping in All (collapsible headers), Aging cards (4 buckets), Add Payment right-drawer with 6 payment modes + Received-by-Driver toggle + Choose-Allocations, Bulk Reminders modal with per-customer send + Send All. Balance chip shown in left panel per customer.
-  - `pages/TripForm.jsx`: reads `?customer_id=...` URL param and pre-fills the customer picker.
-  - Z-index bumped to `z-[70]` on drawer & modal so AI chat bubble no longer blocks the Save button.
   - Tests: 5 iter37 pytest = 100% pass. Frontend E2E: all major flows verified via Playwright.
+- [x] **Iter38 — Party Details Tab + Advance Pool + Payment Photo + Nightly Scheduler** (Feb 2026)
+  - `models.py`: Customer gets 5 new fields — `email`, `opening_balance`, `advance_balance`, `notes`, `reminder_enabled`.
+  - `routers/customers.py` `POST /customers/{id}/add-payment`: `photo_data_url` (base64) uploaded to `public/payment_photos/` and returned as `photo_url` on each applied payment record. Surplus amount (unallocated) auto-bumps `customer.advance_balance`. New `PUT /customers/{id}/reminder-pref` toggles inclusion in nightly digest.
+  - `scheduler.py` (new): APScheduler AsyncIOScheduler runs `_nightly_reminder_digest()` at 12:30 UTC (18:00 IST). Digest saved to `db.reminder_digests` per user per day. `GET /reminders/digest` + `POST /reminders/digest/run` for read + manual trigger.
+  - `server.py` startup hook wires `start_scheduler()`.
+  - `pages/CustomerHistory.jsx`: 5th tab **Party Details** with full profile card + Quick Edit inline (email, PAN, opening balance, notes, reminder toggle). **Advance chip** in customer header when `advance_balance > 0`. **Photo capture** in Add Payment drawer with camera + preview + remove.
+  - Tests: 5 iter38 pytest = 100% pass. Iter31-38 full regression = **26/26 pass**. Frontend E2E via Playwright = 100% (all selectors present).
 
 ## Backlog (P0-P1, requested but not yet built)
 - (all Phase-2 items delivered in Iter32 — searchable dropdowns, quick-add, supplier expansion, complete trip view)
