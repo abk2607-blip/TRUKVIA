@@ -157,8 +157,20 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
   - Rolling refresh for ALL sessions: when `expires_at` is <6 days away and last_refreshed_at is >4 min old, extend `expires_at` by +7 days. Active users never bounce mid-form.
   - `DEMO_TOKEN_DISABLED=1` env kill-switch for production.
   - Tests: 5 new + 34 regression = **39/39 pass**. Playwright: demo → 4 routes → post-inactivity /auth/me still 200.
+- [x] **Iter31 — Phase-1 Bundle: Vehicle Modal Sticky Footer + Auto LR Number** (Feb 2026)
+  - `Vehicles.jsx`: modal restructured — `max-h-[90vh] flex flex-col`; grid body scrolls internally (`overflow-y-auto flex-1`); Cancel/Save footer moved OUTSIDE scroll region as `sticky bottom-0` with `border-t`. Save button now visible without zooming out at all breakpoints (1920×1080, 1366×768, 1024×600).
+  - `routers/trips.py` `POST /api/trips`: auto-assigns `lr_number` from `_next_lr_number(user_id, company_id)` when payload's lr_number is blank. Custom LR values preserved (do not consume sequence). Per-company scope — cross-company sequences independent.
+  - `Trips.jsx`: added "LR No." column between Date and Customer (mono font, em-dash placeholder for empty).
+  - `TripForm.jsx`: LR field placeholder updated to "Leave blank for auto-generation".
+  - Tests: 7 new + 56 regression = **63/63 pass**.
 
 ## Backlog (P0-P1, requested but not yet built)
+- [ ] Searchable Dropdowns (Customer / Supplier / Vehicle / Driver / Product across forms)
+- [ ] Quick-Add Master Data inline modals from Trip Sheet
+- [ ] Supplier Vehicle Enhancements — auto-show supplier panel, supplier diesel tracking, auto-adjust shortage/excess/incomes/expenses in settlement
+- [ ] Complete Trip View — render ALL fields (even empty) matching TripEntry structure
+
+## Backlog (P2, previously logged)
 - [ ] Drivers & Vehicles master (currently free-text)
 - [ ] CSV / Excel export of trips & invoices
 - [ ] Payment reminders / SMS to customers
