@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { ArrowLeft, FileText } from "lucide-react";
 import FileAttachments from "@/components/FileAttachments";
 import SearchableSelect from "@/components/SearchableSelect";
+import VoiceTripButton from "@/components/VoiceTripButton";
 import {
   QuickAddCustomer,
   QuickAddDriver,
@@ -254,13 +255,24 @@ export default function TripForm() {
     <div className="space-y-6" data-testid="trip-form-page">
       <header className="flex items-center gap-3 border-b border-zinc-200 pb-4">
         <button onClick={() => nav(-1)} className="p-2 border border-zinc-200 rounded-sm"><ArrowLeft size={16} /></button>
-        <div>
+        <div className="flex-1">
           <div className="text-[11px] uppercase tracking-[0.15em] text-zinc-500 font-bold">Trip Entry</div>
           <h1 className="text-3xl font-black tracking-tighter">
             <span className="telugu">{isEdit ? "ట్రిప్ ఎడిట్" : "కొత్త ట్రిప్"}</span>
             <span className="text-zinc-400"> · {isEdit ? "Edit Trip" : "New Trip"}</span>
           </h1>
         </div>
+        {!isEdit && (
+          <VoiceTripButton
+            onParsed={(p) => {
+              setForm((f) => ({
+                ...f,
+                ...Object.fromEntries(Object.entries(p).filter(([, v]) => v !== "" && v !== null && v !== undefined)),
+                expenses: f.expenses,
+              }));
+            }}
+          />
+        )}
       </header>
 
       <form onSubmit={(e) => { e.preventDefault(); save.mutate(); }} className="space-y-6">

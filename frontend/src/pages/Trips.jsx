@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, API, fmtCurrency, fmtDate } from "@/api";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { Plus, CheckCircle2, Clock, Download, FileText, Trash2, Eye, Pencil, Copy } from "lucide-react";
+import { Plus, CheckCircle2, Clock, Download, FileText, Trash2, Eye, Pencil, Copy, Share2 } from "lucide-react";
 
 const downloadEwayBill = async (tripId) => {
   const { api: ax } = await import("@/api");
@@ -125,6 +125,20 @@ export default function Trips() {
                       title="Download E-Way Bill JSON"
                     >
                       <Download size={11} /> E-Way
+                    </button>
+                    <button
+                      data-testid={`share-lr-${t.id}`}
+                      onClick={async () => {
+                        try {
+                          const { data } = await api.post(`/trips/${t.id}/share-lr`);
+                          window.open(data.whatsapp_url, "_blank");
+                          toast.success(`LR ${data.lr_number} ready to share`);
+                        } catch (e) { toast.error(e.response?.data?.detail || "Share failed"); }
+                      }}
+                      className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-emerald-300 text-emerald-700 rounded-sm hover:bg-emerald-50 mr-1"
+                      title="Share LR via WhatsApp"
+                    >
+                      <Share2 size={11} /> WA
                     </button>
                     {t.status === "pending" ? (
                       <Link data-testid={`edit-trip-${t.id}`} to={`/trips/${t.id}/edit`} className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-zinc-200 rounded-sm hover:bg-zinc-950 hover:text-white mr-1" title="Edit">

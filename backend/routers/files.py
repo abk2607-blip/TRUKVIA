@@ -179,3 +179,21 @@ async def delete_file(fid: str, user=Depends(get_current_user)):
     if r.matched_count == 0:
         raise HTTPException(status_code=404, detail="Not found")
     return {"ok": True}
+
+
+# Public retrieval — used by WhatsApp share links so recipients (without a login) can download the LR/Invoice PDF.
+# Only exposes objects under the "lr_shares/" or "public/" prefix; any other path is 404.
+@router.get("/files/public/{obj_path:path}")
+async def public_file(obj_path: str):
+    if not (obj_path.startswith("lr_shares/") or obj_path.startswith("public/")):
+        raise HTTPException(status_code=404, detail="Not found")
+    try:
+        data, ctype = get_object(obj_path)
+    except Exception:
+        raise HTTPException(status_code=404, detail="Not found")
+    fname = obj_path.rsplit("/", 1)[-1]
+    return StreamingResponse(
+        io.BytesIO(data), media_type=ctype or "application/octet-stream",
+        headers={"Content-Disposition": f'inline; filename="{fname}"', "Cache-Control": "public, max-age=600"},
+    )
+

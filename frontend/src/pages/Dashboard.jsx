@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api, fmtCurrency, fmtDate } from "@/api";
 import { Link } from "react-router-dom";
 import { TrendingUp, TrendingDown, Truck, FileText, Users, Wallet, ArrowUpRight, MessageCircle, AlertTriangle } from "lucide-react";
+import InsightsCard from "@/components/InsightsCard";
 
 export default function Dashboard() {
   const { data, isLoading } = useQuery({
@@ -47,6 +48,9 @@ export default function Dashboard() {
           </Link>
         </div>
       </header>
+
+      {/* AI Smart Insights */}
+      <InsightsCard />
 
       {/* KPI Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

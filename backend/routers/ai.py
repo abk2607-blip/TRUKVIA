@@ -16,6 +16,7 @@ Tools exposed to the model (each returns concise JSON):
   - gst_summary             GST summary for the active FY
 """
 import json
+import io
 import logging
 import os
 from typing import Optional
@@ -361,4 +362,346 @@ async def ai_chat(payload: ChatRequest, request: Request, user=Depends(get_curre
         event_stream(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no", "Connection": "keep-alive"},
+    )
+
+
+# ============================================================================
+# Voice-to-Trip parser (Iter33)
+# ============================================================================
+
+class ParseTripRequest(BaseModel):
+    transcript: str
+
+
+@router.post("/ai/parse-trip")
+async def parse_trip_from_voice(payload: ParseTripRequest, request: Request, user=Depends(get_current_user)):
+    """Parse a spoken (Telugu/English) trip description into structured trip fields."""
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(status_code=503, detail="AI is not configured (missing EMERGENT_LLM_KEY)")
+    cid = await _active_company_id(request, user)
+    text = (payload.transcript or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Empty transcript")
+
+    # Load master data lookups so LLM can match names → IDs
+    customers = await db.customers.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
+    vehicles = await db.vehicles.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "id": 1, "vehicle_number": 1, "supplier_name": 1, "vehicle_type": 1}).to_list(500)
+    drivers = await db.drivers.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
+    products = await db.products.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "id": 1, "name": 1, "default_rate": 1}).to_list(500)
+
+    system = (
+        "You are a Telugu/English speech-to-JSON parser for a Bitumen transport accounting app. "
+        "The user dictated details of ONE trip. Extract only the fields that were clearly mentioned. "
+        "Return STRICT JSON with these optional keys (omit ones not spoken):\n"
+        '{"date":"YYYY-MM-DD","customer_name":"","vehicle_number":"","driver_name":"","load_details":"",'
+        '"tons":0,"from_location":"","to_location":"","rate_per_ton":0,"round_trip_kms":0,'
+        '"rate_per_km_per_ton":0,"freight_mode":"per_ton|fixed","notes":""}\n'
+        "Rules: "
+        "- Numbers spoken in Telugu (ఇరవై టన్నులు = 20 tons) must be converted to digits. "
+        "- Vehicle registration numbers must be uppercase, no spaces (AP16TA1234). "
+        '- Freight mode: if user says "per ton / తనుకు" pick per_ton; if "round trip / రౌండ్ ట్రిప్" pick fixed. '
+        "- If a customer/vehicle/driver/product name is spoken, use the closest match from these lists (case-insensitive substring):\n"
+        f"Customers: {[c['name'] for c in customers][:40]}\n"
+        f"Vehicles: {[v['vehicle_number'] for v in vehicles][:40]}\n"
+        f"Drivers: {[d['name'] for d in drivers][:40]}\n"
+        f"Products: {[p['name'] for p in products][:20]}\n"
+        f"Today: {now_utc().date().isoformat()}. If user says 'today', 'ఈరోజు' use today. 'yesterday' = today-1.\n"
+        "Return ONLY the JSON object, no prose, no markdown code fence."
+    )
+
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"parse-{user['user_id']}", system_message=system).with_model("gemini", "gemini-3-flash-preview")
+    try:
+        response = await chat.send_message(UserMessage(text=text))
+        raw = response if isinstance(response, str) else (getattr(response, "content", None) or getattr(response, "text", "") or str(response))
+    except Exception as e:
+        logger.exception("parse-trip failed")
+        raise HTTPException(status_code=502, detail=f"AI parse failed: {e}")
+
+    # Strip markdown fences if any
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`").split("\n", 1)[-1]
+        if raw.endswith("```"):
+            raw = raw.rsplit("```", 1)[0]
+    try:
+        data = json.loads(raw)
+    except Exception:
+        # find first { ... }
+        i, j = raw.find("{"), raw.rfind("}")
+        if i >= 0 and j > i:
+            try:
+                data = json.loads(raw[i:j + 1])
+            except Exception:
+                data = {}
+        else:
+            data = {}
+
+    # Resolve names → IDs
+    resolved = dict(data)
+    if data.get("customer_name"):
+        c = next((c for c in customers if data["customer_name"].lower() in c["name"].lower() or c["name"].lower() in data["customer_name"].lower()), None)
+        if c:
+            resolved["customer_id"] = c["id"]
+    if data.get("vehicle_number"):
+        vn = data["vehicle_number"].upper().replace(" ", "")
+        v = next((v for v in vehicles if v["vehicle_number"].upper().replace(" ", "") == vn), None)
+        if v:
+            resolved["vehicle_id"] = v["id"]
+            resolved["vehicle_type"] = v.get("vehicle_type", "own")
+        resolved["vehicle_number"] = vn
+    if data.get("driver_name"):
+        d = next((d for d in drivers if data["driver_name"].lower() in d["name"].lower() or d["name"].lower() in data["driver_name"].lower()), None)
+        if d:
+            resolved["driver_id"] = d["id"]
+            resolved["driver_name"] = d["name"]
+    if data.get("load_details"):
+        p = next((p for p in products if data["load_details"].lower() in p["name"].lower() or p["name"].lower() in data["load_details"].lower()), None)
+        if p:
+            resolved["product_id"] = p["id"]
+            resolved["load_details"] = p["name"]
+    return {"parsed": resolved, "transcript": text}
+
+
+# ============================================================================
+# Smart Dashboard Insights (Iter33)
+# ============================================================================
+
+@router.get("/ai/insights")
+async def dashboard_insights(request: Request, user=Depends(get_current_user)):
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(status_code=503, detail="AI is not configured (missing EMERGENT_LLM_KEY)")
+    cid = await _active_company_id(request, user)
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    thirty_ago = (now - timedelta(days=30)).date().isoformat()
+
+    # Cache: keep the last insight per company for 6 hours
+    cache = await db.ai_insight_cache.find_one({"user_id": user["user_id"], "company_id": cid}, {"_id": 0})
+    if cache and cache.get("generated_at"):
+        try:
+            gen = datetime.fromisoformat(cache["generated_at"])
+            if (now - gen).total_seconds() < 6 * 3600:
+                return {"insights": cache["insights"], "generated_at": cache["generated_at"], "cached": True}
+        except Exception:
+            pass
+
+    # Gather live stats
+    dash = await _tool_get_dashboard(user["user_id"], cid)
+    overdue = await _tool_list_overdue_invoices(user["user_id"], cid, min_days=15)
+    veh_perf = await _tool_vehicle_profit_summary(user["user_id"], cid, days=30)
+    routes = await _tool_route_profit_summary(user["user_id"], cid, days=30)
+
+    # Compute low-profit trips (< 10% margin)
+    trips = await db.trips.find({"user_id": user["user_id"], "company_id": cid, "date": {"$gte": thirty_ago}}, {"_id": 0}).to_list(500)
+    low_profit = []
+    for t in trips:
+        f = float(t.get("freight_amount", 0))
+        p = float(t.get("profit", 0))
+        margin = (p / f * 100) if f > 0 else 0
+        if 0 < f and margin < 10:
+            low_profit.append({"date": t.get("date"), "vehicle": t.get("vehicle_number"), "freight": f, "profit": p, "margin_pct": round(margin, 1)})
+    low_profit = sorted(low_profit, key=lambda x: x["margin_pct"])[:5]
+
+    system = (
+        "You are a business advisor for a Bitumen transport company. Given the JSON stats below, "
+        "produce 4-6 SHORT bullet insights in mixed Telugu+English (short, action-oriented). "
+        "Each bullet MUST be one line, prefixed with a status icon (🟢 good / 🟡 warn / 🔴 urgent). "
+        "Focus on: cash flow, receivables, low-profit vehicles/trips, stuck payments, growth opportunities. "
+        "Include ₹ figures where relevant. Do NOT invent numbers. Return only the bullets, one per line."
+    )
+    ctx = {
+        "overall": dash,
+        "overdue_invoices_15d+": overdue[:8],
+        "vehicle_performance_30d": veh_perf[:8],
+        "route_performance_30d": routes[:5],
+        "low_margin_trips_30d": low_profit,
+    }
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"insights-{cid}", system_message=system).with_model("gemini", "gemini-3-flash-preview")
+    try:
+        response = await chat.send_message(UserMessage(text=json.dumps(ctx, default=str)))
+        text = response if isinstance(response, str) else (getattr(response, "content", None) or getattr(response, "text", "") or str(response))
+        text = (text or "").strip()
+    except Exception as e:
+        logger.exception("insights gen failed")
+        raise HTTPException(status_code=502, detail=f"Insight gen failed: {e}")
+
+    bullets = [ln.strip("•- \t") for ln in text.splitlines() if ln.strip() and any(ln.strip().startswith(ic) for ic in ("🟢", "🟡", "🔴", "•", "-", "*"))]
+    if not bullets:
+        bullets = [ln.strip() for ln in text.splitlines() if ln.strip()][:6]
+
+    result = {
+        "insights": bullets,
+        "generated_at": now.isoformat(),
+        "stats_snapshot": {
+            "outstanding": dash["outstanding_receivable"],
+            "profit_30d": sum(float(t.get("profit", 0)) for t in trips),
+            "low_margin_count": len(low_profit),
+            "overdue_15d_count": len(overdue),
+        },
+    }
+    await db.ai_insight_cache.replace_one(
+        {"user_id": user["user_id"], "company_id": cid},
+        {"user_id": user["user_id"], "company_id": cid, **result},
+        upsert=True,
+    )
+    return {**result, "cached": False}
+
+
+@router.post("/ai/insights/refresh")
+async def insights_refresh(request: Request, user=Depends(get_current_user)):
+    cid = await _active_company_id(request, user)
+    await db.ai_insight_cache.delete_many({"user_id": user["user_id"], "company_id": cid})
+    return await dashboard_insights(request, user)
+
+
+# ============================================================================
+# Report by Chat (Iter33) — NL query → structured spec → PDF
+# ============================================================================
+
+class ReportQuery(BaseModel):
+    query: str
+
+
+@router.post("/ai/report")
+async def natural_language_report(payload: ReportQuery, request: Request, user=Depends(get_current_user)):
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(status_code=503, detail="AI is not configured (missing EMERGENT_LLM_KEY)")
+    cid = await _active_company_id(request, user)
+    q = (payload.query or "").strip()
+    if not q:
+        raise HTTPException(status_code=400, detail="Empty query")
+
+    from datetime import datetime, timezone, timedelta
+    today = datetime.now(timezone.utc).date()
+
+    system = (
+        "Convert the user's report request into STRICT JSON. Keys:\n"
+        '{"title":"", "start":"YYYY-MM-DD", "end":"YYYY-MM-DD", '
+        '"metric":"diesel|freight|profit|expense|shortage|advance|receivable", '
+        '"group_by":"vehicle|customer|driver|route|day|month|none", '
+        '"filter_customer":"", "filter_vehicle":""}\n'
+        f"Today: {today.isoformat()}. If date not given, use last 30 days (start=today-30, end=today). "
+        "If 'last month': start=first day of last month, end=last day of last month. "
+        "Return ONLY the JSON object, no prose."
+    )
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"report-{user['user_id']}", system_message=system).with_model("gemini", "gemini-3-flash-preview")
+    response = await chat.send_message(UserMessage(text=q))
+    raw = response if isinstance(response, str) else (getattr(response, "content", None) or getattr(response, "text", "") or str(response))
+    raw = (raw or "").strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`").split("\n", 1)[-1]
+        if raw.endswith("```"):
+            raw = raw.rsplit("```", 1)[0]
+    try:
+        spec = json.loads(raw)
+    except Exception:
+        i, j = raw.find("{"), raw.rfind("}")
+        spec = json.loads(raw[i:j + 1]) if i >= 0 else {}
+
+    # Defaults
+    spec.setdefault("start", (today - timedelta(days=30)).isoformat())
+    spec.setdefault("end", today.isoformat())
+    spec.setdefault("metric", "profit")
+    spec.setdefault("group_by", "vehicle")
+    spec.setdefault("title", f"{spec['metric'].title()} Report ({spec['group_by']} view)")
+
+    # Execute the query
+    match = {"user_id": user["user_id"], "company_id": cid, "date": {"$gte": spec["start"], "$lte": spec["end"]}}
+    if spec.get("filter_customer"):
+        c = await db.customers.find_one({"user_id": user["user_id"], "company_id": cid, "name": {"$regex": spec["filter_customer"], "$options": "i"}}, {"_id": 0})
+        if c:
+            match["customer_id"] = c["id"]
+    if spec.get("filter_vehicle"):
+        match["vehicle_number"] = spec["filter_vehicle"].upper()
+
+    trips = await db.trips.find(match, {"_id": 0}).to_list(5000)
+    customer_names = {c["id"]: c["name"] for c in await db.customers.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "id": 1, "name": 1}).to_list(2000)}
+
+    def _val(t: dict, metric: str) -> float:
+        if metric == "diesel":
+            return float((t.get("expenses") or {}).get("diesel", 0)) + float(t.get("supplier_diesel", 0))
+        if metric == "freight":
+            return float(t.get("freight_amount", 0))
+        if metric == "expense":
+            return float(t.get("total_expense", 0))
+        if metric == "shortage":
+            return float(t.get("shortage_amount", 0)) + float(t.get("supplier_shortage_deduction", 0))
+        if metric == "advance":
+            return float((t.get("expenses") or {}).get("cash_advance_received", 0)) + float(t.get("supplier_advance", 0))
+        if metric == "receivable":
+            return float(t.get("freight_amount", 0)) - float(t.get("amount_received", 0))
+        # profit default
+        return float(t.get("profit", 0))
+
+    def _key(t: dict, gb: str) -> str:
+        if gb == "vehicle":
+            return t.get("vehicle_number") or "—"
+        if gb == "customer":
+            return customer_names.get(t.get("customer_id"), "—")
+        if gb == "driver":
+            return t.get("driver_name") or "—"
+        if gb == "route":
+            return f"{t.get('from_location', '') or '?'} → {t.get('to_location', '') or '?'}"
+        if gb == "day":
+            return t.get("date", "—")
+        if gb == "month":
+            return (t.get("date") or "")[:7] or "—"
+        return "All"
+
+    buckets: dict = {}
+    total = 0.0
+    for t in trips:
+        k = _key(t, spec["group_by"])
+        v = _val(t, spec["metric"])
+        buckets[k] = buckets.get(k, 0.0) + v
+        total += v
+    rows = sorted(buckets.items(), key=lambda x: -x[1])
+
+    # Generate a simple PDF using ReportLab
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib import colors
+    from reportlab.lib.units import mm
+    buf = io.BytesIO()
+    styles = getSampleStyleSheet()
+    title_st = ParagraphStyle("t", parent=styles["Title"], fontSize=16, leading=20)
+    small_st = ParagraphStyle("s", parent=styles["Normal"], fontSize=9, textColor=colors.grey)
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=18 * mm, rightMargin=18 * mm, topMargin=18 * mm, bottomMargin=18 * mm)
+    story = [Paragraph(spec["title"], title_st)]
+    company = await db.companies.find_one({"id": cid, "user_id": user["user_id"]}, {"_id": 0}) or {}
+    story.append(Paragraph(f"{company.get('name', '')} — Period: {spec['start']} to {spec['end']} — Metric: {spec['metric'].title()} · Group by: {spec['group_by'].title()} · Query: \"{q}\"", small_st))
+    story.append(Spacer(1, 8))
+    data = [[spec["group_by"].title(), "Trips", f"{spec['metric'].title()} (₹)"]]
+    tcount: dict = {}
+    for t in trips:
+        k = _key(t, spec["group_by"])
+        tcount[k] = tcount.get(k, 0) + 1
+    for k, v in rows:
+        data.append([str(k), str(tcount.get(k, 0)), f"{v:,.2f}"])
+    data.append(["TOTAL", str(len(trips)), f"{total:,.2f}"])
+    tbl = Table(data, hAlign="LEFT", repeatRows=1)
+    tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#111827")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+        ("ALIGN", (0, 0), (0, -1), "LEFT"),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+        ("TOPPADDING", (0, 0), (-1, 0), 6),
+        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#f3f4f6")),
+        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d1d5db")),
+    ]))
+    story.append(tbl)
+    doc.build(story)
+    buf.seek(0)
+    filename = f"report_{spec['metric']}_{spec['group_by']}_{today.isoformat()}.pdf"
+    return StreamingResponse(
+        buf, media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{filename}"', "X-Report-Spec": json.dumps(spec)},
     )

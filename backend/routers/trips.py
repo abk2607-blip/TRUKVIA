@@ -2,7 +2,9 @@ from fastapi import APIRouter, HTTPException, Request, Response, Depends, Upload
 from fastapi.responses import StreamingResponse
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
-import io, os, uuid, secrets, re, requests, base64
+import io, os, uuid, secrets, re, requests, base64, logging
+
+logger = logging.getLogger(__name__)
 
 from db import db
 from models import (
@@ -446,6 +448,57 @@ async def trip_lr_pdf(tid: str, user=Depends(get_current_user)):
         media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="{trip["lr_number"].replace("/", "_")}.pdf"'},
     )
+
+
+@router.post("/trips/{tid}/share-lr")
+async def share_lr_whatsapp(tid: str, request: Request, user=Depends(get_current_user)):
+    """Generate the LR PDF, upload to object storage, return a public URL + WhatsApp-ready text.
+    The trip list opens https://wa.me/?text=<encoded text with the pdf link>."""
+    trip = await db.trips.find_one({"id": tid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    if not trip.get("lr_number"):
+        lr_num = await _next_lr_number(user["user_id"], trip.get("company_id", ""))
+        await db.trips.update_one({"id": tid, "user_id": user["user_id"]}, {"$set": {"lr_number": lr_num}})
+        trip["lr_number"] = lr_num
+    customer = await db.customers.find_one({"id": trip["customer_id"], "user_id": user["user_id"]}, {"_id": 0}) or {}
+    trip_company_id = trip.get("company_id", "")
+    company = await db.companies.find_one({"id": trip_company_id, "user_id": user["user_id"]}, {"_id": 0}) if trip_company_id else None
+    company = company or await db.companies.find_one({"user_id": user["user_id"], "is_default": True}, {"_id": 0}) or {}
+    pdf_bytes = build_lr_pdf(company, customer, trip)
+
+    # Upload to public storage bucket
+    lr_safe = str(trip["lr_number"]).replace("/", "_")
+    obj_path = f"lr_shares/{user['user_id']}/{tid}_{lr_safe}.pdf"
+    try:
+        from storage_client import put_object
+        put_object(obj_path, pdf_bytes, "application/pdf")
+    except Exception as e:
+        logger.exception("LR upload failed")
+        raise HTTPException(status_code=502, detail=f"LR upload failed: {e}")
+
+    # Public retrieval goes through our GET /api/files/public/{path}
+    frontend_base = os.environ.get("REACT_APP_BACKEND_URL") or str(request.base_url).rstrip("/")
+    if not frontend_base.startswith("http"):
+        frontend_base = f"https://{frontend_base}"
+    public_url = f"{frontend_base}/api/files/public/{obj_path}"
+
+    msg = (
+        f"*LR from {company.get('name', 'Our Company')}*\n"
+        f"LR No: {trip['lr_number']}\n"
+        f"Date: {trip.get('date', '')}\n"
+        f"Vehicle: {trip.get('vehicle_number', '')}\n"
+        f"Load: {trip.get('load_details', '')} · {trip.get('tons', 0)} MT\n"
+        f"From: {trip.get('from_location', '')}  →  To: {trip.get('to_location', '')}\n\n"
+        f"Download LR PDF: {public_url}"
+    )
+    import urllib.parse
+    return {
+        "public_url": public_url,
+        "whatsapp_text": msg,
+        "whatsapp_url": f"https://wa.me/?text={urllib.parse.quote(msg)}",
+        "lr_number": trip["lr_number"],
+    }
 
 # ==================== Audit Logs ====================
 

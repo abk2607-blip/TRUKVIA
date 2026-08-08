@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { MessageSquare, X, Send, Trash2, Plus } from "lucide-react";
+import { MessageSquare, X, Send, Trash2, Plus, FileText, Loader2 } from "lucide-react";
 import { getActiveCompanyId, API } from "@/api";
 import { useAuth } from "@/context/AuthContext";
 
@@ -13,6 +13,7 @@ export default function AIChatBubble() {
   const [messages, setMessages] = useState([]);   // {role, content, streaming?}
   const [input, setInput] = useState("");
   const [sending, setSending] = useState(false);
+  const [reportLoading, setReportLoading] = useState(false);
   const scrollRef = useRef(null);
 
   useEffect(() => { sessionStorage.setItem(OPEN_KEY, open ? "1" : "0"); }, [open]);
@@ -122,6 +123,38 @@ export default function AIChatBubble() {
     "Show recent trips",
   ];
 
+  const generateReport = async () => {
+    const q = input.trim();
+    if (!q || reportLoading) return;
+    setReportLoading(true);
+    try {
+      const token = session?.session_token || localStorage.getItem("session_token");
+      const cid = getActiveCompanyId() || "";
+      const resp = await fetch(`${API}/ai/report`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+          ...(cid ? { "X-Company-Id": cid } : {}),
+        },
+        body: JSON.stringify({ query: q }),
+      });
+      if (!resp.ok) throw new Error(await resp.text());
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank");
+      setMessages(m => [...m,
+        { role: "user", content: q },
+        { role: "assistant", content: `📊 Report generated for: "${q}". Opened in a new tab.` }
+      ]);
+      setInput("");
+    } catch (e) {
+      setMessages(m => [...m, { role: "assistant", content: `Report failed: ${e.message || e}` }]);
+    } finally {
+      setReportLoading(false);
+    }
+  };
+
   if (!open) {
     return (
       <button
@@ -194,13 +227,22 @@ export default function AIChatBubble() {
             rows={1}
             data-testid="ai-chat-input"
             className="flex-1 resize-none border border-zinc-300 focus:border-amber-500 focus:ring-1 focus:ring-amber-500 rounded-lg px-3 py-2 text-sm outline-none max-h-24"
-            placeholder="Ask a question — e.g. 'Show overdue invoices'"
+            placeholder="Ask a question — e.g. 'Show overdue invoices' or 'Last month diesel by vehicle'"
             value={input}
             onChange={e => setInput(e.target.value)}
             onKeyDown={e => {
               if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
             }}
           />
+          <button
+            data-testid="ai-chat-report"
+            onClick={generateReport}
+            disabled={reportLoading || !input.trim()}
+            title="Generate PDF report from this query"
+            className="rounded-full p-2.5 bg-emerald-600 hover:bg-emerald-700 text-white disabled:opacity-40"
+          >
+            {reportLoading ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
+          </button>
           <button
             data-testid="ai-chat-send"
             onClick={send}
@@ -210,6 +252,7 @@ export default function AIChatBubble() {
             <Send size={16} />
           </button>
         </div>
+        <div className="text-[10px] text-zinc-400 mt-1.5 px-1">Chat 💬 · Report 📄 (green button generates a PDF)</div>
       </div>
     </div>
   );
