@@ -1,0 +1,66 @@
+{
+  "summary": "Backend-only iter27 verification of CORS fix for static preview URL login (Network Error). All 4 CORS-header expectations met and all 78 regression tests pass (51 iter22/25/26 sequential + 27 iter17/21/23/multi_company_iso).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "cors_verification": {
+    "preflight_OPTIONS_/api/auth/session": {
+      "status": 204,
+      "access_control_allow_origin": "*",
+      "access_control_allow_credentials_header_present": false,
+      "access_control_allow_methods": "GET, POST, PUT, DELETE, OPTIONS, HEAD, PATCH",
+      "result": "PASS"
+    },
+    "POST_bogus_session_id_from_static_origin": {
+      "status": 401,
+      "body": "{\"detail\":\"Invalid session_id\"}",
+      "access_control_allow_origin": "*",
+      "credentials_header_present": false,
+      "result": "PASS"
+    },
+    "POST_real_bearer_token_via_/api/auth/session": {
+      "status": 401,
+      "note": "Endpoint expects an Emergent OAuth session_id (to exchange), not a pre-provisioned bearer. Returning 401 is CORRECT behaviour for this endpoint. CORS headers still valid (ACAO:*, no ACAC). The bearer's usability was verified directly via GET /api/dashboard below.",
+      "result": "PASS (behaviour is correct; review-request wording conflated bearer with session_id)"
+    },
+    "GET_/api/dashboard_with_bearer_from_static_origin": {
+      "status": 200,
+      "access_control_allow_origin": "*",
+      "body_snippet": "{\"total_revenue\":0,\"total_expense\":0,...}",
+      "result": "PASS — authed GET from static origin works"
+    }
+  },
+  "regression_suite": {
+    "iter17": "6/6 PASS",
+    "iter21": "7/7 PASS",
+    "iter22": "7/7 PASS",
+    "iter23": "7/7 PASS",
+    "iter25": "30/30 PASS",
+    "iter26": "14/14 PASS",
+    "multi_company_iso": "7/7 PASS",
+    "total": "78/78 PASS"
+  },
+  "test_report_links": [
+    "/app/test_reports/pytest/iter27_regression.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "CORSMiddleware config in server.py is correct: allow_credentials=False + allow_origins=['*'] — valid combination.",
+    "axios client in frontend/src/api.js correctly sets withCredentials:false — matches CORS non-credentialed mode.",
+    "Reminder: Cloudflare-cached static preview may still serve stale JS; the fix is confirmed at the backend layer and will take effect on next static rebuild."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "not tested (per request)"},
+  "test_credentials": "Bearer test_session_bitumen_2026 (works as expected on GET /api/dashboard).",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "iter25/iter26/iter22 test files use module-level STATE dict and MUST be run sequentially (-n 0) — running them under the default xdist -n 2 --dist loadscope causes cross-worker KeyErrors that are NOT real regressions. Split runs: (a) stateful group with -n 0, (b) stateless files with default xdist. CORS is fully green and needs no more attention.",
+  "rca_of_the_issue": "Original bug: browser fetch showed 'Network Error' from the static preview origin because FastAPI's CORSMiddleware was returning Access-Control-Allow-Origin:* while axios sent credentialed requests (withCredentials:true). Browsers reject ACAO:* with credentials, so preflight/response was blocked before any status could be inspected. Fix: (1) set axios withCredentials=false (Bearer token in Authorization header is used for auth, no cookies needed), and (2) FastAPI CORS allow_credentials=False + allow_origins=['*']. Verified: preflight returns ACAO:* with no Access-Control-Allow-Credentials header; both unauthenticated and authenticated calls from the static origin succeed at the CORS layer. Static preview URL itself may still serve stale cached JS bundle until Cloudflare/static rebuild — dev/dynamic URL confirms the fix."
+}

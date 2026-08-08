@@ -49,13 +49,17 @@ app = FastAPI(title="Bitumen Transport Accounting")
 async def root():
     return {"message": "Bitumen Transport Accounting API"}
 
-# CORS — must permit the current preview origin plus the emergent app domain.
+# CORS — the frontend authenticates via Bearer token (Authorization header),
+# so we never rely on cookies. Setting allow_credentials=False lets us use
+# a plain `*` origin and keeps the API reachable from every preview URL
+# (dynamic + static) as well as any user-supplied embed / mobile client.
 app.add_middleware(
     CORSMiddleware,
-    allow_credentials=True,
-    allow_origin_regex=".*",
+    allow_credentials=False,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["Content-Disposition"],
 )
 
 # Mount all sub-routers. Each router has prefix="/api" so paths are already fully qualified.

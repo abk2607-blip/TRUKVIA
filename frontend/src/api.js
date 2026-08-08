@@ -14,9 +14,13 @@ export const setActiveCompanyId = (cid) => {
   } catch {}
 };
 
+// We authenticate via a Bearer token (localStorage `session_token`), so
+// requests do NOT need to send cookies. Keeping withCredentials=false keeps
+// CORS simple: any origin (including the static preview domain) can hit the
+// API without the browser rejecting `Access-Control-Allow-Origin: *`.
 export const api = axios.create({
   baseURL: API,
-  withCredentials: true,
+  withCredentials: false,
 });
 
 // Attach Bearer token from localStorage as a fallback for browsers that
