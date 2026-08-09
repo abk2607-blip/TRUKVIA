@@ -25,8 +25,13 @@ def _compute_trip(t: Trip) -> Trip:
         else:
             t.freight_amount = round(t.fixed_amount, 2)
     # ---- Loading / Unloading auto-diff ----
-    diff = round((t.loaded_qty or 0) - (t.unloaded_qty or 0), 3)
-    if t.loaded_qty > 0 or t.unloaded_qty > 0:
+    # Iter42: `tons` is the OFFICIAL "Loading Qty (in Tons)". loaded_qty is a
+    # legacy mirror field kept for backward compatibility; we sync it from tons
+    # so old readers still work. Diff is always computed from tons vs unloaded_qty.
+    effective_loaded = float(t.tons) if (t.tons or 0) > 0 else float(t.loaded_qty or 0)
+    t.loaded_qty = round(effective_loaded, 3)
+    diff = round(effective_loaded - (t.unloaded_qty or 0), 3)
+    if effective_loaded > 0 or (t.unloaded_qty or 0) > 0:
         if diff > 0:
             t.shortage_qty = diff
             t.excess_qty = 0.0

@@ -162,7 +162,7 @@ export default function TripForm() {
         supplier_shortage_deduction: Number(form.supplier_shortage_deduction || 0),
         supplier_other_recoveries: Number(form.supplier_other_recoveries || 0),
         supplier_other_income: Number(form.supplier_other_income || 0),
-        loaded_qty: Number(form.loaded_qty || form.tons || 0),
+        loaded_qty: Number(form.tons || 0),
         unloaded_qty: Number(form.unloaded_qty || 0),
         excess_qty: Number(form.excess_qty || 0),
         shortage_qty: Number(form.shortage_qty || 0),
@@ -242,8 +242,8 @@ export default function TripForm() {
     + Number(form.supplier_other_income || 0);
   const supplierProfit = freight - supplierNetPayable;
 
-  // Loading/Unloading auto-diff
-  const loadedQ = Number(form.loaded_qty || 0);
+  // Loading/Unloading auto-diff — Iter42: `tons` (Loading Qty in Tons) is the source of truth
+  const loadedQ = Number(form.tons || 0);
   const unloadedQ = Number(form.unloaded_qty || 0);
   const qtyDiff = Number((loadedQ - unloadedQ).toFixed(3));
   const shortageQtyLive = (loadedQ > 0 || unloadedQ > 0) && qtyDiff > 0 ? qtyDiff : 0;
@@ -278,10 +278,10 @@ export default function TripForm() {
   // Keep auto-derived fields in sync when user hasn't overridden
   useEffect(() => {
     if (!form.shortage_amount_override) {
-      setForm((f) => ({ ...f, shortage_qty: shortageQtyLive, excess_qty: excessQtyLive, shortage_amount: shortageAmountLive, excess_amount: excessAmountLive }));
+      setForm((f) => ({ ...f, loaded_qty: Number(f.tons || 0), shortage_qty: shortageQtyLive, excess_qty: excessQtyLive, shortage_amount: shortageAmountLive, excess_amount: excessAmountLive }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadedQ, unloadedQ, productRate, form.shortage_amount_override, form.excess_amount_override]);
+  }, [form.tons, unloadedQ, productRate, form.shortage_amount_override, form.excess_amount_override]);
 
   useEffect(() => {
     if (!form.halting_amount_override) {
@@ -472,8 +472,8 @@ export default function TripForm() {
               />
               <input data-testid="trip-load" value={form.load_details} onChange={(e) => setForm({ ...form, load_details: e.target.value, product_id: "" })} className={`${inputCls} mt-1`} placeholder="Or type free-text load details" />
             </Field>
-            <Field label="Tons · టన్నులు" required>
-              <input data-testid="trip-tons" required type="number" step="0.01" min="0" value={form.tons} onChange={(e) => setForm({ ...form, tons: e.target.value })} className={inputCls} />
+            <Field label="Loading Qty (in Tons) · లోడింగ్" required>
+              <input data-testid="trip-tons" required type="number" step="0.001" min="0" value={form.tons} onChange={(e) => setForm({ ...form, tons: e.target.value })} className={inputCls} />
             </Field>
             <Field label="From · నుండి">
               <input data-testid="trip-from" value={form.from_location} onChange={(e) => setForm({ ...form, from_location: e.target.value })} className={inputCls} />
@@ -546,16 +546,16 @@ export default function TripForm() {
             <Field label="Unloading Date">
               <input data-testid="trip-unloading-date" type="date" value={form.unloading_date} onChange={(e) => setForm({ ...form, unloading_date: e.target.value })} className={inputCls} />
             </Field>
-            <Field label="Loaded Qty (MT) · auto from Trip">
+            <Field label="Loading Qty (MT) · from Trip Details">
               <input
                 data-testid="trip-loaded-qty"
                 type="number"
                 step="0.001"
                 min="0"
-                value={form.loaded_qty || form.tons || 0}
-                onChange={(e) => setForm({ ...form, loaded_qty: e.target.value })}
-                className={`${inputCls} bg-zinc-50`}
-                title="Auto-populated from Trip Quantity — override only if actual loaded quantity differs"
+                value={Number(form.tons || 0)}
+                readOnly
+                className={`${inputCls} bg-zinc-100 cursor-not-allowed text-zinc-700 font-mono`}
+                title="Auto-synced from 'Loading Qty (in Tons)' in Trip Details. Edit that field to change."
               />
             </Field>
             <Field label="Unloaded Qty (MT)">
