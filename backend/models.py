@@ -148,9 +148,10 @@ class Trip(BaseModel):
     total_expense: float = 0.0
     profit: float = 0.0
     net_settlement: float = 0.0
-    # ---- Customer-provided (Iter36) ----
-    customer_diesel_received: float = 0.0    # Diesel/fuel provided by customer against this trip
-    customer_advance_received: float = 0.0   # Cash advance received from customer against this trip
+    # ---- Customer-provided (Iter36/39) ----
+    customer_diesel_received: float = 0.0    # LEGACY total — kept for backward compat; sum of diesel receipts
+    customer_advance_received: float = 0.0   # LEGACY total — kept for backward compat; sum of advance receipts
+    customer_receipts: list = Field(default_factory=list)  # Iter39: [{id, date, type:'diesel'|'advance', ...}]
     invoice_id: Optional[str] = None
     status: Literal["pending", "invoiced"] = "pending"
     notes: str = ""

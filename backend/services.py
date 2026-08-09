@@ -67,6 +67,26 @@ def _compute_trip(t: Trip) -> Trip:
     own_expense = e.diesel + e.toll + e.batta + e.repair + e.other + e.firewood
     # Diesel recovery reduces our cost (but never below 0)
     own_expense_net = max(own_expense - e.diesel_from_customer_amount, 0)
+    # ---- Iter39: Customer Receipts (Diesel + Advance list) ----
+    # Auto-compute amount for diesel receipts (qty × rate), derive totals, back-fill legacy fields.
+    cust_diesel_total = 0.0
+    cust_advance_total = 0.0
+    for r in (t.customer_receipts or []):
+        rt = (r.get("type") or "").lower()
+        if rt == "diesel":
+            qty = float(r.get("litres") or r.get("quantity") or 0)
+            rate = float(r.get("rate") or 0)
+            amt = float(r.get("amount") or 0)
+            if amt <= 0 and qty > 0 and rate > 0:
+                amt = round(qty * rate, 2)
+                r["amount"] = amt
+            cust_diesel_total += amt
+        elif rt == "advance":
+            cust_advance_total += float(r.get("amount") or 0)
+    # If receipts list provided, override the legacy scalar fields; else keep legacy values.
+    if t.customer_receipts:
+        t.customer_diesel_received = round(cust_diesel_total, 2)
+        t.customer_advance_received = round(cust_advance_total, 2)
     if t.vehicle_type == "supplier":
         # Auto-compute supplier freight from detailed inputs when available
         sup_qty = t.supplier_quantity if t.supplier_quantity > 0 else t.tons
@@ -78,25 +98,28 @@ def _compute_trip(t: Trip) -> Trip:
             elif t.supplier_fixed_amount > 0:
                 t.supplier_freight = round(t.supplier_fixed_amount, 2)
         # else keep manually entered supplier_freight
-        # Net payable = freight − advance − diesel − shortage − other_recoveries + other_income
+        # Net payable = freight − advance − diesel(supplier-side) − customer_diesel(recovered against supplier trip)
+        #              − shortage − other_recoveries + other_income
         t.supplier_net_payable = round(
             t.supplier_freight
             - t.supplier_advance
             - t.supplier_diesel
+            - t.customer_diesel_received      # Iter39: customer diesel against supplier trip is a supplier recovery
             - t.supplier_shortage_deduction
             - t.supplier_other_recoveries
             + t.supplier_other_income,
             2,
         )
-        # Profit formula: Customer Freight − (Supplier Freight − Advance − Diesel − Shortage + OtherIncome − OtherRecoveries)
-        # Simpler: profit = customer_billable − supplier_net_payable
+        # Profit formula: profit = customer_billable_net − supplier_net_payable
         t.total_expense = round(t.supplier_net_payable, 2)
     else:
         t.total_expense = round(own_expense_net, 2)
         t.supplier_net_payable = 0.0
     # Billable freight to customer = freight + halting + excess − shortage
-    # (shortage is a customer deduction from our freight; excess bonus optional add-on)
     billable = t.freight_amount + t.halting_amount + t.excess_amount - t.shortage_amount - e.shortage_amount
+    # Iter39: Customer receipts (diesel + advance) reduce the customer's NET receivable (shown in invoice),
+    # but they DO NOT reduce profit — customer diesel is passed on to the supplier (already subtracted from
+    # supplier_net_payable), and customer advance is a collection against the same freight.
     t.profit = round(billable - t.total_expense, 2)
     t.net_settlement = round(billable - t.total_expense - e.cash_advance_received, 2)
     return t

@@ -202,9 +202,17 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
   - `models.py`: Customer gets 5 new fields — `email`, `opening_balance`, `advance_balance`, `notes`, `reminder_enabled`.
   - `routers/customers.py` `POST /customers/{id}/add-payment`: `photo_data_url` (base64) uploaded to `public/payment_photos/` and returned as `photo_url` on each applied payment record. Surplus amount (unallocated) auto-bumps `customer.advance_balance`. New `PUT /customers/{id}/reminder-pref` toggles inclusion in nightly digest.
   - `scheduler.py` (new): APScheduler AsyncIOScheduler runs `_nightly_reminder_digest()` at 12:30 UTC (18:00 IST). Digest saved to `db.reminder_digests` per user per day. `GET /reminders/digest` + `POST /reminders/digest/run` for read + manual trigger.
-  - `server.py` startup hook wires `start_scheduler()`.
-  - `pages/CustomerHistory.jsx`: 5th tab **Party Details** with full profile card + Quick Edit inline (email, PAN, opening balance, notes, reminder toggle). **Advance chip** in customer header when `advance_balance > 0`. **Photo capture** in Add Payment drawer with camera + preview + remove.
-  - Tests: 5 iter38 pytest = 100% pass. Iter31-38 full regression = **26/26 pass**. Frontend E2E via Playwright = 100% (all selectors present).
+  - `pages/CustomerHistory.jsx`: 5th tab **Party Details** with full profile card + Quick Edit inline. **Advance chip** in customer header. **Photo capture** in Add Payment drawer.
+  - Tests: 5 iter38 pytest = 100% pass. Frontend E2E via Playwright = 100%.
+- [x] **Iter39 — Customer Receipts List: Multiple Diesel & Advance Entries per Trip** (Aug 2026)
+  - `models.py`: Trip.`customer_receipts: list` (repeatable entries). Legacy scalar fields kept for backward compat and auto-updated as totals.
+  - `services.py::_compute_trip`: iterates receipts; each `type='diesel'` with `litres`+`rate` auto-computes `amount = qty × rate`. Sums drive `customer_diesel_received` + `customer_advance_received` totals.
+  - Supplier trips: customer_diesel_received now deducts from `supplier_net_payable` (Freight − Adv − Supplier Diesel − Customer Diesel − Shortage − Other Recoveries + Other Income).
+  - Profit formula: `billable − total_expense` — customer receipts do NOT affect profit (only reduce receivable).
+  - `pages/TripForm.jsx`: repeatable **CustomerReceipts** component — Add Row panel (date, type selector, litres/rate for diesel OR amount/mode/ref/remarks for advance), auto-computed total preview, list table with per-row delete. Live totals card (Diesel / Advance / Total Deductions).
+  - **6 payment modes** for advance: Cash, Bank, UPI, IMPS, NEFT, Cash to Driver, Other.
+  - Tests: 4 new (`test_iter39_customer_receipts.py`) + 30/30 regression = 100% pass.
+  - Follow-up (deferred): Invoice PDF should render each receipt as its own "Less:" line — currently the totals apply but not itemized on the PDF.
 
 ## Backlog (P0-P1, requested but not yet built)
 - (all Phase-2 items delivered in Iter32 — searchable dropdowns, quick-add, supplier expansion, complete trip view)

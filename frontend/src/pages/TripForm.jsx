@@ -96,6 +96,7 @@ const EMPTY = {
   seal_numbers: "",
   customer_diesel_received: 0,
   customer_advance_received: 0,
+  customer_receipts: [],
 };
 
 export default function TripForm() {
@@ -171,6 +172,15 @@ export default function TripForm() {
         tare_weight: Number(form.tare_weight || 0),
         customer_diesel_received: Number(form.customer_diesel_received || 0),
         customer_advance_received: Number(form.customer_advance_received || 0),
+        customer_receipts: (form.customer_receipts || []).map((r) => ({
+          id: r.id, date: r.date, type: r.type,
+          amount: Number(r.amount || (Number(r.litres || 0) * Number(r.rate || 0)) || 0),
+          litres: r.litres ? Number(r.litres) : undefined,
+          rate: r.rate ? Number(r.rate) : undefined,
+          mode: r.mode || undefined,
+          ref_no: r.ref_no || undefined,
+          remarks: r.remarks || undefined,
+        })),
         expenses: Object.fromEntries(Object.entries(form.expenses).map(([k, v]) => [k, k === "other_desc" ? v : Number(v || 0)])),
       };
       if (isEdit) return (await api.put(`/trips/${id}`, payload)).data;
@@ -568,33 +578,25 @@ export default function TripForm() {
           </div>
         </Section>
 
-        {/* Customer-Provided (Diesel/Advance) */}
+        {/* Customer-Provided (Diesel/Advance) — Iter39 repeatable receipts */}
         <Section title="కస్టమర్ నుండి · Received From Customer">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <Field label="Diesel Received from Customer (₹)">
-              <input
-                data-testid="trip-customer-diesel"
-                type="number" step="0.01" min="0"
-                value={form.customer_diesel_received}
-                onChange={(e) => setForm({ ...form, customer_diesel_received: e.target.value })}
-                className={inputCls}
-                placeholder="₹ value of fuel provided by customer"
-              />
-            </Field>
-            <Field label="Advance Received from Customer (₹)">
-              <input
-                data-testid="trip-customer-advance"
-                type="number" step="0.01" min="0"
-                value={form.customer_advance_received}
-                onChange={(e) => setForm({ ...form, customer_advance_received: e.target.value })}
-                className={inputCls}
-                placeholder="Cash / bank advance against this trip"
-              />
-            </Field>
-          </div>
-          <div className="mt-2 text-[11px] text-zinc-500">
-            These reduce the customer's balance when the invoice is settled. They appear in Customer Transaction History.
-          </div>
+          <CustomerReceipts
+            receipts={form.customer_receipts || []}
+            onChange={(list) => setForm({ ...form, customer_receipts: list })}
+          />
+          {(() => {
+            const diesel = (form.customer_receipts || []).filter((r) => r.type === "diesel").reduce((s, r) => s + (Number(r.amount) || (Number(r.litres || 0) * Number(r.rate || 0))), 0);
+            const advance = (form.customer_receipts || []).filter((r) => r.type === "advance").reduce((s, r) => s + Number(r.amount || 0), 0);
+            const total = diesel + advance;
+            return (
+              <div className="mt-3 grid grid-cols-1 md:grid-cols-3 gap-2">
+                <div className="border border-zinc-200 bg-white rounded-sm p-2.5"><div className="text-[9px] uppercase tracking-wider font-bold text-zinc-500">Total Diesel Received</div><div className="font-mono text-base font-bold" data-testid="cr-total-diesel">{fmtCurrency(diesel)}</div></div>
+                <div className="border border-zinc-200 bg-white rounded-sm p-2.5"><div className="text-[9px] uppercase tracking-wider font-bold text-zinc-500">Total Advance Received</div><div className="font-mono text-base font-bold" data-testid="cr-total-advance">{fmtCurrency(advance)}</div></div>
+                <div className="border border-rose-300 bg-rose-50 rounded-sm p-2.5"><div className="text-[9px] uppercase tracking-wider font-bold text-rose-700">Total Deductions from Freight</div><div className="font-mono text-lg font-bold text-rose-800" data-testid="cr-total-deduction">{fmtCurrency(total)}</div></div>
+              </div>
+            );
+          })()}
+          <div className="mt-2 text-[11px] text-zinc-500">Each receipt is trip-linked. These reduce the customer's Net Payable Freight. For supplier vehicle trips, Customer Diesel is also deducted from Supplier Net Payable.</div>
         </Section>
 
         {/* Expenses */}
@@ -881,6 +883,142 @@ export default function TripForm() {
 }
 
 const inputCls = "w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none bg-white";
+
+
+// ---------- Iter39: Repeatable Customer Receipts (Diesel + Advance) ----------
+function CustomerReceipts({ receipts, onChange }) {
+  const [draft, setDraft] = React.useState({
+    date: new Date().toISOString().slice(0, 10),
+    type: "diesel",
+    litres: "", rate: "", amount: "",
+    mode: "Cash", ref_no: "", remarks: "",
+  });
+  const add = () => {
+    const t = draft.type;
+    const amt = t === "diesel"
+      ? Number(draft.litres || 0) * Number(draft.rate || 0)
+      : Number(draft.amount || 0);
+    if (amt <= 0) return;
+    const row = {
+      id: `rcpt_${Date.now()}`,
+      date: draft.date,
+      type: t,
+      amount: Number(amt.toFixed(2)),
+      ...(t === "diesel" ? { litres: Number(draft.litres), rate: Number(draft.rate) } : {}),
+      ...(t === "advance" ? { mode: draft.mode, ref_no: draft.ref_no, remarks: draft.remarks } : {}),
+    };
+    onChange([...(receipts || []), row]);
+    setDraft({ ...draft, litres: "", rate: "", amount: "", ref_no: "", remarks: "" });
+  };
+  const del = (id) => onChange((receipts || []).filter((r) => r.id !== id));
+  const ic = "w-full border border-zinc-300 px-2 py-1.5 rounded-sm text-xs focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none bg-white";
+  return (
+    <div className="space-y-3" data-testid="customer-receipts">
+      {/* Add row */}
+      <div className="border border-zinc-200 rounded-sm p-3 bg-zinc-50">
+        <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 mb-2">Add Receipt</div>
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
+          <div>
+            <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Date</label>
+            <input data-testid="cr-date" type="date" value={draft.date} onChange={(e) => setDraft({ ...draft, date: e.target.value })} className={ic} />
+          </div>
+          <div>
+            <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Type</label>
+            <select data-testid="cr-type" value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })} className={ic}>
+              <option value="diesel">Diesel</option>
+              <option value="advance">Advance</option>
+            </select>
+          </div>
+          {draft.type === "diesel" ? (
+            <>
+              <div>
+                <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Litres</label>
+                <input data-testid="cr-litres" type="number" step="0.01" min="0" value={draft.litres} onChange={(e) => setDraft({ ...draft, litres: e.target.value })} className={ic} placeholder="280" />
+              </div>
+              <div>
+                <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Rate (₹/L)</label>
+                <input data-testid="cr-rate" type="number" step="0.01" min="0" value={draft.rate} onChange={(e) => setDraft({ ...draft, rate: e.target.value })} className={ic} placeholder="104.24" />
+              </div>
+              <div>
+                <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Total (auto)</label>
+                <input value={draft.litres && draft.rate ? `₹ ${(Number(draft.litres) * Number(draft.rate)).toFixed(2)}` : ""} readOnly className={`${ic} bg-zinc-100 font-mono font-bold`} />
+              </div>
+            </>
+          ) : (
+            <>
+              <div>
+                <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Amount (₹)</label>
+                <input data-testid="cr-amount" type="number" step="0.01" min="0" value={draft.amount} onChange={(e) => setDraft({ ...draft, amount: e.target.value })} className={ic} placeholder="20000" />
+              </div>
+              <div>
+                <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Mode</label>
+                <select data-testid="cr-mode" value={draft.mode} onChange={(e) => setDraft({ ...draft, mode: e.target.value })} className={ic}>
+                  {["Cash", "Bank", "UPI", "IMPS", "NEFT", "Cash to Driver", "Other"].map((m) => <option key={m}>{m}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Ref / Txn No</label>
+                <input data-testid="cr-refno" value={draft.ref_no} onChange={(e) => setDraft({ ...draft, ref_no: e.target.value })} className={ic} placeholder="Optional" />
+              </div>
+            </>
+          )}
+          <div className="flex items-end">
+            <button type="button" data-testid="cr-add-btn" onClick={add} className="w-full px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold bg-emerald-600 text-white rounded-sm hover:bg-emerald-700">+ Add</button>
+          </div>
+          {draft.type === "advance" && (
+            <div className="md:col-span-6">
+              <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Remarks</label>
+              <input data-testid="cr-remarks" value={draft.remarks} onChange={(e) => setDraft({ ...draft, remarks: e.target.value })} className={ic} placeholder="Optional notes" />
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Existing receipts table */}
+      {(receipts || []).length === 0 ? (
+        <div className="text-xs text-zinc-500 italic px-2">No receipts added yet.</div>
+      ) : (
+        <div className="border border-zinc-200 rounded-sm overflow-hidden">
+          <table className="w-full text-xs" data-testid="cr-list">
+            <thead className="bg-zinc-950 text-white text-[10px] uppercase tracking-wider">
+              <tr>
+                <th className="text-left px-3 py-2">Date</th>
+                <th className="text-left px-3 py-2">Type</th>
+                <th className="text-left px-3 py-2">Details</th>
+                <th className="text-right px-3 py-2">Amount</th>
+                <th className="text-left px-3 py-2">Mode / Ref</th>
+                <th className="w-10"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100">
+              {(receipts || []).map((r) => (
+                <tr key={r.id} data-testid={`cr-row-${r.id}`} className="hover:bg-amber-50/50">
+                  <td className="px-3 py-2 font-mono">{r.date}</td>
+                  <td className="px-3 py-2 uppercase font-bold text-[10px]">
+                    <span className={`px-2 py-0.5 rounded-sm border ${r.type === "diesel" ? "bg-orange-50 text-orange-800 border-orange-200" : "bg-blue-50 text-blue-800 border-blue-200"}`}>{r.type}</span>
+                  </td>
+                  <td className="px-3 py-2 text-zinc-600">
+                    {r.type === "diesel"
+                      ? `${r.litres} L × ₹${Number(r.rate).toFixed(2)}`
+                      : r.remarks || "—"}
+                  </td>
+                  <td className="px-3 py-2 text-right font-mono font-bold">{fmtCurrency(r.amount)}</td>
+                  <td className="px-3 py-2 text-zinc-600 text-[11px]">
+                    {r.type === "advance" ? `${r.mode || "—"}${r.ref_no ? ` · ${r.ref_no}` : ""}` : "Customer Diesel"}
+                  </td>
+                  <td className="px-2 py-2 text-center">
+                    <button type="button" data-testid={`cr-del-${r.id}`} onClick={() => del(r.id)} className="text-rose-600 hover:bg-rose-50 rounded p-1">×</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 function Section({ title, children }) {
   return (
