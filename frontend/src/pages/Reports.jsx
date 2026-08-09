@@ -67,6 +67,7 @@ function SupplierStatementReport() {
   const [supplier, setSupplier] = useState("");
   const [start, setStart] = useState(monthStart);
   const [end, setEnd] = useState(monthEnd);
+  const [openingMode, setOpeningMode] = useState("master"); // Iter47 Phase 3
 
   const { data: suppliers = [] } = useQuery({
     queryKey: ["suppliers-list"],
@@ -74,10 +75,10 @@ function SupplierStatementReport() {
   });
 
   const { data, isLoading, refetch, isFetching } = useQuery({
-    queryKey: ["supplier-statement", supplier, start, end],
+    queryKey: ["supplier-statement", supplier, start, end, openingMode],
     enabled: !!supplier,
     queryFn: async () =>
-      (await api.get("/reports/supplier-statement", { params: { supplier_name: supplier, start, end } })).data,
+      (await api.get("/reports/supplier-statement", { params: { supplier_name: supplier, start, end, opening_mode: openingMode } })).data,
   });
 
   const setThisMonth = () => {
@@ -101,7 +102,7 @@ function SupplierStatementReport() {
   const downloadPdf = async () => {
     if (!supplier) return;
     const resp = await api.get("/reports/supplier-statement.pdf", {
-      params: { supplier_name: supplier, start, end }, responseType: "blob",
+      params: { supplier_name: supplier, start, end, opening_mode: openingMode }, responseType: "blob",
     });
     const url = URL.createObjectURL(new Blob([resp.data], { type: "application/pdf" }));
     const a = document.createElement("a"); a.href = url;
@@ -112,7 +113,7 @@ function SupplierStatementReport() {
   const openPrint = async () => {
     if (!supplier) return;
     const resp = await api.get("/reports/supplier-statement.pdf", {
-      params: { supplier_name: supplier, start, end }, responseType: "blob",
+      params: { supplier_name: supplier, start, end, opening_mode: openingMode }, responseType: "blob",
     });
     const url = URL.createObjectURL(new Blob([resp.data], { type: "application/pdf" }));
     const w = window.open(url, "_blank");
@@ -122,7 +123,7 @@ function SupplierStatementReport() {
     if (!supplier) return;
     try {
       const { data: r } = await api.post("/reports/supplier-statement/share", null, {
-        params: { supplier_name: supplier, start, end },
+        params: { supplier_name: supplier, start, end, opening_mode: openingMode },
       });
       window.open(r.whatsapp_url, "_blank", "noopener");
       const { toast } = await import("sonner");
@@ -165,10 +166,16 @@ function SupplierStatementReport() {
           <input data-testid="ss-end" type="date" value={end} onChange={(e) => setEnd(e.target.value)}
             className="mt-1 w-full border border-zinc-300 px-2 py-1.5 rounded-sm text-sm bg-white" />
         </div>
-        <div className="md:col-span-2 flex flex-wrap gap-2">
+        <div className="md:col-span-2 flex flex-wrap gap-2 items-center">
           <button type="button" data-testid="ss-this-month" onClick={setThisMonth} className="px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold border border-zinc-300 rounded-sm hover:bg-zinc-100">This Month</button>
           <button type="button" data-testid="ss-last-month" onClick={setLastMonth} className="px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold border border-zinc-300 rounded-sm hover:bg-zinc-100">Last Month</button>
           <button type="button" data-testid="ss-prev-month" onClick={setPrevMonth} className="px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold border border-zinc-300 rounded-sm hover:bg-zinc-100">◀ Prev</button>
+          <select data-testid="ss-opening-mode" value={openingMode} onChange={(e) => setOpeningMode(e.target.value)}
+            title="How to compute Opening Balance"
+            className="px-2 py-1.5 text-[10px] uppercase tracking-wider font-bold border border-zinc-300 rounded-sm hover:bg-zinc-100 bg-white">
+            <option value="master">Opening: From Master</option>
+            <option value="carry_forward">Opening: Carry Forward</option>
+          </select>
           <button type="button" data-testid="ss-refresh" onClick={() => refetch()} disabled={!supplier || isFetching}
             className="px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold bg-zinc-950 text-white rounded-sm disabled:opacity-50">
             {isFetching ? "Loading…" : "Generate"}
@@ -204,9 +211,46 @@ function SupplierStatementReport() {
       {supplier && isLoading && (
         <div className="text-center text-sm text-zinc-500 py-12">Loading…</div>
       )}
-      {supplier && data && data.trips.length === 0 && (
+      {supplier && data && data.trips.length === 0 && !data.deep && (
         <div className="text-center text-sm text-zinc-500 py-12 border border-dashed border-zinc-300 rounded-sm">
           No supplier trips found for <b>{supplier}</b> in this period.
+        </div>
+      )}
+
+      {supplier && data && data.deep && (
+        /* Iter47 Phase 3 — Deep Monthly Statement Blocks (always shown when supplier is selected) */
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mb-2" data-testid="ss-deep-blocks">
+          <div className="border-2 border-zinc-950 bg-white rounded-sm p-4">
+            <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 mb-1">Opening Balance</div>
+            <div className="font-mono text-xl font-bold" data-testid="ss-opening-balance">
+              {fmtCurrency(Math.abs(data.deep.opening_balance))} <span className={data.deep.opening_type === "advance" ? "text-emerald-700" : "text-rose-700"}>{data.deep.opening_type === "advance" ? "Cr" : "Dr"}</span>
+            </div>
+            <div className="text-[10px] text-zinc-500 mt-1">
+              Source: {data.deep.opening_source === "carry_forward" ? "Carry-forward from previous period" : "Supplier master opening balance"}
+            </div>
+            <div className="mt-3 pt-3 border-t border-zinc-200 space-y-1 text-[11px]">
+              <div className="flex justify-between"><span>Debits (Freight + Bonus)</span><span className="font-mono font-bold">{fmtCurrency(data.deep.movements_debit)}</span></div>
+              <div className="flex justify-between"><span>Credits (Adv+Diesel+Ded+Pay)</span><span className="font-mono font-bold">-{fmtCurrency(data.deep.movements_credit)}</span></div>
+              {data.deep.payments_out_total > 0 && (
+                <div className="flex justify-between text-zinc-500 pl-3"><span>↳ Payments Made</span><span className="font-mono">-{fmtCurrency(data.deep.payments_out_total)}</span></div>
+              )}
+              {data.deep.payments_in_total > 0 && (
+                <div className="flex justify-between text-zinc-500 pl-3"><span>↳ Receipts Back</span><span className="font-mono">+{fmtCurrency(data.deep.payments_in_total)}</span></div>
+              )}
+            </div>
+          </div>
+          <div className={`border-2 rounded-sm p-4 ${data.deep.closing_type === "advance" ? "border-emerald-500 bg-emerald-50" : "border-rose-500 bg-rose-50"}`}>
+            <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 mb-1">Closing Balance</div>
+            <div className="font-mono text-3xl font-bold" data-testid="ss-closing-balance">
+              {fmtCurrency(Math.abs(data.deep.closing_balance))} <span className={data.deep.closing_type === "advance" ? "text-emerald-700" : "text-rose-700"}>{data.deep.closing_type === "advance" ? "Cr" : "Dr"}</span>
+            </div>
+            <div className="text-[10px] text-zinc-500 mt-1">
+              {data.deep.closing_type === "advance" ? "We are in advance — supplier owes us" : "Payable — we owe supplier"}
+            </div>
+            <div className="mt-3 pt-3 border-t border-zinc-200 text-[11px] text-zinc-600">
+              <span className="italic">Formula:</span> Opening ({fmtCurrency(Math.abs(data.deep.opening_balance))} {data.deep.opening_type === "advance" ? "Cr" : "Dr"}) + Debits − Credits = Closing
+            </div>
+          </div>
         </div>
       )}
 

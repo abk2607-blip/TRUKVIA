@@ -533,14 +533,153 @@ async def supplier_statement_json(
     supplier_name: str,
     start: Optional[str] = None,
     end: Optional[str] = None,
+    opening_mode: str = "master",   # Iter47 Phase 3
     user=Depends(get_current_user),
 ):
     """JSON payload driving the Reports → Supplier Statement in-app View."""
     data = await _supplier_statement_data(request, supplier_name, start, end, user)
-    if not data["trips"]:
-        # Return an empty envelope instead of 404 so the UI can show "no data" state
-        return data
+    # Iter47 Phase 3: attach the Deep Monthly Statement blocks (opening/closing)
+    data["deep"] = await _supplier_deep_statement_blocks(request, supplier_name, start, end, opening_mode, user, data["totals"])
     return data
+
+
+async def _supplier_deep_statement_blocks(request: Request, supplier_name: str, start, end, opening_mode, user, tot):
+    """Iter47 Phase 3 — Compute Opening Balance + explicit Payments-in-period for the
+    Deep Monthly Statement layout. Returns a dict with:
+      opening_balance (float, +ve = payable/Dr, -ve = advance/Cr)
+      opening_type    ("payable" | "advance")
+      opening_source  ("master" | "carry_forward")
+      payments_in_period (list of {date, mode, ref_no, amount})
+      payments_out_total (float — money paid to supplier)
+      payments_in_total  (float — money received back from supplier, rare)
+      closing_balance (float, running: opening + movements)
+      closing_type    ("payable" | "advance")
+    All values in ₹."""
+    uid = user["user_id"]
+    cid = await _active_company_id(request, user)
+    # Find the supplier master record by name (case-insensitive)
+    sup = await db.suppliers.find_one(
+        {"user_id": uid, "company_id": cid,
+         "name": {"$regex": f"^{supplier_name}$", "$options": "i"}},
+        {"_id": 0},
+    )
+
+    # 1. Opening balance
+    opening = 0.0
+    if sup:
+        opening = float(sup.get("opening_balance") or 0.0)
+        if sup.get("opening_balance_type") == "advance":
+            opening = -opening
+
+    if opening_mode == "carry_forward" and start and sup:
+        # Compute closing as of (start - 1 day) by rebuilding the ledger up to that date
+        try:
+            from suppliers_ledger_helper import _build_ledger_upto  # optional shortcut
+        except Exception:
+            _build_ledger_upto = None
+        # Use inline computation:
+        prev_end = _iso_prev_day(start)
+        opening = await _supplier_ledger_closing(uid, cid, sup["id"], prev_end)
+
+    opening_type = "payable" if opening >= 0 else "advance"
+
+    # 2. Payments in period
+    pay_q = {"user_id": uid, "company_id": cid, "is_deleted": {"$ne": True}}
+    if sup:
+        pay_q["supplier_id"] = sup["id"]
+    else:
+        # No linked supplier — no payments
+        pay_q["supplier_id"] = "__none__"
+    pays_cursor = db.supplier_payments.find(pay_q, {"_id": 0, "user_id": 0}).sort("date", 1)
+    payments_all = await pays_cursor.to_list(5000)
+    payments_in_period = [p for p in payments_all if _in_range(p.get("date", ""), start, end)]
+    payments_out_total = round(sum(float(p.get("amount", 0)) for p in payments_in_period if p.get("type", "payment_out") == "payment_out"), 2)
+    payments_in_total = round(sum(float(p.get("amount", 0)) for p in payments_in_period if p.get("type") == "receipt_in"), 2)
+
+    # 3. Movements in the current period (Debits + Credits)
+    # Debits: supplier_freight + supplier_other_income + receipt_in
+    # Credits: supplier_advance + supplier_diesel + customer_diesel + supplier_shortage + supplier_recovery + payments_out
+    movements_debit = round(tot.get("supplier_freight", 0.0) + tot.get("supplier_income", 0.0) + payments_in_total, 2)
+    movements_credit = round(
+        tot.get("supplier_advance", 0.0) + tot.get("supplier_diesel", 0.0)
+        + tot.get("customer_diesel", 0.0) + tot.get("supplier_shortage", 0.0)
+        + tot.get("supplier_recovery", 0.0) + payments_out_total, 2)
+    closing = round(opening + movements_debit - movements_credit, 2)
+
+    return {
+        "opening_balance": round(opening, 2),
+        "opening_type": opening_type,
+        "opening_source": opening_mode,
+        "payments_in_period": payments_in_period,
+        "payments_out_total": payments_out_total,
+        "payments_in_total": payments_in_total,
+        "movements_debit": movements_debit,
+        "movements_credit": movements_credit,
+        "closing_balance": closing,
+        "closing_type": "payable" if closing >= 0 else "advance",
+    }
+
+
+def _iso_prev_day(iso_date: str) -> str:
+    from datetime import date as _date
+    try:
+        y, m, d = [int(x) for x in iso_date.split("-")]
+        prev = _date(y, m, d) - timedelta(days=1)
+        return prev.isoformat()
+    except Exception:
+        return iso_date
+
+
+async def _supplier_ledger_closing(uid: str, cid: str, sid: str, upto_date: str) -> float:
+    """Rebuild the supplier ledger up to (and including) `upto_date` and return
+    the running balance. Positive = payable, negative = advance."""
+    sup = await db.suppliers.find_one({"id": sid, "user_id": uid, "company_id": cid}, {"_id": 0})
+    if not sup:
+        return 0.0
+    running = float(sup.get("opening_balance") or 0.0)
+    if sup.get("opening_balance_type") == "advance":
+        running = -running
+
+    # Trips
+    trip_q = {
+        "user_id": uid, "company_id": cid, "vehicle_type": "supplier",
+        "$or": [
+            {"supplier_id": sid},
+            {"supplier_name": {"$regex": f"^{sup['name']}$", "$options": "i"}},
+        ],
+    }
+    trips = await db.trips.find(trip_q, {"_id": 0, "user_id": 0}).to_list(20000)
+    for t in trips:
+        d = t.get("date", "")
+        if not d or d > upto_date:
+            continue
+        _num = lambda x: (float(x) if x else 0.0)
+        # Debits
+        running += _num(t.get("supplier_freight"))
+        running += _num(t.get("supplier_other_income"))
+        # Credits
+        running -= _num(t.get("supplier_advance"))
+        running -= _num(t.get("supplier_diesel"))
+        cust_dsl = sum(_num(r.get("amount")) for r in (t.get("customer_receipts") or []) if (r.get("type") or "").lower() == "diesel")
+        running -= cust_dsl
+        running -= _num(t.get("supplier_shortage_deduction"))
+        running -= _num(t.get("supplier_other_recoveries"))
+
+    # Payments
+    pays = await db.supplier_payments.find(
+        {"user_id": uid, "company_id": cid, "supplier_id": sid, "is_deleted": {"$ne": True}},
+        {"_id": 0, "amount": 1, "type": 1, "date": 1},
+    ).to_list(20000)
+    for p in pays:
+        d = p.get("date", "")
+        if not d or d > upto_date:
+            continue
+        amt = float(p.get("amount") or 0)
+        if p.get("type", "payment_out") == "payment_out":
+            running -= amt
+        else:
+            running += amt
+    return round(running, 2)
 
 
 @router.get("/reports/supplier-statement.pdf")
@@ -549,9 +688,15 @@ async def supplier_statement_pdf(
     supplier_name: str,
     start: Optional[str] = None,
     end: Optional[str] = None,
+    opening_mode: str = "master",   # Iter47 Phase 3: "master" or "carry_forward"
     user=Depends(get_current_user),
 ):
-    """Supplier-wise settlement statement — LANDSCAPE with all trip fields."""
+    """Supplier-wise settlement statement — LANDSCAPE with all trip fields.
+    Iter47 Phase 3: "Deep Monthly Statement" — shows Opening + Movements + Closing blocks.
+    opening_mode:
+      - "master"        (default): use Supplier.opening_balance from master
+      - "carry_forward": compute closing balance as of start-1 day (previous period closing)
+    """
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
@@ -563,7 +708,11 @@ async def supplier_statement_pdf(
     company = data["company"]
     trips = data["trips"]
     tot = data["totals"]
-    if not trips:
+
+    # Iter47 Phase 3 — compute opening balance + payments-in-period for the deep statement
+    deep = await _supplier_deep_statement_blocks(request, supplier_name, start, end, opening_mode, user, tot)
+
+    if not trips and not deep["payments_in_period"] and deep["opening_balance"] == 0:
         raise HTTPException(status_code=404, detail=f"No supplier trips found for '{supplier_name}'")
 
     buf = io.BytesIO()
@@ -586,7 +735,47 @@ async def supplier_statement_pdf(
     story.append(Paragraph(f"Supplier Settlement Statement — <b>{supplier_name}</b>"
                            + (f" · {data['supplier']['mobile']}" if data["supplier"]["mobile"] else ""), hdr_st))
     story.append(Paragraph(f"Period: {start or 'all'} to {end or 'today'}", hdr_st))
-    story.append(Spacer(1, 6))
+    story.append(Spacer(1, 8))
+
+    # ---- Iter47 Phase 3: Deep Monthly Statement blocks ----
+    def _fmt_bal(v: float) -> str:
+        sign = "Dr" if v >= 0 else "Cr"
+        return f"₹{abs(v):,.2f} {sign}"
+    opening_label = "Opening Balance"
+    opening_src = "(from previous period closing)" if deep["opening_source"] == "carry_forward" else "(from Supplier master)"
+    deep_blocks = [
+        ["OPENING BALANCE", _fmt_bal(deep["opening_balance"]), "MOVEMENTS · DEBITS (+)", f"₹{deep['movements_debit']:,.2f}"],
+        [opening_src, "", "MOVEMENTS · CREDITS (−)", f"₹{deep['movements_credit']:,.2f}"],
+        ["Freight (Trips)", f"₹{tot['supplier_freight']:,.2f}", "Advance", f"₹{tot['supplier_advance']:,.2f}"],
+        ["Bonus / Other Income", f"₹{tot['supplier_income']:,.2f}", "Diesel Funded by Us", f"₹{tot['supplier_diesel']:,.2f}"],
+        ["Receipts from Supplier", f"₹{deep['payments_in_total']:,.2f}", "Cust. Diesel Adjustment", f"₹{tot['customer_diesel']:,.2f}"],
+        ["", "", "Shortage Deducted", f"₹{tot['supplier_shortage']:,.2f}"],
+        ["", "", "Other Recoveries", f"₹{tot['supplier_recovery']:,.2f}"],
+        ["", "", "Payments Made (Bank/Cash)", f"₹{deep['payments_out_total']:,.2f}"],
+        ["CLOSING BALANCE", _fmt_bal(deep["closing_balance"]), "", ""],
+    ]
+    dbt = Table(deep_blocks, hAlign="LEFT", colWidths=[55 * mm, 45 * mm, 55 * mm, 45 * mm])
+    dbt.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, -1), _UNI_FONT),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d1d5db")),
+        # Header rows (opening + movement labels)
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), _UNI_FONT_BOLD),
+        # Opening source note
+        ("FONTSIZE", (0, 1), (1, 1), 6.5),
+        ("TEXTCOLOR", (0, 1), (1, 1), colors.grey),
+        # Closing row highlight
+        ("BACKGROUND", (0, -1), (1, -1), colors.HexColor("#fef3c7")),
+        ("FONTNAME", (0, -1), (-1, -1), _UNI_FONT_BOLD),
+        ("FONTSIZE", (0, -1), (-1, -1), 10),
+        ("SPAN", (2, -1), (3, -1)),
+        # Left-side vs right-side separator
+        ("LINEAFTER", (1, 0), (1, -1), 1.2, colors.HexColor("#0f172a")),
+    ]))
+    story.append(dbt)
+    story.append(Spacer(1, 10))
 
     # Summary block — 3 columns of KPIs
     smy = [
@@ -611,6 +800,44 @@ async def supplier_statement_pdf(
     ]))
     story.append(st)
     story.append(Spacer(1, 10))
+
+    # ---- Iter47 Phase 3: Payments in Period block ----
+    if deep["payments_in_period"]:
+        story.append(Paragraph("<b>Payments in Period</b>",
+            ParagraphStyle("h3", parent=styles["Heading3"], fontName=_UNI_FONT_BOLD)))
+        pay_hdr = ["Date", "Mode", "Against", "Ref No.", "LR / Trip", "Remarks", "Type", "Amount"]
+        pay_rows = [pay_hdr]
+        for p in deep["payments_in_period"]:
+            pay_rows.append([
+                p.get("date", ""),
+                p.get("mode", ""),
+                (p.get("against") or "").capitalize(),
+                p.get("ref_no", "") or "—",
+                p.get("lr_number", "") or "—",
+                Paragraph(p.get("remarks", "") or "—", body_st),
+                "OUT" if p.get("type", "payment_out") == "payment_out" else "IN",
+                f"₹{float(p.get('amount', 0)):,.2f}",
+            ])
+        pay_rows.append([
+            "TOTAL", "", "", "", "", "",
+            f"IN: ₹{deep['payments_in_total']:,.0f}",
+            f"OUT: ₹{deep['payments_out_total']:,.2f}",
+        ])
+        pt = Table(pay_rows, hAlign="LEFT", repeatRows=1,
+                   colWidths=[22, 20, 22, 30, 30, 90, 20, 42])
+        pt.setStyle(TableStyle([
+            ("FONTNAME", (0, 0), (-1, -1), _UNI_FONT),
+            ("FONTSIZE", (0, 0), (-1, -1), 7),
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#111827")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), _UNI_FONT_BOLD),
+            ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#e5e7eb")),
+            ("ALIGN", (7, 1), (7, -1), "RIGHT"),
+            ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#fef3c7")),
+            ("FONTNAME", (0, -1), (-1, -1), _UNI_FONT_BOLD),
+        ]))
+        story.append(pt)
+        story.append(Spacer(1, 10))
 
     # Trip-wise table — landscape width ~277mm
     story.append(Paragraph("<b>Trip-wise Settlement</b>", ParagraphStyle("h3", parent=styles["Heading3"], fontName=_UNI_FONT_BOLD)))
@@ -712,6 +939,7 @@ async def share_supplier_statement(
     supplier_name: str,
     start: Optional[str] = None,
     end: Optional[str] = None,
+    opening_mode: str = "master",   # Iter47 Phase 3
     user=Depends(get_current_user),
 ):
     """Build the supplier statement PDF, upload to public object storage, and
@@ -719,7 +947,7 @@ async def share_supplier_statement(
     vehicle in Vehicles master) when available so the deeplink pre-fills the
     recipient — falls back to a generic wa.me/?text= link when no mobile is
     on file."""
-    resp = await supplier_statement_pdf(request, supplier_name, start, end, user)
+    resp = await supplier_statement_pdf(request, supplier_name, start, end, opening_mode, user)
     body_bytes = b""
     async for chunk in resp.body_iterator:
         body_bytes += chunk

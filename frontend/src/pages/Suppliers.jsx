@@ -37,7 +37,7 @@ export default function Suppliers() {
         ))}
       </nav>
       <Routes>
-        <Route index element={<Navigate to="list" replace />} />
+        <Route index element={<SupplierDashboard />} />
         <Route path="list" element={<SupplierList />} />
         <Route path="add" element={<SupplierForm />} />
         <Route path="edit/:sid" element={<SupplierForm />} />
@@ -47,6 +47,82 @@ export default function Suppliers() {
         <Route path="outstanding" element={<SupplierOutstanding />} />
         <Route path="pl" element={<SupplierPLTab />} />
       </Routes>
+    </div>
+  );
+}
+
+/* ================= Iter47 — Supplier Dashboard (6 KPI cards + top payables) ================= */
+function SupplierDashboard() {
+  const nav = useNavigate();
+  const { data, isLoading } = useQuery({
+    queryKey: ["suppliers-dashboard"],
+    queryFn: async () => (await api.get("/suppliers-dashboard")).data,
+  });
+  if (isLoading || !data) return <div className="text-sm text-zinc-500 text-center py-16">Loading…</div>;
+  const t = data.totals;
+  const cards = [
+    { k: "Total Suppliers", v: t.total_suppliers, sub: `${t.active_suppliers} active`, tid: "sd-total-suppliers" },
+    { k: "Supplier Vehicles", v: t.active_vehicles, sub: "active", tid: "sd-active-vehicles" },
+    { k: "Total Freight (Trips)", v: fmtCurrency(t.total_freight), sub: "supplier-side freight", tid: "sd-total-freight" },
+    { k: "Total Advances", v: fmtCurrency(t.total_advances), sub: "given at trip time", tid: "sd-total-advances" },
+    { k: "Total Payments", v: fmtCurrency(t.total_payments), sub: "cash / bank / UPI", tid: "sd-total-payments" },
+    { k: "Total Outstanding", v: fmtCurrency(t.total_outstanding), sub: "payable now", tid: "sd-total-outstanding", highlight: true },
+  ];
+  const top = data.suppliers.slice(0, 8);
+  return (
+    <div className="space-y-4" data-testid="sup-dashboard">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
+        {cards.map(c => (
+          <div key={c.k} data-testid={c.tid}
+            className={`border rounded-sm p-3 ${c.highlight ? "border-amber-400 bg-amber-50" : "border-zinc-200 bg-white"}`}>
+            <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">{c.k}</div>
+            <div className="mt-1 font-mono font-bold text-base">{c.v}</div>
+            <div className="text-[10px] text-zinc-500 mt-0.5">{c.sub}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="border border-zinc-200 bg-white rounded-sm overflow-hidden">
+        <div className="px-4 py-2 border-b border-zinc-200 flex items-center justify-between">
+          <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-500">Top Suppliers by Outstanding</div>
+          <Link to="outstanding" className="text-[10px] uppercase font-bold text-zinc-500 hover:text-zinc-950">View All →</Link>
+        </div>
+        <table className="w-full text-sm">
+          <thead className="bg-zinc-50 text-[10px] uppercase tracking-wider text-zinc-600">
+            <tr>
+              <th className="text-left px-3 py-2">Supplier</th>
+              <th className="text-left px-3 py-2">Mobile</th>
+              <th className="text-right px-3 py-2">Closing Balance</th>
+              <th className="text-center px-3 py-2">Status</th>
+              <th className="w-24"></th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-zinc-100">
+            {top.map(s => (
+              <tr key={s.supplier_id} data-testid={`sd-row-${s.supplier_id}`}
+                className="hover:bg-amber-50 cursor-pointer"
+                onClick={() => nav(`edit/${s.supplier_id}`)}>
+                <td className="px-3 py-2 font-bold">{s.supplier_name}</td>
+                <td className="px-3 py-2 text-xs font-mono">{s.mobile || "—"}</td>
+                <td className="px-3 py-2 text-right font-mono font-bold text-rose-700">
+                  {fmtCurrency(Math.abs(s.closing_balance))} {s.closing_type === "advance" ? "Cr" : "Dr"}
+                </td>
+                <td className="px-3 py-2 text-center">
+                  <span className={`text-[10px] px-2 py-0.5 rounded-sm font-bold ${s.is_active ? "bg-emerald-100 text-emerald-800" : "bg-zinc-200 text-zinc-700"}`}>
+                    {s.is_active ? "ACTIVE" : "INACTIVE"}
+                  </span>
+                </td>
+                <td className="px-2 py-2 text-right text-[10px]">
+                  <Link to={`../suppliers/statement`} className="uppercase font-bold text-zinc-500 hover:text-zinc-950" onClick={(e) => e.stopPropagation()}>Ledger →</Link>
+                </td>
+              </tr>
+            ))}
+            {top.length === 0 && (
+              <tr><td colSpan={5} className="px-3 py-10 text-center text-zinc-400 text-sm">No suppliers yet — add one to begin.</td></tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

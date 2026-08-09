@@ -40,6 +40,50 @@ import pandas as pd
 from pdf import build_lr_pdf, build_invoice_pdf
 
 
+# ---------------------------------------------------------------------------
+# Iter47 Phase 3 — Supplier link enforcement
+# ---------------------------------------------------------------------------
+async def _enforce_supplier_link(payload: Trip, uid: str, cid: str):
+    """When a trip's vehicle is 'supplier' type, mandate a valid Supplier master link.
+    Auto-resolves supplier_id from supplier_name when the FK isn't set yet.
+    If a name is provided but no Supplier master record exists, auto-creates one
+    (backward-compat for legacy trip data + strict FK-integrity going forward).
+    Raises 400 when neither supplier_id nor supplier_name is present."""
+    from models import Supplier as _SupModel  # local to avoid cycles
+
+    if not (payload.supplier_id or "").strip() and (payload.supplier_name or "").strip():
+        # Try to resolve by name (case-insensitive)
+        sup = await db.suppliers.find_one(
+            {"user_id": uid, "company_id": cid,
+             "name": {"$regex": f"^{payload.supplier_name.strip()}$", "$options": "i"}},
+            {"_id": 0, "id": 1, "name": 1},
+        )
+        if sup:
+            payload.supplier_id = sup["id"]
+            payload.supplier_name = sup["name"]  # normalise casing
+        else:
+            # Auto-create a Supplier master record so the FK is always valid
+            new_sup = _SupModel(name=payload.supplier_name.strip())
+            doc = new_sup.model_dump()
+            doc["user_id"] = uid
+            doc["company_id"] = cid
+            doc["created_by"] = uid
+            await db.suppliers.insert_one(doc)
+            payload.supplier_id = doc["id"]
+            payload.supplier_name = doc["name"]
+
+    if not (payload.supplier_id or "").strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Supplier vehicle requires a linked Supplier. Please select a supplier or create one under Suppliers → Add.",
+        )
+    # Validate the supplier_id belongs to this company
+    sup = await db.suppliers.find_one({"id": payload.supplier_id, "user_id": uid, "company_id": cid}, {"_id": 0, "name": 1})
+    if not sup:
+        raise HTTPException(status_code=400, detail="Selected supplier does not exist for this company")
+    payload.supplier_name = sup["name"]
+
+
 @router.get("/trips")
 async def list_trips(request: Request, user=Depends(get_current_user), customer_id: Optional[str] = None, status: Optional[str] = None):
     cid = await _active_company_id(request, user)
@@ -63,6 +107,10 @@ async def create_trip(payload: Trip, request: Request, user=Depends(get_current_
             payload.vehicle_type = v.get("vehicle_type", "own")
             if payload.vehicle_type == "supplier":
                 payload.supplier_name = payload.supplier_name or v.get("supplier_name", "")
+                payload.supplier_id = payload.supplier_id or v.get("supplier_id", "")
+    # Iter47 Phase 3: Strict enforcement — supplier vehicle MUST link to a Supplier master record
+    if payload.vehicle_type == "supplier":
+        await _enforce_supplier_link(payload, user["user_id"], cid)
     # Auto-assign LR number if not provided (per-company sequential)
     if not (payload.lr_number or "").strip():
         payload.lr_number = await _next_lr_number(user["user_id"], cid)
@@ -90,6 +138,11 @@ async def update_trip(tid: str, payload: Trip, request: Request, user=Depends(ge
             payload.vehicle_type = v.get("vehicle_type", "own")
             if payload.vehicle_type == "supplier" and not payload.supplier_name:
                 payload.supplier_name = v.get("supplier_name", "")
+            if payload.vehicle_type == "supplier" and not payload.supplier_id:
+                payload.supplier_id = v.get("supplier_id", "")
+    # Iter47 Phase 3: Strict enforcement — supplier vehicle MUST link to a Supplier master record
+    if payload.vehicle_type == "supplier":
+        await _enforce_supplier_link(payload, user["user_id"], cid)
     payload = _compute_trip(payload)
     doc = payload.model_dump()
     doc["user_id"] = user["user_id"]

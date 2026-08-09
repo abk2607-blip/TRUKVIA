@@ -122,6 +122,7 @@ class Trip(BaseModel):
     halting_amount: float = 0.0        # auto: chargeable * rate, user-editable
     halting_amount_override: bool = False
     # ---- Supplier fields ----
+    supplier_id: str = ""              # Iter47 Phase 3: FK to Suppliers master (mandatory when vehicle_type=supplier)
     supplier_name: str = ""
     supplier_freight: float = 0.0
     # Supplier freight detailed calculation (mirrors customer billing)
@@ -233,6 +234,7 @@ class Vehicle(BaseModel):
     vehicle_type: Literal["own", "supplier"] = "own"
     owner_name: str = ""
     owner_phone: str = ""
+    supplier_id: str = ""              # Iter47 Phase 3: FK to Suppliers master
     supplier_name: str = ""
     supplier_contact_person: str = ""
     supplier_mobile: str = ""

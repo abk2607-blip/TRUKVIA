@@ -21,6 +21,7 @@ const EMPTY = {
   vehicle_number: "",
   vehicle_id: "",
   vehicle_type: "own",
+  supplier_id: "",
   supplier_name: "",
   supplier_freight: 0,
   supplier_freight_mode: "per_ton",
@@ -123,6 +124,7 @@ export default function TripForm() {
   const { data: vehicles = [] } = useQuery({ queryKey: ["vehicles"], queryFn: async () => (await api.get("/vehicles")).data });
   const { data: templates = [] } = useQuery({ queryKey: ["templates"], queryFn: async () => (await api.get("/templates")).data });
   const { data: expenditureTypes = [] } = useQuery({ queryKey: ["expenditure-types"], queryFn: async () => (await api.get("/expenditure-types")).data });
+  const { data: suppliers = [] } = useQuery({ queryKey: ["suppliers"], queryFn: async () => (await api.get("/suppliers")).data });
   const [selectedTemplate, setSelectedTemplate] = useState("");
   const [qaOpen, setQaOpen] = useState(null); // 'customer' | 'vehicle' | 'driver' | 'product' | null
 
@@ -333,7 +335,15 @@ export default function TripForm() {
         )}
       </header>
 
-      <form onSubmit={(e) => { e.preventDefault(); save.mutate(); }} className="space-y-6">
+      <form onSubmit={(e) => {
+        e.preventDefault();
+        // Iter47 Phase 3: Strict supplier enforcement on supplier vehicles
+        if (form.vehicle_type === "supplier" && !form.supplier_id) {
+          toast.error("Please select a Supplier for this supplier vehicle (mandatory)");
+          return;
+        }
+        save.mutate();
+      }} className="space-y-6">
         {!isEdit && templates.length > 0 && (
           <div data-testid="template-picker" className="border border-emerald-300 bg-emerald-50 rounded-sm p-4 flex flex-col sm:flex-row sm:items-center gap-3">
             <div className="text-sm text-emerald-900 flex-1">
@@ -405,6 +415,7 @@ export default function TripForm() {
                       vehicle_id: v.id,
                       vehicle_number: v.vehicle_number,
                       vehicle_type: v.vehicle_type || "own",
+                      supplier_id: v.vehicle_type === "supplier" ? (v.supplier_id || "") : "",
                       supplier_name: v.vehicle_type === "supplier" ? (v.supplier_name || "") : "",
                     });
                   } else {
@@ -721,8 +732,30 @@ export default function TripForm() {
         {form.vehicle_type === "supplier" && (
           <Section title="Supplier Vehicle · సప్లయర్ వాహనం">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <Field label="Supplier Name">
-                <input data-testid="trip-supplier-name" value={form.supplier_name} onChange={(e) => setForm({ ...form, supplier_name: e.target.value })} className={inputCls} />
+              <Field label="Supplier · సప్లయర్" required>
+                <SearchableSelect
+                  dataTestId="trip-supplier-picker"
+                  value={form.supplier_id || ""}
+                  onChange={(sid) => {
+                    const s = suppliers.find((x) => x.id === sid);
+                    setForm({
+                      ...form,
+                      supplier_id: sid || "",
+                      supplier_name: s ? s.name : form.supplier_name,
+                    });
+                  }}
+                  placeholder="Select supplier…"
+                  options={suppliers.map((s) => ({
+                    value: s.id,
+                    label: s.name,
+                    meta: [s.mobile, s.gst_in].filter(Boolean).join(" · "),
+                  }))}
+                />
+                {!form.supplier_id && (
+                  <div className="text-[10px] text-rose-700 mt-1 font-bold">
+                    ⚠ Supplier selection is mandatory for supplier vehicles. <a href="/suppliers/add" target="_blank" rel="noopener" className="underline">+ Add new</a>
+                  </div>
+                )}
               </Field>
               <Field label="Loading Point">
                 <input data-testid="trip-supplier-loading" value={form.supplier_loading_point} onChange={(e) => setForm({ ...form, supplier_loading_point: e.target.value })} className={inputCls} placeholder="e.g. HPCL Kondapalli" />
@@ -929,6 +962,7 @@ export default function TripForm() {
             vehicle_id: v.id,
             vehicle_number: v.vehicle_number,
             vehicle_type: v.vehicle_type || "own",
+            supplier_id: v.vehicle_type === "supplier" ? (v.supplier_id || "") : "",
             supplier_name: v.vehicle_type === "supplier" ? (v.supplier_name || "") : "",
           }))}
           onClose={() => setQaOpen(null)}
