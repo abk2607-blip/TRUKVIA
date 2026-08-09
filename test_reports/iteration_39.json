@@ -1,0 +1,22 @@
+{
+  "summary": "Iter41 verified end-to-end. Backend: 4/4 test_iter41_voice_tpl_analytics_supplier pytest pass + 29/29 regression across iter22/31/32/38/39/40. POST /api/ai/parse-template correctly extracts name/from_location/to_location/product_type/freight_mode=per_ton/rate_per_ton=1500/round_trip_kms=450/halting_rate_per_day=2500 from sample transcript. GET /api/dashboard/expenditure-breakdown returns period/total/trip_count/by_type with pct summing to ~100. GET /api/reports/supplier-statement.pdf renders PDF with supplier name, 'Trip-wise Settlement' table, Net Payable, and settlement remarks; 404 returned for unknown supplier. Frontend: (a) ExpenditureBreakdownCard rendered on /dashboard after seeding a current-day trip with 4 other_expenditures — bar + 5 legend rows (Driver Food ×3 ₹1,100 28.95%, Toll ×2 ₹1,100 28.95%, Loading Charges ×1 ₹800 21.05%, Parking ×2 ₹400 10.53%, Labour ×1 ₹400 10.53%). (b) Trip Templates '+ New Template' opens form and voice-btn-template-start button ('Voice · వాయిస్') is visible and enabled. (c) /reports/supplier-pl shows new STATEMENT column with 9 supplier-statement-btn-* buttons; clicking first triggered blob download 'supplier_statement_TEST_Sup_Full.pdf'.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter41_voice_tpl_analytics_supplier.py",
+    "/app/test_reports/pytest/iter41.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "parse-template LLM extraction is deterministic on the sample transcript — good.",
+    "ExpenditureBreakdownCard correctly hides when total=0 (verified elsewhere) and renders bar + legend with pct rounded to 2dp; percentages sum to ~100 within rounding tolerance.",
+    "Supplier statement PDF download uses blob response and triggers file download (not new tab) — matches spec; filename slug from supplier name."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (4/4 iter41 + 29/29 regression)", "frontend": "100% (dashboard card, voice btn, supplier PDF download all verified)"},
+  "test_credentials": "Bearer test_session_bitumen_2026 (see /app/memory/test_credentials.md); UI: data-testid=demo-login-button",
+  "seed_data_creation": "Backend pytest created TEST_Iter41 customer + trips with unique future dates (2050+) to keep breakdown assertion stable across re-runs. Frontend flow seeded one current-day trip with 4 other_expenditures on the active tenant to make the dashboard card visible.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter41 fully green. Voice mic capture not exercised (headless browser lacks mic); button visibility + enablement + /api/ai/parse-template contract validated separately. Supplier PDF opens via blob (page.expect_download works)."
+}

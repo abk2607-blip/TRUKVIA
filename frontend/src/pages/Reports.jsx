@@ -101,6 +101,7 @@ function SupplierPLReport() {
                 <th className="text-right px-4 py-2">Net Payable</th>
                 <th className="text-right px-4 py-2">Profit</th>
                 <th className="text-right px-4 py-2">Margin %</th>
+                <th className="text-right px-4 py-2">Statement</th>
               </tr>
             </thead>
             <tbody className="font-mono">
@@ -116,10 +117,13 @@ function SupplierPLReport() {
                   <td className="px-4 py-2 text-right font-semibold">{fmtCurrency(s.net_payable || 0)}</td>
                   <td className={`px-4 py-2 text-right font-bold ${s.profit >= 0 ? "text-emerald-800" : "text-rose-800"}`}>{fmtCurrency(s.profit)}</td>
                   <td className="px-4 py-2 text-right">{s.margin_pct}%</td>
+                  <td className="px-4 py-2 text-right">
+                    <SupplierStatementBtn name={s.supplier_name} start={start} end={end} />
+                  </td>
                 </tr>
               ))}
               {(data.suppliers || []).length === 0 && (
-                <tr><td colSpan={10} className="px-4 py-10 text-center text-zinc-400 text-sm">No supplier trips in this period.</td></tr>
+                <tr><td colSpan={11} className="px-4 py-10 text-center text-zinc-400 text-sm">No supplier trips in this period.</td></tr>
               )}
             </tbody>
             {(data.suppliers || []).length > 0 && (
@@ -135,6 +139,7 @@ function SupplierPLReport() {
                   <td className="px-4 py-2 text-right font-bold">{fmtCurrency(data.totals.net_payable || 0)}</td>
                   <td className="px-4 py-2 text-right font-bold text-emerald-800">{fmtCurrency(data.totals.profit)}</td>
                   <td className="px-4 py-2 text-right"></td>
+                  <td className="px-4 py-2 text-right"></td>
                 </tr>
               </tfoot>
             )}
@@ -142,6 +147,46 @@ function SupplierPLReport() {
         </div>
       )}
     </div>
+  );
+}
+
+/* ------------------ Supplier Statement Download Button ------------------ */
+function SupplierStatementBtn({ name, start, end }) {
+  const [loading, setLoading] = React.useState(false);
+  const download = async () => {
+    setLoading(true);
+    try {
+      const resp = await api.get("/reports/supplier-statement.pdf", {
+        params: { supplier_name: name, start, end },
+        responseType: "blob",
+      });
+      const url = URL.createObjectURL(new Blob([resp.data], { type: "application/pdf" }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `supplier_statement_${name.replace(/\s+/g, "_")}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      const detail = e?.response?.data?.detail;
+      const msg = detail || "Statement download failed";
+      try { const { toast } = await import("sonner"); toast.error(msg); } catch { alert(msg); }
+    } finally {
+      setLoading(false);
+    }
+  };
+  return (
+    <button
+      type="button"
+      data-testid={`supplier-statement-btn-${name.toLowerCase().replace(/\s+/g, "-")}`}
+      onClick={download}
+      disabled={loading}
+      className="inline-flex items-center gap-1 px-2 py-1 text-[10px] uppercase tracking-wider font-bold border border-zinc-300 bg-white text-zinc-800 rounded-sm hover:bg-zinc-100 disabled:opacity-50"
+      title={`Download PDF statement for ${name}`}
+    >
+      <Download size={11} /> PDF
+    </button>
   );
 }
 

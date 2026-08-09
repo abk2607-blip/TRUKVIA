@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "@/api";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import VoiceButton from "@/components/VoiceButton";
 
 const EMPTY = {
   name: "", customer_id: "", from_location: "", to_location: "",
@@ -68,7 +69,21 @@ export default function TripTemplates() {
       <div className="space-y-4 max-w-3xl" data-testid="template-form">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold">{editing.id ? "Edit" : "New"} Trip Template</h1>
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
+            <VoiceButton
+              context="template"
+              onParsed={(p) => {
+                // Merge parsed values, coerce numerics
+                const numKeys = ["round_trip_kms", "rate_per_ton", "rate_per_km_per_ton", "fixed_amount", "halting_rate_per_day"];
+                const patch = {};
+                for (const [k, v] of Object.entries(p)) {
+                  if (v === "" || v === null || v === undefined) continue;
+                  patch[k] = numKeys.includes(k) ? Number(v) : v;
+                }
+                setEditing((prev) => ({ ...prev, ...patch }));
+                toast.success("Template pre-filled from voice — review & save");
+              }}
+            />
             <Button variant="outline" onClick={cancel} data-testid="template-cancel">Cancel</Button>
             <Button onClick={save} disabled={saving} data-testid="template-save">{saving ? "Saving…" : "Save"}</Button>
           </div>

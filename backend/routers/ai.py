@@ -464,6 +464,79 @@ async def parse_trip_from_voice(payload: ParseTripRequest, request: Request, use
 
 
 # ============================================================================
+# Voice parse for Trip Template (Iter41)
+# ============================================================================
+
+@router.post("/ai/parse-template")
+async def parse_template_from_voice(payload: ParseTripRequest, request: Request, user=Depends(get_current_user)):
+    """Parse a spoken (Telugu/English) trip TEMPLATE description into structured fields.
+
+    Templates carry the recurring parts of a trip (name, route, rates, product,
+    halting rate). This endpoint's schema is intentionally smaller than parse-trip
+    (no tons/date/vehicle/driver — those vary per trip)."""
+    if not EMERGENT_LLM_KEY:
+        raise HTTPException(status_code=503, detail="AI is not configured (missing EMERGENT_LLM_KEY)")
+    cid = await _active_company_id(request, user)
+    text = (payload.transcript or "").strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="Empty transcript")
+
+    customers = await db.customers.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
+    products = await db.products.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "id": 1, "name": 1, "default_rate": 1}).to_list(500)
+
+    system = (
+        "You are a Telugu/English speech-to-JSON parser for a Bitumen transport TEMPLATE. "
+        "A template stores the RECURRING parts of a trip so it can be reused across many actual trips. "
+        "Extract only the fields that were clearly mentioned. Return STRICT JSON with these optional keys "
+        "(omit ones not spoken):\n"
+        '{"name":"","customer_name":"","from_location":"","to_location":"","load_details":"",'
+        '"product_type":"","round_trip_kms":0,"freight_mode":"per_ton|fixed",'
+        '"rate_per_ton":0,"rate_per_km_per_ton":0,"fixed_amount":0,'
+        '"hsn_sac":"","gst_type":"cgst_sgst|igst|rcm","halting_rate_per_day":0,"remarks":""}\n'
+        "Rules: "
+        "- Numbers spoken in Telugu (ఇరవై = 20) must be converted to digits. "
+        '- freight_mode: "per ton / తనుకు" → per_ton; "round trip / రౌండ్ ట్రిప్ / fixed" → fixed. '
+        '- product_type: valid values only — VG-10, VG-30, VG-40, CRMB, PMB, Emulsion, Other. '
+        "- If a customer name is spoken, use closest match:\n"
+        f"Customers: {[c['name'] for c in customers][:40]}\n"
+        f"Products: {[p['name'] for p in products][:20]}\n"
+        '- If user says "Kondapalli to Vijayawada template" and no explicit name, set name accordingly. '
+        "Return ONLY the JSON object, no prose, no markdown."
+    )
+
+    from emergentintegrations.llm.chat import LlmChat, UserMessage
+    chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"parse-tpl-{user['user_id']}", system_message=system).with_model("gemini", "gemini-3-flash-preview")
+    try:
+        response = await chat.send_message(UserMessage(text=text))
+        raw = response if isinstance(response, str) else (getattr(response, "content", None) or getattr(response, "text", "") or str(response))
+    except Exception as e:
+        logger.exception("parse-template failed")
+        raise HTTPException(status_code=502, detail=f"AI parse failed: {e}")
+
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`").split("\n", 1)[-1]
+        if raw.endswith("```"):
+            raw = raw.rsplit("```", 1)[0]
+    try:
+        data = json.loads(raw)
+    except Exception:
+        i, j = raw.find("{"), raw.rfind("}")
+        data = json.loads(raw[i:j + 1]) if (i >= 0 and j > i) else {}
+
+    resolved = dict(data)
+    if data.get("customer_name"):
+        c = next((c for c in customers if data["customer_name"].lower() in c["name"].lower() or c["name"].lower() in data["customer_name"].lower()), None)
+        if c:
+            resolved["customer_id"] = c["id"]
+    if not resolved.get("name") and resolved.get("from_location") and resolved.get("to_location"):
+        resolved["name"] = f"{resolved['from_location']} → {resolved['to_location']}"
+        if resolved.get("load_details"):
+            resolved["name"] += f" — {resolved['load_details']}"
+    return {"parsed": resolved, "transcript": text}
+
+
+# ============================================================================
 # Smart Dashboard Insights (Iter33)
 # ============================================================================
 

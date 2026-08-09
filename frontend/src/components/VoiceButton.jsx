@@ -54,8 +54,13 @@ export default function VoiceButton({
       if (!text) { toast.info("No voice detected"); return; }
       setParsing(true);
       try {
-        const endpoint = context === "trip" ? "/ai/parse-trip" : "/ai/parse";
-        const body = context === "trip" ? { transcript: text } : { transcript: text, context };
+        const endpoint =
+          context === "trip" ? "/ai/parse-trip"
+          : context === "template" ? "/ai/parse-template"
+          : "/ai/parse";
+        const body = (context === "trip" || context === "template")
+          ? { transcript: text }
+          : { transcript: text, context };
         const { data } = await api.post(endpoint, body);
         const parsed = data.parsed || {};
         const count = Object.keys(parsed).filter((k) => parsed[k] !== "" && parsed[k] !== 0 && parsed[k] != null).length;

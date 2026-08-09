@@ -112,5 +112,61 @@ async def dashboard(request: Request, user=Depends(get_current_user)):
         "expiry_alerts": expiry_alerts,
     }
 
+
+@router.get("/dashboard/expenditure-breakdown")
+async def dashboard_expenditure_breakdown(
+    request: Request,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    """Aggregate the dynamic Other-Expenditure entries across every trip for the
+    active company in the given date range, grouped by type.
+
+    Returns:
+      {
+        "period": {"start": start, "end": end},
+        "total": <sum>,
+        "trip_count": <trips with any expenditure>,
+        "by_type": [{"type": "Driver Food", "amount": 3200.0, "count": 12, "pct": 34.5}, ...]
+      }
+    """
+    uid = user["user_id"]
+    cid = await _active_company_id(request, user)
+    trips = await db.trips.find({"user_id": uid, "company_id": cid}, {"_id": 0, "date": 1, "other_expenditures": 1}).to_list(20000)
+    trips = [t for t in trips if _in_range(t.get("date", ""), start, end)]
+    by_type: dict = {}
+    trip_ids_with = 0
+    total = 0.0
+    for t in trips:
+        rows = t.get("other_expenditures") or []
+        if not rows:
+            continue
+        counted = False
+        for r in rows:
+            try:
+                amt = float(r.get("amount") or 0)
+            except Exception:
+                amt = 0.0
+            if amt <= 0:
+                continue
+            k = (r.get("type") or "Others").strip() or "Others"
+            b = by_type.setdefault(k, {"type": k, "amount": 0.0, "count": 0})
+            b["amount"] += amt
+            b["count"] += 1
+            total += amt
+            counted = True
+        if counted:
+            trip_ids_with += 1
+    for b in by_type.values():
+        b["amount"] = round(b["amount"], 2)
+        b["pct"] = round(b["amount"] / total * 100.0, 2) if total > 0 else 0.0
+    return {
+        "period": {"start": start, "end": end},
+        "total": round(total, 2),
+        "trip_count": trip_ids_with,
+        "by_type": sorted(by_type.values(), key=lambda x: -x["amount"]),
+    }
+
 # ==================== Drivers ====================
 

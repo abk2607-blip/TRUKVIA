@@ -5,6 +5,7 @@ import { Link } from "react-router-dom";
 import { TrendingUp, TrendingDown, Truck, FileText, Users, Wallet, ArrowUpRight, MessageCircle, AlertTriangle, Share2, Loader2 } from "lucide-react";
 import InsightsCard from "@/components/InsightsCard";
 import RecurringTripsCard from "@/components/RecurringTripsCard";
+import ExpenditureBreakdownCard from "@/components/ExpenditureBreakdownCard";
 
 export default function Dashboard() {
   const [digestLoading, setDigestLoading] = React.useState(false);
@@ -76,6 +77,9 @@ export default function Dashboard() {
 
       {/* Recurring / One-Tap Trips */}
       <RecurringTripsCard />
+
+      {/* Expenditure Breakdown — per-type spend chart */}
+      <ExpenditureBreakdownCard />
 
       {/* KPI Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">

@@ -376,5 +376,160 @@ async def report_gst_summary(request: Request, user=Depends(get_current_user)):
 
 # ==================== Overdue Invoices — see /invoices/overdue defined above /invoices/{iid} ====================
 
+
+# ==================== Supplier Statement (Iter41) ====================
+
+
+@router.get("/reports/supplier-statement.pdf")
+async def supplier_statement_pdf(
+    request: Request,
+    supplier_name: str,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    """Supplier-wise settlement statement — trip-by-trip listing with net_payable + remarks.
+
+    Mirrors the Customer Statement layout. supplier_name is matched
+    case-insensitively so URL encoding of arbitrary supplier strings works.
+    """
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib import colors
+    from reportlab.lib.units import mm
+    from pdf._base import _UNI_FONT, _UNI_FONT_BOLD
+
+    uid = user["user_id"]
+    cid = await _active_company_id(request, user)
+    company = await db.companies.find_one({"id": cid, "user_id": uid}, {"_id": 0}) or {}
+    trips = await db.trips.find(
+        {"user_id": uid, "company_id": cid, "vehicle_type": "supplier"},
+        {"_id": 0, "user_id": 0},
+    ).to_list(10000)
+    sn_lc = (supplier_name or "").strip().lower()
+    trips = [t for t in trips if (t.get("supplier_name") or "").strip().lower() == sn_lc]
+    trips = [t for t in trips if _in_range(t.get("date", ""), start, end)]
+    trips.sort(key=lambda t: (t.get("date", ""), t.get("created_at", "")))
+    if not trips:
+        raise HTTPException(status_code=404, detail=f"No supplier trips found for '{supplier_name}'")
+
+    total_trips = len(trips)
+    total_tons = round(sum(float(t.get("tons", 0)) for t in trips), 3)
+    total_customer_freight = round(sum(float(t.get("freight_amount", 0)) for t in trips), 2)
+    total_supplier_freight = round(sum(float(t.get("supplier_freight", 0)) for t in trips), 2)
+    total_advance = round(sum(float(t.get("supplier_advance", 0)) for t in trips), 2)
+    total_diesel = round(sum(float(t.get("supplier_diesel", 0)) for t in trips), 2)
+    total_shortage = round(sum(float(t.get("supplier_shortage_deduction", 0)) for t in trips), 2)
+    total_recovery = round(sum(float(t.get("supplier_other_recoveries", 0)) for t in trips), 2)
+    total_income = round(sum(float(t.get("supplier_other_income", 0)) for t in trips), 2)
+    total_net_payable = round(sum(float(t.get("supplier_net_payable", 0)) for t in trips), 2)
+    total_profit = round(total_customer_freight - total_net_payable, 2)
+
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=12 * mm, rightMargin=12 * mm,
+        topMargin=14 * mm, bottomMargin=14 * mm,
+        title=f"Supplier Statement — {supplier_name}",
+    )
+    styles = getSampleStyleSheet()
+    title_st = ParagraphStyle("t", parent=styles["Title"], fontSize=15, leading=18, fontName=_UNI_FONT_BOLD)
+    hdr_st = ParagraphStyle("h", parent=styles["Normal"], fontSize=10, textColor=colors.grey, fontName=_UNI_FONT)
+    body_st = ParagraphStyle("b", parent=styles["Normal"], fontSize=8, leading=10, fontName=_UNI_FONT)
+    sub_st = ParagraphStyle("sub", parent=styles["Normal"], fontSize=7, leading=9, textColor=colors.grey, fontName=_UNI_FONT)
+
+    story: list = []
+    story.append(Paragraph(f"<b>{company.get('name', '')}</b>", title_st))
+    story.append(Paragraph(f"Supplier Settlement Statement — <b>{supplier_name}</b>", hdr_st))
+    if start or end:
+        story.append(Paragraph(f"Period: {start or 'all'} to {end or 'today'}", hdr_st))
+    story.append(Spacer(1, 6))
+
+    # Summary block
+    smy = [
+        ["Trips", str(total_trips), "Tons", f"{total_tons:,.3f}"],
+        ["Customer Freight (₹)", f"{total_customer_freight:,.2f}", "Supplier Freight (₹)", f"{total_supplier_freight:,.2f}"],
+        ["Advance Paid (₹)", f"{total_advance:,.2f}", "Diesel Funded (₹)", f"{total_diesel:,.2f}"],
+        ["Shortage Deducted (₹)", f"{total_shortage:,.2f}", "Other Recoveries (₹)", f"{total_recovery:,.2f}"],
+        ["Bonus / Other Income (₹)", f"{total_income:,.2f}", "Net Payable (₹)", f"{total_net_payable:,.2f}"],
+        ["Trip Profit (₹)", f"{total_profit:,.2f}", "Margin %", f"{(total_profit/total_customer_freight*100.0 if total_customer_freight>0 else 0):.2f}%"],
+    ]
+    st = Table(smy, hAlign="LEFT", colWidths=[45 * mm, 40 * mm, 45 * mm, 40 * mm])
+    st.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, -1), _UNI_FONT),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d1d5db")),
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f3f4f6")),
+        ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#f3f4f6")),
+        ("FONTNAME", (0, 0), (0, -1), _UNI_FONT_BOLD),
+        ("FONTNAME", (2, 0), (2, -1), _UNI_FONT_BOLD),
+        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#fef3c7")),
+    ]))
+    story.append(st)
+    story.append(Spacer(1, 12))
+
+    # Trip table — one row per trip + optional remarks row below
+    story.append(Paragraph("<b>Trip-wise Settlement</b>", ParagraphStyle("h3", parent=styles["Heading3"], fontName=_UNI_FONT_BOLD)))
+    trip_rows = [[
+        "Date", "LR / Vehicle", "Route", "Tons", "Sup. Freight", "Adv", "Diesel", "Shortage", "Net Payable",
+    ]]
+    for t in trips:
+        route = f"{t.get('from_location', '') or '?'} → {t.get('to_location', '') or '?'}"
+        veh_cell = f"{t.get('lr_number') or '—'}\n<font color='#6b7280' size='7'>{t.get('vehicle_number','')}</font>"
+        trip_rows.append([
+            t.get("date", ""),
+            Paragraph(veh_cell, body_st),
+            Paragraph(route, body_st),
+            f"{float(t.get('tons', 0)):.2f}",
+            f"₹{float(t.get('supplier_freight', 0)):,.0f}",
+            f"₹{float(t.get('supplier_advance', 0)):,.0f}",
+            f"₹{float(t.get('supplier_diesel', 0)):,.0f}",
+            f"₹{float(t.get('supplier_shortage_deduction', 0)):,.0f}",
+            f"₹{float(t.get('supplier_net_payable', 0)):,.0f}",
+        ])
+        # Optional remarks row (spans the columns)
+        rem = (t.get("supplier_settlement_remarks") or "").strip()
+        if rem:
+            trip_rows.append([
+                "", "", Paragraph(f"<i>↳ {rem}</i>", sub_st), "", "", "", "", "", "",
+            ])
+    col_widths = [18 * mm, 24 * mm, 40 * mm, 12 * mm, 18 * mm, 15 * mm, 15 * mm, 17 * mm, 22 * mm]
+    tt = Table(trip_rows, hAlign="LEFT", repeatRows=1, colWidths=col_widths)
+    ts = [
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#111827")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("FONTNAME", (0, 0), (-1, -1), _UNI_FONT),
+        ("FONTNAME", (0, 0), (-1, 0), _UNI_FONT_BOLD),
+        ("FONTSIZE", (0, 0), (-1, -1), 7.5),
+        ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#e5e7eb")),
+        ("ALIGN", (3, 1), (-1, -1), "RIGHT"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]
+    # Merge remarks-row description across cols 2..8 and give it a soft amber background
+    r_idx = 1
+    for t in trips:
+        r_idx += 1  # advance past the trip row
+        rem = (t.get("supplier_settlement_remarks") or "").strip()
+        if rem:
+            ts.append(("SPAN", (2, r_idx - 1), (8, r_idx - 1)))
+            ts.append(("BACKGROUND", (0, r_idx - 1), (-1, r_idx - 1), colors.HexColor("#fff7ed")))
+            r_idx += 1  # advance past the remark row
+    tt.setStyle(TableStyle(ts))
+    story.append(tt)
+
+    story.append(Spacer(1, 12))
+    story.append(Paragraph(
+        f"<font size='8' color='#6b7280'>Net Payable = Supplier Freight − Advance − Diesel − Shortage − Other Recoveries + Other Income. "
+        f"Generated on {now_utc().date().isoformat()} for {company.get('name','')}.</font>",
+        ParagraphStyle("f", parent=styles["Normal"], fontName=_UNI_FONT),
+    ))
+
+    doc.build(story)
+    buf.seek(0)
+    fname = f"supplier_statement_{(supplier_name or 'supplier').replace(' ', '_')}.pdf"
+    return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{fname}"'})
+
+
 # ==================== Health ====================
 
