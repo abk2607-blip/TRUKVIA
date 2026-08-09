@@ -70,6 +70,12 @@ async def list_overdue_invoices(request: Request, days: int = 30, user=Depends(g
 
 @router.get("/invoices/{iid}")
 async def get_invoice(iid: str, user=Depends(get_current_user)):
+    # Iter44: silently re-derive from linked trips so stale invoices auto-heal
+    # (fixes case where trip halting/shortage were added AFTER invoice creation).
+    try:
+        await _recompute_invoice(iid, user)
+    except Exception:
+        pass
     doc = await db.invoices.find_one({"id": iid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -265,6 +271,11 @@ async def add_payment(iid: str, payload: PaymentAdd, user=Depends(get_current_us
 
 @router.get("/invoices/{iid}/pdf")
 async def invoice_pdf(iid: str, user=Depends(get_current_user)):
+    # Iter44: auto-recompute so stale halting/shortage/receipts pull latest trip data
+    try:
+        await _recompute_invoice(iid, user)
+    except Exception:
+        pass
     inv = await db.invoices.find_one({"id": iid, "user_id": user["user_id"]}, {"_id": 0})
     if not inv:
         raise HTTPException(status_code=404, detail="Not found")

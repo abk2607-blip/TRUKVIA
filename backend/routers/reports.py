@@ -377,29 +377,50 @@ async def report_gst_summary(request: Request, user=Depends(get_current_user)):
 # ==================== Overdue Invoices — see /invoices/overdue defined above /invoices/{iid} ====================
 
 
-# ==================== Supplier Statement (Iter41) ====================
+# ==================== Supplier Statement (Iter41 + Iter44 expanded) ====================
 
 
-@router.get("/reports/supplier-statement.pdf")
-async def supplier_statement_pdf(
-    request: Request,
-    supplier_name: str,
-    start: Optional[str] = None,
-    end: Optional[str] = None,
-    user=Depends(get_current_user),
-):
-    """Supplier-wise settlement statement — trip-by-trip listing with net_payable + remarks.
-
-    Mirrors the Customer Statement layout. supplier_name is matched
-    case-insensitively so URL encoding of arbitrary supplier strings works.
+@router.get("/reports/suppliers")
+async def list_suppliers(request: Request, user=Depends(get_current_user)):
+    """List unique supplier names for the active company — used in the
+    Reports → Supplier Statement dropdown.
     """
-    from reportlab.lib.pagesizes import A4
-    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-    from reportlab.lib import colors
-    from reportlab.lib.units import mm
-    from pdf._base import _UNI_FONT, _UNI_FONT_BOLD
+    uid = user["user_id"]
+    cid = await _active_company_id(request, user)
+    # From trip records
+    trip_sups = await db.trips.distinct(
+        "supplier_name",
+        {"user_id": uid, "company_id": cid, "vehicle_type": "supplier"},
+    )
+    # And from vehicles master (in case a supplier is defined but no trip yet)
+    veh_sups = await db.vehicles.distinct(
+        "supplier_name",
+        {"user_id": uid, "company_id": cid, "vehicle_type": "supplier"},
+    )
+    seen = set()
+    result = []
+    for name in (trip_sups + veh_sups):
+        n = (name or "").strip()
+        key = n.lower()
+        if not n or key in seen:
+            continue
+        seen.add(key)
+        # Find any mobile for the supplier
+        mob = ""
+        v = await db.vehicles.find_one(
+            {"user_id": uid, "company_id": cid, "vehicle_type": "supplier",
+             "supplier_name": {"$regex": f"^{n}$", "$options": "i"}},
+            {"_id": 0, "supplier_mobile": 1, "owner_phone": 1},
+        )
+        if v:
+            mob = (v.get("supplier_mobile") or v.get("owner_phone") or "").strip()
+        result.append({"name": n, "mobile": mob})
+    result.sort(key=lambda x: x["name"].lower())
+    return result
 
+
+async def _supplier_statement_data(request: Request, supplier_name: str, start, end, user):
+    """Shared aggregation for JSON + PDF endpoints."""
     uid = user["user_id"]
     cid = await _active_company_id(request, user)
     company = await db.companies.find_one({"id": cid, "user_id": uid}, {"_id": 0}) or {}
@@ -411,116 +432,270 @@ async def supplier_statement_pdf(
     trips = [t for t in trips if (t.get("supplier_name") or "").strip().lower() == sn_lc]
     trips = [t for t in trips if _in_range(t.get("date", ""), start, end)]
     trips.sort(key=lambda t: (t.get("date", ""), t.get("created_at", "")))
+
+    # Attach customer name per trip for the enriched view
+    customer_ids = list({t.get("customer_id") for t in trips if t.get("customer_id")})
+    customers = await db.customers.find(
+        {"user_id": uid, "company_id": cid, "id": {"$in": customer_ids}}, {"_id": 0}
+    ).to_list(2000)
+    cmap = {c["id"]: c.get("name", "Unknown") for c in customers}
+
+    # Supplier mobile
+    supplier_mobile = ""
+    v = await db.vehicles.find_one(
+        {"user_id": uid, "company_id": cid, "vehicle_type": "supplier",
+         "supplier_name": {"$regex": f"^{supplier_name}$", "$options": "i"}},
+        {"_id": 0, "supplier_mobile": 1, "owner_phone": 1},
+    )
+    if v:
+        supplier_mobile = (v.get("supplier_mobile") or v.get("owner_phone") or "").strip()
+
+    def _num(x):
+        try: return float(x or 0)
+        except Exception: return 0.0
+
+    trip_rows = []
+    tot = {"trips": 0, "load_tons": 0.0, "unload_tons": 0.0,
+           "distance": 0.0, "supplier_freight": 0.0, "supplier_advance": 0.0,
+           "supplier_diesel": 0.0, "customer_diesel": 0.0,
+           "supplier_shortage": 0.0, "supplier_recovery": 0.0,
+           "supplier_income": 0.0, "halting": 0.0, "net_payable": 0.0,
+           "customer_freight": 0.0}
+    for t in trips:
+        # Customer diesel adjustment — trip-level from receipts
+        cust_diesel = round(sum(
+            _num(r.get("amount")) for r in (t.get("customer_receipts") or [])
+            if (r.get("type") or "").lower() == "diesel"
+        ), 2)
+        row = {
+            "trip_id": t.get("id"),
+            "date": t.get("date", ""),
+            "lr_number": t.get("lr_number") or "",
+            "vehicle_number": t.get("vehicle_number") or "",
+            "customer_name": cmap.get(t.get("customer_id"), "Unknown"),
+            "product": t.get("load_details") or t.get("product_type") or "",
+            "from_location": t.get("from_location") or "",
+            "to_location": t.get("to_location") or "",
+            "loaded_qty": round(_num(t.get("tons") or t.get("loaded_qty")), 3),
+            "unloaded_qty": round(_num(t.get("unloaded_qty")), 3),
+            "shortage_qty": round(_num(t.get("shortage_qty")), 3),
+            "excess_qty": round(_num(t.get("excess_qty")), 3),
+            "distance_kms": round(_num(t.get("supplier_round_trip_kms") or t.get("round_trip_kms")), 2),
+            "supplier_rate": round(_num(t.get("supplier_rate_per_ton")), 2),
+            "supplier_freight": round(_num(t.get("supplier_freight")), 2),
+            "supplier_advance": round(_num(t.get("supplier_advance")), 2),
+            "supplier_diesel": round(_num(t.get("supplier_diesel")), 2),
+            "customer_diesel": cust_diesel,
+            "supplier_shortage_deduction": round(_num(t.get("supplier_shortage_deduction")), 2),
+            "supplier_other_recoveries": round(_num(t.get("supplier_other_recoveries")), 2),
+            "supplier_other_income": round(_num(t.get("supplier_other_income")), 2),
+            "halting_amount": round(_num(t.get("halting_amount")), 2),
+            "halting_days": int(t.get("chargeable_halting_days") or 0),
+            "halting_rate": round(_num(t.get("halting_rate_per_day")), 2),
+            "supplier_net_payable": round(_num(t.get("supplier_net_payable")), 2),
+            "settlement_remarks": t.get("supplier_settlement_remarks") or "",
+            "customer_freight": round(_num(t.get("freight_amount")), 2),
+        }
+        trip_rows.append(row)
+        tot["trips"] += 1
+        tot["load_tons"] += row["loaded_qty"]
+        tot["unload_tons"] += row["unloaded_qty"]
+        tot["distance"] += row["distance_kms"]
+        tot["supplier_freight"] += row["supplier_freight"]
+        tot["supplier_advance"] += row["supplier_advance"]
+        tot["supplier_diesel"] += row["supplier_diesel"]
+        tot["customer_diesel"] += row["customer_diesel"]
+        tot["supplier_shortage"] += row["supplier_shortage_deduction"]
+        tot["supplier_recovery"] += row["supplier_other_recoveries"]
+        tot["supplier_income"] += row["supplier_other_income"]
+        tot["halting"] += row["halting_amount"]
+        tot["net_payable"] += row["supplier_net_payable"]
+        tot["customer_freight"] += row["customer_freight"]
+
+    for k, v in tot.items():
+        if isinstance(v, float):
+            tot[k] = round(v, 2)
+    tot["profit"] = round(tot["customer_freight"] - tot["net_payable"], 2)
+    tot["margin_pct"] = round((tot["profit"] / tot["customer_freight"] * 100.0) if tot["customer_freight"] > 0 else 0, 2)
+    return {
+        "supplier": {"name": supplier_name, "mobile": supplier_mobile},
+        "company": {"id": company.get("id"), "name": company.get("name", ""),
+                    "gst_in": company.get("gst_in", ""), "address": company.get("address", "")},
+        "period": {"start": start, "end": end},
+        "trips": trip_rows,
+        "totals": tot,
+    }
+
+
+@router.get("/reports/supplier-statement")
+async def supplier_statement_json(
+    request: Request,
+    supplier_name: str,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    """JSON payload driving the Reports → Supplier Statement in-app View."""
+    data = await _supplier_statement_data(request, supplier_name, start, end, user)
+    if not data["trips"]:
+        # Return an empty envelope instead of 404 so the UI can show "no data" state
+        return data
+    return data
+
+
+@router.get("/reports/supplier-statement.pdf")
+async def supplier_statement_pdf(
+    request: Request,
+    supplier_name: str,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    """Supplier-wise settlement statement — LANDSCAPE with all trip fields."""
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib import colors
+    from reportlab.lib.units import mm
+    from pdf._base import _UNI_FONT, _UNI_FONT_BOLD
+
+    data = await _supplier_statement_data(request, supplier_name, start, end, user)
+    company = data["company"]
+    trips = data["trips"]
+    tot = data["totals"]
     if not trips:
         raise HTTPException(status_code=404, detail=f"No supplier trips found for '{supplier_name}'")
 
-    total_trips = len(trips)
-    total_tons = round(sum(float(t.get("tons", 0)) for t in trips), 3)
-    total_customer_freight = round(sum(float(t.get("freight_amount", 0)) for t in trips), 2)
-    total_supplier_freight = round(sum(float(t.get("supplier_freight", 0)) for t in trips), 2)
-    total_advance = round(sum(float(t.get("supplier_advance", 0)) for t in trips), 2)
-    total_diesel = round(sum(float(t.get("supplier_diesel", 0)) for t in trips), 2)
-    total_shortage = round(sum(float(t.get("supplier_shortage_deduction", 0)) for t in trips), 2)
-    total_recovery = round(sum(float(t.get("supplier_other_recoveries", 0)) for t in trips), 2)
-    total_income = round(sum(float(t.get("supplier_other_income", 0)) for t in trips), 2)
-    total_net_payable = round(sum(float(t.get("supplier_net_payable", 0)) for t in trips), 2)
-    total_profit = round(total_customer_freight - total_net_payable, 2)
-
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
-        buf, pagesize=A4,
-        leftMargin=12 * mm, rightMargin=12 * mm,
-        topMargin=14 * mm, bottomMargin=14 * mm,
+        buf, pagesize=landscape(A4),
+        leftMargin=10 * mm, rightMargin=10 * mm,
+        topMargin=12 * mm, bottomMargin=10 * mm,
         title=f"Supplier Statement — {supplier_name}",
     )
     styles = getSampleStyleSheet()
-    title_st = ParagraphStyle("t", parent=styles["Title"], fontSize=15, leading=18, fontName=_UNI_FONT_BOLD)
-    hdr_st = ParagraphStyle("h", parent=styles["Normal"], fontSize=10, textColor=colors.grey, fontName=_UNI_FONT)
-    body_st = ParagraphStyle("b", parent=styles["Normal"], fontSize=8, leading=10, fontName=_UNI_FONT)
-    sub_st = ParagraphStyle("sub", parent=styles["Normal"], fontSize=7, leading=9, textColor=colors.grey, fontName=_UNI_FONT)
+    title_st = ParagraphStyle("t", parent=styles["Title"], fontSize=14, leading=16, fontName=_UNI_FONT_BOLD)
+    hdr_st = ParagraphStyle("h", parent=styles["Normal"], fontSize=9, textColor=colors.grey, fontName=_UNI_FONT)
+    body_st = ParagraphStyle("b", parent=styles["Normal"], fontSize=7, leading=8.5, fontName=_UNI_FONT)
+    sub_st = ParagraphStyle("sub", parent=styles["Normal"], fontSize=6.5, leading=8, textColor=colors.grey, fontName=_UNI_FONT)
 
     story: list = []
     story.append(Paragraph(f"<b>{company.get('name', '')}</b>", title_st))
-    story.append(Paragraph(f"Supplier Settlement Statement — <b>{supplier_name}</b>", hdr_st))
-    if start or end:
-        story.append(Paragraph(f"Period: {start or 'all'} to {end or 'today'}", hdr_st))
+    if company.get("gst_in"):
+        story.append(Paragraph(f"GSTIN: {company.get('gst_in','')} · {company.get('address','')}", hdr_st))
+    story.append(Paragraph(f"Supplier Settlement Statement — <b>{supplier_name}</b>"
+                           + (f" · {data['supplier']['mobile']}" if data["supplier"]["mobile"] else ""), hdr_st))
+    story.append(Paragraph(f"Period: {start or 'all'} to {end or 'today'}", hdr_st))
     story.append(Spacer(1, 6))
 
-    # Summary block
+    # Summary block — 3 columns of KPIs
     smy = [
-        ["Trips", str(total_trips), "Tons", f"{total_tons:,.3f}"],
-        ["Customer Freight (₹)", f"{total_customer_freight:,.2f}", "Supplier Freight (₹)", f"{total_supplier_freight:,.2f}"],
-        ["Advance Paid (₹)", f"{total_advance:,.2f}", "Diesel Funded (₹)", f"{total_diesel:,.2f}"],
-        ["Shortage Deducted (₹)", f"{total_shortage:,.2f}", "Other Recoveries (₹)", f"{total_recovery:,.2f}"],
-        ["Bonus / Other Income (₹)", f"{total_income:,.2f}", "Net Payable (₹)", f"{total_net_payable:,.2f}"],
-        ["Trip Profit (₹)", f"{total_profit:,.2f}", "Margin %", f"{(total_profit/total_customer_freight*100.0 if total_customer_freight>0 else 0):.2f}%"],
+        ["Trips", str(tot["trips"]), "Loading (MT)", f"{tot['load_tons']:,.3f}", "Unloading (MT)", f"{tot['unload_tons']:,.3f}"],
+        ["Distance (KM)", f"{tot['distance']:,.2f}", "Customer Freight (₹)", f"{tot['customer_freight']:,.2f}", "Supplier Freight (₹)", f"{tot['supplier_freight']:,.2f}"],
+        ["Advance (₹)", f"{tot['supplier_advance']:,.2f}", "Diesel Funded (₹)", f"{tot['supplier_diesel']:,.2f}", "Cust. Diesel Adj (₹)", f"{tot['customer_diesel']:,.2f}"],
+        ["Shortage Ded (₹)", f"{tot['supplier_shortage']:,.2f}", "Other Recov. (₹)", f"{tot['supplier_recovery']:,.2f}", "Bonus / Income (₹)", f"{tot['supplier_income']:,.2f}"],
+        ["Halting (₹)", f"{tot['halting']:,.2f}", "Net Payable (₹)", f"{tot['net_payable']:,.2f}", "Trip Profit (₹)", f"{tot['profit']:,.2f} ({tot['margin_pct']}%)"],
     ]
-    st = Table(smy, hAlign="LEFT", colWidths=[45 * mm, 40 * mm, 45 * mm, 40 * mm])
+    st = Table(smy, hAlign="LEFT", colWidths=[38 * mm, 38 * mm, 38 * mm, 38 * mm, 38 * mm, 38 * mm])
     st.setStyle(TableStyle([
         ("FONTNAME", (0, 0), (-1, -1), _UNI_FONT),
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("FONTSIZE", (0, 0), (-1, -1), 8),
         ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d1d5db")),
         ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f3f4f6")),
         ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#f3f4f6")),
+        ("BACKGROUND", (4, 0), (4, -1), colors.HexColor("#f3f4f6")),
         ("FONTNAME", (0, 0), (0, -1), _UNI_FONT_BOLD),
         ("FONTNAME", (2, 0), (2, -1), _UNI_FONT_BOLD),
+        ("FONTNAME", (4, 0), (4, -1), _UNI_FONT_BOLD),
         ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#fef3c7")),
     ]))
     story.append(st)
-    story.append(Spacer(1, 12))
+    story.append(Spacer(1, 10))
 
-    # Trip table — one row per trip + optional remarks row below
+    # Trip-wise table — landscape width ~277mm
     story.append(Paragraph("<b>Trip-wise Settlement</b>", ParagraphStyle("h3", parent=styles["Heading3"], fontName=_UNI_FONT_BOLD)))
-    trip_rows = [[
-        "Date", "LR / Vehicle", "Route", "Tons", "Sup. Freight", "Adv", "Diesel", "Shortage", "Net Payable",
-    ]]
-    for t in trips:
-        route = f"{t.get('from_location', '') or '?'} → {t.get('to_location', '') or '?'}"
-        veh_cell = f"{t.get('lr_number') or '—'}\n<font color='#6b7280' size='7'>{t.get('vehicle_number','')}</font>"
-        trip_rows.append([
-            t.get("date", ""),
-            Paragraph(veh_cell, body_st),
-            Paragraph(route, body_st),
-            f"{float(t.get('tons', 0)):.2f}",
-            f"₹{float(t.get('supplier_freight', 0)):,.0f}",
-            f"₹{float(t.get('supplier_advance', 0)):,.0f}",
-            f"₹{float(t.get('supplier_diesel', 0)):,.0f}",
-            f"₹{float(t.get('supplier_shortage_deduction', 0)):,.0f}",
-            f"₹{float(t.get('supplier_net_payable', 0)):,.0f}",
+    headers = [
+        "Date", "LR / Vehicle", "Customer", "Route", "Product",
+        "Load", "Unload", "S/E", "KM",
+        "Sup.Rate", "Freight", "Adv", "Diesel", "Cust.Dsl", "Ded/Rec", "Halt", "Net Pay",
+    ]
+    rows = [headers]
+    for r in trips:
+        se = ""
+        if r["shortage_qty"] > 0: se = f"-{r['shortage_qty']:.3f}"
+        elif r["excess_qty"] > 0: se = f"+{r['excess_qty']:.3f}"
+        veh_cell = Paragraph(
+            f"{r['lr_number'] or '—'}<br/><font color='#6b7280' size='6'>{r['vehicle_number']}</font>",
+            body_st,
+        )
+        route = Paragraph(f"{r['from_location'] or '?'}<br/>→ {r['to_location'] or '?'}", body_st)
+        ded_rec = r["supplier_shortage_deduction"] + r["supplier_other_recoveries"]
+        rows.append([
+            r["date"], veh_cell,
+            Paragraph(r["customer_name"], body_st),
+            route,
+            Paragraph(r["product"], body_st),
+            f"{r['loaded_qty']:.2f}",
+            f"{r['unloaded_qty']:.2f}",
+            se or "—",
+            f"{r['distance_kms']:.0f}" if r["distance_kms"] else "—",
+            f"₹{r['supplier_rate']:,.0f}" if r["supplier_rate"] else "—",
+            f"₹{r['supplier_freight']:,.0f}",
+            f"₹{r['supplier_advance']:,.0f}",
+            f"₹{r['supplier_diesel']:,.0f}",
+            f"₹{r['customer_diesel']:,.0f}",
+            f"₹{ded_rec:,.0f}",
+            f"₹{r['halting_amount']:,.0f}" if r["halting_amount"] else "—",
+            f"₹{r['supplier_net_payable']:,.0f}",
         ])
-        # Optional remarks row (spans the columns)
-        rem = (t.get("supplier_settlement_remarks") or "").strip()
-        if rem:
-            trip_rows.append([
-                "", "", Paragraph(f"<i>↳ {rem}</i>", sub_st), "", "", "", "", "", "",
-            ])
-    col_widths = [18 * mm, 24 * mm, 40 * mm, 12 * mm, 18 * mm, 15 * mm, 15 * mm, 17 * mm, 22 * mm]
-    tt = Table(trip_rows, hAlign="LEFT", repeatRows=1, colWidths=col_widths)
+        if r["settlement_remarks"]:
+            rows.append(["", "", Paragraph(f"<i>↳ {r['settlement_remarks']}</i>", sub_st),
+                         "", "", "", "", "", "", "", "", "", "", "", "", "", ""])
+    # Totals row
+    rows.append([
+        "TOTAL", f"{tot['trips']} trip(s)", "", "", "",
+        f"{tot['load_tons']:.2f}",
+        f"{tot['unload_tons']:.2f}",
+        "—",
+        f"{tot['distance']:.0f}",
+        "",
+        f"₹{tot['supplier_freight']:,.0f}",
+        f"₹{tot['supplier_advance']:,.0f}",
+        f"₹{tot['supplier_diesel']:,.0f}",
+        f"₹{tot['customer_diesel']:,.0f}",
+        f"₹{(tot['supplier_shortage']+tot['supplier_recovery']):,.0f}",
+        f"₹{tot['halting']:,.0f}",
+        f"₹{tot['net_payable']:,.0f}",
+    ])
+    col_widths = [15, 20, 22, 26, 16, 11, 11, 13, 11, 17, 20, 17, 17, 18, 17, 15, 28]  # mm; wider Net Pay col
+    col_widths = [c * mm for c in col_widths]
+    tt = Table(rows, hAlign="LEFT", repeatRows=1, colWidths=col_widths)
     ts = [
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#111827")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("FONTNAME", (0, 0), (-1, -1), _UNI_FONT),
         ("FONTNAME", (0, 0), (-1, 0), _UNI_FONT_BOLD),
-        ("FONTSIZE", (0, 0), (-1, -1), 7.5),
-        ("GRID", (0, 0), (-1, -1), 0.3, colors.HexColor("#e5e7eb")),
-        ("ALIGN", (3, 1), (-1, -1), "RIGHT"),
+        ("FONTNAME", (0, -1), (-1, -1), _UNI_FONT_BOLD),
+        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#fef3c7")),
+        ("FONTSIZE", (0, 0), (-1, -1), 6.5),
+        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#e5e7eb")),
+        ("ALIGN", (5, 1), (-1, -1), "RIGHT"),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
     ]
-    # Merge remarks-row description across cols 2..8 and give it a soft amber background
+    # Remarks-row styling
     r_idx = 1
-    for t in trips:
-        r_idx += 1  # advance past the trip row
-        rem = (t.get("supplier_settlement_remarks") or "").strip()
-        if rem:
-            ts.append(("SPAN", (2, r_idx - 1), (8, r_idx - 1)))
+    for r in trips:
+        r_idx += 1
+        if r["settlement_remarks"]:
+            ts.append(("SPAN", (2, r_idx - 1), (16, r_idx - 1)))
             ts.append(("BACKGROUND", (0, r_idx - 1), (-1, r_idx - 1), colors.HexColor("#fff7ed")))
-            r_idx += 1  # advance past the remark row
+            r_idx += 1
     tt.setStyle(TableStyle(ts))
     story.append(tt)
 
-    story.append(Spacer(1, 12))
+    story.append(Spacer(1, 8))
     story.append(Paragraph(
-        f"<font size='8' color='#6b7280'>Net Payable = Supplier Freight − Advance − Diesel − Shortage − Other Recoveries + Other Income. "
+        f"<font size='7' color='#6b7280'>Net Payable = Supplier Freight − Advance − Diesel Funded − Cust.Diesel Adj − Shortage Ded − Other Recoveries + Bonus + Halting. "
         f"Generated on {now_utc().date().isoformat()} for {company.get('name','')}.</font>",
         ParagraphStyle("f", parent=styles["Normal"], fontName=_UNI_FONT),
     ))

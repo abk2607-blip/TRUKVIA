@@ -2,13 +2,14 @@ import React, { useState } from "react";
 import { NavLink, Routes, Route, Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api, API, fmtCurrency, fmtDate } from "@/api";
-import { FileText, TrendingUp, Scale, Download, Landmark, Handshake, Clock, MessageCircle } from "lucide-react";
+import { FileText, TrendingUp, Scale, Download, Landmark, Handshake, Clock, MessageCircle, Truck, Printer } from "lucide-react";
 import HaltingReport from "@/pages/HaltingReport";
 
 const tabs = [
   { to: "ledger", te: "లెడ్జర్", en: "Ledger", icon: FileText, testid: "tab-ledger" },
   { to: "pl", te: "లాభ-నష్టం", en: "P&L", icon: TrendingUp, testid: "tab-pl" },
   { to: "supplier-pl", te: "సప్లయర్ P&L", en: "Supplier P&L", icon: Handshake, testid: "tab-supplier-pl" },
+  { to: "supplier-statement", te: "సప్లయర్ స్టేట్‌మెంట్", en: "Supplier Statement", icon: Truck, testid: "tab-supplier-statement" },
   { to: "halting", te: "హాల్టింగ్", en: "Halting", icon: Clock, testid: "tab-halting" },
   { to: "balance-sheet", te: "బ్యాలెన్స్ షీట్", en: "Balance Sheet", icon: Scale, testid: "tab-balance-sheet" },
   { to: "gstr1", te: "GSTR-1", en: "GSTR-1", icon: Landmark, testid: "tab-gstr1" },
@@ -48,10 +49,311 @@ export default function Reports() {
         <Route path="ledger" element={<LedgerReport />} />
         <Route path="pl" element={<PLReport />} />
         <Route path="supplier-pl" element={<SupplierPLReport />} />
+        <Route path="supplier-statement" element={<SupplierStatementReport />} />
         <Route path="halting" element={<HaltingReport />} />
         <Route path="balance-sheet" element={<BalanceSheetReport />} />
         <Route path="gstr1" element={<GSTR1Report />} />
       </Routes>
+    </div>
+  );
+}
+
+/* ------------------ Supplier Statement (Iter44) ------------------ */
+function SupplierStatementReport() {
+  const today = new Date();
+  const _fmt = (d) => d.toISOString().slice(0, 10);
+  const monthStart = _fmt(new Date(today.getFullYear(), today.getMonth(), 1));
+  const monthEnd = _fmt(today);
+  const [supplier, setSupplier] = useState("");
+  const [start, setStart] = useState(monthStart);
+  const [end, setEnd] = useState(monthEnd);
+
+  const { data: suppliers = [] } = useQuery({
+    queryKey: ["suppliers-list"],
+    queryFn: async () => (await api.get("/reports/suppliers")).data,
+  });
+
+  const { data, isLoading, refetch, isFetching } = useQuery({
+    queryKey: ["supplier-statement", supplier, start, end],
+    enabled: !!supplier,
+    queryFn: async () =>
+      (await api.get("/reports/supplier-statement", { params: { supplier_name: supplier, start, end } })).data,
+  });
+
+  const setThisMonth = () => {
+    setStart(_fmt(new Date(today.getFullYear(), today.getMonth(), 1)));
+    setEnd(_fmt(today));
+  };
+  const setLastMonth = () => {
+    const y = today.getMonth() === 0 ? today.getFullYear() - 1 : today.getFullYear();
+    const m = today.getMonth() === 0 ? 11 : today.getMonth() - 1;
+    setStart(_fmt(new Date(y, m, 1)));
+    setEnd(_fmt(new Date(y, m + 1, 0)));
+  };
+  const setPrevMonth = () => {
+    const [ys, ms] = start.split("-").map(Number);
+    const y = ms === 1 ? ys - 1 : ys;
+    const m = ms === 1 ? 12 : ms - 1;
+    setStart(`${y}-${String(m).padStart(2, "0")}-01`);
+    setEnd(`${y}-${String(m).padStart(2, "0")}-${String(new Date(y, m, 0).getDate()).padStart(2, "0")}`);
+  };
+
+  const downloadPdf = async () => {
+    if (!supplier) return;
+    const resp = await api.get("/reports/supplier-statement.pdf", {
+      params: { supplier_name: supplier, start, end }, responseType: "blob",
+    });
+    const url = URL.createObjectURL(new Blob([resp.data], { type: "application/pdf" }));
+    const a = document.createElement("a"); a.href = url;
+    a.download = `supplier_statement_${supplier.replace(/\s+/g, "_")}_${start}_${end}.pdf`;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  };
+  const openPrint = async () => {
+    if (!supplier) return;
+    const resp = await api.get("/reports/supplier-statement.pdf", {
+      params: { supplier_name: supplier, start, end }, responseType: "blob",
+    });
+    const url = URL.createObjectURL(new Blob([resp.data], { type: "application/pdf" }));
+    const w = window.open(url, "_blank");
+    if (w) setTimeout(() => { try { w.print(); } catch (_) {} }, 800);
+  };
+  const shareWa = async () => {
+    if (!supplier) return;
+    try {
+      const { data: r } = await api.post("/reports/supplier-statement/share", null, {
+        params: { supplier_name: supplier, start, end },
+      });
+      window.open(r.whatsapp_url, "_blank", "noopener");
+      const { toast } = await import("sonner");
+      if (!r.supplier_mobile_available) {
+        toast.info(`No saved mobile for ${supplier} — WhatsApp opened without a recipient. Add mobile in Vehicles master.`);
+      } else {
+        toast.success(`WhatsApp ready — ${r.supplier_mobile}`);
+      }
+    } catch (e) {
+      const { toast } = await import("sonner");
+      toast.error(e?.response?.data?.detail || "Share failed");
+    }
+  };
+
+  return (
+    <div className="space-y-4" data-testid="supplier-statement-tab">
+      {/* Selectors */}
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end bg-zinc-50 border border-zinc-200 rounded-sm p-4">
+        <div>
+          <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">Supplier · సప్లయర్</label>
+          <select
+            data-testid="ss-supplier-select"
+            value={supplier}
+            onChange={(e) => setSupplier(e.target.value)}
+            className="mt-1 w-full border border-zinc-300 px-2 py-1.5 rounded-sm text-sm bg-white focus:border-zinc-950 outline-none"
+          >
+            <option value="">— Select supplier —</option>
+            {suppliers.map((s) => (
+              <option key={s.name} value={s.name}>{s.name}{s.mobile ? ` (${s.mobile})` : ""}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">From</label>
+          <input data-testid="ss-start" type="date" value={start} onChange={(e) => setStart(e.target.value)}
+            className="mt-1 w-full border border-zinc-300 px-2 py-1.5 rounded-sm text-sm bg-white" />
+        </div>
+        <div>
+          <label className="text-[10px] uppercase font-bold text-zinc-500 tracking-wider">To</label>
+          <input data-testid="ss-end" type="date" value={end} onChange={(e) => setEnd(e.target.value)}
+            className="mt-1 w-full border border-zinc-300 px-2 py-1.5 rounded-sm text-sm bg-white" />
+        </div>
+        <div className="md:col-span-2 flex flex-wrap gap-2">
+          <button type="button" data-testid="ss-this-month" onClick={setThisMonth} className="px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold border border-zinc-300 rounded-sm hover:bg-zinc-100">This Month</button>
+          <button type="button" data-testid="ss-last-month" onClick={setLastMonth} className="px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold border border-zinc-300 rounded-sm hover:bg-zinc-100">Last Month</button>
+          <button type="button" data-testid="ss-prev-month" onClick={setPrevMonth} className="px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold border border-zinc-300 rounded-sm hover:bg-zinc-100">◀ Prev</button>
+          <button type="button" data-testid="ss-refresh" onClick={() => refetch()} disabled={!supplier || isFetching}
+            className="px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold bg-zinc-950 text-white rounded-sm disabled:opacity-50">
+            {isFetching ? "Loading…" : "Generate"}
+          </button>
+        </div>
+      </div>
+
+      {/* Action bar */}
+      {supplier && data && data.trips.length > 0 && (
+        <div className="flex flex-wrap items-center justify-between gap-2 border border-zinc-200 bg-white rounded-sm px-4 py-3">
+          <div>
+            <div className="text-lg font-bold">{data.supplier.name}
+              {data.supplier.mobile && <span className="text-xs text-zinc-500 font-normal ml-2">· {data.supplier.mobile}</span>}
+            </div>
+            <div className="text-[11px] text-zinc-500">
+              {data.company.name} · {data.period.start} → {data.period.end} · {data.totals.trips} trip(s)
+            </div>
+          </div>
+          <div className="flex gap-2">
+            <button data-testid="ss-download-pdf" onClick={downloadPdf} className="inline-flex items-center gap-1 px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold border border-zinc-300 rounded-sm hover:bg-zinc-100"><Download size={12} /> PDF</button>
+            <button data-testid="ss-print" onClick={openPrint} className="inline-flex items-center gap-1 px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold border border-zinc-300 rounded-sm hover:bg-zinc-100"><Printer size={12} /> Print</button>
+            <button data-testid="ss-wa" onClick={shareWa} className="inline-flex items-center gap-1 px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold bg-emerald-600 text-white rounded-sm hover:bg-emerald-700"><MessageCircle size={12} /> WhatsApp</button>
+          </div>
+        </div>
+      )}
+
+      {/* View */}
+      {!supplier && (
+        <div className="text-center text-sm text-zinc-500 py-12 border border-dashed border-zinc-300 rounded-sm">
+          Select a supplier + month to generate the statement.
+        </div>
+      )}
+      {supplier && isLoading && (
+        <div className="text-center text-sm text-zinc-500 py-12">Loading…</div>
+      )}
+      {supplier && data && data.trips.length === 0 && (
+        <div className="text-center text-sm text-zinc-500 py-12 border border-dashed border-zinc-300 rounded-sm">
+          No supplier trips found for <b>{supplier}</b> in this period.
+        </div>
+      )}
+
+      {supplier && data && data.trips.length > 0 && (
+        <>
+          {/* Summary KPI grid */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+            <SsKpi label="Total Trips" v={data.totals.trips} data-testid="ss-kpi-trips" />
+            <SsKpi label="Loading Qty (MT)" v={data.totals.load_tons.toFixed(3)} />
+            <SsKpi label="Customer Freight" v={fmtCurrency(data.totals.customer_freight)} />
+            <SsKpi label="Supplier Freight" v={fmtCurrency(data.totals.supplier_freight)} />
+            <SsKpi label="Advance" v={fmtCurrency(data.totals.supplier_advance)} />
+            <SsKpi label="Diesel Funded" v={fmtCurrency(data.totals.supplier_diesel)} />
+            <SsKpi label="Cust. Diesel Adj" v={fmtCurrency(data.totals.customer_diesel)} />
+            <SsKpi label="Halting" v={fmtCurrency(data.totals.halting)} />
+            <SsKpi label="Shortage Ded." v={fmtCurrency(data.totals.supplier_shortage)} />
+            <SsKpi label="Other Recov." v={fmtCurrency(data.totals.supplier_recovery)} />
+            <SsKpi label="Other Income" v={fmtCurrency(data.totals.supplier_income)} />
+            <SsKpi label="Net Payable" v={fmtCurrency(data.totals.net_payable)} highlight testid="ss-kpi-net-payable" />
+          </div>
+
+          {/* Trip-wise details table */}
+          <div className="overflow-x-auto border border-zinc-200 rounded-sm bg-white">
+            <table className="w-full text-xs">
+              <thead className="bg-zinc-950 text-white text-[10px] uppercase tracking-wider">
+                <tr>
+                  <th className="text-left px-2 py-2">Date</th>
+                  <th className="text-left px-2 py-2">LR / Vehicle</th>
+                  <th className="text-left px-2 py-2">Customer</th>
+                  <th className="text-left px-2 py-2">Route</th>
+                  <th className="text-left px-2 py-2">Product</th>
+                  <th className="text-right px-2 py-2">Load</th>
+                  <th className="text-right px-2 py-2">Unload</th>
+                  <th className="text-right px-2 py-2">S/E</th>
+                  <th className="text-right px-2 py-2">KM</th>
+                  <th className="text-right px-2 py-2">Rate</th>
+                  <th className="text-right px-2 py-2">Freight</th>
+                  <th className="text-right px-2 py-2">Adv</th>
+                  <th className="text-right px-2 py-2">Diesel</th>
+                  <th className="text-right px-2 py-2">Cust.Dsl</th>
+                  <th className="text-right px-2 py-2">Halt</th>
+                  <th className="text-right px-2 py-2">Ded/Rec</th>
+                  <th className="text-right px-2 py-2">Net</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-zinc-100 font-mono">
+                {data.trips.map((r) => (
+                  <React.Fragment key={r.trip_id}>
+                    <tr data-testid={`ss-row-${r.trip_id}`} className="hover:bg-amber-50">
+                      <td className="px-2 py-1.5">{r.date}</td>
+                      <td className="px-2 py-1.5">
+                        <div className="font-bold">{r.lr_number || "—"}</div>
+                        <div className="text-[10px] text-zinc-500">{r.vehicle_number}</div>
+                      </td>
+                      <td className="px-2 py-1.5">{r.customer_name}</td>
+                      <td className="px-2 py-1.5 text-zinc-600">{r.from_location || "?"} → {r.to_location || "?"}</td>
+                      <td className="px-2 py-1.5 text-zinc-600">{r.product || "—"}</td>
+                      <td className="px-2 py-1.5 text-right">{r.loaded_qty.toFixed(2)}</td>
+                      <td className="px-2 py-1.5 text-right">{r.unloaded_qty.toFixed(2)}</td>
+                      <td className="px-2 py-1.5 text-right">
+                        {r.shortage_qty > 0 && <span className="text-rose-700">-{r.shortage_qty.toFixed(3)}</span>}
+                        {r.excess_qty > 0 && <span className="text-emerald-700">+{r.excess_qty.toFixed(3)}</span>}
+                        {r.shortage_qty === 0 && r.excess_qty === 0 && "—"}
+                      </td>
+                      <td className="px-2 py-1.5 text-right">{r.distance_kms || "—"}</td>
+                      <td className="px-2 py-1.5 text-right">{r.supplier_rate ? fmtCurrency(r.supplier_rate) : "—"}</td>
+                      <td className="px-2 py-1.5 text-right">{fmtCurrency(r.supplier_freight)}</td>
+                      <td className="px-2 py-1.5 text-right">{fmtCurrency(r.supplier_advance)}</td>
+                      <td className="px-2 py-1.5 text-right">{fmtCurrency(r.supplier_diesel)}</td>
+                      <td className="px-2 py-1.5 text-right">{fmtCurrency(r.customer_diesel)}</td>
+                      <td className="px-2 py-1.5 text-right">
+                        {r.halting_amount > 0
+                          ? <span title={`${r.halting_days} days × ₹${r.halting_rate}`}>{fmtCurrency(r.halting_amount)}</span>
+                          : "—"}
+                      </td>
+                      <td className="px-2 py-1.5 text-right">{fmtCurrency(r.supplier_shortage_deduction + r.supplier_other_recoveries)}</td>
+                      <td className="px-2 py-1.5 text-right font-bold">{fmtCurrency(r.supplier_net_payable)}</td>
+                    </tr>
+                    {r.settlement_remarks && (
+                      <tr className="bg-amber-50/50">
+                        <td colSpan={17} className="px-3 py-1 text-[10px] italic text-zinc-600">↳ {r.settlement_remarks}</td>
+                      </tr>
+                    )}
+                  </React.Fragment>
+                ))}
+                <tr className="bg-amber-50 font-bold border-t-2 border-zinc-950">
+                  <td className="px-2 py-2">TOTAL</td>
+                  <td className="px-2 py-2">{data.totals.trips} trip(s)</td>
+                  <td className="px-2 py-2"></td>
+                  <td className="px-2 py-2"></td>
+                  <td className="px-2 py-2"></td>
+                  <td className="px-2 py-2 text-right">{data.totals.load_tons.toFixed(2)}</td>
+                  <td className="px-2 py-2 text-right">{data.totals.unload_tons.toFixed(2)}</td>
+                  <td className="px-2 py-2 text-right">—</td>
+                  <td className="px-2 py-2 text-right">{data.totals.distance.toFixed(0)}</td>
+                  <td className="px-2 py-2 text-right">—</td>
+                  <td className="px-2 py-2 text-right">{fmtCurrency(data.totals.supplier_freight)}</td>
+                  <td className="px-2 py-2 text-right">{fmtCurrency(data.totals.supplier_advance)}</td>
+                  <td className="px-2 py-2 text-right">{fmtCurrency(data.totals.supplier_diesel)}</td>
+                  <td className="px-2 py-2 text-right">{fmtCurrency(data.totals.customer_diesel)}</td>
+                  <td className="px-2 py-2 text-right">{fmtCurrency(data.totals.halting)}</td>
+                  <td className="px-2 py-2 text-right">{fmtCurrency(data.totals.supplier_shortage + data.totals.supplier_recovery)}</td>
+                  <td className="px-2 py-2 text-right">{fmtCurrency(data.totals.net_payable)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          {/* Closing summary block */}
+          <div className="border border-amber-300 bg-amber-50/50 rounded-sm p-4">
+            <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 mb-2">Closing Summary</div>
+            <div className="font-mono text-sm space-y-1 max-w-lg">
+              <ClosingRow k="Total Supplier Freight" v={data.totals.supplier_freight} />
+              <ClosingRow k="Less: Advance" v={-data.totals.supplier_advance} />
+              <ClosingRow k="Less: Diesel Funded" v={-data.totals.supplier_diesel} />
+              <ClosingRow k="Less: Customer Diesel Adjustment" v={-data.totals.customer_diesel} />
+              <ClosingRow k="Less: Shortage Deducted" v={-data.totals.supplier_shortage} />
+              <ClosingRow k="Less: Other Recoveries" v={-data.totals.supplier_recovery} />
+              <ClosingRow k="Add: Bonus / Other Income" v={data.totals.supplier_income} />
+              <ClosingRow k="Add: Halting Charges" v={data.totals.halting} />
+              <div className="flex justify-between border-t-2 border-zinc-950 mt-2 pt-2 font-bold text-base">
+                <span>Net Payable to Supplier</span>
+                <span data-testid="ss-closing-net">{fmtCurrency(data.totals.net_payable)}</span>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function SsKpi({ label, v, highlight = false, testid }) {
+  return (
+    <div className={`border rounded-sm p-3 ${highlight ? "border-amber-400 bg-amber-50" : "border-zinc-200 bg-white"}`} data-testid={testid}>
+      <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">{label}</div>
+      <div className="mt-1 font-mono font-bold text-sm">{v}</div>
+    </div>
+  );
+}
+
+function ClosingRow({ k, v }) {
+  const neg = v < 0;
+  return (
+    <div className="flex justify-between">
+      <span className="text-zinc-600">{k}</span>
+      <span className={neg ? "text-rose-700" : ""}>{neg ? `(${fmtCurrency(-v)})` : fmtCurrency(v)}</span>
     </div>
   );
 }

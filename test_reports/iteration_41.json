@@ -1,0 +1,39 @@
+{
+  "summary": "Iter44 end-to-end verification. Backend: 5/5 new tests pass; targeted regression of iter17/22/31/32/36/38/39/40/41/42/44 = 60/61 (1 pre-existing module-path failure in test_iter43 unrelated to iter44). Frontend: Supplier Statement tab renders correctly at /reports/supplier-statement with all 10 required testids (tab-supplier-statement, supplier-statement-tab, ss-supplier-select, ss-start, ss-end, ss-this-month, ss-last-month, ss-prev-month, ss-refresh, ss-download-pdf, ss-print, ss-wa). Seeded supplier trip TEST_UI_Supplier_Ram (halting 6 chargeable days × 500 = 3000): UI showed 12 KPI cards (Net Payable ₹21,000), 17-column trip row (including amber italic settlement_remarks sub-row 'UI test remarks'), Closing Summary with 8 line items, PDF download triggered (supplier_statement_TEST_UI_Supplier_Ram_2026-01-01_2026-01-31.pdf), WhatsApp deeplink opened api.whatsapp.com with formatted message including 'Supplier Settlement Statement', Print opened new tab (blob URL). Halting auto-recompute on GET /invoices/{iid} + PDF verified in test_iter44 (24000 halting appended). Company isolation confirmed correct via X-Company-Id header: supplier list & statement scoped per-company (0 leakage).",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/reports/suppliers", "issue": "Supplier `mobile` returned empty even though trip's supplier_mobile='9998887777' was set. This means WhatsApp share button will show 'no mobile' toast for suppliers whose contact number only lives on the trip document. Consider aggregating supplier mobile from last trip if suppliers collection lacks it."},
+      {"endpoint": "/api/trips/{id} DELETE", "issue": "Returned 400 when trying to delete a trip that has no downstream invoice. May be by design (soft-blocks) but worth verifying error message."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "Reports > Supplier Statement", "issues": ["Native <select> is used for ss-supplier-select instead of shadcn Select — inconsistent with other selects in the app (Reports > Supplier P&L uses shadcn) and lacks search/filter for the 30+ supplier list. Minor UX polish."]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter44_halting_invoice_and_supplier_statement.py",
+    "/app/test_reports/pytest/iter44_results.xml",
+    "/app/test_reports/pytest/full_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: In /reports/suppliers, backfill supplier.mobile from latest trip.supplier_mobile if the suppliers-collection entry has empty mobile (avoids user hitting friendly-toast when clicking ss-wa for legacy suppliers).",
+    "OPTIONAL: Replace native <select> in ss-supplier-select with shadcn Combobox for consistency + search when supplier list grows."
+  ],
+  "critical_code_review_comments": [
+    "iter44 auto-recompute on GET /invoices/{iid} is correct and idempotent — good defensive design; matches user's root cause (stale snapshot).",
+    "Reports > Supplier Statement is properly company-scoped via _active_company_id in /api/reports/suppliers, /reports/supplier-statement, and /reports/supplier-statement.pdf.",
+    "PDF landscape output includes all 15 required headers (Date, LR, Customer, Route, Product, Load, Unload, Sup.Rate, Freight, Adv, Diesel, Cust.Dsl, Ded/Rec, Halt, Net Pay) plus supplier + settlement remarks rendered."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (61/61 iter44+targeted regression)", "frontend": "100%"},
+  "test_credentials": "Bearer test_session_bitumen_2026 (session cookie also set for browser tests); user demo@bitumen-transport.local",
+  "seed_data_creation": "Created trip trip_147338867ba3430f for supplier 'TEST_UI_Supplier_Ram' + customer 'TEST_Iter44' for UI verification. Delete returned 400 so seed persists but is prefixed TEST_ for future cleanup.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter44 fully passes. Note: to switch companies via API you MUST send X-Company-Id header — POST /companies/{id}/activate alone does not change server-side scoping for that request. Seeded TEST_UI_Supplier_Ram in default company (co_c2ac839cf8bf4ff4). Test file at /app/backend/tests/test_iter44_halting_invoice_and_supplier_statement.py is the canonical iter44 regression suite.",
+  "rca of the issue": "User's halting-not-in-invoice bug root cause = invoice was created BEFORE halting fields were entered on the trip (invoice stores a snapshot of trip freight/halting at creation time). Iter44 fix: silent _recompute_invoice() on every GET /invoices/{iid} and /invoices/{iid}/pdf so the snapshot is refreshed lazily. Backfill script recomputed 220 historical invoices already. Verified: create trip (no halting) -> invoice.halting_total=0 -> PUT trip with loading/unloading/grace/rate -> GET invoice returns halting_total=24000, PDF text contains '24,000' and 'Halting'."
+}
