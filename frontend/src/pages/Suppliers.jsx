@@ -459,16 +459,56 @@ function SupplierStatement() {
   const [sid, setSid] = useState("");
   const [start, setStart] = useState(fmt(new Date(today.getFullYear(), today.getMonth(), 1)));
   const [end, setEnd] = useState(fmt(today));
+  const [filterVeh, setFilterVeh] = useState("");
+  const [filterLR, setFilterLR] = useState("");
+  const [filterType, setFilterType] = useState("all");
 
   const { data, isLoading } = useQuery({
     queryKey: ["supplier-ledger", sid, start, end], enabled: !!sid,
     queryFn: async () => (await api.get(`/suppliers/${sid}/ledger`, { params: { start, end } })).data,
   });
 
+  // Client-side filter (keeps single-source-of-truth on backend, but per user's Phase 2 spec)
+  const filteredEntries = useMemo(() => {
+    if (!data) return [];
+    return data.entries.filter((e) => {
+      if (filterType !== "all" && e.type !== filterType && !(filterType === "payment" && e.type.startsWith("payment"))) return false;
+      if (filterVeh && !(e.vehicle_number || "").toLowerCase().includes(filterVeh.toLowerCase())) return false;
+      if (filterLR && !(e.lr_number || "").toLowerCase().includes(filterLR.toLowerCase())) return false;
+      return true;
+    });
+  }, [data, filterType, filterVeh, filterLR]);
+
+  const suppliers = (useSuppliers().data || []);
+  const supName = suppliers.find(s => s.id === sid)?.name || "";
+  const downloadPdf = async () => {
+    if (!supName) return;
+    const resp = await api.get("/reports/supplier-statement.pdf", {
+      params: { supplier_name: supName, start, end }, responseType: "blob",
+    });
+    const url = URL.createObjectURL(new Blob([resp.data], { type: "application/pdf" }));
+    const a = document.createElement("a"); a.href = url;
+    a.download = `supplier_statement_${supName.replace(/\s+/g, "_")}_${start}_${end}.pdf`;
+    document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  };
+  const shareWa = async () => {
+    if (!supName) return;
+    try {
+      const { data: r } = await api.post("/reports/supplier-statement/share", null, {
+        params: { supplier_name: supName, start, end },
+      });
+      window.open(r.whatsapp_url, "_blank", "noopener");
+      if (!r.supplier_mobile_available) toast.info(`No mobile on file for ${supName}`);
+      else toast.success(`WhatsApp ready — ${r.supplier_mobile}`);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Share failed");
+    }
+  };
+
   return (
     <div className="space-y-3" data-testid="sup-statement">
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end bg-zinc-50 border border-zinc-200 rounded-sm p-4">
-        <div>
+      <div className="grid grid-cols-1 md:grid-cols-7 gap-3 items-end bg-zinc-50 border border-zinc-200 rounded-sm p-4">
+        <div className="md:col-span-2">
           <label className={labelCls}>Supplier</label>
           <SupplierPicker value={sid} onChange={setSid} testid="sup-led-picker" />
         </div>
@@ -480,22 +520,47 @@ function SupplierStatement() {
           <label className={labelCls}>To</label>
           <input data-testid="sup-led-end" type="date" value={end} onChange={(e) => setEnd(e.target.value)} className={inputCls} />
         </div>
-        <div className="flex flex-wrap gap-2 items-center">
-          <button onClick={() => { const d = new Date(today.getFullYear(), today.getMonth(), 1); setStart(fmt(d)); setEnd(fmt(today)); }} className="px-3 py-1.5 text-[10px] uppercase font-bold border border-zinc-300 rounded-sm hover:bg-zinc-100">This Month</button>
-          <button onClick={() => { const y = today.getMonth()===0 ? today.getFullYear()-1 : today.getFullYear(); const m = today.getMonth()===0 ? 11 : today.getMonth()-1; setStart(fmt(new Date(y,m,1))); setEnd(fmt(new Date(y,m+1,0))); }} className="px-3 py-1.5 text-[10px] uppercase font-bold border border-zinc-300 rounded-sm hover:bg-zinc-100">Last Month</button>
+        <div>
+          <label className={labelCls}>Vehicle No.</label>
+          <input data-testid="sup-led-filter-veh" value={filterVeh} onChange={(e) => setFilterVeh(e.target.value)} className={inputCls} placeholder="Filter…" />
+        </div>
+        <div>
+          <label className={labelCls}>LR / Trip No.</label>
+          <input data-testid="sup-led-filter-lr" value={filterLR} onChange={(e) => setFilterLR(e.target.value)} className={inputCls} placeholder="Filter…" />
+        </div>
+        <div>
+          <label className={labelCls}>Type</label>
+          <select data-testid="sup-led-filter-type" value={filterType} onChange={(e) => setFilterType(e.target.value)} className={inputCls}>
+            <option value="all">All</option>
+            <option value="opening">Opening</option>
+            <option value="trip_freight">Trip Freight</option>
+            <option value="trip_advance">Advance</option>
+            <option value="trip_diesel">Diesel</option>
+            <option value="cust_diesel_adj">Cust. Diesel Adj</option>
+            <option value="trip_shortage">Shortage</option>
+            <option value="trip_recovery">Recovery</option>
+            <option value="trip_bonus">Bonus</option>
+            <option value="payment">Payments</option>
+          </select>
+        </div>
+        <div className="md:col-span-7 flex flex-wrap gap-2">
+          <button type="button" onClick={() => { const d = new Date(today.getFullYear(), today.getMonth(), 1); setStart(fmt(d)); setEnd(fmt(today)); }} className="px-3 py-1.5 text-[10px] uppercase font-bold border border-zinc-300 rounded-sm hover:bg-zinc-100">This Month</button>
+          <button type="button" onClick={() => { const y = today.getMonth()===0 ? today.getFullYear()-1 : today.getFullYear(); const m = today.getMonth()===0 ? 11 : today.getMonth()-1; setStart(fmt(new Date(y,m,1))); setEnd(fmt(new Date(y,m+1,0))); }} className="px-3 py-1.5 text-[10px] uppercase font-bold border border-zinc-300 rounded-sm hover:bg-zinc-100">Last Month</button>
+          {sid && (
+            <div className="ml-auto flex gap-2">
+              <button data-testid="sup-led-pdf" onClick={downloadPdf} className="inline-flex items-center gap-1 px-3 py-1.5 text-[10px] uppercase font-bold border border-zinc-300 rounded-sm hover:bg-zinc-100"><Download size={12}/> PDF</button>
+              <button data-testid="sup-led-print" onClick={() => window.print()} className="inline-flex items-center gap-1 px-3 py-1.5 text-[10px] uppercase font-bold border border-zinc-300 rounded-sm hover:bg-zinc-100"><Printer size={12}/> Print</button>
+              <button data-testid="sup-led-wa" onClick={shareWa} className="inline-flex items-center gap-1 px-3 py-1.5 text-[10px] uppercase font-bold bg-emerald-600 text-white rounded-sm hover:bg-emerald-700"><MessageCircle size={12}/> WhatsApp</button>
+            </div>
+          )}
         </div>
       </div>
 
       {sid && data && (
         <div className="border border-zinc-200 rounded-sm bg-white">
-          <div className="px-4 py-3 border-b border-zinc-200 flex items-center justify-between">
-            <div>
-              <div className="text-lg font-bold">{data.supplier.name}</div>
-              <div className="text-[11px] text-zinc-500">{data.entries.length} entries · {start} → {end}</div>
-            </div>
-            <div className="flex gap-2">
-              <button onClick={() => window.print()} className="inline-flex items-center gap-1 px-3 py-1.5 text-[10px] uppercase font-bold border border-zinc-300 rounded-sm hover:bg-zinc-100"><Printer size={12}/> Print</button>
-            </div>
+          <div className="px-4 py-3 border-b border-zinc-200">
+            <div className="text-lg font-bold">{data.supplier.name}</div>
+            <div className="text-[11px] text-zinc-500">{filteredEntries.length} of {data.entries.length} entries · {start} → {end}</div>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -503,7 +568,7 @@ function SupplierStatement() {
                 <tr>
                   <th className="text-left px-3 py-2">Date</th>
                   <th className="text-left px-3 py-2">Particulars</th>
-                  <th className="text-left px-3 py-2">LR / Trip</th>
+                  <th className="text-left px-3 py-2">LR / Vehicle</th>
                   <th className="text-left px-3 py-2">Ref</th>
                   <th className="text-right px-3 py-2">Debit</th>
                   <th className="text-right px-3 py-2">Credit</th>
@@ -512,11 +577,14 @@ function SupplierStatement() {
               </thead>
               <tbody className="divide-y divide-zinc-100 font-mono">
                 {isLoading && <tr><td colSpan={7} className="px-3 py-10 text-center text-zinc-400">Loading…</td></tr>}
-                {!isLoading && data.entries.map((e, i) => (
+                {!isLoading && filteredEntries.map((e, i) => (
                   <tr key={i} data-testid={`sup-led-row-${i}`} className={e.type === "opening" ? "bg-zinc-50 font-bold" : ""}>
                     <td className="px-3 py-1.5">{e.type === "opening" ? "Opening" : e.date}</td>
                     <td className="px-3 py-1.5">{e.particulars}</td>
-                    <td className="px-3 py-1.5 text-zinc-500 text-xs">{e.lr_number} {e.vehicle_number && <span className="text-zinc-400">· {e.vehicle_number}</span>}</td>
+                    <td className="px-3 py-1.5 text-zinc-500 text-xs">
+                      {e.lr_number && <div>{e.lr_number}</div>}
+                      {e.vehicle_number && <div className="text-zinc-400">{e.vehicle_number}</div>}
+                    </td>
                     <td className="px-3 py-1.5 text-zinc-500 text-xs">{e.ref_no || "—"}</td>
                     <td className="px-3 py-1.5 text-right">{e.debit ? fmtCurrency(e.debit) : "—"}</td>
                     <td className="px-3 py-1.5 text-right">{e.credit ? fmtCurrency(e.credit) : "—"}</td>
@@ -525,7 +593,7 @@ function SupplierStatement() {
                 ))}
                 {!isLoading && (
                   <tr className="bg-amber-50 font-bold border-t-2 border-zinc-950">
-                    <td colSpan={4} className="px-3 py-2 text-right uppercase text-[10px]">Total</td>
+                    <td colSpan={4} className="px-3 py-2 text-right uppercase text-[10px]">Total (all)</td>
                     <td className="px-3 py-2 text-right">{fmtCurrency(data.totals.debit)}</td>
                     <td className="px-3 py-2 text-right">{fmtCurrency(data.totals.credit)}</td>
                     <td className="px-3 py-2 text-right" data-testid="sup-led-closing">

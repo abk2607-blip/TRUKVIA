@@ -455,6 +455,20 @@ async def supplier_outstanding(sid: str, request: Request, user=Depends(get_curr
     cid = await _active_company_id(request, user)
     data = await _build_ledger(uid, cid, sid, None, None)
     tot = data["totals"]
+    # Aging: bucket the closing balance by oldest unmatched debit (best-effort)
+    from datetime import datetime as _dt
+    today = _dt.utcnow().date()
+    buckets = {"0-30": 0.0, "31-60": 0.0, "61-90": 0.0, "90+": 0.0}
+    for e in data["entries"]:
+        if e["type"] == "opening" or e["debit"] <= 0:
+            continue
+        try:
+            d = _dt.fromisoformat(e["date"]).date()
+            age = (today - d).days
+        except Exception:
+            age = 0
+        key = "0-30" if age <= 30 else "31-60" if age <= 60 else "61-90" if age <= 90 else "90+"
+        buckets[key] += e["debit"]
     return {
         "supplier_id": sid,
         "supplier_name": data["supplier"]["name"],
@@ -462,6 +476,7 @@ async def supplier_outstanding(sid: str, request: Request, user=Depends(get_curr
         "closing_type": tot["closing_type"],
         "outstanding_payable": max(tot["closing_balance"], 0),
         "outstanding_advance": max(-tot["closing_balance"], 0),
+        "aging": {k: round(v, 2) for k, v in buckets.items()},
     }
 
 

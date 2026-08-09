@@ -48,19 +48,25 @@ def _compute_trip(t: Trip) -> Trip:
     if not t.excess_amount_override:
         t.excess_amount = round(rate * t.excess_qty, 2)
     # ---- Halting / Waiting Charges auto-calc ----
+    # Iter46: single source of truth = Trip level.
+    # Priority for `total_halting_days`:
+    #   1. If loading_date AND unloading_date set → derive (Unload - Load).days
+    #   2. Else → respect any value the user typed in `total_halting_days`
+    # Chargeable = max(total - grace, 0). Amount = chargeable × rate (unless override).
+    dates_present = False
     if t.loading_date and t.unloading_date:
         try:
             _ld = datetime.fromisoformat(t.loading_date).date()
             _ud = datetime.fromisoformat(t.unloading_date).date()
             t.total_halting_days = max((_ud - _ld).days, 0)
+            dates_present = True
         except Exception:
-            t.total_halting_days = 0
-    else:
-        t.total_halting_days = 0
+            pass
+    if not dates_present:
+        # Preserve whatever total the caller supplied (may have been typed manually)
+        t.total_halting_days = max(int(t.total_halting_days or 0), 0)
     _grace = max(int(t.grace_days or 0), 0)
-    # Only auto-set chargeable days if not manually diverged from formula
     _auto_chargeable = max(t.total_halting_days - _grace, 0)
-    # If user hasn't customised (override marker via halting_amount_override implies manual)
     if not t.halting_amount_override:
         t.chargeable_halting_days = _auto_chargeable
         t.halting_amount = round(t.chargeable_halting_days * (t.halting_rate_per_day or 0), 2)

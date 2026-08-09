@@ -256,14 +256,18 @@ export default function TripForm() {
     ? Number(form.excess_amount || 0)
     : Number((productRate * excessQtyLive).toFixed(2));
 
-  // Halting auto-calc
+  // Halting auto-calc — Iter46: honour manually-typed Total Days when no dates provided.
   let totalHaltingDaysLive = 0;
   const effectiveLoadingDate = form.loading_date || form.date || "";
-  if (effectiveLoadingDate && form.unloading_date) {
+  const _datesPresent = !!(effectiveLoadingDate && form.unloading_date);
+  if (_datesPresent) {
     const ld = new Date(effectiveLoadingDate);
     const ud = new Date(form.unloading_date);
     const diffMs = ud - ld;
     totalHaltingDaysLive = Math.max(Math.floor(diffMs / 86400000), 0);
+  } else {
+    // Fall back to user-typed value stored in form.total_halting_days
+    totalHaltingDaysLive = Math.max(Number(form.total_halting_days || 0), 0);
   }
   const graceDaysLive = Math.max(Number(form.grace_days || 0), 0);
   const autoChargeableDays = Math.max(totalHaltingDaysLive - graceDaysLive, 0);
@@ -288,7 +292,7 @@ export default function TripForm() {
       setForm((f) => ({ ...f, total_halting_days: totalHaltingDaysLive, chargeable_halting_days: autoChargeableDays, halting_amount: haltingAmountLive }));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.loading_date, form.unloading_date, form.grace_days, form.halting_rate_per_day, form.halting_amount_override]);
+  }, [form.loading_date, form.unloading_date, form.grace_days, form.halting_rate_per_day, form.halting_amount_override, form.total_halting_days]);
 
   useEffect(() => {
     // Iter40 (Image 11): Auto-sync driver_name/mobile from Trip Details section
@@ -596,11 +600,22 @@ export default function TripForm() {
         {/* Halting / Waiting Charges */}
         <Section title="Halting / Waiting Charges · హాల్టింగ్">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <div className="border border-zinc-200 p-2 rounded-sm text-center">
-              <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">Total Days</div>
-              <div className="font-mono text-lg font-bold" data-testid="trip-total-halting-days">{totalHaltingDaysLive}</div>
-              <div className="text-[9px] text-zinc-400 mt-0.5">Auto from dates</div>
-            </div>
+            {_datesPresent ? (
+              <div className="border border-zinc-200 p-2 rounded-sm text-center">
+                <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">Total Days</div>
+                <div className="font-mono text-lg font-bold" data-testid="trip-total-halting-days">{totalHaltingDaysLive}</div>
+                <div className="text-[9px] text-zinc-400 mt-0.5">Auto from Loading/Unloading dates</div>
+              </div>
+            ) : (
+              <Field label={<span>Total Halting Days <span className="text-[9px] text-amber-700 uppercase">manual</span></span>}>
+                <input data-testid="trip-total-halting-days" type="number" min="0" step="1"
+                  value={form.total_halting_days || 0}
+                  onChange={(e) => setForm({ ...form, total_halting_days: e.target.value, halting_amount_override: false })}
+                  className={inputCls}
+                  placeholder="Or enter Loading + Unloading dates"
+                />
+              </Field>
+            )}
             <Field label="Grace Days">
               <input data-testid="trip-grace-days" type="number" min="0" step="1" value={form.grace_days} onChange={(e) => setForm({ ...form, grace_days: e.target.value, halting_amount_override: false })} className={inputCls} />
             </Field>
@@ -618,8 +633,10 @@ export default function TripForm() {
               <input data-testid="trip-halting-amount" type="number" step="0.01" min="0" value={form.halting_amount_override ? form.halting_amount : haltingAmountLive} disabled={!form.halting_amount_override} onChange={(e) => setForm({ ...form, halting_amount: e.target.value })} className={`${inputCls} disabled:bg-zinc-50 disabled:text-zinc-600 font-bold`} />
             </Field>
           </div>
-          <div className="mt-3 text-[11px] text-zinc-500 bg-zinc-50 border border-zinc-200 rounded-sm p-2">
-            <span className="font-bold">Rule:</span> First {form.grace_days || 4} days = grace period (free). From day {(Number(form.grace_days) || 4) + 1} onwards, halting is charged at ₹{Number(form.halting_rate_per_day || 0).toLocaleString("en-IN")} / day. All fields editable if customer contract differs.
+          <div className="mt-3 text-[11px] text-zinc-500 bg-amber-50 border border-amber-200 rounded-sm p-2">
+            <span className="font-bold">Formula:</span> Halting = Chargeable Days × Rate.
+            {" "}Provide <b>Loading Date + Unloading Date</b> in Trip Details for automatic Total Days —
+            {" "}or type Total Days directly above when dates are unknown. Grace of {form.grace_days || 4} days is deducted.
           </div>
           <div className="mt-3">
             <Field label="Halting — Remarks">
