@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { NavLink, Routes, Route, Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api, API, fmtCurrency, fmtDate } from "@/api";
-import { FileText, TrendingUp, Scale, Download, Landmark, Handshake, Clock } from "lucide-react";
+import { FileText, TrendingUp, Scale, Download, Landmark, Handshake, Clock, MessageCircle } from "lucide-react";
 import HaltingReport from "@/pages/HaltingReport";
 
 const tabs = [
@@ -118,7 +118,10 @@ function SupplierPLReport() {
                   <td className={`px-4 py-2 text-right font-bold ${s.profit >= 0 ? "text-emerald-800" : "text-rose-800"}`}>{fmtCurrency(s.profit)}</td>
                   <td className="px-4 py-2 text-right">{s.margin_pct}%</td>
                   <td className="px-4 py-2 text-right">
-                    <SupplierStatementBtn name={s.supplier_name} start={start} end={end} />
+                    <div className="inline-flex items-center gap-1">
+                      <SupplierStatementBtn name={s.supplier_name} start={start} end={end} />
+                      <SupplierStatementWABtn name={s.supplier_name} start={start} end={end} />
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -186,6 +189,45 @@ function SupplierStatementBtn({ name, start, end }) {
       title={`Download PDF statement for ${name}`}
     >
       <Download size={11} /> PDF
+    </button>
+  );
+}
+
+/* ------------------ Supplier Statement WhatsApp Share Button ------------------ */
+function SupplierStatementWABtn({ name, start, end }) {
+  const [loading, setLoading] = React.useState(false);
+  const share = async () => {
+    setLoading(true);
+    try {
+      const { data } = await api.post("/reports/supplier-statement/share", null, {
+        params: { supplier_name: name, start, end },
+      });
+      // Open WhatsApp deeplink
+      window.open(data.whatsapp_url, "_blank", "noopener");
+      const { toast } = await import("sonner");
+      if (!data.supplier_mobile_available) {
+        toast.info(`No saved mobile for ${name} — WhatsApp opened without a recipient. Add supplier mobile in Vehicles.`);
+      } else {
+        toast.success(`WhatsApp ready — ${data.supplier_mobile}`);
+      }
+    } catch (e) {
+      const detail = e?.response?.data?.detail;
+      const { toast } = await import("sonner");
+      toast.error(detail || "WhatsApp share failed");
+    } finally {
+      setLoading(false);
+    }
+  };
+  return (
+    <button
+      type="button"
+      data-testid={`supplier-statement-wa-btn-${name.toLowerCase().replace(/\s+/g, "-")}`}
+      onClick={share}
+      disabled={loading}
+      className="inline-flex items-center gap-1 px-2 py-1 text-[10px] uppercase tracking-wider font-bold border border-emerald-300 bg-emerald-50 text-emerald-800 rounded-sm hover:bg-emerald-100 disabled:opacity-50"
+      title={`Share ${name} statement via WhatsApp`}
+    >
+      <MessageCircle size={11} /> WA
     </button>
   );
 }

@@ -21,6 +21,7 @@ export default function VoiceButton({
   label = null,
   size = "md",
   className = "",
+  existing = null,   // Iter43: for template refine mode
 }) {
   const [listening, setListening] = useState(false);
   const [parsing, setParsing] = useState(false);
@@ -58,13 +59,19 @@ export default function VoiceButton({
           context === "trip" ? "/ai/parse-trip"
           : context === "template" ? "/ai/parse-template"
           : "/ai/parse";
-        const body = (context === "trip" || context === "template")
+        const body = context === "trip"
           ? { transcript: text }
+          : context === "template"
+          ? { transcript: text, existing: existing || undefined }
           : { transcript: text, context };
         const { data } = await api.post(endpoint, body);
         const parsed = data.parsed || {};
         const count = Object.keys(parsed).filter((k) => parsed[k] !== "" && parsed[k] !== 0 && parsed[k] != null).length;
-        toast.success(`Voice parsed — ${count} field(s)`);
+        if (data.refine_mode && count === 0) {
+          toast.info("Sorry — I couldn't identify which field to change. Please say the field name too (e.g. 'change rate to 1600').");
+        } else {
+          toast.success(`Voice parsed — ${count} field(s)${data.refine_mode ? " (refine)" : ""}`);
+        }
         onParsed?.(parsed, text);
       } catch (e) {
         toast.error(e?.response?.data?.detail || "Voice parse failed");

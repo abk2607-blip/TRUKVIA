@@ -182,6 +182,60 @@ async def _tool_gst_summary(user_id: str, cid: str) -> dict:
     }
 
 
+async def _tool_expenditure_breakdown(user_id: str, cid: str, start: Optional[str] = None, end: Optional[str] = None, type: Optional[str] = None) -> dict:
+    """Iter43: Other-Expenditure lookup. Returns per-type totals for the range,
+    or trip-wise detail rows when a specific `type` is provided."""
+    trips = await db.trips.find(
+        {"user_id": user_id, "company_id": cid},
+        {"_id": 0, "id": 1, "date": 1, "lr_number": 1, "vehicle_number": 1,
+         "from_location": 1, "to_location": 1, "other_expenditures": 1},
+    ).to_list(20000)
+    def _in(d):
+        if not d: return False
+        if start and d < start: return False
+        if end and d > end: return False
+        return True
+    trips = [t for t in trips if _in(t.get("date", ""))]
+    match_type = (type or "").strip().lower()
+    if match_type:
+        rows = []
+        total = 0.0
+        for t in trips:
+            for r in (t.get("other_expenditures") or []):
+                if (r.get("type") or "").strip().lower() != match_type: continue
+                amt = float(r.get("amount") or 0)
+                if amt <= 0: continue
+                rows.append({
+                    "trip_id": t.get("id"),
+                    "date": r.get("date") or t.get("date"),
+                    "lr_number": t.get("lr_number") or "",
+                    "vehicle_number": t.get("vehicle_number") or "",
+                    "route": f"{t.get('from_location','')} → {t.get('to_location','')}",
+                    "amount": round(amt, 2),
+                    "remarks": r.get("remarks") or "",
+                })
+                total += amt
+        return {"type": type, "period": {"start": start, "end": end},
+                "total": round(total, 2), "count": len(rows), "trips": rows[:50]}
+    # Aggregate mode
+    by_type: dict = {}
+    total_all = 0.0
+    for t in trips:
+        for r in (t.get("other_expenditures") or []):
+            amt = float(r.get("amount") or 0)
+            if amt <= 0: continue
+            k = (r.get("type") or "Others").strip() or "Others"
+            b = by_type.setdefault(k, {"type": k, "amount": 0.0, "count": 0})
+            b["amount"] += amt
+            b["count"] += 1
+            total_all += amt
+    for b in by_type.values():
+        b["amount"] = round(b["amount"], 2)
+        b["pct"] = round(b["amount"] / total_all * 100.0, 2) if total_all > 0 else 0.0
+    return {"period": {"start": start, "end": end}, "total": round(total_all, 2),
+            "by_type": sorted(by_type.values(), key=lambda x: -x["amount"])}
+
+
 TOOL_FN_MAP = {
     "get_dashboard":           _tool_get_dashboard,
     "list_customers":          _tool_list_customers,
@@ -191,6 +245,7 @@ TOOL_FN_MAP = {
     "route_profit_summary":    _tool_route_profit_summary,
     "customer_ledger":         _tool_customer_ledger,
     "gst_summary":             _tool_gst_summary,
+    "expenditure_breakdown":   _tool_expenditure_breakdown,
 }
 
 TOOL_SCHEMAS = [
@@ -218,6 +273,22 @@ TOOL_SCHEMAS = [
     {"type": "function", "function": {
         "name": "gst_summary", "description": "GST summary for the current financial year — taxable value, CGST, SGST, IGST, total.",
         "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "expenditure_breakdown",
+        "description": (
+            "Other-Expenditure lookup for the currently active company. Supports both Telugu and English queries "
+            "like 'How much did we spend on parking last month?' / 'ఈ నెల parking కి ఎంత ఖర్చు అయ్యింది?' / "
+            "'Show trips where firewood expenses were incurred'. "
+            "Pass `type` (e.g. 'Parking', 'Driver Food', 'Toll') to get trip-wise details. "
+            "Omit `type` to get the per-type breakdown for the period. "
+            "Dates are ISO YYYY-MM-DD. When the user asks about 'this month', pass the current-month range; "
+            "for 'last month', the prior month's range."
+        ),
+        "parameters": {"type": "object", "properties": {
+            "type": {"type": "string", "description": "Expenditure type name (Parking, Toll, Driver Food, ...). Omit for aggregate."},
+            "start": {"type": "string", "description": "ISO date YYYY-MM-DD"},
+            "end": {"type": "string", "description": "ISO date YYYY-MM-DD"},
+        }, "required": []}}},
 ]
 
 
@@ -371,6 +442,7 @@ async def ai_chat(payload: ChatRequest, request: Request, user=Depends(get_curre
 
 class ParseTripRequest(BaseModel):
     transcript: str
+    existing: Optional[dict] = None    # Iter43: for REFINE mode on parse-template
 
 
 @router.post("/ai/parse-trip")
@@ -484,25 +556,50 @@ async def parse_template_from_voice(payload: ParseTripRequest, request: Request,
     customers = await db.customers.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "id": 1, "name": 1}).to_list(500)
     products = await db.products.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "id": 1, "name": 1, "default_rate": 1}).to_list(500)
 
-    system = (
-        "You are a Telugu/English speech-to-JSON parser for a Bitumen transport TEMPLATE. "
-        "A template stores the RECURRING parts of a trip so it can be reused across many actual trips. "
-        "Extract only the fields that were clearly mentioned. Return STRICT JSON with these optional keys "
-        "(omit ones not spoken):\n"
-        '{"name":"","customer_name":"","from_location":"","to_location":"","load_details":"",'
-        '"product_type":"","round_trip_kms":0,"freight_mode":"per_ton|fixed",'
-        '"rate_per_ton":0,"rate_per_km_per_ton":0,"fixed_amount":0,'
-        '"hsn_sac":"","gst_type":"cgst_sgst|igst|rcm","halting_rate_per_day":0,"remarks":""}\n'
-        "Rules: "
-        "- Numbers spoken in Telugu (ఇరవై = 20) must be converted to digits. "
-        '- freight_mode: "per ton / తనుకు" → per_ton; "round trip / రౌండ్ ట్రిప్ / fixed" → fixed. '
-        '- product_type: valid values only — VG-10, VG-30, VG-40, CRMB, PMB, Emulsion, Other. '
-        "- If a customer name is spoken, use closest match:\n"
-        f"Customers: {[c['name'] for c in customers][:40]}\n"
-        f"Products: {[p['name'] for p in products][:20]}\n"
-        '- If user says "Kondapalli to Vijayawada template" and no explicit name, set name accordingly. '
-        "Return ONLY the JSON object, no prose, no markdown."
-    )
+    existing = payload.existing if isinstance(payload.existing, dict) else None
+    is_refine = bool(existing and any(
+        (existing.get(k) not in ("", None, 0, 0.0))
+        for k in ("name", "from_location", "to_location", "load_details", "product_type", "rate_per_ton", "rate_per_km_per_ton", "fixed_amount", "round_trip_kms", "halting_rate_per_day")
+    ))
+
+    if is_refine:
+        # Only include fields the user explicitly asks to change.
+        existing_str = json.dumps({k: v for k, v in existing.items() if v not in ("", None)}, ensure_ascii=False)
+        system = (
+            "You are a Telugu/English REFINE-mode parser for a Bitumen transport TEMPLATE. "
+            "The user already has a partially/fully filled template and is dictating a small change "
+            "(e.g. 'change the rate to 1600', 'రేటు 2800 కి మార్చు', 'update halting to 3000 per day'). "
+            "Return STRICT JSON containing ONLY the fields the user explicitly asked to modify. "
+            "Omit every field they did not mention. Never re-emit unchanged fields.\n"
+            f"Current template values: {existing_str}\n"
+            "Allowed keys (subset): name, customer_name, from_location, to_location, load_details, "
+            "product_type (VG-10|VG-30|VG-40|CRMB|PMB|Emulsion|Other), round_trip_kms, "
+            "freight_mode (per_ton|fixed), rate_per_ton, rate_per_km_per_ton, fixed_amount, "
+            "hsn_sac, gst_type (cgst_sgst|igst|rcm), halting_rate_per_day, remarks.\n"
+            "Rules: Numbers in Telugu → digits. If the request is ambiguous or does not mention any "
+            "specific field, return an empty object {}. Never invent values. "
+            "Return ONLY the JSON object, no prose, no markdown."
+        )
+    else:
+        system = (
+            "You are a Telugu/English speech-to-JSON parser for a Bitumen transport TEMPLATE. "
+            "A template stores the RECURRING parts of a trip so it can be reused across many actual trips. "
+            "Extract only the fields that were clearly mentioned. Return STRICT JSON with these optional keys "
+            "(omit ones not spoken):\n"
+            '{"name":"","customer_name":"","from_location":"","to_location":"","load_details":"",'
+            '"product_type":"","round_trip_kms":0,"freight_mode":"per_ton|fixed",'
+            '"rate_per_ton":0,"rate_per_km_per_ton":0,"fixed_amount":0,'
+            '"hsn_sac":"","gst_type":"cgst_sgst|igst|rcm","halting_rate_per_day":0,"remarks":""}\n'
+            "Rules: "
+            "- Numbers spoken in Telugu (ఇరవై = 20) must be converted to digits. "
+            '- freight_mode: "per ton / తనుకు" → per_ton; "round trip / రౌండ్ ట్రిప్ / fixed" → fixed. '
+            '- product_type: valid values only — VG-10, VG-30, VG-40, CRMB, PMB, Emulsion, Other. '
+            "- If a customer name is spoken, use closest match:\n"
+            f"Customers: {[c['name'] for c in customers][:40]}\n"
+            f"Products: {[p['name'] for p in products][:20]}\n"
+            '- If user says "Kondapalli to Vijayawada template" and no explicit name, set name accordingly. '
+            "Return ONLY the JSON object, no prose, no markdown."
+        )
 
     from emergentintegrations.llm.chat import LlmChat, UserMessage
     chat = LlmChat(api_key=EMERGENT_LLM_KEY, session_id=f"parse-tpl-{user['user_id']}", system_message=system).with_model("gemini", "gemini-3-flash-preview")
@@ -525,15 +622,16 @@ async def parse_template_from_voice(payload: ParseTripRequest, request: Request,
         data = json.loads(raw[i:j + 1]) if (i >= 0 and j > i) else {}
 
     resolved = dict(data)
-    if data.get("customer_name"):
-        c = next((c for c in customers if data["customer_name"].lower() in c["name"].lower() or c["name"].lower() in data["customer_name"].lower()), None)
-        if c:
-            resolved["customer_id"] = c["id"]
-    if not resolved.get("name") and resolved.get("from_location") and resolved.get("to_location"):
-        resolved["name"] = f"{resolved['from_location']} → {resolved['to_location']}"
-        if resolved.get("load_details"):
-            resolved["name"] += f" — {resolved['load_details']}"
-    return {"parsed": resolved, "transcript": text}
+    if not is_refine:
+        if data.get("customer_name"):
+            c = next((c for c in customers if data["customer_name"].lower() in c["name"].lower() or c["name"].lower() in data["customer_name"].lower()), None)
+            if c:
+                resolved["customer_id"] = c["id"]
+        if not resolved.get("name") and resolved.get("from_location") and resolved.get("to_location"):
+            resolved["name"] = f"{resolved['from_location']} → {resolved['to_location']}"
+            if resolved.get("load_details"):
+                resolved["name"] += f" — {resolved['load_details']}"
+    return {"parsed": resolved, "transcript": text, "refine_mode": is_refine}
 
 
 # ============================================================================

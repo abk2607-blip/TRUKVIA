@@ -72,6 +72,7 @@ export default function TripTemplates() {
           <div className="flex gap-2 items-center">
             <VoiceButton
               context="template"
+              existing={editing}
               onParsed={(p) => {
                 // Merge parsed values, coerce numerics
                 const numKeys = ["round_trip_kms", "rate_per_ton", "rate_per_km_per_ton", "fixed_amount", "halting_rate_per_day"];
@@ -80,8 +81,12 @@ export default function TripTemplates() {
                   if (v === "" || v === null || v === undefined) continue;
                   patch[k] = numKeys.includes(k) ? Number(v) : v;
                 }
+                if (Object.keys(patch).length === 0) return;
                 setEditing((prev) => ({ ...prev, ...patch }));
-                toast.success("Template pre-filled from voice — review & save");
+                const isRefine = editing && (editing.name || editing.from_location || editing.rate_per_ton);
+                toast.success(isRefine
+                  ? `Refined ${Object.keys(patch).length} field(s) — review & save`
+                  : "Template pre-filled from voice — review & save");
               }}
             />
             <Button variant="outline" onClick={cancel} data-testid="template-cancel">Cancel</Button>

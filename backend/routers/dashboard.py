@@ -168,5 +168,65 @@ async def dashboard_expenditure_breakdown(
         "by_type": sorted(by_type.values(), key=lambda x: -x["amount"]),
     }
 
+
+@router.get("/dashboard/expenditure-detail")
+async def dashboard_expenditure_detail(
+    request: Request,
+    type: str,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    """Drill-down: return every trip that spent on the given expenditure `type`
+    within the range for the active company. One row per matching expenditure
+    entry (a trip can have multiple entries of the same type).
+
+    Returns: {type, period, total, count, trips: [{trip_id, date, lr_number,
+                vehicle_number, from_location, to_location, amount, remarks}]}
+    """
+    uid = user["user_id"]
+    cid = await _active_company_id(request, user)
+    match_type = (type or "").strip().lower()
+    if not match_type:
+        raise HTTPException(status_code=400, detail="type is required")
+    trips = await db.trips.find(
+        {"user_id": uid, "company_id": cid},
+        {"_id": 0, "id": 1, "date": 1, "lr_number": 1, "vehicle_number": 1,
+         "from_location": 1, "to_location": 1, "other_expenditures": 1},
+    ).to_list(20000)
+    trips = [t for t in trips if _in_range(t.get("date", ""), start, end)]
+    rows = []
+    total = 0.0
+    for t in trips:
+        for r in (t.get("other_expenditures") or []):
+            rt = (r.get("type") or "").strip().lower()
+            if rt != match_type:
+                continue
+            try:
+                amt = float(r.get("amount") or 0)
+            except Exception:
+                amt = 0.0
+            if amt <= 0:
+                continue
+            rows.append({
+                "trip_id": t.get("id"),
+                "date": r.get("date") or t.get("date", ""),
+                "lr_number": t.get("lr_number") or "",
+                "vehicle_number": t.get("vehicle_number") or "",
+                "from_location": t.get("from_location") or "",
+                "to_location": t.get("to_location") or "",
+                "amount": round(amt, 2),
+                "remarks": r.get("remarks") or "",
+            })
+            total += amt
+    rows.sort(key=lambda r: (r["date"], r["trip_id"]), reverse=True)
+    return {
+        "type": type,
+        "period": {"start": start, "end": end},
+        "total": round(total, 2),
+        "count": len(rows),
+        "trips": rows,
+    }
+
 # ==================== Drivers ====================
 

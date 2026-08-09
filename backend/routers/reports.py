@@ -531,5 +531,92 @@ async def supplier_statement_pdf(
     return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{fname}"'})
 
 
+@router.post("/reports/supplier-statement/share")
+async def share_supplier_statement(
+    request: Request,
+    supplier_name: str,
+    start: Optional[str] = None,
+    end: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    """Build the supplier statement PDF, upload to public object storage, and
+    return a WhatsApp deeplink. Uses the supplier's saved mobile (from any
+    vehicle in Vehicles master) when available so the deeplink pre-fills the
+    recipient — falls back to a generic wa.me/?text= link when no mobile is
+    on file."""
+    resp = await supplier_statement_pdf(request, supplier_name, start, end, user)
+    body_bytes = b""
+    async for chunk in resp.body_iterator:
+        body_bytes += chunk
+
+    cid = await _active_company_id(request, user)
+    company = await db.companies.find_one({"id": cid, "user_id": user["user_id"]}, {"_id": 0}) or {}
+
+    # Find supplier's mobile from Vehicles master (any vehicle with this supplier_name)
+    sn_lc = (supplier_name or "").strip().lower()
+    vehicles = await db.vehicles.find(
+        {"user_id": user["user_id"], "company_id": cid, "vehicle_type": "supplier"},
+        {"_id": 0, "supplier_name": 1, "supplier_mobile": 1, "owner_phone": 1},
+    ).to_list(500)
+    supplier_mobile = ""
+    for v in vehicles:
+        if (v.get("supplier_name") or "").strip().lower() == sn_lc:
+            supplier_mobile = (v.get("supplier_mobile") or v.get("owner_phone") or "").strip()
+            if supplier_mobile:
+                break
+
+    obj_path = f"public/supplier_statements/{user['user_id']}/{sn_lc.replace(' ','_') or 'supplier'}_{secrets.token_hex(4)}.pdf"
+    try:
+        from storage_client import put_object
+        put_object(obj_path, body_bytes, "application/pdf")
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Upload failed: {e}")
+
+    frontend_base = _public_base_url(request)
+    public_url = f"{frontend_base}/api/files/public/{obj_path}"
+
+    msg = (
+        f"*Supplier Settlement Statement — {company.get('name', 'Our Company')}*\n"
+        f"Supplier: {supplier_name}\n"
+        f"Period: {start or 'all'} → {end or 'today'}\n\n"
+        f"Download PDF: {public_url}"
+    )
+    import urllib.parse
+    if supplier_mobile:
+        # Sanitize to digits only for wa.me; default to +91 if no country code
+        digits = "".join(ch for ch in supplier_mobile if ch.isdigit())
+        if digits and len(digits) == 10:
+            digits = "91" + digits
+        wa_url = f"https://wa.me/{digits}?text={urllib.parse.quote(msg)}"
+    else:
+        wa_url = f"https://wa.me/?text={urllib.parse.quote(msg)}"
+    return {
+        "public_url": public_url,
+        "whatsapp_url": wa_url,
+        "whatsapp_text": msg,
+        "supplier_mobile": supplier_mobile or "",
+        "supplier_mobile_available": bool(supplier_mobile),
+    }
+
+
+def _public_base_url(request):
+    """Return the public HTTPS base URL for building share links."""
+    url = os.environ.get("REACT_APP_BACKEND_URL") or os.environ.get("PUBLIC_BASE_URL")
+    if not url:
+        try:
+            with open("/app/frontend/.env", "r") as f:
+                for line in f:
+                    if line.startswith("REACT_APP_BACKEND_URL="):
+                        url = line.split("=", 1)[1].strip().strip('"').strip("'")
+                        break
+        except Exception:
+            pass
+    if not url:
+        url = str(request.base_url).rstrip("/")
+    if not url.startswith("http"):
+        url = f"https://{url}"
+    return url.rstrip("/")
+
+
 # ==================== Health ====================
 
