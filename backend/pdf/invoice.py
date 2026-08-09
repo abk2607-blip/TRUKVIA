@@ -72,6 +72,8 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
     styles.add(ParagraphStyle(name="Amount",   fontName=_FB, fontSize=9,  leading=11, textColor=C_INK, alignment=2))
     styles.add(ParagraphStyle(name="AmtSub",   fontName=_F,  fontSize=8,  leading=10, textColor=C_SUB_TX, alignment=2))
     styles.add(ParagraphStyle(name="SubLbl",   fontName=_F,  fontSize=8,  leading=10, textColor=C_SUB_TX))
+    # Iter40: tiny italic remarks below sub-rows
+    styles.add(ParagraphStyle(name="SubRemark", fontName=_F, fontSize=6.5, leading=8, textColor=C_MUTED, leftIndent=8))
 
     story = []
 
@@ -234,10 +236,19 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
         ])
 
         # ---- Sub-rows (Halting / Diesel / Advance / Shortage / Excess) ----
-        def _add_sub(label: str, amt_str: str):
+        def _add_sub(label: str, amt_str: str, remark: str = ""):
+            # Combine remark inline (italic muted) below the label if provided
+            if remark:
+                from xml.sax.saxutils import escape as _xesc
+                label_para = Paragraph(
+                    f"↳ {label}<br/><font color='#94A3B8' size='6.5'><i>{_xesc(remark)}</i></font>",
+                    styles["SubLbl"],
+                )
+            else:
+                label_para = Paragraph(f"↳ {label}", styles["SubLbl"])
             rows.append([
                 "",
-                Paragraph(f"↳ {label}", styles["SubLbl"]),
+                label_para,
                 "", "", "", "", "",
                 Paragraph(amt_str, styles["AmtSub"]),
             ])
@@ -246,21 +257,50 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
         if float(t.get("halting_amount", 0) or 0) > 0:
             hdays = t.get("chargeable_halting_days", 0) or 0
             hrate = t.get("halting_rate_per_day", 0) or 0
-            _add_sub(f"Halting — {hdays} day(s) × ₹ {_fmt(hrate)} / day", f"₹ {_fmt(t.get('halting_amount', 0))}")
+            _add_sub(
+                f"Halting — {hdays} day(s) × ₹ {_fmt(hrate)} / day",
+                f"₹ {_fmt(t.get('halting_amount', 0))}",
+                remark=t.get("halting_remarks", "") or "",
+            )
 
-        diesel_amt = float((t.get("expenses") or {}).get("diesel_from_customer_amount", 0) or 0)
-        if diesel_amt > 0:
-            dq = (t.get("expenses") or {}).get("diesel_from_customer_qty", 0) or 0
-            dr = (t.get("expenses") or {}).get("diesel_from_customer_rate", 0) or 0
-            if dq and dr:
-                lbl = f"Less: Diesel from Customer — {_fmt(dq)} L × ₹ {_fmt(dr)} / L"
-            else:
-                lbl = "Less: Diesel from Customer"
-            _add_sub(lbl, f"(₹ {_fmt(diesel_amt)})")
+        # Iter39/40: Customer Receipts — render each entry as its own "Less:" line with remarks
+        receipts = t.get("customer_receipts") or []
+        if receipts:
+            for r in receipts:
+                rtype = (r.get("type") or "").lower()
+                amt = float(r.get("amount") or 0)
+                if amt <= 0:
+                    continue
+                rem = r.get("remarks") or ""
+                if rtype == "diesel":
+                    q = r.get("litres") or r.get("quantity") or 0
+                    rt = r.get("rate") or 0
+                    lbl = (
+                        f"Less: Diesel from Customer — {_fmt(q)} L × ₹ {_fmt(rt)} / L"
+                        if q and rt else "Less: Diesel from Customer"
+                    )
+                    _add_sub(lbl, f"(₹ {_fmt(amt)})", remark=rem)
+                elif rtype == "advance":
+                    mode = r.get("mode") or ""
+                    refno = r.get("ref_no") or ""
+                    extra = " · ".join([x for x in [mode, refno] if x])
+                    lbl = f"Less: Customer Advance{(' — ' + extra) if extra else ''}"
+                    _add_sub(lbl, f"(₹ {_fmt(amt)})", remark=rem)
+        else:
+            # Backward-compat: legacy scalar diesel_from_customer_* + cash_advance_received
+            diesel_amt = float((t.get("expenses") or {}).get("diesel_from_customer_amount", 0) or 0)
+            if diesel_amt > 0:
+                dq = (t.get("expenses") or {}).get("diesel_from_customer_qty", 0) or 0
+                dr = (t.get("expenses") or {}).get("diesel_from_customer_rate", 0) or 0
+                lbl = (
+                    f"Less: Diesel from Customer — {_fmt(dq)} L × ₹ {_fmt(dr)} / L"
+                    if dq and dr else "Less: Diesel from Customer"
+                )
+                _add_sub(lbl, f"(₹ {_fmt(diesel_amt)})")
 
-        adv_amt = float((t.get("expenses") or {}).get("cash_advance_received", 0) or 0)
-        if adv_amt > 0:
-            _add_sub("Less: Customer Advance Received", f"(₹ {_fmt(adv_amt)})")
+            adv_amt = float((t.get("expenses") or {}).get("cash_advance_received", 0) or 0)
+            if adv_amt > 0:
+                _add_sub("Less: Customer Advance Received", f"(₹ {_fmt(adv_amt)})")
 
         shortage_qty = float(t.get("shortage_qty", 0) or 0)
         expenses = t.get("expenses") or {}
@@ -275,7 +315,7 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
                 lbl = f"Less: Shortage — {shortage_qty:.3f} MT"
             else:
                 lbl = "Less: Shortage Deduction"
-            _add_sub(lbl, f"(₹ {_fmt(total_shortage_amt)})")
+            _add_sub(lbl, f"(₹ {_fmt(total_shortage_amt)})", remark=t.get("shortage_remarks", "") or "")
 
         excess_amt = float(t.get("excess_amount", 0) or 0)
         if excess_amt > 0:
@@ -285,7 +325,7 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
                 lbl = f"Add: Excess — {excess_qty:.3f} MT × ₹ {_fmt(prod_rate)} / MT"
             else:
                 lbl = "Add: Excess"
-            _add_sub(lbl, f"₹ {_fmt(excess_amt)}")
+            _add_sub(lbl, f"₹ {_fmt(excess_amt)}", remark=t.get("excess_remarks", "") or "")
 
     # Column widths (total 186mm ≈ A4 - 24mm margins) — sized so YYYY-MM-DD
     # (~10 chars in 8pt) fits Date, "999.99" fits Tons, and typical product
@@ -339,10 +379,22 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
         sum(float(t.get("shortage_amount", 0)) + float((t.get("expenses") or {}).get("shortage_amount", 0)) for t in trips), 2,
     )
     diesel_total = invoice.get("diesel_deduction_total") or round(
-        sum(float((t.get("expenses") or {}).get("diesel_from_customer_amount", 0)) for t in trips), 2,
+        sum(
+            (
+                sum(float(r.get("amount") or 0) for r in (t.get("customer_receipts") or []) if (r.get("type") or "").lower() == "diesel")
+                if (t.get("customer_receipts") or []) else float((t.get("expenses") or {}).get("diesel_from_customer_amount", 0))
+            )
+            for t in trips
+        ), 2,
     )
     advance_total = invoice.get("advance_deduction_total") or round(
-        sum(float((t.get("expenses") or {}).get("cash_advance_received", 0)) for t in trips), 2,
+        sum(
+            (
+                sum(float(r.get("amount") or 0) for r in (t.get("customer_receipts") or []) if (r.get("type") or "").lower() == "advance")
+                if (t.get("customer_receipts") or []) else float((t.get("expenses") or {}).get("cash_advance_received", 0))
+            )
+            for t in trips
+        ), 2,
     )
     subtotal = invoice.get("subtotal", 0)
     gst_type = invoice.get("gst_type", "cgst_sgst")

@@ -34,6 +34,7 @@ from routers import (
     audit_router as audit_r,
     templates as templates_r,
     ai as ai_r,
+    expenditure_types as expenditure_types_r,
 )
 
 ROOT_DIR = Path(__file__).parent
@@ -67,7 +68,7 @@ for r in (
     auth_r, companies_r, customers_r, drivers_r, products_r,
     vehicles_r, parties_r, trips_r, invoices_r, dashboard_r,
     reports_r, gst_r, files_r, team_r, audit_r,
-    templates_r, ai_r,
+    templates_r, ai_r, expenditure_types_r,
 ):
     app.include_router(r.router)
 

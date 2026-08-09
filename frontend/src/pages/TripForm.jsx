@@ -94,6 +94,15 @@ const EMPTY = {
   gross_weight: 0,
   tare_weight: 0,
   seal_numbers: "",
+  other_expenditures: [],
+  halting_remarks: "",
+  shortage_remarks: "",
+  excess_remarks: "",
+  other_income: 0,
+  other_income_remarks: "",
+  supplier_settlement_remarks: "",
+  lr_driver_name: "",
+  lr_driver_mobile: "",
   customer_diesel_received: 0,
   customer_advance_received: 0,
   customer_receipts: [],
@@ -113,6 +122,7 @@ export default function TripForm() {
   const { data: products = [] } = useQuery({ queryKey: ["products"], queryFn: async () => (await api.get("/products")).data });
   const { data: vehicles = [] } = useQuery({ queryKey: ["vehicles"], queryFn: async () => (await api.get("/vehicles")).data });
   const { data: templates = [] } = useQuery({ queryKey: ["templates"], queryFn: async () => (await api.get("/templates")).data });
+  const { data: expenditureTypes = [] } = useQuery({ queryKey: ["expenditure-types"], queryFn: async () => (await api.get("/expenditure-types")).data });
   const [selectedTemplate, setSelectedTemplate] = useState("");
   const [qaOpen, setQaOpen] = useState(null); // 'customer' | 'vehicle' | 'driver' | 'product' | null
 
@@ -152,7 +162,7 @@ export default function TripForm() {
         supplier_shortage_deduction: Number(form.supplier_shortage_deduction || 0),
         supplier_other_recoveries: Number(form.supplier_other_recoveries || 0),
         supplier_other_income: Number(form.supplier_other_income || 0),
-        loaded_qty: Number(form.loaded_qty || 0),
+        loaded_qty: Number(form.loaded_qty || form.tons || 0),
         unloaded_qty: Number(form.unloaded_qty || 0),
         excess_qty: Number(form.excess_qty || 0),
         shortage_qty: Number(form.shortage_qty || 0),
@@ -181,6 +191,12 @@ export default function TripForm() {
           ref_no: r.ref_no || undefined,
           remarks: r.remarks || undefined,
         })),
+        other_expenditures: (form.other_expenditures || []).map((e2) => ({
+          id: e2.id, date: e2.date, type: e2.type,
+          amount: Number(e2.amount || 0),
+          remarks: e2.remarks || "",
+        })),
+        other_income: Number(form.other_income || 0),
         expenses: Object.fromEntries(Object.entries(form.expenses).map(([k, v]) => [k, k === "other_desc" ? v : Number(v || 0)])),
       };
       if (isEdit) return (await api.put(`/trips/${id}`, payload)).data;
@@ -201,8 +217,9 @@ export default function TripForm() {
     : (Number(form.round_trip_kms || 0) > 0 && Number(form.rate_per_km_per_ton || 0) > 0)
       ? Number(form.tons || 0) * Number(form.round_trip_kms || 0) * Number(form.rate_per_km_per_ton || 0)
       : Number(form.fixed_amount || 0);
-  const totalExpense = Object.entries(form.expenses).reduce((s, [k, v]) => s + (k === "other_desc" ? 0 : Number(v || 0)), 0);
-  const profit = freight - totalExpense;
+  const totalExpense = Object.entries(form.expenses).reduce((s, [k, v]) => s + (k === "other_desc" || k === "other_remarks" ? 0 : Number(v || 0)), 0)
+    + (form.other_expenditures || []).reduce((s, e2) => s + Number(e2.amount || 0), 0);
+  const profit = freight - totalExpense + Number(form.other_income || 0);
 
   // Supplier live compute
   const supQty = Number(form.supplier_quantity || 0) > 0 ? Number(form.supplier_quantity) : Number(form.tons || 0);
@@ -241,8 +258,9 @@ export default function TripForm() {
 
   // Halting auto-calc
   let totalHaltingDaysLive = 0;
-  if (form.loading_date && form.unloading_date) {
-    const ld = new Date(form.loading_date);
+  const effectiveLoadingDate = form.loading_date || form.date || "";
+  if (effectiveLoadingDate && form.unloading_date) {
+    const ld = new Date(effectiveLoadingDate);
     const ud = new Date(form.unloading_date);
     const diffMs = ud - ld;
     totalHaltingDaysLive = Math.max(Math.floor(diffMs / 86400000), 0);
@@ -271,6 +289,19 @@ export default function TripForm() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.loading_date, form.unloading_date, form.grace_days, form.halting_rate_per_day, form.halting_amount_override]);
+
+  useEffect(() => {
+    // Iter40 (Image 11): Auto-sync driver_name/mobile from Trip Details section
+    // into the LR section, but ONLY when the LR fields are empty (never overwrite
+    // a manual LR-side edit). Editing lr_driver_* does NOT touch Driver Master.
+    setForm((f) => {
+      if (!f.driver_name && !f.driver_mobile) return f;
+      const patch = {};
+      if (!f.lr_driver_name && f.driver_name) patch.lr_driver_name = f.driver_name;
+      if (!f.lr_driver_mobile && f.driver_mobile) patch.lr_driver_mobile = f.driver_mobile;
+      return Object.keys(patch).length ? { ...f, ...patch } : f;
+    });
+  }, [form.driver_name, form.driver_mobile]);
 
   const setExp = (k, v) => setForm({ ...form, expenses: { ...form.expenses, [k]: v } });
 
@@ -510,16 +541,22 @@ export default function TripForm() {
         </Section>
 
         {/* Loading / Unloading Details */}
-        <Section title="Loading &amp; Unloading Details · లోడ్/అన్‌లోడ్">
+        <Section title="Unloading Details · అన్‌లోడ్">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-            <Field label="Loading Date">
-              <input data-testid="trip-loading-date" type="date" value={form.loading_date} onChange={(e) => setForm({ ...form, loading_date: e.target.value })} className={inputCls} />
-            </Field>
             <Field label="Unloading Date">
               <input data-testid="trip-unloading-date" type="date" value={form.unloading_date} onChange={(e) => setForm({ ...form, unloading_date: e.target.value })} className={inputCls} />
             </Field>
-            <Field label="Loaded Qty (MT)">
-              <input data-testid="trip-loaded-qty" type="number" step="0.001" min="0" value={form.loaded_qty} onChange={(e) => setForm({ ...form, loaded_qty: e.target.value })} className={inputCls} />
+            <Field label="Loaded Qty (MT) · auto from Trip">
+              <input
+                data-testid="trip-loaded-qty"
+                type="number"
+                step="0.001"
+                min="0"
+                value={form.loaded_qty || form.tons || 0}
+                onChange={(e) => setForm({ ...form, loaded_qty: e.target.value })}
+                className={`${inputCls} bg-zinc-50`}
+                title="Auto-populated from Trip Quantity — override only if actual loaded quantity differs"
+              />
             </Field>
             <Field label="Unloaded Qty (MT)">
               <input data-testid="trip-unloaded-qty" type="number" step="0.001" min="0" value={form.unloaded_qty} onChange={(e) => setForm({ ...form, unloaded_qty: e.target.value })} className={inputCls} />
@@ -544,6 +581,14 @@ export default function TripForm() {
               <span>Excess Amount (₹) <button type="button" onClick={() => setForm({ ...form, excess_amount_override: !form.excess_amount_override })} className={`ml-1 text-[9px] uppercase tracking-wider ${form.excess_amount_override ? "text-amber-700" : "text-zinc-400"}`}>{form.excess_amount_override ? "manual" : "auto"}</button></span>
             }>
               <input data-testid="trip-excess-amount" type="number" step="0.01" min="0" value={form.excess_amount_override ? form.excess_amount : excessAmountLive} disabled={!form.excess_amount_override} onChange={(e) => setForm({ ...form, excess_amount: e.target.value })} className={`${inputCls} disabled:bg-zinc-50 disabled:text-zinc-600`} />
+            </Field>
+          </div>
+          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
+            <Field label="Shortage — Remarks">
+              <input data-testid="trip-shortage-remarks" value={form.shortage_remarks} onChange={(e) => setForm({ ...form, shortage_remarks: e.target.value })} className={inputCls} placeholder="Cause / reference (optional)" />
+            </Field>
+            <Field label="Excess — Remarks">
+              <input data-testid="trip-excess-remarks" value={form.excess_remarks} onChange={(e) => setForm({ ...form, excess_remarks: e.target.value })} className={inputCls} placeholder="Cause / reference (optional)" />
             </Field>
           </div>
         </Section>
@@ -575,6 +620,11 @@ export default function TripForm() {
           </div>
           <div className="mt-3 text-[11px] text-zinc-500 bg-zinc-50 border border-zinc-200 rounded-sm p-2">
             <span className="font-bold">Rule:</span> First {form.grace_days || 4} days = grace period (free). From day {(Number(form.grace_days) || 4) + 1} onwards, halting is charged at ₹{Number(form.halting_rate_per_day || 0).toLocaleString("en-IN")} / day. All fields editable if customer contract differs.
+          </div>
+          <div className="mt-3">
+            <Field label="Halting — Remarks">
+              <input data-testid="trip-halting-remarks" value={form.halting_remarks} onChange={(e) => setForm({ ...form, halting_remarks: e.target.value })} className={inputCls} placeholder="Detention reason / site details (optional)" />
+            </Field>
           </div>
         </Section>
 
@@ -727,37 +777,41 @@ export default function TripForm() {
                 <div className="text-[10px] text-zinc-500 mt-1">Customer Freight − Net Payable</div>
               </div>
             </div>
+            <div className="mt-3">
+              <Field label="Supplier Settlement — Remarks">
+                <input data-testid="trip-supplier-settlement-remarks" value={form.supplier_settlement_remarks} onChange={(e) => setForm({ ...form, supplier_settlement_remarks: e.target.value })} className={inputCls} placeholder="Payment / TDS / adjustments notes (optional)" />
+              </Field>
+            </div>
           </Section>
         )}
 
-        <Section title="Extra Recovery & Expenses (Optional)">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-            <Field label="Diesel from Customer — Qty (L)">
-              <input data-testid="trip-diesel-cust-qty" type="number" step="0.01" min="0" value={form.expenses.diesel_from_customer_qty} onChange={(e) => setExp("diesel_from_customer_qty", e.target.value)} className={inputCls} />
+        <Section title="Other Expenditure · ఇతర ఖర్చులు">
+          <div className="text-[11px] text-zinc-500 mb-3 bg-amber-50 border border-amber-200 rounded-sm p-2">
+            <span className="font-bold">Note:</span> Customer Diesel &amp; Advance are managed in <em>"Received From Customer"</em> above. This section is for miscellaneous trip expenditures (Driver Food, Parking, Toll, Loading Charges, Unloading Charges, Weighment, Labour, etc.).
+          </div>
+          <OtherExpenditures
+            rows={form.other_expenditures || []}
+            types={expenditureTypes}
+            onChange={(list) => setForm({ ...form, other_expenditures: list })}
+            onCreateType={async (name) => {
+              try {
+                const { data } = await api.post("/expenditure-types", { name });
+                qc.invalidateQueries({ queryKey: ["expenditure-types"] });
+                return data;
+              } catch (err) {
+                toast.error(err?.response?.data?.detail || "Could not add type");
+                return null;
+              }
+            }}
+          />
+
+          {/* Other Income (₹) with remarks */}
+          <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3 border-t border-zinc-200 pt-4">
+            <Field label="Other Income (₹) — Miscellaneous">
+              <input data-testid="trip-other-income" type="number" step="0.01" min="0" value={form.other_income} onChange={(e) => setForm({ ...form, other_income: e.target.value })} className={inputCls} placeholder="Detention income, misc bonus, etc." />
             </Field>
-            <Field label="Diesel from Customer — Rate">
-              <input data-testid="trip-diesel-cust-rate" type="number" step="0.01" min="0" value={form.expenses.diesel_from_customer_rate} onChange={(e) => setExp("diesel_from_customer_rate", e.target.value)} className={inputCls} />
-            </Field>
-            <Field label="Diesel from Customer — Amount">
-              <input data-testid="trip-diesel-cust-amt" type="number" step="0.01" min="0" value={form.expenses.diesel_from_customer_amount || (Number(form.expenses.diesel_from_customer_qty) * Number(form.expenses.diesel_from_customer_rate)).toFixed(2)} onChange={(e) => setExp("diesel_from_customer_amount", e.target.value)} className={inputCls} />
-            </Field>
-            <Field label="Shortage Qty (MT/L)">
-              <input data-testid="trip-shortage-qty" type="number" step="0.01" min="0" value={form.expenses.shortage_qty} onChange={(e) => setExp("shortage_qty", e.target.value)} className={inputCls} />
-            </Field>
-            <Field label="Shortage Amount (₹)">
-              <input data-testid="trip-shortage-amt" type="number" step="0.01" min="0" value={form.expenses.shortage_amount} onChange={(e) => setExp("shortage_amount", e.target.value)} className={inputCls} />
-            </Field>
-            <Field label="Cash Advance Received">
-              <input data-testid="trip-cash-advance" type="number" step="0.01" min="0" value={form.expenses.cash_advance_received} onChange={(e) => setExp("cash_advance_received", e.target.value)} className={inputCls} />
-            </Field>
-            <Field label="Firewood Expense">
-              <input data-testid="trip-firewood" type="number" step="0.01" min="0" value={form.expenses.firewood} onChange={(e) => setExp("firewood", e.target.value)} className={inputCls} />
-            </Field>
-            <Field label="Other Expense Description">
-              <input data-testid="trip-other-desc" value={form.expenses.other_desc} onChange={(e) => setExp("other_desc", e.target.value)} className={inputCls} />
-            </Field>
-            <Field label="Other Expense Amount">
-              <input data-testid="trip-other-amt" type="number" step="0.01" min="0" value={form.expenses.other} onChange={(e) => setExp("other", e.target.value)} className={inputCls} />
+            <Field label="Other Income — Remarks">
+              <input data-testid="trip-other-income-remarks" value={form.other_income_remarks} onChange={(e) => setForm({ ...form, other_income_remarks: e.target.value })} className={inputCls} placeholder="Reason / context (optional)" />
             </Field>
           </div>
         </Section>
@@ -803,8 +857,11 @@ export default function TripForm() {
             <Field label="Seal Numbers">
               <input data-testid="trip-seal" value={form.seal_numbers} onChange={(e) => setForm({ ...form, seal_numbers: e.target.value })} className={inputCls} placeholder="SL-001, SL-002" />
             </Field>
-            <Field label="Driver Mobile">
-              <input data-testid="trip-driver-mobile" value={form.driver_mobile} onChange={(e) => setForm({ ...form, driver_mobile: e.target.value })} className={inputCls} placeholder="98xxxxxxxx" />
+            <Field label={<span>Driver Name (LR) <span className="text-[9px] text-zinc-400">auto from Trip · editable</span></span>}>
+              <input data-testid="trip-lr-driver-name" value={form.lr_driver_name} onChange={(e) => setForm({ ...form, lr_driver_name: e.target.value })} className={inputCls} placeholder={form.driver_name || "Enter driver name"} />
+            </Field>
+            <Field label={<span>Driver Mobile (LR) <span className="text-[9px] text-zinc-400">auto from Trip · editable</span></span>}>
+              <input data-testid="trip-driver-mobile" value={form.lr_driver_mobile} onChange={(e) => setForm({ ...form, lr_driver_mobile: e.target.value })} className={inputCls} placeholder={form.driver_mobile || "98xxxxxxxx"} />
             </Field>
             <Field label="From Pincode">
               <input data-testid="trip-from-pin" value={form.from_pincode} onChange={(e) => setForm({ ...form, from_pincode: e.target.value })} className={inputCls} />
@@ -904,8 +961,9 @@ function CustomerReceipts({ receipts, onChange }) {
       date: draft.date,
       type: t,
       amount: Number(amt.toFixed(2)),
+      remarks: draft.remarks || "",
       ...(t === "diesel" ? { litres: Number(draft.litres), rate: Number(draft.rate) } : {}),
-      ...(t === "advance" ? { mode: draft.mode, ref_no: draft.ref_no, remarks: draft.remarks } : {}),
+      ...(t === "advance" ? { mode: draft.mode, ref_no: draft.ref_no } : {}),
     };
     onChange([...(receipts || []), row]);
     setDraft({ ...draft, litres: "", rate: "", amount: "", ref_no: "", remarks: "" });
@@ -965,12 +1023,10 @@ function CustomerReceipts({ receipts, onChange }) {
           <div className="flex items-end">
             <button type="button" data-testid="cr-add-btn" onClick={add} className="w-full px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold bg-emerald-600 text-white rounded-sm hover:bg-emerald-700">+ Add</button>
           </div>
-          {draft.type === "advance" && (
-            <div className="md:col-span-6">
-              <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Remarks</label>
-              <input data-testid="cr-remarks" value={draft.remarks} onChange={(e) => setDraft({ ...draft, remarks: e.target.value })} className={ic} placeholder="Optional notes" />
-            </div>
-          )}
+          <div className="md:col-span-6">
+            <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Remarks</label>
+            <input data-testid="cr-remarks" value={draft.remarks} onChange={(e) => setDraft({ ...draft, remarks: e.target.value })} className={ic} placeholder="Optional notes (e.g. paid at HPCL Kondapalli / txn ref / receipt no)" />
+          </div>
         </div>
       </div>
 
@@ -998,9 +1054,12 @@ function CustomerReceipts({ receipts, onChange }) {
                     <span className={`px-2 py-0.5 rounded-sm border ${r.type === "diesel" ? "bg-orange-50 text-orange-800 border-orange-200" : "bg-blue-50 text-blue-800 border-blue-200"}`}>{r.type}</span>
                   </td>
                   <td className="px-3 py-2 text-zinc-600">
-                    {r.type === "diesel"
-                      ? `${r.litres} L × ₹${Number(r.rate).toFixed(2)}`
-                      : r.remarks || "—"}
+                    <div>
+                      {r.type === "diesel"
+                        ? `${r.litres} L × ₹${Number(r.rate).toFixed(2)}`
+                        : (r.mode || "—")}
+                    </div>
+                    {r.remarks && <div className="text-[10px] text-zinc-500 italic mt-0.5">{r.remarks}</div>}
                   </td>
                   <td className="px-3 py-2 text-right font-mono font-bold">{fmtCurrency(r.amount)}</td>
                   <td className="px-3 py-2 text-zinc-600 text-[11px]">
@@ -1011,6 +1070,131 @@ function CustomerReceipts({ receipts, onChange }) {
                   </td>
                 </tr>
               ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+// ---------- Iter40: Dynamic Other Expenditure list backed by Expenditure Master ----------
+function OtherExpenditures({ rows, types, onChange, onCreateType }) {
+  const [draft, setDraft] = React.useState({
+    date: new Date().toISOString().slice(0, 10),
+    type: "",
+    amount: "",
+    remarks: "",
+  });
+  const [newType, setNewType] = React.useState("");
+  const ic = "w-full border border-zinc-300 px-2 py-1.5 rounded-sm text-xs focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none bg-white";
+
+  const add = () => {
+    const amt = Number(draft.amount || 0);
+    const type = (draft.type || "").trim();
+    if (!type || amt <= 0) {
+      toast.error("Choose a type and enter an amount");
+      return;
+    }
+    onChange([
+      ...(rows || []),
+      { id: `oe_${Date.now()}`, date: draft.date, type, amount: Number(amt.toFixed(2)), remarks: draft.remarks || "" },
+    ]);
+    setDraft({ ...draft, amount: "", remarks: "" });
+  };
+  const del = (id) => onChange((rows || []).filter((r) => r.id !== id));
+  const addNewType = async () => {
+    const n = (newType || "").trim();
+    if (!n) return;
+    const created = await onCreateType(n);
+    if (created) {
+      setDraft({ ...draft, type: created.name });
+      setNewType("");
+      toast.success(`Added "${created.name}" to Expenditure Master`);
+    }
+  };
+
+  const total = (rows || []).reduce((s, r) => s + Number(r.amount || 0), 0);
+
+  return (
+    <div className="space-y-3" data-testid="other-expenditures">
+      <div className="border border-zinc-200 rounded-sm p-3 bg-zinc-50">
+        <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 mb-2">Add Expenditure</div>
+        <div className="grid grid-cols-2 md:grid-cols-6 gap-2">
+          <div>
+            <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Date</label>
+            <input data-testid="oe-date" type="date" value={draft.date} onChange={(e) => setDraft({ ...draft, date: e.target.value })} className={ic} />
+          </div>
+          <div className="md:col-span-2">
+            <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Type · రకం</label>
+            <select data-testid="oe-type" value={draft.type} onChange={(e) => setDraft({ ...draft, type: e.target.value })} className={ic}>
+              <option value="">— Select type —</option>
+              {(types || []).map((t) => (
+                <option key={t.id} value={t.name}>{t.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Amount (₹)</label>
+            <input data-testid="oe-amount" type="number" step="0.01" min="0" value={draft.amount} onChange={(e) => setDraft({ ...draft, amount: e.target.value })} className={ic} placeholder="0" />
+          </div>
+          <div className="md:col-span-2">
+            <label className="text-[9px] uppercase font-bold text-zinc-500 tracking-wider">Remarks</label>
+            <input data-testid="oe-remarks" value={draft.remarks} onChange={(e) => setDraft({ ...draft, remarks: e.target.value })} className={ic} placeholder="Optional context" />
+          </div>
+          <div className="md:col-span-6 flex flex-col md:flex-row md:items-end gap-2 mt-1">
+            <button type="button" data-testid="oe-add-btn" onClick={add} className="px-4 py-1.5 text-[10px] uppercase tracking-wider font-bold bg-emerald-600 text-white rounded-sm hover:bg-emerald-700">
+              + Add Expenditure
+            </button>
+            <div className="flex items-center gap-2 flex-1 md:justify-end">
+              <input
+                data-testid="oe-new-type-input"
+                value={newType}
+                onChange={(e) => setNewType(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addNewType(); } }}
+                className={`${ic} max-w-[220px]`}
+                placeholder="Add new type to master…"
+              />
+              <button type="button" data-testid="oe-add-type-btn" onClick={addNewType} className="px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold border border-zinc-300 rounded-sm hover:bg-zinc-100">
+                + Type
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {(rows || []).length === 0 ? (
+        <div className="text-xs text-zinc-500 italic px-2">No expenditures added yet.</div>
+      ) : (
+        <div className="border border-zinc-200 rounded-sm overflow-hidden">
+          <table className="w-full text-xs" data-testid="oe-list">
+            <thead className="bg-zinc-950 text-white text-[10px] uppercase tracking-wider">
+              <tr>
+                <th className="text-left px-3 py-2">Date</th>
+                <th className="text-left px-3 py-2">Type</th>
+                <th className="text-left px-3 py-2">Remarks</th>
+                <th className="text-right px-3 py-2">Amount</th>
+                <th className="w-10"></th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-zinc-100">
+              {(rows || []).map((r) => (
+                <tr key={r.id} data-testid={`oe-row-${r.id}`} className="hover:bg-amber-50/50">
+                  <td className="px-3 py-2 font-mono">{r.date}</td>
+                  <td className="px-3 py-2 font-bold">{r.type}</td>
+                  <td className="px-3 py-2 text-zinc-600 italic">{r.remarks || "—"}</td>
+                  <td className="px-3 py-2 text-right font-mono font-bold">{fmtCurrency(r.amount)}</td>
+                  <td className="px-2 py-2 text-center">
+                    <button type="button" data-testid={`oe-del-${r.id}`} onClick={() => del(r.id)} className="text-rose-600 hover:bg-rose-50 rounded p-1">×</button>
+                  </td>
+                </tr>
+              ))}
+              <tr className="bg-zinc-50 font-bold">
+                <td colSpan={3} className="px-3 py-2 text-right uppercase tracking-wider text-[10px]">Total</td>
+                <td className="px-3 py-2 text-right font-mono" data-testid="oe-total">{fmtCurrency(total)}</td>
+                <td></td>
+              </tr>
             </tbody>
           </table>
         </div>

@@ -86,7 +86,8 @@ export default function Trips() {
                 <tr
                   key={t.id}
                   data-testid={`trip-row-${t.id}`}
-                  className={`${idx % 2 === 0 ? "bg-white" : "bg-zinc-50/60"} hover:bg-amber-50/40 transition-colors`}
+                  onClick={() => window.location.href = `/trips/${t.id}/view`}
+                  className={`${idx % 2 === 0 ? "bg-white" : "bg-zinc-50/60"} hover:bg-amber-50/40 transition-colors cursor-pointer`}
                 >
                   {/* Date · Time */}
                   <td className="px-4 py-3 whitespace-nowrap">
@@ -159,7 +160,7 @@ export default function Trips() {
                     )}
                   </td>
                   {/* Actions — icon-only compact cluster */}
-                  <td className="px-2 py-3 whitespace-nowrap w-[220px]">
+                  <td className="px-2 py-3 whitespace-nowrap w-[220px]" onClick={(e) => e.stopPropagation()}>
                     <div className="flex items-center justify-end gap-0.5">
                       <Link
                         data-testid={`view-trip-${t.id}`}

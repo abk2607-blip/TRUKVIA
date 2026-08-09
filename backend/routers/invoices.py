@@ -96,8 +96,20 @@ async def create_invoice(payload: InvoiceCreateRequest, request: Request, user=D
     shortage_total = round(
         sum(t.get("shortage_amount", 0.0) + (t.get("expenses") or {}).get("shortage_amount", 0.0) for t in trips), 2,
     )
-    diesel_deduction_total = round(sum((t.get("expenses") or {}).get("diesel_from_customer_amount", 0.0) for t in trips), 2)
-    advance_deduction_total = round(sum((t.get("expenses") or {}).get("cash_advance_received", 0.0) for t in trips), 2)
+    diesel_deduction_total = round(sum(
+        (
+            sum(float(r.get("amount") or 0) for r in (t.get("customer_receipts") or []) if (r.get("type") or "").lower() == "diesel")
+            if (t.get("customer_receipts") or []) else float((t.get("expenses") or {}).get("diesel_from_customer_amount", 0.0))
+        )
+        for t in trips
+    ), 2)
+    advance_deduction_total = round(sum(
+        (
+            sum(float(r.get("amount") or 0) for r in (t.get("customer_receipts") or []) if (r.get("type") or "").lower() == "advance")
+            if (t.get("customer_receipts") or []) else float((t.get("expenses") or {}).get("cash_advance_received", 0.0))
+        )
+        for t in trips
+    ), 2)
     # --- Auto GST type based on state match ---
     customer_doc = await db.customers.find_one({"id": payload.customer_id, "user_id": user["user_id"]}, {"_id": 0}) or {}
     company_doc = await db.companies.find_one({"id": cid, "user_id": user["user_id"]}, {"_id": 0}) or {}

@@ -54,6 +54,7 @@ class Customer(BaseModel):
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
 
 class Expenses(BaseModel):
+    model_config = ConfigDict(extra="allow")
     diesel: float = 0.0
     toll: float = 0.0
     batta: float = 0.0
@@ -62,12 +63,28 @@ class Expenses(BaseModel):
     # Additional expenses / recoveries
     firewood: float = 0.0
     other_desc: str = ""
+    other_remarks: str = ""
     diesel_from_customer_qty: float = 0.0
     diesel_from_customer_rate: float = 0.0
     diesel_from_customer_amount: float = 0.0   # recovery (reduces our cost)
     shortage_qty: float = 0.0
     shortage_amount: float = 0.0               # deduction from freight
     cash_advance_received: float = 0.0         # settlement only
+
+
+class ExpenditureType(BaseModel):
+    """Master list of Other Expenditure categories (Driver Food, Parking, Toll, ...)."""
+    id: str = Field(default_factory=lambda: new_id("etype_"))
+    name: str
+    is_default: bool = False   # seeded defaults vs user-added
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+
+
+DEFAULT_EXPENDITURE_TYPES = [
+    "Driver Food", "Parking", "Toll", "Loading Charges",
+    "Unloading Charges", "Weighment", "Labour", "Detention",
+    "Cleaning", "Others",
+]
 
 class Driver(BaseModel):
     id: str = Field(default_factory=lambda: new_id("drv_"))
@@ -152,6 +169,16 @@ class Trip(BaseModel):
     customer_diesel_received: float = 0.0    # LEGACY total — kept for backward compat; sum of diesel receipts
     customer_advance_received: float = 0.0   # LEGACY total — kept for backward compat; sum of advance receipts
     customer_receipts: list = Field(default_factory=list)  # Iter39: [{id, date, type:'diesel'|'advance', ...}]
+    # ---- Iter40: Other Expenditure (dynamic list) + Remarks ----
+    other_expenditures: list = Field(default_factory=list)  # [{id, date, type, amount, remarks}]
+    halting_remarks: str = ""
+    shortage_remarks: str = ""
+    excess_remarks: str = ""
+    other_income: float = 0.0
+    other_income_remarks: str = ""
+    supplier_settlement_remarks: str = ""
+    lr_driver_name: str = ""     # LR-side override; falls back to driver_name
+    lr_driver_mobile: str = ""   # LR-side override; falls back to driver_mobile
     invoice_id: Optional[str] = None
     status: Literal["pending", "invoiced"] = "pending"
     notes: str = ""

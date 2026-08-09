@@ -65,6 +65,14 @@ def _compute_trip(t: Trip) -> Trip:
         e.diesel_from_customer_amount = round(e.diesel_from_customer_qty * e.diesel_from_customer_rate, 2)
     # Own expense base
     own_expense = e.diesel + e.toll + e.batta + e.repair + e.other + e.firewood
+    # Iter40: Dynamic Other Expenditure list — each row {type, amount, remarks}
+    other_expenditure_total = 0.0
+    for oe in (t.other_expenditures or []):
+        try:
+            other_expenditure_total += float(oe.get("amount") or 0)
+        except Exception:
+            pass
+    own_expense += round(other_expenditure_total, 2)
     # Diesel recovery reduces our cost (but never below 0)
     own_expense_net = max(own_expense - e.diesel_from_customer_amount, 0)
     # ---- Iter39: Customer Receipts (Diesel + Advance list) ----
@@ -120,24 +128,39 @@ def _compute_trip(t: Trip) -> Trip:
     # Iter39: Customer receipts (diesel + advance) reduce the customer's NET receivable (shown in invoice),
     # but they DO NOT reduce profit — customer diesel is passed on to the supplier (already subtracted from
     # supplier_net_payable), and customer advance is a collection against the same freight.
-    t.profit = round(billable - t.total_expense, 2)
-    t.net_settlement = round(billable - t.total_expense - e.cash_advance_received, 2)
+    t.profit = round(billable - t.total_expense + float(t.other_income or 0), 2)
+    t.net_settlement = round(billable - t.total_expense - e.cash_advance_received + float(t.other_income or 0), 2)
     return t
 
 def _trip_billable(t: dict) -> float:
     """Billable freight to customer for invoicing.
     = Freight + Halting + Excess − Shortage − Diesel-from-Customer − Advance-from-Customer.
     Diesel & Advance are customer-side reimbursements: the customer already paid
-    (or funded) these amounts, so they must be netted off the invoice total."""
+    (or funded) these amounts, so they must be netted off the invoice total.
+    Iter39/40: prefer customer_receipts totals; fall back to legacy scalars."""
     e = t.get("expenses") or {}
+    # Prefer new receipts list totals if present
+    receipts = t.get("customer_receipts") or []
+    if receipts:
+        diesel_ded = round(sum(
+            float(r.get("amount") or 0)
+            for r in receipts if (r.get("type") or "").lower() == "diesel"
+        ), 2)
+        advance_ded = round(sum(
+            float(r.get("amount") or 0)
+            for r in receipts if (r.get("type") or "").lower() == "advance"
+        ), 2)
+    else:
+        diesel_ded = float(e.get("diesel_from_customer_amount", 0))
+        advance_ded = float(e.get("cash_advance_received", 0))
     return round(
         float(t.get("freight_amount", 0))
         + float(t.get("halting_amount", 0))
         + float(t.get("excess_amount", 0))
         - float(t.get("shortage_amount", 0))
         - float(e.get("shortage_amount", 0))
-        - float(e.get("diesel_from_customer_amount", 0))
-        - float(e.get("cash_advance_received", 0)),
+        - diesel_ded
+        - advance_ded,
         2,
     )
 
@@ -154,8 +177,20 @@ async def _recompute_invoice(iid: str, user):
     shortage_total = round(
         sum(t.get("shortage_amount", 0.0) + (t.get("expenses") or {}).get("shortage_amount", 0.0) for t in trips), 2,
     )
-    diesel_deduction_total = round(sum((t.get("expenses") or {}).get("diesel_from_customer_amount", 0.0) for t in trips), 2)
-    advance_deduction_total = round(sum((t.get("expenses") or {}).get("cash_advance_received", 0.0) for t in trips), 2)
+    diesel_deduction_total = round(sum(
+        (
+            sum(float(r.get("amount") or 0) for r in (t.get("customer_receipts") or []) if (r.get("type") or "").lower() == "diesel")
+            if (t.get("customer_receipts") or []) else float((t.get("expenses") or {}).get("diesel_from_customer_amount", 0.0))
+        )
+        for t in trips
+    ), 2)
+    advance_deduction_total = round(sum(
+        (
+            sum(float(r.get("amount") or 0) for r in (t.get("customer_receipts") or []) if (r.get("type") or "").lower() == "advance")
+            if (t.get("customer_receipts") or []) else float((t.get("expenses") or {}).get("cash_advance_received", 0.0))
+        )
+        for t in trips
+    ), 2)
     subtotal = round(sum(_trip_billable(t) for t in trips), 2)
     # Auto GST re-evaluation on edit (customer/company state may have changed)
     inv_company_id = inv.get("company_id", "")

@@ -122,8 +122,8 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
     ]))
     story.append(details_tbl)
 
-    driver_rows = [[Paragraph("<b>Driver Name</b>", styles["LRSmallBold"]), trip.get("driver_name", "—"),
-                    Paragraph("<b>Driver Mobile</b>", styles["LRSmallBold"]), trip.get("driver_mobile", "—")]]
+    driver_rows = [[Paragraph("<b>Driver Name</b>", styles["LRSmallBold"]), (trip.get("lr_driver_name") or trip.get("driver_name") or "—"),
+                    Paragraph("<b>Driver Mobile</b>", styles["LRSmallBold"]), (trip.get("lr_driver_mobile") or trip.get("driver_mobile") or "—")]]
     driver_tbl = Table(driver_rows, colWidths=[40 * mm, 55 * mm, 40 * mm, 55 * mm])
     driver_tbl.setStyle(TableStyle([
         ("BOX", (0, 0), (-1, -1), 0.5, colors.black),
