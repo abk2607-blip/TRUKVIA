@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/context/AuthContext";
 import { api, getActiveCompanyId, setActiveCompanyId } from "@/api";
 import {
-  LayoutDashboard, Truck, Users, FileText, Settings as SettingsIcon, LogOut, UserCog, Package, BarChart3, Car, Fuel as FuelIcon, FolderArchive, History, ShieldCheck, MapPin, AlertCircle, Building2, Check, LayoutTemplate,
+  LayoutDashboard, Truck, Users, FileText, Settings as SettingsIcon, LogOut, UserCog, Package, BarChart3, Car, Fuel as FuelIcon, FolderArchive, History, ShieldCheck, MapPin, AlertCircle, Building2, Check, LayoutTemplate, Handshake,
 } from "lucide-react";
 import AIChatBubble from "@/components/AIChatBubble";
 
@@ -14,6 +14,7 @@ const nav = [
   { to: "/trips/templates", te: "ట్రిప్ టెంప్లేట్‌లు", en: "Trip Templates", icon: LayoutTemplate, testid: "nav-templates" },
   { to: "/customers", te: "కస్టమర్లు", en: "Customers", icon: Users, testid: "nav-customers" },
   { to: "/customers/history", te: "కస్టమర్ లావాదేవీలు", en: "Customer History", icon: FileText, testid: "nav-customer-history" },
+  { to: "/suppliers", te: "సప్లయర్లు", en: "Suppliers", icon: Handshake, testid: "nav-suppliers" },
   { to: "/parties", te: "కన్‌సైనర్/కన్‌సైనీ", en: "Consignor/Consignee", icon: MapPin, testid: "nav-parties" },
   { to: "/vehicles", te: "వాహనాలు", en: "Vehicles", icon: Car, testid: "nav-vehicles" },
   { to: "/drivers", te: "డ్రైవర్లు", en: "Drivers", icon: UserCog, testid: "nav-drivers" },

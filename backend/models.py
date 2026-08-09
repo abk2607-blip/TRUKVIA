@@ -422,6 +422,68 @@ class ChatSession(BaseModel):
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
 
 
+# ============================================================================
+# Iter45 — Supplier Master + Supplier Payments (dedicated Suppliers module)
+# ============================================================================
+
+class Supplier(BaseModel):
+    """Supplier / hired-vehicle owner master. Company-scoped."""
+    id: str = Field(default_factory=lambda: new_id("sup_"))
+    name: str
+    contact_person: str = ""
+    mobile: str = ""
+    alt_mobile: str = ""
+    address: str = ""
+    state: str = ""
+    city: str = ""
+    gst_in: str = ""
+    pan: str = ""
+    msme_number: str = ""
+    bank_name: str = ""
+    account_number: str = ""
+    ifsc: str = ""
+    branch: str = ""
+    payment_terms: str = ""              # free text (e.g. "Net 15 days", "Advance 40%")
+    opening_balance: float = 0.0         # positive amount
+    opening_balance_type: Literal["payable", "advance"] = "payable"
+    remarks: str = ""
+    is_active: bool = True
+    # Audit
+    created_by: str = ""
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+    modified_by: str = ""
+    modified_at: str = ""
+
+
+class SupplierPayment(BaseModel):
+    """A payment (or receipt) transaction against a supplier's ledger.
+    All supplier trip transactions (freight, advance, diesel, cust.diesel adj,
+    shortage/excess, other recovery/income) are DERIVED from trips at ledger
+    read-time — never duplicated here. This document tracks only the actual
+    money movements between us and the supplier."""
+    id: str = Field(default_factory=lambda: new_id("sp_"))
+    supplier_id: str
+    date: str                              # ISO YYYY-MM-DD
+    amount: float                          # always positive; direction inferred from `type`
+    type: Literal["payment_out", "receipt_in"] = "payment_out"  # our-cash-out vs our-cash-in
+    mode: Literal["Cash", "Bank", "UPI", "IMPS", "NEFT", "RTGS", "Cheque", "Other"] = "Bank"
+    account_id: str = ""                   # optional link to a bank account master
+    ref_no: str = ""
+    against: Literal["advance", "trip", "outstanding", "other"] = "outstanding"
+    trip_id: str = ""                      # optional link
+    lr_number: str = ""                    # optional link
+    remarks: str = ""
+    # Audit
+    created_by: str = ""
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+    modified_by: str = ""
+    modified_at: str = ""
+    is_deleted: bool = False
+    deleted_by: str = ""
+    deleted_at: str = ""
+    deletion_reason: str = ""
+
+
 class ChatMessage(BaseModel):
     id: str = Field(default_factory=lambda: new_id("msg_"))
     session_id: str
