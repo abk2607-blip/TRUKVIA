@@ -41,12 +41,29 @@ def test_auth_health_contains_regression_guard_block():
         assert k in d["regression_guard"], f"regression_guard missing {k}"
 
 
-def test_auth_health_200_in_dev_mode():
-    """When REGRESSION_GUARD_STRICT is not 1, /api/auth/health always returns 200
-    even if the guard is red — dev environments must remain usable."""
+def test_auth_health_returns_meaningful_state():
+    """Iter53 — Regardless of strict mode, /api/auth/health must return the
+    regression_guard block with status + strict_mode + checked_at fields.
+    - strict_mode=false, any guard → 200
+    - strict_mode=true,  guard=pass → 200
+    - strict_mode=true,  guard=fail → 503 with same payload under `detail`
+    - strict_mode=true,  guard=unknown → 200 with warning (grace period on boot)"""
     r = httpx.get(f"{BASE}/api/auth/health", timeout=10)
-    # In our current pod REGRESSION_GUARD_STRICT is unset, so 200 is required
-    assert r.status_code == 200, f"dev mode should be 200; got {r.status_code}: {r.text}"
+    assert r.status_code in (200, 503)
+    d = r.json() if r.status_code == 200 else r.json().get("detail", {})
+    guard = d.get("regression_guard", {})
+    strict = guard.get("strict_mode")
+    status = guard.get("status")
+    # 503 only when strict + guard=fail
+    if r.status_code == 503:
+        assert strict is True, "503 must only happen in strict mode"
+        assert status == "fail", "503 must only happen when guard=fail"
+    else:
+        # 200 accepted for: non-strict OR pass OR unknown
+        assert status in ("pass", "fail", "unknown")
+        # If strict + fail returned 200, that's a leak
+        if strict is True and status == "fail":
+            pytest.fail("strict+fail returned 200 — 503 gate leaked")
 
 
 def test_deploy_md_documents_three_layers():

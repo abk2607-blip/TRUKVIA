@@ -390,13 +390,50 @@ function SaveHealthTile() {
           </div>
           <div className="text-[10px] uppercase tracking-wider font-bold opacity-70 pt-2">Delivery Channels & Recipients</div>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
-            <label className="flex flex-col md:col-span-2">
-              <span className="text-[10px] uppercase tracking-wider opacity-70 mb-1">Email recipients (comma-separated)</span>
-              <input data-testid="cfg-email-recipients" type="text"
-                value={(formCfg.email_recipients || []).join(", ")}
-                onChange={(e) => setFormCfg({ ...formCfg, email_recipients: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
-                className="border border-current/40 bg-white px-2 py-1 rounded-sm text-zinc-900"
-                placeholder="owner@example.com, ops@example.com" />
+            <label className="flex flex-col md:col-span-2" data-testid="cfg-email-recipients-editor">
+              <span className="text-[10px] uppercase tracking-wider opacity-70 mb-1 flex items-center gap-2">
+                Email recipients
+                <span className="font-mono normal-case tracking-normal opacity-70">
+                  ({(formCfg.email_recipients || []).length} configured — all receive every alert)
+                </span>
+              </span>
+              <div className="flex flex-wrap gap-2 border border-current/40 bg-white p-2 rounded-sm min-h-[40px]">
+                {(formCfg.email_recipients || []).map((r, i) => (
+                  <span key={i} data-testid={`recipient-chip-${i}`} className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-900 border border-emerald-300 px-2 py-1 rounded-sm text-xs font-mono">
+                    {r}
+                    <button
+                      data-testid={`recipient-remove-${i}`}
+                      onClick={() => setFormCfg({ ...formCfg, email_recipients: (formCfg.email_recipients || []).filter((_, idx) => idx !== i) })}
+                      className="text-emerald-700 hover:text-rose-700 font-bold ml-1"
+                      title="Remove this recipient"
+                    >×</button>
+                  </span>
+                ))}
+                <input
+                  data-testid="cfg-email-recipients-input"
+                  type="email"
+                  placeholder={(formCfg.email_recipients || []).length ? "+ add another…" : "owner@example.com"}
+                  className="flex-1 min-w-[180px] outline-none text-zinc-900 text-xs bg-transparent"
+                  onKeyDown={(e) => {
+                    if ((e.key === "Enter" || e.key === "," || e.key === " ") && e.currentTarget.value.trim()) {
+                      e.preventDefault();
+                      const v = e.currentTarget.value.trim().replace(/,$/, "");
+                      if (v.includes("@") && !((formCfg.email_recipients || []).includes(v))) {
+                        setFormCfg({ ...formCfg, email_recipients: [...(formCfg.email_recipients || []), v] });
+                      }
+                      e.currentTarget.value = "";
+                    }
+                  }}
+                  onBlur={(e) => {
+                    const v = e.currentTarget.value.trim();
+                    if (v && v.includes("@") && !((formCfg.email_recipients || []).includes(v))) {
+                      setFormCfg({ ...formCfg, email_recipients: [...(formCfg.email_recipients || []), v] });
+                      e.currentTarget.value = "";
+                    }
+                  }}
+                />
+              </div>
+              <span className="text-[10px] mt-1 opacity-60">Press Enter, comma or space to add each address. Click ✕ to remove. Every alert is dispatched to ALL configured addresses.</span>
             </label>
             <label className="flex flex-col">
               <span className="text-[10px] uppercase tracking-wider opacity-70 mb-1">Channels</span>
@@ -575,6 +612,13 @@ function DeployGuardTile() {
               >
                 {showHistory ? "Hide" : "See"} failed runs
               </button>
+              <Link
+                to="/admin/deploy-history"
+                data-testid="deploy-guard-trend-link"
+                className="mt-2 ml-3 text-[10px] uppercase tracking-wider font-bold underline opacity-70 hover:opacity-100"
+              >
+                Full 30-day trend →
+              </Link>
               {showHistory && (
                 <div className="mt-2 text-[10px] font-mono space-y-1" data-testid="deploy-guard-history-list">
                   {hist.history.filter((h) => h.status === "fail").slice(-10).map((h, i) => (

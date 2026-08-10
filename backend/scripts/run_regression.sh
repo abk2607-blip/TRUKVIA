@@ -40,6 +40,7 @@ CRITICAL_TESTS=(
   "tests/test_iter50_save_health_and_regression_guard.py"  # ops observability + guard-of-guards
   "tests/test_iter51_deploy_guard_and_alerts.py"       # deploy-readiness + configurable alerts
   "tests/test_iter52_strict_mode_alerts_history.py"    # strict mode + email/wa alerts + guard history
+  "tests/test_iter53_strict_prod_multirecip_trend.py"  # strict-in-prod + multi-recipient + trend chart
 )
 
 # Explicit venv PATH so this runs cleanly from asyncio subprocess (which

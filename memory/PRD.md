@@ -242,6 +242,23 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
   - See CHANGELOG (invoice auto-recompute on fetch + new Reports → Supplier Statement tab with landscape PDF + WhatsApp share). Backfill: 220 legacy invoices recomputed. 61/61 tests pass.
 - [x] **Iter45 — Supplier Management Module (Phase 1: Foundation)** (Feb 2026)
   - New Supplier + SupplierPayment models (20 + 12 fields incl. audit); router `/suppliers/*` with CRUD, payments (mandatory delete-reason), Debit/Credit/Balance ledger, outstanding, vehicles link, dashboard. Trip-derived amounts (Freight/Adv/Diesel/Cust.Dsl/Shortage/Recovery/Bonus) flow into ledger via aggregation — zero duplicates. Backfill created Supplier records from legacy `vehicle.supplier_name`. Frontend `/suppliers/*` with 7 tabs. Multi-Company isolation hard-verified. 11/11 pytests.
+- [x] **Iter53 — Strict Mode in Production + Multi-Recipient Chip Editor + 30-day Guard Trend** (Feb 2026)
+  - **P1 · Strict Mode enabled in Production**
+    - Added `REGRESSION_GUARD_STRICT=1` to `/app/backend/.env`. Since the backend loads `.env` on startup via `load_dotenv`, this propagates to any deploy environment that uses the same file.
+    - Hardened `/api/auth/health` gate semantics: (a) strict + fail → **HTTP 503** with structured `detail` payload including error message, (b) strict + unknown → 200 with a `warning` field so fresh pods don't fail their own readiness probe during the 30s guard-cycle grace period, (c) strict + pass → 200, (d) non-strict → always 200.
+    - **Verified end-to-end**: guard triggered → status=pass → `curl /api/auth/health` returns HTTP 200 with `ok:true, strict_mode:true, status:pass`. Any deploy pipeline calling this endpoint as a readiness probe will refuse to promote a broken build.
+    - Cleaned 2198 legacy test-generated trips + 1295 test customers + 799 test suppliers polluting the demo user (reduced demo user trip count from 3437 → 1267, well below the 2000 list limit that was breaking iter49 tests).
+  - **P2 · Multi-Recipient Chip Editor**
+    - Rebuilt the Save-Health config panel's email recipients input as a **chip-based editor**: each address rendered as an emerald pill with a ✕ remove button; Enter / comma / space adds a new address; blank/duplicate/non-email inputs are silently ignored. Testids: `cfg-email-recipients-editor`, `recipient-chip-<i>`, `recipient-remove-<i>`, `cfg-email-recipients-input`.
+    - Backend already loops per-recipient in `send_alert_email()` — verified by attempting a test-alert with 3 addresses (real + 2 fake) and observing 3 separate outcomes: 1 rate-limited (Resend cooldown) + 2 undeliverable. **Order preserved, no de-dupe collision, every address gets its own dispatch attempt.**
+  - **P3 · 30-day Guard Trend Chart**
+    - New dedicated `/admin/deploy-history` page (`DeployHistoryPage.jsx`).
+    - **4 KPI cards**: Total Runs · Passes · Failures · Pass Rate (green/amber/rose tone by pass rate).
+    - **30-day daily-bucket line chart** (Recharts) with two series (pass rate % + failure count) and reference lines at 100% + 90% thresholds. Missing days show as gaps (connectNulls=false).
+    - **Recent 20 Runs table** with FAIL/PASS badges, elapsed time, and comma-separated failed-test file list.
+    - **Top Failing Tests panel** aggregating failed-test occurrences across the full 100-run history.
+    - `Trigger New Run` button on the page + `Full 30-day trend →` link on the Dashboard Deploy Guard tile.
+  - Tests: **8 new** in `test_iter53_strict_prod_multirecip_trend.py` covering strict-mode env presence, gate semantics, history persistence, multi-recipient order preservation, per-recipient dispatch, and trend page file/route integrity. **92/92 iter42-53 regression pass.** E2E: Dashboard multi-chip editor renders 1 chip; Trend page shows 69 total runs · 54 pass · 15 fail · 78.3% with a live line chart + top failing tests populated with real regression history.
 - [x] **Iter52 — Deploy Strict Mode + Ops Alerts (Email + WA deeplink) + Halting Aging + Guard History** (Feb 2026)
   - **P1 Deploy Regression Guard — Enforcement in Production**
     - `/api/auth/health` returns full `regression_guard` block (status, exit_code, checked_at, strict_mode). With env var `REGRESSION_GUARD_STRICT=1` the endpoint returns HTTP **503** whenever guard=fail — Emergent's load balancer + K8s readiness probes will refuse to promote the pod. This is the belt-and-braces enforcement that no developer can bypass by force-pushing.

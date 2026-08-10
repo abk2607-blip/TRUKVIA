@@ -79,11 +79,17 @@ async def auth_health():
             },
             "timestamp": now_utc().isoformat(),
         }
-        # In strict mode, a failing regression forces 503 so deploys block
+        # Iter53 — In strict mode a *failing* regression forces 503 so deploys
+        # are blocked. We deliberately allow "unknown" through (with a warning
+        # in the payload) because the guard needs ~30s after boot before its
+        # first result is written — otherwise every fresh pod would fail its
+        # own readiness probe on startup and be killed in an infinite loop.
         if strict_mode and guard_status == "fail":
             payload["ok"] = False
             payload["error"] = "Regression Guard FAILED — deploy blocked"
             raise HTTPException(status_code=503, detail=payload)
+        if strict_mode and guard_status == "unknown":
+            payload["warning"] = "Guard not yet checked; allowing traffic until first cycle completes"
         return payload
     except HTTPException:
         raise

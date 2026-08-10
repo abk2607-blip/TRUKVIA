@@ -23,6 +23,7 @@ import Parties from "@/pages/Parties";
 import Invoices from "@/pages/Invoices";
 import InvoiceCreate from "@/pages/InvoiceCreate";
 import InvoiceView from "@/pages/InvoiceView";
+import DeployHistoryPage from "@/pages/DeployHistoryPage";
 import Settings from "@/pages/Settings";
 import TripImport from "@/pages/TripImport";
 import TripTemplates from "@/pages/TripTemplates";
@@ -52,6 +53,7 @@ function AppRouter() {
     <Routes>
       <Route path="/" element={<Login />} />
       <Route path="/dashboard" element={<Protected><Dashboard /></Protected>} />
+      <Route path="/admin/deploy-history" element={<Protected><DeployHistoryPage /></Protected>} />
       <Route path="/trips" element={<Protected><Trips /></Protected>} />
       <Route path="/trips/new" element={<Protected><TripForm /></Protected>} />
       <Route path="/trips/import" element={<Protected><TripImport /></Protected>} />
