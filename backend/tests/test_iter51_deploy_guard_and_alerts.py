@@ -203,8 +203,10 @@ def test_alert_cooldown_prevents_spam():
         time.sleep(0.3)
     time.sleep(2)
     alerts = httpx.get(f"{BASE}/api/admin/save-health/alerts", params={"limit": 10}, timeout=10).json()["alerts"]
-    # Only 1 alert due to cooldown
-    assert len(alerts) == 1, f"cooldown breached; got {len(alerts)} alerts"
+    # Only 1 save_failure alert due to cooldown (auth_ip_burst alerts are a
+    # separate kind added in Iter58 — filter them out for this cooldown check)
+    sf_alerts = [a for a in alerts if a.get("kind") != "auth_ip_burst"]
+    assert len(sf_alerts) == 1, f"cooldown breached; got {len(sf_alerts)} save-failure alerts (all: {len(alerts)})"
     # Restore
     httpx.put(f"{BASE}/api/admin/save-health/alert-config",
               json={"threshold": 20, "window_hours": 1, "cooldown_min": 30, "enabled": True}, timeout=10)

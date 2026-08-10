@@ -505,3 +505,39 @@ Four features shipped in a single iteration, each covered by pytest and end-to-e
 - [x] P7 · Save-Health Sparkline (Iter57 P3) — DONE
 - [ ] Halting SMS Digest — deferred until halting proven stable in live use
 
+
+## Iter58 — Bulk Trip Actions + Auth IP Burst + Sparkline Deep-Dive · Feb 2026
+Three features shipped in one iteration. Full regression **149/149 green** (`/api/admin/deploy-readiness` exit=0, 350s). testing_agent iteration_53.json: 100% PASS on all P1/P2/P3 + zero regressions.
+
+### P1 · Bulk Actions on Trip Log
+- **Bulk Invoice** (Option B — real invoice, not a flag):
+  - New `POST /api/trips/bulk-invoice-preflight` validates selected trips → returns `ok:true + customer_id + trip_count + freight_total` OR `ok:false` with reason (`mixed_customers`, `already_invoiced`, `no_customer`, `zero_freight`, `not_found`) and a human-readable `detail`.
+  - Frontend calls preflight, then invokes the EXISTING `POST /api/invoices` — same GST/CGST/SGST/IGST/halting/shortage/rounding logic as manual invoice creation. Navigates to `/invoices/{id}` on success.
+  - Blocks: `bulk-invoice-btn` disabled when any selected trip is already invoiced (with `bulk-invoiced-warning` chip).
+- **Bulk Delete**: `POST /api/trips/bulk-delete` with mandatory `reason`. `force_invoiced=false` short-circuits with `requires_force=true + invoiced_count` when any selected trip is invoiced. On success, linked invoices are auto-recomputed. Per-trip audit log written. Max 500 trips per call. Enforces `delete_trip` permission.
+- **Bulk Export**: Extended `GET /api/trips/export?trip_ids=csv` — accepts comma-separated IDs on top of existing filters; company scoping still applies (verified: cross-company request returns empty).
+- **Frontend**: Sticky bulk-action bar appears when >0 selected. Row checkboxes with `data-testid=bulk-select-<id>` and header `bulk-select-all`. Two-step confirm for delete: initial dialog → reason prompt → invoiced-trip confirmation. Selected rows highlighted emerald.
+
+### P2 · Auth Failure Alerts by IP
+- New `_evaluate_auth_ip_burst_alerts()` in `server.py`: Mongo aggregation groups auth failures by `ip` over the last 60 min; any IP crossing `AUTH_IP_BURST_THRESHOLD=20` fires an alert with kind=`auth_ip_burst` and 30-min per-IP cooldown.
+- Alert body: `{ip, count, threshold=20, window_minutes=60, first_seen, last_seen, sample_paths (max 3)}`.
+- **PII-safe**: never captures Authorization/Cookie/token/password/Bearer headers or request payloads. Testing agent explicitly inspected the row and confirmed zero occurrences.
+- New `alert_types.auth_ip_burst` toggle (default true).
+- Middleware fires the evaluator alongside `_evaluate_save_health_alerts()` on every save/auth failure.
+
+### P3 · Sparkline Deep-Dive
+- Sparkline SVG buckets now render invisible `<rect>` hit-targets (`data-testid=sparkline-bucket-<i>`). Non-empty buckets have `cursor: pointer`.
+- Extended `GET /api/admin/save-health/auth-failures` with `since` + `until` ISO params (Iter58 additions to Iter57 endpoint).
+- Clicking a bucket opens the AuthFailureDrillModal with a narrowed slice; `auth-drill-scope` shows `Slice: HH:MM → HH:MM UTC`. Clicking the AUTH count still opens the full-24h view.
+
+### Notes
+- `test_alert_cooldown_prevents_spam` (iter51) updated to filter out `auth_ip_burst` alerts from the cooldown check — the new alert kind is separate from the save-failure cooldown.
+
+## Priority Roadmap (Feb 2026 — updated)
+- [x] P1 · Login-Failure Tracking (Iter54) — DONE
+- [x] P2 · Safe TripForm Refactor (Iter55) — DONE
+- [x] P3 · Trip Log Search & Filter (Iter56) — DONE
+- [x] P4 · Saved Filter Views + Export + Auth Drill + Sparkline (Iter57) — DONE
+- [x] P5 · Bulk Trip Actions + Auth IP Burst + Sparkline Deep-Dive (Iter58) — DONE
+- [ ] Halting SMS Digest — deferred until halting proven stable in live use (user's ask: only after Trip Edit → Save → View → Invoice PDF is confirmed stable)
+

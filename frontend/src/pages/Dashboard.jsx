@@ -302,6 +302,7 @@ function SaveHealthTile() {
   const [open, setOpen] = React.useState(false);
   const [showCfg, setShowCfg] = React.useState(false);
   const [showAuthDrill, setShowAuthDrill] = React.useState(false);
+  const [authDrillRange, setAuthDrillRange] = React.useState(null); // Iter58 P3 — {since, until} narrow window
   const { data, isLoading, refetch } = useQuery({
     queryKey: ["save-health"],
     queryFn: async () => (await api.get("/admin/save-health", { params: { hours: 24 } })).data,
@@ -350,7 +351,7 @@ function SaveHealthTile() {
             <button
               type="button"
               data-testid="save-health-auth-failures"
-              onClick={() => setShowAuthDrill(true)}
+              onClick={() => { setAuthDrillRange(null); setShowAuthDrill(true); }}
               className="flex items-center gap-1 hover:underline focus:outline-none focus:underline"
               title="Click to see recent 401/403 failures"
             >
@@ -359,10 +360,23 @@ function SaveHealthTile() {
               <span className="text-[9px] opacity-60">›</span>
             </button>
           </div>
-          {/* Iter57 P3 — 24h sparkline */}
+          {/* Iter57 P3 — 24h sparkline (Iter58 P3: clickable buckets) */}
           {spark && (
             <div className="mt-2" data-testid="save-health-sparkline">
-              <SaveHealthSparkline auth={spark.auth || []} save={spark.save || []} bucketMinutes={spark.bucket_minutes || 60} />
+              <SaveHealthSparkline
+                auth={spark.auth || []}
+                save={spark.save || []}
+                bucketMinutes={spark.bucket_minutes || 60}
+                cutoff={spark.cutoff}
+                onBucketClick={(idx) => {
+                  const start = new Date(spark.cutoff);
+                  const bucketMs = (spark.bucket_minutes || 60) * 60 * 1000;
+                  const since = new Date(start.getTime() + idx * bucketMs).toISOString();
+                  const until = new Date(start.getTime() + (idx + 1) * bucketMs).toISOString();
+                  setAuthDrillRange({ since, until });
+                  setShowAuthDrill(true);
+                }}
+              />
             </div>
           )}
           <div className="text-[10px] mt-1 opacity-70">
@@ -604,9 +618,12 @@ function SaveHealthTile() {
         </div>
       )}
 
-      {/* Iter57 P2 — Auth-failure drill-down modal */}
+      {/* Iter57 P2 — Auth-failure drill-down modal (Iter58 P3: accepts optional slice) */}
       {showAuthDrill && (
-        <AuthFailureDrillModal onClose={() => setShowAuthDrill(false)} />
+        <AuthFailureDrillModal
+          range={authDrillRange}
+          onClose={() => { setShowAuthDrill(false); setAuthDrillRange(null); }}
+        />
       )}
     </div>
   );
@@ -614,22 +631,46 @@ function SaveHealthTile() {
 
 
 // Iter57 P3 — Save Health Sparkline (tiny inline SVG, no external chart lib)
-function SaveHealthSparkline({ auth, save, bucketMinutes }) {
+// Iter58 P3 — buckets are now clickable — clicking opens the drill-down modal
+// scoped to that exact 1-hour slice.
+function SaveHealthSparkline({ auth, save, bucketMinutes, cutoff, onBucketClick }) {
   const width = 220, height = 32, pad = 2;
   const buckets = Math.max(auth.length, save.length, 1);
   const maxVal = Math.max(1, ...auth, ...save);
   const stepX = (width - pad * 2) / Math.max(buckets - 1, 1);
   const yFor = (v) => height - pad - (v / maxVal) * (height - pad * 2);
   const pathFor = (arr) => arr.map((v, i) => `${i === 0 ? "M" : "L"}${(pad + i * stepX).toFixed(1)},${yFor(v).toFixed(1)}`).join(" ");
+  const start = cutoff ? new Date(cutoff) : null;
+  const bucketMs = (bucketMinutes || 60) * 60 * 1000;
   return (
-    <div className="inline-flex items-center gap-2" title={`Last ${(buckets * bucketMinutes / 60).toFixed(0)}h · ${bucketMinutes.toFixed(0)}-min buckets · Max ${maxVal}/bucket`}>
+    <div className="inline-flex items-center gap-2" title={`Last ${(buckets * bucketMinutes / 60).toFixed(0)}h · ${bucketMinutes.toFixed(0)}-min buckets · Click a bucket to drill down`}>
       <svg width={width} height={height} className="border border-current/20 rounded-sm bg-white/40" data-testid="save-health-sparkline-svg">
-        {/* baseline */}
         <line x1={pad} y1={height - pad} x2={width - pad} y2={height - pad} stroke="currentColor" strokeOpacity="0.15" strokeWidth="0.5" />
-        {/* save line — amber */}
         <path d={pathFor(save)} fill="none" stroke="#d97706" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
-        {/* auth line — rose */}
         <path d={pathFor(auth)} fill="none" stroke="#e11d48" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+        {/* Iter58 P3 — Invisible hit targets per bucket for click-to-drill */}
+        {onBucketClick && start && auth.map((_, i) => {
+          const cx = pad + i * stepX;
+          const bucketStart = new Date(start.getTime() + i * bucketMs);
+          const label = bucketStart.toISOString().slice(11, 16) + " UTC";
+          const authCount = auth[i] || 0;
+          const saveCount = save[i] || 0;
+          return (
+            <rect
+              key={i}
+              data-testid={`sparkline-bucket-${i}`}
+              x={cx - stepX / 2}
+              y={0}
+              width={stepX}
+              height={height}
+              fill="transparent"
+              style={{ cursor: (authCount + saveCount) > 0 ? "pointer" : "default" }}
+              onClick={() => { if ((authCount + saveCount) > 0) onBucketClick(i); }}
+            >
+              <title>{`${label} · Auth: ${authCount} · Save: ${saveCount}${authCount+saveCount>0 ? " (click to drill)" : ""}`}</title>
+            </rect>
+          );
+        })}
       </svg>
       <div className="text-[9px] font-mono opacity-70 leading-tight flex flex-col">
         <span className="flex items-center gap-1"><span className="w-2 h-0.5 bg-[#d97706] inline-block" /> Save</span>
@@ -641,12 +682,19 @@ function SaveHealthSparkline({ auth, save, bucketMinutes }) {
 
 
 // Iter57 P2 — Auth Failure Drill-Down Modal (PII-safe: shows only ts/method/path/status/ip)
-function AuthFailureDrillModal({ onClose }) {
+// Iter58 P3 — Accepts optional `range={since, until}` to narrow the window.
+function AuthFailureDrillModal({ onClose, range }) {
+  const params = { hours: 24, limit: 100 };
+  if (range?.since) params.since = range.since;
+  if (range?.until) params.until = range.until;
   const { data, isLoading } = useQuery({
-    queryKey: ["auth-failures-drill"],
-    queryFn: async () => (await api.get("/admin/save-health/auth-failures", { params: { hours: 24, limit: 100 } })).data,
+    queryKey: ["auth-failures-drill", range?.since, range?.until],
+    queryFn: async () => (await api.get("/admin/save-health/auth-failures", { params })).data,
     refetchInterval: 30 * 1000,
   });
+  const label = range?.since
+    ? `Slice: ${range.since.slice(11, 16)} → ${range.until.slice(11, 16)} UTC`
+    : "Last 24h";
   return (
     <div
       data-testid="auth-drill-modal"
@@ -657,7 +705,7 @@ function AuthFailureDrillModal({ onClose }) {
         <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-200 bg-zinc-950 text-white">
           <div>
             <div className="text-[10px] uppercase tracking-[0.15em] font-bold opacity-70">Iter57 · Auth Failure Drill-Down</div>
-            <div className="text-lg font-bold">Recent 401/403 Failures · Last 24h</div>
+            <div className="text-lg font-bold" data-testid="auth-drill-title">Recent 401/403 Failures · <span data-testid="auth-drill-scope">{label}</span></div>
           </div>
           <button
             type="button"

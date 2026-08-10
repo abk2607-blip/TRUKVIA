@@ -149,6 +149,7 @@ async def _save_health_middleware(request: _FReq, call_next):
             })
             # Iter51 — Evaluate alerting rules (fire-and-forget)
             _asyncio.create_task(_evaluate_save_health_alerts())
+            _asyncio.create_task(_evaluate_auth_ip_burst_alerts())
     except Exception:
         pass
     return response
@@ -192,19 +193,42 @@ async def save_health(hours: int = 24):
 
 
 @app.get("/api/admin/save-health/auth-failures")
-async def save_health_auth_failures(hours: int = 24, limit: int = 100):
+async def save_health_auth_failures(
+    hours: int = 24,
+    limit: int = 100,
+    since: str = "",
+    until: str = "",
+):
     """Iter57 P2 — Drill-down for recent authentication failures on /api/auth/*.
 
     Returns the most recent N rows (default 100, max 500) captured within the
     time window (default 24h, max 168h). Each row is PII-safe: it only exposes
     timestamp, HTTP method, path, status code, latency and source IP. Never
     exposes Authorization headers, tokens, cookies or request payloads.
+
+    Iter58 P3 — When `since` and/or `until` (ISO 8601) are provided, the
+    window is narrowed to that exact slice. This backs the "click a bucket
+    on the sparkline" deep-dive.
     """
     hours = max(1, min(int(hours or 24), 168))
     limit = max(1, min(int(limit or 100), 500))
     cutoff = _dt.now(_tz.utc) - _td(hours=hours)
+    ts_filter = {"$gte": cutoff}
+    # Optional narrow window from the sparkline deep-dive
+    if since:
+        try:
+            since_dt = _dt.fromisoformat(since.replace("Z", "+00:00"))
+            ts_filter["$gte"] = since_dt
+        except Exception:
+            pass
+    if until:
+        try:
+            until_dt = _dt.fromisoformat(until.replace("Z", "+00:00"))
+            ts_filter["$lte"] = until_dt
+        except Exception:
+            pass
     docs = await db.save_health.find(
-        {"kind": "auth_failure", "ts": {"$gte": cutoff}},
+        {"kind": "auth_failure", "ts": ts_filter},
         {"_id": 0, "ts": 0},  # Drop raw datetime; ts_iso is human-readable.
     ).sort("ts", -1).limit(limit).to_list(limit)
     # Group by IP for a quick "top offenders" summary — useful for spotting bots.
@@ -473,7 +497,12 @@ DEFAULT_ALERT_TYPES = {
     "deployment_failure": True,
     "trip_save_failure": True,
     "invoice_save_failure": True,
+    "auth_ip_burst": True,  # Iter58 P2 — per-IP auth-failure burst detector
 }
+# Iter58 P2 — Any single IP crossing this many auth failures inside the
+# alert window fires a dedicated alert. Tunable but not user-editable for
+# now to keep the settings UI simple.
+AUTH_IP_BURST_THRESHOLD = 20
 
 
 @app.get("/api/admin/save-health/alert-config")
@@ -641,10 +670,113 @@ async def _evaluate_save_health_alerts():
         return None
 
 
+async def _evaluate_auth_ip_burst_alerts():
+    """Iter58 P2 — Detect when a SINGLE source IP crosses the auth-failure
+    burst threshold within the last hour, and fire an alert. This runs
+    independently of `_evaluate_save_health_alerts` so it fires even when
+    the aggregate threshold hasn't been crossed.
+
+    PII safety: The alert body contains ONLY the IP, count, first/last
+    seen timestamps, and up to 3 sample paths. Passwords, tokens,
+    Authorization headers and cookies are NEVER stored or exposed.
+    """
+    try:
+        cfg = await db.alert_config.find_one({"_id": "save_health"}, {"_id": 0}) or {}
+        if not cfg.get("enabled", True):
+            return None
+        at = {**DEFAULT_ALERT_TYPES, **(cfg.get("alert_types") or {})}
+        if not at.get("auth_ip_burst", True):
+            return None
+        cutoff = _dt.now(_tz.utc) - _td(hours=1)
+        pipeline = [
+            {"$match": {"kind": "auth_failure", "ts": {"$gte": cutoff},
+                        "ip": {"$exists": True, "$ne": ""}}},
+            {"$group": {"_id": "$ip",
+                        "count": {"$sum": 1},
+                        "first_seen": {"$min": "$ts_iso"},
+                        "last_seen": {"$max": "$ts_iso"},
+                        "sample_paths": {"$addToSet": "$path"}}},
+            {"$match": {"count": {"$gte": AUTH_IP_BURST_THRESHOLD}}},
+            {"$sort": {"count": -1}},
+            {"$limit": 5},
+        ]
+        offenders = await db.save_health.aggregate(pipeline).to_list(5)
+        if not offenders:
+            return None
+        # Cooldown per IP so we don't spam. 30 minutes between alerts for the same IP.
+        cooldown = int(cfg.get("cooldown_min") or DEFAULT_ALERT_COOLDOWN_MIN) * 60
+        now = _dt.now(_tz.utc)
+        new_alerts = []
+        for o in offenders:
+            ip = o["_id"] or "unknown"
+            last = await db.save_health_alerts.find_one(
+                {"kind": "auth_ip_burst", "ip": ip}, sort=[("fired_at", -1)]
+            )
+            if last:
+                try:
+                    from datetime import datetime as _dt2
+                    dt = _dt2.fromisoformat(last.get("fired_at", ""))
+                    if (now - dt).total_seconds() < cooldown:
+                        continue
+                except Exception:
+                    pass
+            alert = {
+                "kind": "auth_ip_burst",
+                "fired_at": now.isoformat(),
+                "ip": ip,
+                "count": int(o["count"]),
+                "threshold": AUTH_IP_BURST_THRESHOLD,
+                "window_minutes": 60,
+                "first_seen": o.get("first_seen"),
+                "last_seen": o.get("last_seen"),
+                # Sample paths (max 3) — no query strings, no headers, no tokens.
+                "sample_paths": sorted(list(o.get("sample_paths") or []))[:3],
+                "acknowledged": False,
+            }
+            await db.save_health_alerts.insert_one(alert)
+            new_alerts.append(alert)
+            logger.warning(
+                f"⚠ Auth IP Burst Alert: {ip} produced {o['count']} auth failures in last 60 min "
+                f"(threshold={AUTH_IP_BURST_THRESHOLD})"
+            )
+            # Optional email dispatch — reuse existing channel config
+            try:
+                channels = cfg.get("channels", ["email"])
+                recipients = cfg.get("email_recipients", []) or []
+                if "email" in channels and recipients:
+                    from services_alerts import send_alert_email
+                    subject = f"[Bitumen Transport] Auth Burst · IP {ip} · {o['count']} failures / 60 min"
+                    body = (
+                        f"<h3>Auth-Failure Burst Detected</h3>"
+                        f"<p><b>Source IP:</b> <code>{ip}</code></p>"
+                        f"<p><b>Failures in last 60 min:</b> {o['count']} "
+                        f"(threshold {AUTH_IP_BURST_THRESHOLD})</p>"
+                        f"<p><b>First seen:</b> {o.get('first_seen','')} "
+                        f"· <b>Last seen:</b> {o.get('last_seen','')}</p>"
+                        f"<p><b>Sample paths:</b> "
+                        f"{', '.join(sorted(list(o.get('sample_paths') or []))[:3])}</p>"
+                        f"<hr><p style='font-size:11px;color:#666'>"
+                        "This alert is generated from server access logs. No passwords, tokens, "
+                        "Authorization headers, cookies or request payloads are captured or included.</p>"
+                    )
+                    res = await send_alert_email(recipients, subject, body)
+                    await db.save_health_alerts.update_one(
+                        {"fired_at": alert["fired_at"], "ip": ip},
+                        {"$set": {"email_delivery": res}},
+                    )
+            except Exception as e:
+                logger.warning(f"Auth-IP-Burst email dispatch failed: {e}")
+        return new_alerts
+    except Exception as e:
+        logger.warning(f"Auth-IP-Burst evaluation failed: {e}")
+        return None
+
+
 # Piggy-back on the same middleware to evaluate alerts after every logged failure.
 # We store this on the app state so the middleware can call it.
 async def _post_failure_hook():
     await _evaluate_save_health_alerts()
+    await _evaluate_auth_ip_burst_alerts()
 
 
 @app.get("/api/admin/save-health/alerts")

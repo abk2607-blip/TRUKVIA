@@ -1,7 +1,7 @@
 import React from "react";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { api, API, fmtCurrency, fmtDate } from "@/api";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { Plus, CheckCircle2, Clock, Download, FileText, Trash2, Eye, Pencil, Copy, Share2, Search, X, ChevronLeft, ChevronRight, Bookmark, BookmarkPlus } from "lucide-react";
 import SearchableSelect from "@/components/SearchableSelect";
@@ -170,6 +170,105 @@ export default function Trips() {
     onSuccess: () => { toast.success("Trip deleted"); qc.invalidateQueries({ queryKey: ["trips"] }); },
     onError: (e) => toast.error(e?.response?.data?.detail || "Failed"),
   });
+
+  // ─── Iter58 P1 — Multi-select bulk actions ──────────────────────────────
+  const [selected, setSelected] = React.useState(() => new Set());
+  const nav = useNavigate();
+  React.useEffect(() => { setSelected(new Set()); }, [filters, page, showHaltingOnly]);
+  const pageIds = React.useMemo(() => displayedTrips.map((t) => t.id), [displayedTrips]);
+  const allOnPageSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
+  const toggleAllOnPage = () => {
+    setSelected((prev) => {
+      const s = new Set(prev);
+      if (allOnPageSelected) pageIds.forEach((id) => s.delete(id));
+      else pageIds.forEach((id) => s.add(id));
+      return s;
+    });
+  };
+  const toggleOne = (id) => {
+    setSelected((prev) => {
+      const s = new Set(prev);
+      if (s.has(id)) s.delete(id); else s.add(id);
+      return s;
+    });
+  };
+  const clearSelection = () => setSelected(new Set());
+  const selectedTrips = React.useMemo(
+    () => displayedTrips.filter((t) => selected.has(t.id)),
+    [displayedTrips, selected]
+  );
+  const selectedInvoicedCount = selectedTrips.filter((t) => t.status === "invoiced").length;
+
+  const bulkDelete = useMutation({
+    mutationFn: async ({ trip_ids, reason, force_invoiced }) =>
+      (await api.post("/trips/bulk-delete", { trip_ids, reason, force_invoiced })).data,
+    onSuccess: (res) => {
+      if (res?.requires_force) {
+        toast.error(res.detail);
+        return;
+      }
+      toast.success(`Deleted ${res.deleted_count} trip${res.deleted_count === 1 ? "" : "s"}${res.recomputed_invoices?.length ? ` · ${res.recomputed_invoices.length} invoice(s) recomputed` : ""}`);
+      clearSelection();
+      qc.invalidateQueries({ queryKey: ["trips"] });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Bulk delete failed"),
+  });
+  const runBulkDelete = async () => {
+    if (selected.size === 0) return;
+    const trip_ids = Array.from(selected);
+    const invoiced = selectedInvoicedCount;
+    let confirmMsg = `Delete ${trip_ids.length} selected trip${trip_ids.length === 1 ? "" : "s"}?`;
+    if (invoiced > 0) confirmMsg += `\n\n⚠ ${invoiced} of these trip(s) are linked to an invoice. Their invoice totals will be recomputed.`;
+    if (!window.confirm(confirmMsg)) return;
+    const reason = window.prompt("Reason for deletion (mandatory):");
+    if (!reason || !reason.trim()) { toast.error("Reason required"); return; }
+    let forceInvoiced = false;
+    if (invoiced > 0) {
+      forceInvoiced = window.confirm(
+        `Type OK to confirm: ${invoiced} selected trip(s) are already INVOICED. Delete them anyway and recompute the linked invoices?`
+      );
+      if (!forceInvoiced) { toast.info("Bulk delete cancelled"); return; }
+    }
+    bulkDelete.mutate({ trip_ids, reason: reason.trim(), force_invoiced: forceInvoiced });
+  };
+
+  const bulkInvoice = useMutation({
+    mutationFn: async (trip_ids) => {
+      // Preflight: same customer + all unbilled
+      const pf = (await api.post("/trips/bulk-invoice-preflight", { trip_ids })).data;
+      if (!pf.ok) {
+        const err = new Error(pf.detail || "Preflight failed");
+        err._preflight = pf;
+        throw err;
+      }
+      // Create the invoice via the existing endpoint — same GST/CGST/SGST/IGST logic.
+      const { data } = await api.post("/invoices", {
+        customer_id: pf.customer_id,
+        trip_ids,
+        gst_type: "cgst_sgst",   // Backend auto-corrects based on state match anyway
+        rcm: false,
+      });
+      return data;
+    },
+    onSuccess: (inv) => {
+      toast.success(`Invoice ${inv.invoice_number} created (₹${(inv.total_amount || 0).toLocaleString("en-IN")})`);
+      clearSelection();
+      qc.invalidateQueries({ queryKey: ["trips"] });
+      qc.invalidateQueries({ queryKey: ["invoices"] });
+      // Navigate straight to the new invoice so the operator can review/print
+      nav(`/invoices/${inv.id}`);
+    },
+    onError: (e) => {
+      const detail = e?._preflight?.detail || e?.response?.data?.detail || e.message || "Bulk invoice failed";
+      toast.error(detail);
+    },
+  });
+  const runBulkInvoice = () => {
+    if (selected.size === 0) return;
+    const trip_ids = Array.from(selected);
+    if (!window.confirm(`Create ONE invoice covering the ${trip_ids.length} selected trip${trip_ids.length === 1 ? "" : "s"}? All must belong to the same customer and be unbilled.`)) return;
+    bulkInvoice.mutate(trip_ids);
+  };
 
   const askDelete = (t) => {
     const linked = t.invoice_id ? "\n⚠ This trip is linked to an invoice. The invoice totals will be recomputed." : "";
@@ -417,11 +516,85 @@ export default function Trips() {
         )}
       </div>
 
+      {/* Iter58 P1 — Sticky bulk action bar (appears only when rows are selected) */}
+      {selected.size > 0 && (
+        <div
+          data-testid="bulk-action-bar"
+          className="sticky top-2 z-30 bg-zinc-950 text-white border border-zinc-800 rounded-sm p-3 flex flex-wrap items-center gap-3 shadow-lg"
+        >
+          <span className="text-xs uppercase tracking-wider font-bold">
+            <span data-testid="bulk-selected-count" className="font-mono text-base">{selected.size}</span> trip{selected.size === 1 ? "" : "s"} selected
+            {selectedInvoicedCount > 0 && (
+              <span className="ml-2 text-amber-300 text-[10px]" data-testid="bulk-invoiced-warning">
+                ⚠ {selectedInvoicedCount} already invoiced
+              </span>
+            )}
+          </span>
+          <div className="flex-1" />
+          <button
+            type="button"
+            data-testid="bulk-invoice-btn"
+            onClick={runBulkInvoice}
+            disabled={bulkInvoice.isPending || selectedInvoicedCount > 0}
+            title={selectedInvoicedCount > 0 ? "Some selected trips are already invoiced" : "Create ONE invoice for all selected trips (must be same customer)"}
+            className="px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold bg-emerald-600 text-white rounded-sm hover:bg-emerald-700 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1"
+          >
+            <FileText size={12} /> {bulkInvoice.isPending ? "Creating…" : `Bulk Invoice`}
+          </button>
+          <button
+            type="button"
+            data-testid="bulk-export-btn"
+            onClick={async () => {
+              try {
+                const trip_ids = Array.from(selected).join(",");
+                const res = await api.get(`/trips/export?format=csv&trip_ids=${encodeURIComponent(trip_ids)}`, { responseType: "blob" });
+                const cd = res.headers?.["content-disposition"] || "";
+                const m = /filename="([^"]+)"/.exec(cd);
+                const url = URL.createObjectURL(res.data);
+                const a = document.createElement("a"); a.href = url; a.download = m ? m[1] : "trips_selected.csv"; a.click();
+                URL.revokeObjectURL(url);
+                toast.success(`Exported ${selected.size} selected trip${selected.size === 1 ? "" : "s"}`);
+              } catch (e) { toast.error(e?.response?.data?.detail || "Export failed"); }
+            }}
+            className="px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold bg-indigo-600 text-white rounded-sm hover:bg-indigo-700 inline-flex items-center gap-1"
+          >
+            <Download size={12} /> Export Selected
+          </button>
+          <button
+            type="button"
+            data-testid="bulk-delete-btn"
+            onClick={runBulkDelete}
+            disabled={bulkDelete.isPending}
+            className="px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold bg-rose-600 text-white rounded-sm hover:bg-rose-700 inline-flex items-center gap-1 disabled:opacity-40"
+          >
+            <Trash2 size={12} /> {bulkDelete.isPending ? "Deleting…" : "Bulk Delete"}
+          </button>
+          <button
+            type="button"
+            data-testid="bulk-clear-selection"
+            onClick={clearSelection}
+            className="px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold border border-zinc-700 text-zinc-300 rounded-sm hover:bg-zinc-800"
+          >
+            <X size={12} /> Clear
+          </button>
+        </div>
+      )}
+
       <div className="border border-zinc-200 bg-white rounded-sm overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm" data-testid="trips-table">
             <thead className="bg-zinc-950 text-white text-[10px] uppercase tracking-[0.12em] sticky top-0 z-10">
               <tr>
+                <th className="px-3 py-3 w-8">
+                  <input
+                    type="checkbox"
+                    data-testid="bulk-select-all"
+                    checked={allOnPageSelected}
+                    onChange={toggleAllOnPage}
+                    className="accent-emerald-500 cursor-pointer"
+                    title={allOnPageSelected ? "Deselect all on this page" : "Select all on this page"}
+                  />
+                </th>
                 <th className="text-left px-4 py-3 font-bold">Date · Time</th>
                 <th className="text-left px-4 py-3 font-bold">LR Number</th>
                 <th className="text-left px-4 py-3 font-bold">Customer</th>
@@ -453,8 +626,17 @@ export default function Trips() {
                   key={t.id}
                   data-testid={`trip-row-${t.id}`}
                   onClick={() => window.location.href = `/trips/${t.id}/view`}
-                  className={`${idx % 2 === 0 ? "bg-white" : "bg-zinc-50/60"} hover:bg-amber-50/40 transition-colors cursor-pointer`}
+                  className={`${idx % 2 === 0 ? "bg-white" : "bg-zinc-50/60"} ${selected.has(t.id) ? "!bg-emerald-50" : ""} hover:bg-amber-50/40 transition-colors cursor-pointer`}
                 >
+                  <td className="px-3 py-3 w-8" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      data-testid={`bulk-select-${t.id}`}
+                      checked={selected.has(t.id)}
+                      onChange={() => toggleOne(t.id)}
+                      className="accent-emerald-500 cursor-pointer"
+                    />
+                  </td>
                   <td className="px-4 py-3 whitespace-nowrap">
                     <div className="text-sm font-semibold text-zinc-900 font-mono">{fmtDate(t.date)}</div>
                     {timeStr && <div className="text-[10px] text-zinc-400 font-mono mt-0.5">🕒 {timeStr}</div>}
@@ -566,7 +748,7 @@ export default function Trips() {
               })}
               {!isLoading && total === 0 && (
                 <tr>
-                  <td colSpan={12} className="px-4 py-16 text-center text-zinc-400" data-testid="trips-empty-state">
+                  <td colSpan={13} className="px-4 py-16 text-center text-zinc-400" data-testid="trips-empty-state">
                     {activeFilterCount > 0 ? (
                       <>
                         No trips match your filters.

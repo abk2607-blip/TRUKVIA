@@ -202,12 +202,17 @@ async def export_trips(
     date_to: Optional[str] = None,
     q: Optional[str] = None,
     halting_only: bool = False,
+    trip_ids: Optional[str] = None,   # Iter58 — comma-separated IDs for bulk "Export Selected"
 ):
     """Iter57 P1 — Export currently-filtered trips as CSV or XLSX.
 
     Accepts the exact same filter query params as GET /trips, so the export
     contains ONLY the trips that would appear in the filtered log. Multi-
     company isolation is preserved (results are scoped to the active company).
+
+    Iter58 — When `trip_ids` (comma-separated) is provided, the export is
+    narrowed to exactly those IDs on top of any other filters. This backs the
+    "Export Selected" bulk action.
     """
     cid = await _active_company_id(request, user)
     await _backfill_to_default(user["user_id"])
@@ -217,6 +222,10 @@ async def export_trips(
         status=status, date=date, date_from=date_from, date_to=date_to,
         q=q, halting_only=halting_only,
     )
+    if trip_ids:
+        ids = [tid.strip() for tid in trip_ids.split(",") if tid.strip()]
+        if ids:
+            mongo_q["id"] = {"$in": ids[:5000]}
     # Cap at 10k rows to keep memory sane while still supporting a full year of trips.
     trips = await (db.trips
                    .find(mongo_q, {"_id": 0, "user_id": 0})
@@ -373,6 +382,160 @@ async def update_trip(tid: str, payload: Trip, request: Request, user=Depends(ge
     await _log_audit(user, "trip", "update", entity_id=tid, entity_ref=doc.get("vehicle_number", ""), changes=changes)
     doc.pop("user_id", None)
     return doc
+
+@router.post("/trips/bulk-invoice-preflight")
+async def bulk_invoice_preflight(
+    request: Request,
+    payload: dict,
+    user=Depends(get_current_user),
+):
+    """Iter58 P1 — Pre-flight validation for the Bulk Invoice action.
+
+    Returns whether the selected trips are eligible to be invoiced together:
+      * All belong to the SAME customer
+      * NONE is already invoiced
+      * All have freight_amount > 0
+    The frontend calls this before POST /invoices so the operator sees the
+    exact reason a bulk invoice can't be created (matching the user's UX ask).
+    """
+    trip_ids = list(payload.get("trip_ids") or [])
+    if not trip_ids:
+        raise HTTPException(status_code=400, detail="trip_ids required")
+    if len(trip_ids) > 200:
+        raise HTTPException(status_code=400, detail="Cannot bulk-invoice more than 200 trips at a time")
+    cid = await _active_company_id(request, user)
+    trips = await db.trips.find(
+        {"id": {"$in": trip_ids}, "user_id": user["user_id"], "company_id": cid},
+        {"_id": 0},
+    ).to_list(len(trip_ids))
+    found = {t["id"]: t for t in trips}
+    missing = [tid for tid in trip_ids if tid not in found]
+    if missing:
+        return {
+            "ok": False,
+            "reason": "not_found",
+            "detail": f"{len(missing)} selected trip(s) were not found in the active company",
+            "missing_ids": missing,
+        }
+    customers = sorted({t.get("customer_id") for t in trips if t.get("customer_id")})
+    if len(customers) == 0:
+        return {"ok": False, "reason": "no_customer",
+                "detail": "Selected trips do not have a customer assigned"}
+    if len(customers) > 1:
+        # Load customer names for the error message so operators can see which are the outliers.
+        cust_docs = await db.customers.find(
+            {"id": {"$in": customers}, "user_id": user["user_id"]},
+            {"_id": 0, "id": 1, "name": 1},
+        ).to_list(len(customers))
+        names = ", ".join(sorted(c.get("name", c["id"][:8]) for c in cust_docs))
+        return {
+            "ok": False,
+            "reason": "mixed_customers",
+            "detail": "Bulk invoice can only be created for trips belonging to the same customer.",
+            "customer_ids": customers,
+            "customer_names": names,
+        }
+    already_invoiced = [t["id"] for t in trips if t.get("status") == "invoiced"]
+    if already_invoiced:
+        return {
+            "ok": False,
+            "reason": "already_invoiced",
+            "detail": f"{len(already_invoiced)} selected trip(s) are already invoiced. Only unbilled trips can be bulk-invoiced.",
+            "invoiced_ids": already_invoiced,
+        }
+    zero_freight = [t["id"] for t in trips if not (t.get("freight_amount") or 0) > 0]
+    if zero_freight:
+        return {
+            "ok": False,
+            "reason": "zero_freight",
+            "detail": f"{len(zero_freight)} selected trip(s) have zero freight and cannot be invoiced.",
+            "trip_ids": zero_freight,
+        }
+    return {
+        "ok": True,
+        "customer_id": customers[0],
+        "trip_count": len(trips),
+        "freight_total": round(sum(t.get("freight_amount", 0.0) for t in trips), 2),
+        "halting_total": round(sum(t.get("halting_amount", 0.0) for t in trips), 2),
+    }
+
+
+@router.post("/trips/bulk-delete")
+async def bulk_delete_trips(
+    request: Request,
+    payload: dict,
+    user=Depends(get_current_user),
+):
+    """Iter58 P1 — Bulk delete selected trips.
+
+    Required body: {trip_ids: [str], reason: str, force_invoiced: bool}
+      * `reason` is MANDATORY (matches single-delete policy).
+      * `force_invoiced=true` is required to delete any trip whose status is
+        already 'invoiced' — this is the extra confirmation the user asked for.
+      * Any invoice linked to a deleted trip is auto-recomputed.
+    Returns per-trip results so the UI can report partial failures cleanly.
+    """
+    if not _has_perm(user, "delete_trip"):
+        raise HTTPException(status_code=403, detail="Missing permission: delete_trip")
+    trip_ids = list(payload.get("trip_ids") or [])
+    reason = (payload.get("reason") or "").strip()
+    force_invoiced = bool(payload.get("force_invoiced") or False)
+    if not trip_ids:
+        raise HTTPException(status_code=400, detail="trip_ids required")
+    if len(trip_ids) > 500:
+        raise HTTPException(status_code=400, detail="Cannot bulk-delete more than 500 trips at a time")
+    if not reason:
+        raise HTTPException(status_code=400, detail="Reason for deletion is required")
+    cid = await _active_company_id(request, user)
+    trips = await db.trips.find(
+        {"id": {"$in": trip_ids}, "user_id": user["user_id"], "company_id": cid},
+        {"_id": 0},
+    ).to_list(len(trip_ids))
+    found_ids = {t["id"] for t in trips}
+    # Check invoiced protection
+    invoiced_trips = [t for t in trips if t.get("status") == "invoiced"]
+    if invoiced_trips and not force_invoiced:
+        return {
+            "ok": False,
+            "requires_force": True,
+            "invoiced_count": len(invoiced_trips),
+            "detail": (
+                f"{len(invoiced_trips)} of the selected trips are linked to an invoice. "
+                "Pass force_invoiced=true to delete them (invoices will be recomputed)."
+            ),
+            "invoiced_ids": [t["id"] for t in invoiced_trips],
+        }
+    deleted, skipped, invoice_ids = [], [], set()
+    for t in trips:
+        try:
+            await db.trips.delete_one({"id": t["id"], "user_id": user["user_id"], "company_id": cid})
+            if t.get("invoice_id"):
+                invoice_ids.add(t["invoice_id"])
+            deleted.append(t["id"])
+            await _log_audit(
+                user, "trip", "delete", entity_id=t["id"],
+                entity_ref=t.get("vehicle_number", ""), reason=reason,
+                changes={"snapshot": {k: t.get(k) for k in ("date", "customer_id", "vehicle_number", "freight_amount", "invoice_id")},
+                         "bulk": True},
+            )
+        except Exception as e:
+            skipped.append({"trip_id": t["id"], "error": str(e)})
+    # Recompute affected invoices once each
+    for iid in invoice_ids:
+        try:
+            await _recompute_invoice(iid, user)
+        except Exception:
+            pass
+    not_found = [tid for tid in trip_ids if tid not in found_ids]
+    return {
+        "ok": True,
+        "deleted_count": len(deleted),
+        "deleted_ids": deleted,
+        "recomputed_invoices": list(invoice_ids),
+        "skipped": skipped,
+        "not_found": not_found,
+    }
+
 
 @router.delete("/trips/{tid}")
 async def delete_trip(tid: str, request: Request, reason: str = "", user=Depends(get_current_user)):
