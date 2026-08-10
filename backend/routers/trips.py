@@ -84,6 +84,63 @@ async def _enforce_supplier_link(payload: Trip, uid: str, cid: str):
     payload.supplier_name = sup["name"]
 
 
+async def _build_trip_filter_query(
+    user, cid: str,
+    customer_id=None, vehicle_id=None, supplier_id=None, status=None,
+    date=None, date_from=None, date_to=None, q=None, halting_only=False,
+) -> dict:
+    """Iter57 — Shared filter-builder used by GET /trips and GET /trips/export
+    so both endpoints apply *exactly* the same AND-filter semantics."""
+    mongo_q: dict = {"user_id": user["user_id"], "company_id": cid}
+    if customer_id:
+        mongo_q["customer_id"] = customer_id
+    if vehicle_id:
+        mongo_q["vehicle_id"] = vehicle_id
+    if supplier_id:
+        mongo_q["supplier_id"] = supplier_id
+    if status:
+        mongo_q["status"] = status
+    if halting_only:
+        mongo_q["halting_amount"] = {"$gt": 0}
+    if date:
+        mongo_q["date"] = date
+    else:
+        rng = {}
+        if date_from:
+            rng["$gte"] = date_from
+        if date_to:
+            rng["$lte"] = date_to
+        if rng:
+            mongo_q["date"] = rng
+    if q and q.strip():
+        import re as _re
+        pattern = _re.compile(_re.escape(q.strip()), _re.IGNORECASE)
+        cust_ids: list = []
+        try:
+            cust_docs = await db.customers.find(
+                {"user_id": user["user_id"], "company_id": cid, "name": pattern},
+                {"id": 1, "_id": 0},
+            ).to_list(50)
+            cust_ids = [c["id"] for c in cust_docs]
+        except Exception:
+            cust_ids = []
+        or_clauses = [
+            {"lr_number": pattern},
+            {"vehicle_number": pattern},
+            {"from_location": pattern},
+            {"to_location": pattern},
+            {"external_invoice_no": pattern},
+            {"customer_invoice_no": pattern},
+            {"waybill_no": pattern},
+            {"driver_name": pattern},
+            {"supplier_name": pattern},
+        ]
+        if cust_ids:
+            or_clauses.append({"customer_id": {"$in": cust_ids}})
+        mongo_q["$or"] = or_clauses
+    return mongo_q
+
+
 @router.get("/trips")
 async def list_trips(
     request: Request,
@@ -111,58 +168,12 @@ async def list_trips(
     """
     cid = await _active_company_id(request, user)
     await _backfill_to_default(user["user_id"])
-    mongo_q: dict = {"user_id": user["user_id"], "company_id": cid}
-    if customer_id:
-        mongo_q["customer_id"] = customer_id
-    if vehicle_id:
-        mongo_q["vehicle_id"] = vehicle_id
-    if supplier_id:
-        mongo_q["supplier_id"] = supplier_id
-    if status:
-        mongo_q["status"] = status
-    if halting_only:
-        mongo_q["halting_amount"] = {"$gt": 0}
-    # Date filtering — single `date` takes precedence over range.
-    if date:
-        mongo_q["date"] = date
-    else:
-        rng = {}
-        if date_from:
-            rng["$gte"] = date_from
-        if date_to:
-            rng["$lte"] = date_to
-        if rng:
-            mongo_q["date"] = rng
-    # Free-text search across trip identifiers (case-insensitive regex).
-    # Includes: lr_number, trip_number, vehicle_number, customer_name (denormalised),
-    # from_location, to_location, external_invoice_no, waybill_no.
-    if q and q.strip():
-        import re as _re
-        pattern = _re.compile(_re.escape(q.strip()), _re.IGNORECASE)
-        # Look up matching customer IDs so a name search matches too.
-        cust_ids: list = []
-        try:
-            cust_docs = await db.customers.find(
-                {"user_id": user["user_id"], "company_id": cid, "name": pattern},
-                {"id": 1, "_id": 0},
-            ).to_list(50)
-            cust_ids = [c["id"] for c in cust_docs]
-        except Exception:
-            cust_ids = []
-        or_clauses = [
-            {"lr_number": pattern},
-            {"vehicle_number": pattern},
-            {"from_location": pattern},
-            {"to_location": pattern},
-            {"external_invoice_no": pattern},
-            {"customer_invoice_no": pattern},
-            {"waybill_no": pattern},
-            {"driver_name": pattern},
-            {"supplier_name": pattern},
-        ]
-        if cust_ids:
-            or_clauses.append({"customer_id": {"$in": cust_ids}})
-        mongo_q["$or"] = or_clauses
+    mongo_q = await _build_trip_filter_query(
+        user, cid,
+        customer_id=customer_id, vehicle_id=vehicle_id, supplier_id=supplier_id,
+        status=status, date=date, date_from=date_from, date_to=date_to,
+        q=q, halting_only=halting_only,
+    )
 
     total = await db.trips.count_documents(mongo_q)
     cursor = (db.trips
@@ -175,6 +186,133 @@ async def list_trips(
     response.headers["X-Has-More"] = "true" if (offset + len(docs)) < total else "false"
     response.headers["Access-Control-Expose-Headers"] = "X-Total-Count, X-Has-More"
     return docs
+
+
+@router.get("/trips/export")
+async def export_trips(
+    request: Request,
+    user=Depends(get_current_user),
+    format: str = "csv",
+    customer_id: Optional[str] = None,
+    vehicle_id: Optional[str] = None,
+    supplier_id: Optional[str] = None,
+    status: Optional[str] = None,
+    date: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    q: Optional[str] = None,
+    halting_only: bool = False,
+):
+    """Iter57 P1 — Export currently-filtered trips as CSV or XLSX.
+
+    Accepts the exact same filter query params as GET /trips, so the export
+    contains ONLY the trips that would appear in the filtered log. Multi-
+    company isolation is preserved (results are scoped to the active company).
+    """
+    cid = await _active_company_id(request, user)
+    await _backfill_to_default(user["user_id"])
+    mongo_q = await _build_trip_filter_query(
+        user, cid,
+        customer_id=customer_id, vehicle_id=vehicle_id, supplier_id=supplier_id,
+        status=status, date=date, date_from=date_from, date_to=date_to,
+        q=q, halting_only=halting_only,
+    )
+    # Cap at 10k rows to keep memory sane while still supporting a full year of trips.
+    trips = await (db.trips
+                   .find(mongo_q, {"_id": 0, "user_id": 0})
+                   .sort([("date", -1), ("created_at", -1)])
+                   .limit(10000)
+                   .to_list(10000))
+    # Denormalise customer name for readability.
+    cust_ids = list({t.get("customer_id") for t in trips if t.get("customer_id")})
+    cust_map = {}
+    if cust_ids:
+        c_docs = await db.customers.find(
+            {"user_id": user["user_id"], "id": {"$in": cust_ids}},
+            {"_id": 0, "id": 1, "name": 1},
+        ).to_list(len(cust_ids))
+        cust_map = {c["id"]: c["name"] for c in c_docs}
+    # Build rows (flat, human-readable columns).
+    columns = [
+        "date", "trip_number", "lr_number", "customer", "vehicle_number",
+        "vehicle_type", "supplier_name", "driver_name",
+        "load_details", "tons", "from_location", "to_location",
+        "freight_mode", "rate_per_ton", "round_trip_kms", "rate_per_km_per_ton",
+        "fixed_amount", "freight_amount",
+        "loaded_qty", "unloaded_qty", "shortage_qty", "excess_qty",
+        "shortage_amount", "excess_amount",
+        "total_halting_days", "grace_days", "chargeable_halting_days",
+        "halting_rate_per_day", "halting_amount",
+        "exp_diesel", "exp_toll", "exp_batta", "exp_repair", "exp_other",
+        "total_expense", "other_income", "profit", "status", "invoice_id",
+    ]
+    rows = []
+    for t in trips:
+        e = t.get("expenses") or {}
+        rows.append({
+            "date": t.get("date"),
+            "trip_number": t.get("trip_number") or "",
+            "lr_number": t.get("lr_number") or "",
+            "customer": cust_map.get(t.get("customer_id"), ""),
+            "vehicle_number": t.get("vehicle_number") or "",
+            "vehicle_type": t.get("vehicle_type") or "own",
+            "supplier_name": t.get("supplier_name") or "",
+            "driver_name": t.get("driver_name") or "",
+            "load_details": t.get("load_details") or "",
+            "tons": t.get("tons") or 0,
+            "from_location": t.get("from_location") or "",
+            "to_location": t.get("to_location") or "",
+            "freight_mode": t.get("freight_mode") or "per_ton",
+            "rate_per_ton": t.get("rate_per_ton") or 0,
+            "round_trip_kms": t.get("round_trip_kms") or 0,
+            "rate_per_km_per_ton": t.get("rate_per_km_per_ton") or 0,
+            "fixed_amount": t.get("fixed_amount") or 0,
+            "freight_amount": t.get("freight_amount") or 0,
+            "loaded_qty": t.get("loaded_qty") or t.get("tons") or 0,
+            "unloaded_qty": t.get("unloaded_qty") or 0,
+            "shortage_qty": t.get("shortage_qty") or 0,
+            "excess_qty": t.get("excess_qty") or 0,
+            "shortage_amount": t.get("shortage_amount") or 0,
+            "excess_amount": t.get("excess_amount") or 0,
+            "total_halting_days": t.get("total_halting_days") or 0,
+            "grace_days": t.get("grace_days") or 0,
+            "chargeable_halting_days": t.get("chargeable_halting_days") or 0,
+            "halting_rate_per_day": t.get("halting_rate_per_day") or 0,
+            "halting_amount": t.get("halting_amount") or 0,
+            "exp_diesel": e.get("diesel") or 0,
+            "exp_toll": e.get("toll") or 0,
+            "exp_batta": e.get("batta") or 0,
+            "exp_repair": e.get("repair") or 0,
+            "exp_other": e.get("other") or 0,
+            "total_expense": t.get("total_expense") or 0,
+            "other_income": t.get("other_income") or 0,
+            "profit": t.get("profit") or 0,
+            "status": t.get("status") or "pending",
+            "invoice_id": t.get("invoice_id") or "",
+        })
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    fmt = (format or "csv").lower()
+    if fmt == "xlsx":
+        df = pd.DataFrame(rows, columns=columns)
+        buf = io.BytesIO()
+        with pd.ExcelWriter(buf, engine="openpyxl") as w:
+            df.to_excel(w, index=False, sheet_name="Trips")
+        buf.seek(0)
+        return StreamingResponse(
+            buf,
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={"Content-Disposition": f'attachment; filename="trips_export_{stamp}.xlsx"'},
+        )
+    # Default: CSV
+    df = pd.DataFrame(rows, columns=columns)
+    csv_bytes = df.to_csv(index=False).encode("utf-8-sig")  # BOM for Excel compat
+    return StreamingResponse(
+        io.BytesIO(csv_bytes),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="trips_export_{stamp}.csv"'},
+    )
+
+
 
 @router.post("/trips")
 async def create_trip(payload: Trip, request: Request, user=Depends(get_current_user)):

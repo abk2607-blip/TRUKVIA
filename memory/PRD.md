@@ -466,3 +466,42 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - [ ] Nice-to-have: testids on SearchableSelect popover search inputs
 - [ ] Data hygiene: clean up duplicate `BKA Logistics 17` / `TEST_*` companies from demo tenant
 
+
+## Iter57 — Saved Views + Export + Auth Drill-Down + Sparkline · Feb 2026
+Four features shipped in a single iteration, each covered by pytest and end-to-end verified by testing_agent_v3_fork (iteration_52.json). Regression guard PASS (0 exit, 249s), full suite **136/136 green** (was 124, +12 iter57).
+
+### P1a · Saved Filter Views (Trip Log)
+- New `saved_filters.py` router → `POST /api/saved-trip-filters`, `GET /api/saved-trip-filters`, `DELETE /api/saved-trip-filters/{fid}`.
+- Records are scoped by `(user_id, company_id)`; Company A views never visible in Company B, cross-company delete returns 404.
+- Frontend: `Trips.jsx` gains a "Saved Views" chip strip with `Bookmark` icon. Clicking a chip re-applies the stored filter state; `X` mini-icon deletes with confirm. `+ Save Current` button captures the live filter+halting_only state.
+- Testids: `trips-saved-views`, `save-current-view-btn`, `saved-view-<id>`, `apply-view-<id>`, `delete-view-<id>`.
+
+### P1b · Export Filtered Trips (CSV/XLSX)
+- New `GET /api/trips/export?format=csv|xlsx` reusing the extracted `_build_trip_filter_query` helper — export contents match the Trip Log 1:1 for the same filters. Verified via CSV row-count == X-Total-Count on q=Kondapalli (45 == 45).
+- 38-column flat export (date, LR, customer, vehicle, load, freight, halting, expenses, profit, status, invoice_id, ...). Customer name denormalised. CSV uses UTF-8-BOM for native Excel display; XLSX uses `pandas` + `openpyxl`.
+- 10k-row cap to keep memory bounded.
+- Frontend: `ExportMenu` component next to Clear Filters. Dropdown offers CSV / XLSX. `blob` response triggers browser download with server-supplied filename.
+- Testids: `trips-export-btn`, `trips-export-menu`, `trips-export-csv`, `trips-export-xlsx`.
+
+### P2 · Auth Failure Drill-Down
+- Middleware now captures `ip` (X-Forwarded-For first, direct client host fallback) alongside existing fields. **Never** stores headers/tokens/cookies/payloads.
+- New `GET /api/admin/save-health/auth-failures?hours=24&limit=100` returns `{count, top_ips[], items[], generated_at}` where each item is `{ts_iso, method, path, status, latency_ms, kind, ip, collection}`. Explicitly projects out `_id` and raw `ts`. Sorted newest-first; top-10 IPs summarised.
+- Frontend: AUTH count on Save-Health tile is now a `<button>` — clicking it opens `AuthFailureDrillModal` with a PII-safe table (Timestamp UTC · Method · Path · Status · Source IP · Latency). Auto-refreshes every 30s. Disclaimer line: "No passwords, tokens or headers are captured or displayed."
+- Verified: no `Authorization / Cookie / token / password / Bearer` present in any row (both backend response + DOM inspection).
+- Testids: `auth-drill-modal`, `auth-drill-table`, `auth-drill-close`, `auth-drill-row-<i>`, `auth-drill-top-ip-<i>`, `auth-drill-empty`.
+
+### P3 · 24h Save-Health Sparkline
+- New `GET /api/admin/save-health/sparkline?hours=24&buckets=24` — Mongo aggregation pipeline projects a bucket index via `$floor` + `$divide`, groups by (bucket, kind), returns `{auth: int[24], save: int[24], bucket_minutes, cutoff}`. Clamps `hours` ≤ 168 and `buckets` ≤ 96.
+- Frontend: `SaveHealthSparkline` inline SVG (no chart lib). Amber line = save failures, rose line = auth failures. Legend + tooltip. Auto-refreshes every 60s.
+- Testid: `save-health-sparkline`, `save-health-sparkline-svg`.
+
+## Priority Roadmap (Feb 2026 — updated)
+- [x] P1 · Login-Failure Tracking (Iter54) — DONE
+- [x] P2 · Safe TripForm Refactor (Iter55) — DONE
+- [x] P3 · Trip Log Search & Filter (Iter56) — DONE
+- [x] P4 · Saved Filter Views (Iter57 P1a) — DONE
+- [x] P5 · Export Filtered Trips (Iter57 P1b) — DONE
+- [x] P6 · Auth Failure Drill-Down (Iter57 P2) — DONE
+- [x] P7 · Save-Health Sparkline (Iter57 P3) — DONE
+- [ ] Halting SMS Digest — deferred until halting proven stable in live use
+

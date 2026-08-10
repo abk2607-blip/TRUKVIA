@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tansta
 import { api, API, fmtCurrency, fmtDate } from "@/api";
 import { Link } from "react-router-dom";
 import { toast } from "sonner";
-import { Plus, CheckCircle2, Clock, Download, FileText, Trash2, Eye, Pencil, Copy, Share2, Search, X, ChevronLeft, ChevronRight } from "lucide-react";
+import { Plus, CheckCircle2, Clock, Download, FileText, Trash2, Eye, Pencil, Copy, Share2, Search, X, ChevronLeft, ChevronRight, Bookmark, BookmarkPlus } from "lucide-react";
 import SearchableSelect from "@/components/SearchableSelect";
 
 const downloadEwayBill = async (tripId) => {
@@ -64,6 +64,47 @@ export default function Trips() {
   const { data: vehicles = [] } = useQuery({ queryKey: ["vehicles"], queryFn: async () => (await api.get("/vehicles")).data });
   const { data: suppliers = [] } = useQuery({ queryKey: ["suppliers"], queryFn: async () => (await api.get("/suppliers")).data });
   const custMap = React.useMemo(() => Object.fromEntries(customers.map((c) => [c.id, c.name])), [customers]);
+
+  // Iter57 P1 — Saved filter views (company-scoped by backend).
+  const { data: savedViews = [] } = useQuery({ queryKey: ["saved-trip-filters"], queryFn: async () => (await api.get("/saved-trip-filters")).data });
+  const saveView = useMutation({
+    mutationFn: async ({ name, filter_state }) => (await api.post("/saved-trip-filters", { name, filter_state })).data,
+    onSuccess: () => { toast.success("Filter view saved"); qc.invalidateQueries({ queryKey: ["saved-trip-filters"] }); },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Failed to save"),
+  });
+  const deleteView = useMutation({
+    mutationFn: async (fid) => (await api.delete(`/saved-trip-filters/${fid}`)).data,
+    onSuccess: () => { toast.success("Filter view removed"); qc.invalidateQueries({ queryKey: ["saved-trip-filters"] }); },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Failed"),
+  });
+
+  const applySavedView = (view) => {
+    const s = view?.filter_state || {};
+    setFilters({
+      customer_id: s.customer_id || "",
+      vehicle_id: s.vehicle_id || "",
+      supplier_id: s.supplier_id || "",
+      date_from: s.date_from || "",
+      date_to: s.date_to || "",
+      q: s.q || "",
+    });
+    setQDraft(s.q || "");
+    setShowHaltingOnly(!!s.halting_only);
+    setPage(0);
+  };
+
+  const handleSaveCurrentView = () => {
+    if (activeFilterCount === 0) {
+      toast.error("Apply at least one filter first");
+      return;
+    }
+    const name = window.prompt("Name this view (e.g. 'Last 30d · ABC · unbilled')");
+    if (!name || !name.trim()) return;
+    saveView.mutate({
+      name: name.trim(),
+      filter_state: { ...filters, halting_only: showHaltingOnly },
+    });
+  };
 
   // Server-side trips query — key includes every filter + page so results are cached per combo.
   const tripsQ = useQuery({
@@ -292,17 +333,66 @@ export default function Trips() {
               <button type="button" onClick={() => setLastNDays(30)} className="px-2 py-1 text-[10px] uppercase tracking-wider font-bold border border-zinc-300 rounded-sm hover:bg-zinc-100" data-testid="preset-30d">Last 30d</button>
               <button type="button" onClick={() => setLastNDays(90)} className="px-2 py-1 text-[10px] uppercase tracking-wider font-bold border border-zinc-300 rounded-sm hover:bg-zinc-100" data-testid="preset-90d">Last 90d</button>
             </div>
-            <button
-              type="button"
-              data-testid="trips-clear-filters"
-              onClick={clearFilters}
-              disabled={activeFilterCount === 0}
-              className="px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold border rounded-sm inline-flex items-center justify-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed
-                bg-rose-50 text-rose-800 border-rose-300 hover:bg-rose-100"
-            >
-              <X size={12} /> Clear Filters {activeFilterCount > 0 && <span className="font-mono">({activeFilterCount})</span>}
-            </button>
+            <div className="grid grid-cols-2 gap-1">
+              <button
+                type="button"
+                data-testid="trips-clear-filters"
+                onClick={clearFilters}
+                disabled={activeFilterCount === 0}
+                className="px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold border rounded-sm inline-flex items-center justify-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed
+                  bg-rose-50 text-rose-800 border-rose-300 hover:bg-rose-100"
+              >
+                <X size={12} /> Clear {activeFilterCount > 0 && <span className="font-mono">({activeFilterCount})</span>}
+              </button>
+              <ExportMenu
+                filters={filters}
+                showHaltingOnly={showHaltingOnly}
+                total={total}
+              />
+            </div>
           </div>
+        </div>
+
+        {/* Iter57 P1 — Saved views strip */}
+        <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-zinc-100" data-testid="trips-saved-views">
+          <span className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 flex items-center gap-1">
+            <Bookmark size={11} /> Saved Views
+          </span>
+          {savedViews.length === 0 ? (
+            <span className="text-[11px] text-zinc-400 italic">No saved views yet — build a filter and click "+ Save Current".</span>
+          ) : (
+            savedViews.map((v) => (
+              <span key={v.id} data-testid={`saved-view-${v.id}`} className="inline-flex items-center gap-1 border border-indigo-200 bg-indigo-50 rounded-full pl-2 pr-1 py-0.5 text-[11px] group">
+                <button
+                  type="button"
+                  data-testid={`apply-view-${v.id}`}
+                  onClick={() => applySavedView(v)}
+                  className="font-semibold text-indigo-800 hover:underline"
+                  title={JSON.stringify(v.filter_state)}
+                >
+                  {v.name}
+                </button>
+                <button
+                  type="button"
+                  data-testid={`delete-view-${v.id}`}
+                  onClick={() => { if (window.confirm(`Delete saved view "${v.name}"?`)) deleteView.mutate(v.id); }}
+                  className="text-indigo-400 hover:text-rose-600 p-0.5 opacity-60 group-hover:opacity-100"
+                  title="Delete this view"
+                >
+                  <X size={10} />
+                </button>
+              </span>
+            ))
+          )}
+          <button
+            type="button"
+            data-testid="save-current-view-btn"
+            onClick={handleSaveCurrentView}
+            disabled={activeFilterCount === 0 || saveView.isPending}
+            className="ml-auto inline-flex items-center gap-1 px-2 py-1 text-[10px] uppercase tracking-wider font-bold border border-indigo-300 text-indigo-700 rounded-sm hover:bg-indigo-50 disabled:opacity-40 disabled:cursor-not-allowed"
+          >
+            <BookmarkPlus size={11} /> Save Current
+          </button>
         </div>
       </div>
 
@@ -546,5 +636,84 @@ function HaltingAgeChip({ trip }) {
     >
       {ageDays}d
     </span>
+  );
+}
+
+
+
+// Iter57 P1 — Export Filtered Trips (CSV / XLSX)
+function ExportMenu({ filters, showHaltingOnly, total }) {
+  const [open, setOpen] = React.useState(false);
+  const [busy, setBusy] = React.useState(false);
+  const rootRef = React.useRef(null);
+  React.useEffect(() => {
+    const onDoc = (e) => { if (rootRef.current && !rootRef.current.contains(e.target)) setOpen(false); };
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+  const doExport = async (fmt) => {
+    if (busy) return;
+    setBusy(true);
+    setOpen(false);
+    try {
+      const params = new URLSearchParams({ format: fmt });
+      if (filters.customer_id) params.set("customer_id", filters.customer_id);
+      if (filters.vehicle_id) params.set("vehicle_id", filters.vehicle_id);
+      if (filters.supplier_id) params.set("supplier_id", filters.supplier_id);
+      if (filters.date_from) params.set("date_from", filters.date_from);
+      if (filters.date_to) params.set("date_to", filters.date_to);
+      if (filters.q?.trim()) params.set("q", filters.q.trim());
+      if (showHaltingOnly) params.set("halting_only", "true");
+      const res = await api.get(`/trips/export?${params.toString()}`, { responseType: "blob" });
+      const cd = res.headers?.["content-disposition"] || "";
+      const m = /filename="([^"]+)"/.exec(cd);
+      const filename = m ? m[1] : `trips_export.${fmt}`;
+      const url = URL.createObjectURL(res.data);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`Exported ${total.toLocaleString()} trip${total === 1 ? "" : "s"} → ${filename}`);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Export failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        data-testid="trips-export-btn"
+        onClick={() => setOpen((v) => !v)}
+        disabled={busy || total === 0}
+        className="w-full px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold border rounded-sm inline-flex items-center justify-center gap-1 disabled:opacity-40 disabled:cursor-not-allowed bg-emerald-50 text-emerald-800 border-emerald-300 hover:bg-emerald-100"
+      >
+        <Download size={12} /> {busy ? "…" : "Export"}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-20 bg-white border border-zinc-200 rounded-sm shadow-lg min-w-[160px]" data-testid="trips-export-menu">
+          <button
+            type="button"
+            data-testid="trips-export-csv"
+            onClick={() => doExport("csv")}
+            className="w-full text-left px-3 py-2 text-xs hover:bg-zinc-100 border-b border-zinc-100"
+          >
+            <span className="font-bold">CSV</span>
+            <span className="text-zinc-500 ml-2 text-[10px]">Excel-compatible</span>
+          </button>
+          <button
+            type="button"
+            data-testid="trips-export-xlsx"
+            onClick={() => doExport("xlsx")}
+            className="w-full text-left px-3 py-2 text-xs hover:bg-zinc-100"
+          >
+            <span className="font-bold">XLSX</span>
+            <span className="text-zinc-500 ml-2 text-[10px]">Native Excel</span>
+          </button>
+        </div>
+      )}
+    </div>
   );
 }

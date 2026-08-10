@@ -1,0 +1,48 @@
+{
+  "summary": "Iter57 (Saved Filter Views, Trip Export CSV/XLSX, Auth Failure Drill-Down, Save-Health Sparkline) tested end-to-end. Backend pytest suite for iter57 = 12/12 PASS. Frontend flows verified: saved-views CRUD & multi-company isolation, CSV/XLSX export with filter respect, Auth drill-down modal with PII safety, sparkline SVG. No regressions observed in Trip Log, Dashboard, Deploy Guard tile. Only issue found: pre-existing test_iter51_deploy_guard_and_alerts.py fails when invoked recursively via /api/admin/deploy-readiness (self-referential nested run) — passes 10/10 standalone. Unrelated to iter57.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/admin/deploy-readiness", "issue": "test_iter51_deploy_guard_and_alerts.py fails ONLY when invoked recursively via the deploy-readiness endpoint (nested run). Iter51 itself invokes deploy-readiness in its own tests, causing DB/subprocess race. Standalone `pytest test_iter51...` = 10/10 PASS. iter57 12/12 PASS both standalone and inside deploy-readiness. Pre-existing flake, not iter57 regression."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter57_saved_filters_export_drill_spark.py",
+    "/app/test_reports/pytest/iter57_results.xml"
+  ],
+  "action_items": [
+    "OPTIONAL: Investigate iter51 nested-invocation failure inside /api/admin/deploy-readiness (Regression Guard reports 'fail' even though iter57 passes). This appears to be a pre-existing self-referential race in test_iter51 — not caused by iter57."
+  ],
+  "critical_code_review_comments": [
+    "PII Safety verified: /api/admin/save-health/auth-failures explicitly projects out `_id` and `ts`; middleware NEVER stores Authorization/Cookie/token/password. Table rows contain only ts_iso, method, path, status, latency_ms, kind, ip. Confirmed via both backend response inspection and DOM inspection of the drill-down modal — no leakage.",
+    "Multi-company isolation: saved_filters.py scopes list/create/delete by (user_id, company_id). Verified in backend test_saved_filter_company_isolation and by API contract review.",
+    "Export filter parity: _build_trip_filter_query is shared by /api/trips and /api/trips/export so export contents match the listing 1:1. Verified via CSV row count == X-Total-Count for the same filter (45 == 45 with q=Kondapalli).",
+    "Export cap at 10k rows — sensible; document to user if their date range >10k rows expected.",
+    "Sparkline endpoint properly clamps hours (≤168) and buckets (≤96). Uses aggregation pipeline; efficient.",
+    "Minor: 'top_ips' in auth-failures may reveal internal LB IP (127.0.0.1) — expected since ingress terminates locally; not a leak."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (12/12 iter57)", "frontend": "100% (all iter57 flows)"},
+  "test_credentials": "Bearer test_session_bitumen_2026 (demo user). Frontend: demo-login-button on /login.",
+  "seed_data_creation": "None. Used existing seed data (9,382 trips, multiple companies).",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter57 fully green. When testing regression via /api/admin/deploy-readiness, note that iter51 nested failure is a pre-existing self-referential issue (iter51 tests invoke deploy-readiness which then re-runs iter51). Use direct pytest of individual suites to bypass. iter57 backend tests are @ /app/backend/tests/test_iter57_saved_filters_export_drill_spark.py.",
+  "verified_features": {
+    "P1a_saved_views_CRUD": "PASS — chip appears, apply restores filter (9382→45→9382→45), delete removes chip",
+    "P1a_multi_company_isolation": "PASS (backend test) — view in Co A not visible in Co B; 404 on cross-company delete",
+    "P1b_export_CSV": "PASS — 45 rows all containing 'Kondapalli', matches listing count exactly",
+    "P1b_export_XLSX": "PASS — PK magic bytes, openxml content-type",
+    "P1b_export_company_isolation": "PASS — backend test verifies disjoint trip_numbers",
+    "P2_auth_drill_modal": "PASS — modal opens, table shows 100 rows, X close works, PII-safe (no Authorization/Cookie/token/password/Bearer in tbody rows). Descriptive text mentions those words as a disclaimer only.",
+    "P2_fresh_401_capture": "PASS — external curl with bogus bearer appeared at top of drill-down with source IP 104.198.214.223, status 401",
+    "P3_sparkline_svg": "PASS — data-testid=save-health-sparkline-svg renders on dashboard, both amber (save) and rose (auth) lines visible with legend",
+    "REGRESSION_dashboard": "PASS — Deploy Guard shows PASS/Safe to Deploy, Save Health tile shows AUTH 1350 / SAVE 3103",
+    "REGRESSION_trips": "PASS — Trip Log renders 9,419 trips, filter/search work, latest-first sort preserved"
+  }
+}

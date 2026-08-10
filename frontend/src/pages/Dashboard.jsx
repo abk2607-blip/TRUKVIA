@@ -2,7 +2,7 @@ import React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, fmtCurrency, fmtDate } from "@/api";
 import { Link } from "react-router-dom";
-import { TrendingUp, TrendingDown, Truck, FileText, Users, Wallet, ArrowUpRight, MessageCircle, AlertTriangle, Share2, Loader2, CheckCircle2 } from "lucide-react";
+import { TrendingUp, TrendingDown, Truck, FileText, Users, Wallet, ArrowUpRight, MessageCircle, AlertTriangle, Share2, Loader2, CheckCircle2, X } from "lucide-react";
 import InsightsCard from "@/components/InsightsCard";
 import RecurringTripsCard from "@/components/RecurringTripsCard";
 import ExpenditureBreakdownCard from "@/components/ExpenditureBreakdownCard";
@@ -301,10 +301,17 @@ function SaveHealthTile() {
   const qc = useQueryClient();
   const [open, setOpen] = React.useState(false);
   const [showCfg, setShowCfg] = React.useState(false);
+  const [showAuthDrill, setShowAuthDrill] = React.useState(false);
   const { data, isLoading, refetch } = useQuery({
     queryKey: ["save-health"],
     queryFn: async () => (await api.get("/admin/save-health", { params: { hours: 24 } })).data,
     refetchInterval: 60 * 1000, // 1-min live refresh
+  });
+  // Iter57 P3 — Sparkline (24 buckets over 24h)
+  const { data: spark } = useQuery({
+    queryKey: ["save-health-sparkline"],
+    queryFn: async () => (await api.get("/admin/save-health/sparkline", { params: { hours: 24, buckets: 24 } })).data,
+    refetchInterval: 60 * 1000,
   });
   const { data: cfg } = useQuery({
     queryKey: ["save-health-alert-config"],
@@ -340,11 +347,24 @@ function SaveHealthTile() {
               <span className="font-bold">{saveFailures}</span>
             </span>
             <span className="opacity-40">·</span>
-            <span data-testid="save-health-auth-failures" className="flex items-center gap-1">
+            <button
+              type="button"
+              data-testid="save-health-auth-failures"
+              onClick={() => setShowAuthDrill(true)}
+              className="flex items-center gap-1 hover:underline focus:outline-none focus:underline"
+              title="Click to see recent 401/403 failures"
+            >
               <span className="opacity-70 uppercase tracking-wider">Auth</span>
               <span className="font-bold">{authFailures}</span>
-            </span>
+              <span className="text-[9px] opacity-60">›</span>
+            </button>
           </div>
+          {/* Iter57 P3 — 24h sparkline */}
+          {spark && (
+            <div className="mt-2" data-testid="save-health-sparkline">
+              <SaveHealthSparkline auth={spark.auth || []} save={spark.save || []} bucketMinutes={spark.bucket_minutes || 60} />
+            </div>
+          )}
           <div className="text-[10px] mt-1 opacity-70">
             Write requests (POST/PUT/PATCH/DELETE) returning HTTP ≥ 400 across all collections, plus 401/403 on <code className="font-mono">/api/auth/*</code>.
             {cfg && (
@@ -583,9 +603,128 @@ function SaveHealthTile() {
           </div>
         </div>
       )}
+
+      {/* Iter57 P2 — Auth-failure drill-down modal */}
+      {showAuthDrill && (
+        <AuthFailureDrillModal onClose={() => setShowAuthDrill(false)} />
+      )}
     </div>
   );
 }
+
+
+// Iter57 P3 — Save Health Sparkline (tiny inline SVG, no external chart lib)
+function SaveHealthSparkline({ auth, save, bucketMinutes }) {
+  const width = 220, height = 32, pad = 2;
+  const buckets = Math.max(auth.length, save.length, 1);
+  const maxVal = Math.max(1, ...auth, ...save);
+  const stepX = (width - pad * 2) / Math.max(buckets - 1, 1);
+  const yFor = (v) => height - pad - (v / maxVal) * (height - pad * 2);
+  const pathFor = (arr) => arr.map((v, i) => `${i === 0 ? "M" : "L"}${(pad + i * stepX).toFixed(1)},${yFor(v).toFixed(1)}`).join(" ");
+  return (
+    <div className="inline-flex items-center gap-2" title={`Last ${(buckets * bucketMinutes / 60).toFixed(0)}h · ${bucketMinutes.toFixed(0)}-min buckets · Max ${maxVal}/bucket`}>
+      <svg width={width} height={height} className="border border-current/20 rounded-sm bg-white/40" data-testid="save-health-sparkline-svg">
+        {/* baseline */}
+        <line x1={pad} y1={height - pad} x2={width - pad} y2={height - pad} stroke="currentColor" strokeOpacity="0.15" strokeWidth="0.5" />
+        {/* save line — amber */}
+        <path d={pathFor(save)} fill="none" stroke="#d97706" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+        {/* auth line — rose */}
+        <path d={pathFor(auth)} fill="none" stroke="#e11d48" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+      <div className="text-[9px] font-mono opacity-70 leading-tight flex flex-col">
+        <span className="flex items-center gap-1"><span className="w-2 h-0.5 bg-[#d97706] inline-block" /> Save</span>
+        <span className="flex items-center gap-1"><span className="w-2 h-0.5 bg-[#e11d48] inline-block" /> Auth</span>
+      </div>
+    </div>
+  );
+}
+
+
+// Iter57 P2 — Auth Failure Drill-Down Modal (PII-safe: shows only ts/method/path/status/ip)
+function AuthFailureDrillModal({ onClose }) {
+  const { data, isLoading } = useQuery({
+    queryKey: ["auth-failures-drill"],
+    queryFn: async () => (await api.get("/admin/save-health/auth-failures", { params: { hours: 24, limit: 100 } })).data,
+    refetchInterval: 30 * 1000,
+  });
+  return (
+    <div
+      data-testid="auth-drill-modal"
+      className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="bg-white rounded-sm border border-zinc-300 w-full max-w-3xl max-h-[85vh] overflow-hidden flex flex-col">
+        <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-200 bg-zinc-950 text-white">
+          <div>
+            <div className="text-[10px] uppercase tracking-[0.15em] font-bold opacity-70">Iter57 · Auth Failure Drill-Down</div>
+            <div className="text-lg font-bold">Recent 401/403 Failures · Last 24h</div>
+          </div>
+          <button
+            type="button"
+            data-testid="auth-drill-close"
+            onClick={onClose}
+            className="text-white/70 hover:text-white p-2 rounded-sm hover:bg-white/10"
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <div className="p-4 overflow-auto text-zinc-900">
+          {isLoading ? (
+            <div className="text-sm text-zinc-500 italic">Loading…</div>
+          ) : !data ? (
+            <div className="text-sm text-zinc-500 italic">No data.</div>
+          ) : data.count === 0 ? (
+            <div data-testid="auth-drill-empty" className="text-sm text-emerald-700 py-6 text-center">
+              🟢 Zero authentication failures in the last 24 hours. Nice.
+            </div>
+          ) : (
+            <>
+              <div className="mb-3 flex flex-wrap gap-2 text-[11px] uppercase tracking-wider font-bold">
+                <span className="bg-rose-50 text-rose-800 border border-rose-200 px-2 py-1 rounded-sm">Total: {data.count}</span>
+                {data.top_ips.slice(0, 5).map((ip, i) => (
+                  <span key={i} className="bg-zinc-100 text-zinc-800 border border-zinc-300 px-2 py-1 rounded-sm font-mono" data-testid={`auth-drill-top-ip-${i}`}>
+                    {ip.ip} · {ip.count}
+                  </span>
+                ))}
+              </div>
+              <div className="mb-2 text-[11px] text-zinc-500 italic">
+                Timestamps in UTC. IP source is <span className="font-mono">X-Forwarded-For</span> when present, else direct client host.
+                No passwords, tokens or headers are captured or displayed.
+              </div>
+              <div className="overflow-x-auto border border-zinc-200 rounded-sm">
+                <table className="w-full text-xs" data-testid="auth-drill-table">
+                  <thead className="bg-zinc-100 text-zinc-700 text-[10px] uppercase tracking-wider">
+                    <tr>
+                      <th className="text-left px-3 py-2">Timestamp (UTC)</th>
+                      <th className="text-left px-3 py-2">Method</th>
+                      <th className="text-left px-3 py-2">Path</th>
+                      <th className="text-right px-3 py-2">Status</th>
+                      <th className="text-left px-3 py-2">Source IP</th>
+                      <th className="text-right px-3 py-2">Latency</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-zinc-100">
+                    {data.items.map((r, i) => (
+                      <tr key={i} data-testid={`auth-drill-row-${i}`} className={i % 2 === 0 ? "bg-white" : "bg-zinc-50/50"}>
+                        <td className="px-3 py-2 font-mono text-zinc-600">{(r.ts_iso || "").replace("T", " ").slice(0, 19)}</td>
+                        <td className="px-3 py-2 font-mono">{r.method}</td>
+                        <td className="px-3 py-2 font-mono">{r.path}</td>
+                        <td className="px-3 py-2 text-right font-mono font-bold text-rose-700">{r.status}</td>
+                        <td className="px-3 py-2 font-mono">{r.ip || "—"}</td>
+                        <td className="px-3 py-2 text-right font-mono text-zinc-500">{r.latency_ms ? `${r.latency_ms}ms` : "—"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 
 
 // Iter51/52 — Deploy Guard status tile with history bar (P4).

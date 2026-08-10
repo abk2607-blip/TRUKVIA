@@ -36,6 +36,7 @@ from routers import (
     ai as ai_r,
     expenditure_types as expenditure_types_r,
     suppliers as suppliers_r,
+    saved_filters as saved_filters_r,
 )
 
 ROOT_DIR = Path(__file__).parent
@@ -70,6 +71,7 @@ for r in (
     vehicles_r, parties_r, trips_r, invoices_r, dashboard_r,
     reports_r, gst_r, files_r, team_r, audit_r,
     templates_r, ai_r, expenditure_types_r, suppliers_r,
+    saved_filters_r,
 ):
     app.include_router(r.router)
 
@@ -128,6 +130,12 @@ async def _save_health_middleware(request: _FReq, call_next):
         is_auth_failure = path.startswith("/api/auth/") and status in (401, 403)
         is_save_failure = method in ("POST", "PUT", "PATCH", "DELETE") and status >= 400
         if is_save_failure or is_auth_failure:
+            # Iter57 — Capture source IP for auth-failure drill-down. Prefer
+            # X-Forwarded-For (populated by the Kubernetes ingress) then fall
+            # back to the direct client host. NEVER store request headers,
+            # tokens or payloads — keep this row PII-safe.
+            xff = request.headers.get("x-forwarded-for") or ""
+            ip = xff.split(",")[0].strip() if xff else (request.client.host if request.client else "")
             await db.save_health.insert_one({
                 "ts": _dt.now(_tz.utc),
                 "ts_iso": _dt.now(_tz.utc).isoformat(),
@@ -137,6 +145,7 @@ async def _save_health_middleware(request: _FReq, call_next):
                 "status": status,
                 "latency_ms": round((_time.perf_counter() - t0) * 1000, 1),
                 "kind": "auth_failure" if is_auth_failure else "save_failure",
+                "ip": ip,
             })
             # Iter51 — Evaluate alerting rules (fire-and-forget)
             _asyncio.create_task(_evaluate_save_health_alerts())
@@ -180,6 +189,89 @@ async def save_health(hours: int = 24):
         "recent": recent,
         "generated_at": _dt.now(_tz.utc).isoformat(),
     }
+
+
+@app.get("/api/admin/save-health/auth-failures")
+async def save_health_auth_failures(hours: int = 24, limit: int = 100):
+    """Iter57 P2 — Drill-down for recent authentication failures on /api/auth/*.
+
+    Returns the most recent N rows (default 100, max 500) captured within the
+    time window (default 24h, max 168h). Each row is PII-safe: it only exposes
+    timestamp, HTTP method, path, status code, latency and source IP. Never
+    exposes Authorization headers, tokens, cookies or request payloads.
+    """
+    hours = max(1, min(int(hours or 24), 168))
+    limit = max(1, min(int(limit or 100), 500))
+    cutoff = _dt.now(_tz.utc) - _td(hours=hours)
+    docs = await db.save_health.find(
+        {"kind": "auth_failure", "ts": {"$gte": cutoff}},
+        {"_id": 0, "ts": 0},  # Drop raw datetime; ts_iso is human-readable.
+    ).sort("ts", -1).limit(limit).to_list(limit)
+    # Group by IP for a quick "top offenders" summary — useful for spotting bots.
+    ip_counts: dict = {}
+    for d in docs:
+        ip = (d.get("ip") or "").strip() or "unknown"
+        ip_counts[ip] = ip_counts.get(ip, 0) + 1
+    top_ips = sorted(
+        [{"ip": k, "count": v} for k, v in ip_counts.items()],
+        key=lambda x: x["count"], reverse=True,
+    )[:10]
+    return {
+        "window_hours": hours,
+        "count": len(docs),
+        "top_ips": top_ips,
+        "items": docs,
+        "generated_at": _dt.now(_tz.utc).isoformat(),
+    }
+
+
+@app.get("/api/admin/save-health/sparkline")
+async def save_health_sparkline(hours: int = 24, buckets: int = 24):
+    """Iter57 P3 — Time-bucketed failure counts for the dashboard sparkline.
+
+    Returns `buckets` evenly-spaced counts across the last `hours` window,
+    split by kind (auth_failure vs save_failure). Default 24 buckets over 24h.
+    """
+    hours = max(1, min(int(hours or 24), 168))
+    buckets = max(4, min(int(buckets or 24), 96))
+    now = _dt.now(_tz.utc)
+    cutoff = now - _td(hours=hours)
+    bucket_seconds = (hours * 3600) / buckets
+    pipeline = [
+        {"$match": {"ts": {"$gte": cutoff}}},
+        {"$project": {
+            "kind": 1,
+            "bucket": {"$floor": {
+                "$divide": [
+                    {"$subtract": ["$ts", cutoff]},
+                    bucket_seconds * 1000,
+                ]
+            }},
+        }},
+        {"$group": {"_id": {"bucket": "$bucket", "kind": "$kind"},
+                    "count": {"$sum": 1}}},
+    ]
+    rows = await db.save_health.aggregate(pipeline).to_list(1000)
+    auth = [0] * buckets
+    save = [0] * buckets
+    for r in rows:
+        b = int(r["_id"].get("bucket") or 0)
+        if not (0 <= b < buckets):
+            continue
+        if r["_id"].get("kind") == "auth_failure":
+            auth[b] += r["count"]
+        else:
+            save[b] += r["count"]
+    return {
+        "window_hours": hours,
+        "buckets": buckets,
+        "bucket_minutes": round((hours * 60) / buckets, 1),
+        "auth": auth,
+        "save": save,
+        "cutoff": cutoff.isoformat(),
+        "generated_at": now.isoformat(),
+    }
+
 
 
 # ---------------------------------------------------------------------------

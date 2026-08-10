@@ -44,6 +44,7 @@ CRITICAL_TESTS=(
   "tests/test_iter53b_alert_types_and_halting_full_flow.py"  # alert types menu + single-trip GET + P1 halting full flow
   "tests/test_iter54_login_failure_tracking.py"        # login-failure tracking on /api/auth/*
   "tests/test_iter56_trip_search_filter.py"            # Iter56 — Trip Log search/filter/pagination
+  "tests/test_iter57_saved_filters_export_drill_spark.py"  # Iter57 — saved views, export, auth drill, sparkline
 )
 
 # Explicit venv PATH so this runs cleanly from asyncio subprocess (which
