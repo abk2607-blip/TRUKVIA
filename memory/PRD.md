@@ -242,6 +242,26 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
   - See CHANGELOG (invoice auto-recompute on fetch + new Reports → Supplier Statement tab with landscape PDF + WhatsApp share). Backfill: 220 legacy invoices recomputed. 61/61 tests pass.
 - [x] **Iter45 — Supplier Management Module (Phase 1: Foundation)** (Feb 2026)
   - New Supplier + SupplierPayment models (20 + 12 fields incl. audit); router `/suppliers/*` with CRUD, payments (mandatory delete-reason), Debit/Credit/Balance ledger, outstanding, vehicles link, dashboard. Trip-derived amounts (Freight/Adv/Diesel/Cust.Dsl/Shortage/Recovery/Bonus) flow into ledger via aggregation — zero duplicates. Backfill created Supplier records from legacy `vehicle.supplier_name`. Frontend `/suppliers/*` with 7 tabs. Multi-Company isolation hard-verified. 11/11 pytests.
+- [x] **Iter49 — Trip Edit crash + Halting single-source-of-truth regression (CRITICAL fix)** (Feb 2026)
+  - **User pain point**: "We are unable to edit an existing Trip — save errors out with 'Objects are not valid as a React child'. Halting Charges reappear as 0 in Trip View + Invoice despite typing them in Trip Edit. Please investigate root cause, not a temporary UI patch. Halting must be a single source of truth across Trip Entry → Edit → View → Log → Invoice → Invoice PDF → Reports → Supplier Settlement."
+  - **Root cause chain (4 concurrent bugs)**:
+    1. Iter47 added `Trip.supplier_id: str = ""` to the Pydantic v2 model, but 235+ legacy trip docs in Mongo already had `supplier_id: None`. On PUT roundtrip, Pydantic rejected the null → **422**.
+    2. Frontend's `toast.error(e?.response?.data?.detail || "Failed")` blindly rendered the raw Pydantic v2 detail array `[{type, loc, msg, input, url}, ...]` as a React child → **"Objects are not valid as a React child" crash**, masking the real 422.
+    3. Because the save silently failed, the user's typed halting values (total_days=12, rate=3000) never persisted → **Trip View + Invoice PDF continued showing 0** (which correctly reflected stale DB state).
+    4. `TripForm.jsx` incorrectly Number()-cast **every** field in `expenses` on save except `other_desc` — but `other_remarks` is ALSO a string field → `Number("note text")` = NaN → `JSON.stringify(NaN)` = `null` → backend 422 even for freshly-typed remarks.
+  - **Fixes (defence in depth across 4 layers)**:
+    1. **Pydantic model_validator** (`models.py`): Added `_coerce_none_to_default(cls, data)` global helper and attached `@model_validator(mode="before")` to both `Trip` and `Expenses` models. For every declared str-field with a non-None default, `None` incoming values are coerced to the default. Legacy Mongo rows now roundtrip cleanly without touching the DB.
+    2. **Startup backfill** (`server.py`): One-time null→"" migration for `trips.supplier_id`, `vehicles.supplier_id`, `expenses.other_remarks`, `expenses.other_desc`, and 20+ other legacy string fields (driver_name, consignor_name, consignee_name, hsn_sac, load_details, from_location, to_location, halting_remarks, shortage_remarks, excess_remarks, other_income_remarks, lr_number, lr_time, etc). Runs on every restart; only writes when a legacy null is found. Initial run: 118 `expenses.other_remarks` + 833 other-string-fields + 235 supplier_id + 460 vehicle supplier_id normalised.
+    3. **Axios response interceptor** (`api.js`): New `_flattenDetail(d)` helper — turns any Pydantic v2 array into `"Validation error — field_a: msg; field_b: msg"`, preserves the raw payload under `err.response.data.detail_raw` for advanced callers. React text nodes can now safely interpolate `err.response.data.detail`.
+    4. **TripForm payload** (`TripForm.jsx`): The expenses-cast now excludes BOTH `other_desc` AND `other_remarks` from `Number()`. String fields stay strings.
+  - **End-to-end halting flow verified** (test `test_halting_flow_end_to_end`):
+    (a) Create trip with total_days=10, grace=4, rate=2000 → `halting_amount=12000`
+    (b) Create invoice with this trip → `invoice.halting_total=12000`
+    (c) Edit trip: rate→3000, total_days→12 → save 200 → `halting_amount=24000`
+    (d) `/trips` list returns the new halting values
+    (e) `GET /invoices/{id}` auto-recomputes → `halting_total=24000`
+    (f) `GET /invoices/{id}/pdf` — extracted text contains "24,000"
+  - Tests: **6 new** (`test_iter49_trip_edit_halting_regression.py`) covering the exact user scenario + Pydantic-level assertion + FE interceptor contract. **57/57 iter42-49 regression pass.** E2E: Demo Login → Trips list → Edit first trip → Update → success toast + redirect (no React crash). Trip View for the halting trip shows Total Days=12, Chargeable=8, Rate=₹3,000, Amount=₹24,000 — matches Trip Edit + linked Invoice 1:1.
 - [x] **Iter48 — Auth Stability Hardening (Critical Fix — resolves recurring login/session bugs)** (Feb 2026)
   - **User pain point**: "Login working inconsistently, users logged out mid-form, Demo Login not opening — treat as critical stability issue before publishing".
   - **Root causes identified (5 concurrent bugs)**:

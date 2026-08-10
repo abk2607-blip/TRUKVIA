@@ -199,7 +199,11 @@ export default function TripForm() {
           remarks: e2.remarks || "",
         })),
         other_income: Number(form.other_income || 0),
-        expenses: Object.fromEntries(Object.entries(form.expenses).map(([k, v]) => [k, k === "other_desc" ? v : Number(v || 0)])),
+        // Iter49 — expenses has TWO string fields (`other_desc` + `other_remarks`).
+        // Number()-casting `other_remarks` produced NaN → JSON null → backend 422.
+        expenses: Object.fromEntries(Object.entries(form.expenses).map(([k, v]) =>
+          [k, (k === "other_desc" || k === "other_remarks") ? (v || "") : Number(v || 0)]
+        )),
       };
       if (isEdit) return (await api.put(`/trips/${id}`, payload)).data;
       return (await api.post("/trips", payload)).data;

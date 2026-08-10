@@ -87,6 +87,41 @@ async def startup_event():
     except Exception as e:
         logger.warning(f"Scheduler init failed: {e}")
     # Iter48 — Auth stability hardening (root-cause fixes for repeated login/session issues)
+    # Iter49 — Also backfill legacy trips/vehicles with null-valued str/float fields
+    # so the Pydantic v2 contract never rejects a legacy row on PUT.
+    try:
+        # Trip-level supplier_id
+        r1 = await db.trips.update_many({"supplier_id": None}, {"$set": {"supplier_id": ""}})
+        r2 = await db.vehicles.update_many({"supplier_id": None}, {"$set": {"supplier_id": ""}})
+        # Trip.expenses.other_remarks & other_desc were `None` in legacy rows
+        r3 = await db.trips.update_many({"expenses.other_remarks": None}, {"$set": {"expenses.other_remarks": ""}})
+        r4 = await db.trips.update_many({"expenses.other_desc": None}, {"$set": {"expenses.other_desc": ""}})
+        # Common null-str Trip fields — coerce to "" everywhere
+        str_fields_to_normalise = [
+            "supplier_name", "supplier_loading_point", "supplier_unloading_point",
+            "supplier_material", "supplier_settlement_remarks",
+            "driver_name", "driver_mobile", "lr_driver_name", "lr_driver_mobile",
+            "consignor_name", "consignee_name", "consignor_address",
+            "consignee_site_location", "consignee_site_contact",
+            "hsn_sac", "load_details", "from_location", "to_location",
+            "from_pincode", "to_pincode", "loading_date", "unloading_date",
+            "halting_remarks", "shortage_remarks", "excess_remarks",
+            "other_income_remarks", "notes", "lr_number", "lr_time",
+            "external_invoice_no", "customer_invoice_no", "customer_purchased_at",
+            "waybill_no", "seal_numbers",
+        ]
+        fixed_str = 0
+        for f in str_fields_to_normalise:
+            rr = await db.trips.update_many({f: None}, {"$set": {f: ""}})
+            fixed_str += rr.modified_count
+        if r1.modified_count or r2.modified_count or r3.modified_count or r4.modified_count or fixed_str:
+            logger.info(
+                f"Iter49 null-coerce backfill: trips.supplier_id={r1.modified_count}, "
+                f"vehicles.supplier_id={r2.modified_count}, expenses.other_remarks={r3.modified_count}, "
+                f"expenses.other_desc={r4.modified_count}, other-str-fields={fixed_str}"
+            )
+    except Exception as e:
+        logger.warning(f"Iter49 null-coerce backfill failed: {e}")
     # 1. Unique index on session_token → guarantees no duplicate session docs
     # 2. TTL index on expires_at    → MongoDB auto-purges expired sessions
     # 3. Unique index on users.email → prevents dup user rows on OAuth replay

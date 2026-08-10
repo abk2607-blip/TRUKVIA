@@ -1,8 +1,8 @@
 """All Pydantic domain models."""
 import uuid
 from datetime import datetime, timezone
-from typing import List, Optional, Literal
-from pydantic import BaseModel, Field, ConfigDict
+from typing import List, Optional, Literal, Any
+from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 
 def now_utc():
@@ -11,6 +11,39 @@ def now_utc():
 
 def new_id(prefix: str = ""):
     return f"{prefix}{uuid.uuid4().hex[:16]}"
+
+
+def _coerce_none_to_default(cls, data: Any) -> Any:
+    """Iter49 — Global defensive coercer.
+    Legacy Mongo documents may contain `None` (JSON null) for fields whose
+    Pydantic v2 schema declares `str` with a non-None default. Coerce these
+    to their empty-string default instead of raising 422. This is the fix for
+    "Trip Edit crashes with Pydantic validation error" when re-saving a trip
+    whose row was created before a new str field was introduced."""
+    if not isinstance(data, dict):
+        return data
+    for name, field in cls.model_fields.items():
+        if name not in data:
+            continue
+        if data[name] is not None:
+            continue
+        ann = field.annotation
+        # If the annotation includes None (Optional/Union with None), keep None
+        try:
+            args = getattr(ann, "__args__", None) or ()
+            if type(None) in args:
+                continue
+        except Exception:
+            pass
+        # Coerce to default when we have one
+        if field.default is not None and field.default is not ...:
+            data[name] = field.default
+        elif field.default_factory is not None:
+            try:
+                data[name] = field.default_factory()
+            except Exception:
+                pass
+    return data
 
 
 class Company(BaseModel):
@@ -55,6 +88,12 @@ class Customer(BaseModel):
 
 class Expenses(BaseModel):
     model_config = ConfigDict(extra="allow")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_nones(cls, data):
+        return _coerce_none_to_default(cls, data)
+
     diesel: float = 0.0
     toll: float = 0.0
     batta: float = 0.0
@@ -95,6 +134,13 @@ class Driver(BaseModel):
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
 
 class Trip(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_nones(cls, data):
+        return _coerce_none_to_default(cls, data)
+
     id: str = Field(default_factory=lambda: new_id("trip_"))
     company_id: str = ""
     customer_id: str

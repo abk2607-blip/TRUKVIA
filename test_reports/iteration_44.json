@@ -1,0 +1,23 @@
+{
+  "summary": "Iter49 — Trip Edit crash + Halting single-source-of-truth regression PASSED end-to-end. Backend: 6/6 tests in test_iter49_trip_edit_halting_regression.py PASS (null supplier_id PUT roundtrip → 200; end-to-end halting flow: trip 10d→12000, invoice 12000, edit to rate 3000/12d → trip 24000 → invoice auto-recompute 24000 → PDF contains '24,000'; Pydantic model_validator coerces None→'' for supplier_id/supplier_name/driver_name; DB has 0 trips with supplier_id:None post-backfill; expenses.other_remarks null coerced to ''). Startup log confirmed: 'Iter49 null-coerce backfill: trips.supplier_id=0, vehicles.supplier_id=0, expenses.other_remarks=118, expenses.other_desc=0, other-str-fields=833'. Frontend: (a) Demo Login → /trips renders 96 trips, (b) clicked first edit-trip-* link → TripForm loads without error, (c) clicked Update Trip with no changes → server 200, redirected to /trips, NO 'Objects are not valid as a React child' crash, NO raw pydantic detail array in DOM. Trip View page for the invoiced halting trip (trip_a6e8af6961674470) renders Total Days=12, Grace=4, Chargeable=8, Rate=₹3,000, Halting Amount=₹24,000 — matches Trip Edit values 1:1; linked invoice shows ₹1,17,000 (45k freight + 24k halting + 48k GST) proving auto-recompute path.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter49_trip_edit_halting_regression.py",
+    "/app/test_reports/pytest/iter49.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "models.py _coerce_none_to_default is applied via @model_validator(mode='before') on Trip + Expenses — verified correct for str fields with non-None defaults. Consider extending to Vehicle / Supplier models too for full parity, so future legacy null-string bugs on those collections don't recur.",
+    "server.py Iter49 startup backfill updates 20+ legacy string fields — good defensive migration, but the backfill loop runs on every backend restart. For DBs with many collections consider gating behind a version marker in a 'system' collection to skip repeat scans.",
+    "api.js response interceptor flattens Pydantic v2 detail arrays; verified via unit test (test #4). Consider also flattening 400/500 detail-arrays symmetrically since some validators emit non-422 array details."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (6/6 iter49)", "frontend": "100% of tested flows (Trip Edit save + Trip View halting parity)"},
+  "test_credentials": "Bearer test_session_bitumen_2026 (Demo Login button on /login).",
+  "seed_data_creation": "6 ephemeral trips + 3 IT49Cust-* customers + 1 invoice created by pytest. Existing trip trip_a6e8af6961674470 (from earlier iterations) used for frontend View parity check.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "All Iter49 fixes are live and green. To re-run: pytest /app/backend/tests/test_iter49_trip_edit_halting_regression.py -v. Backfill log line to grep: 'Iter49 null-coerce backfill'. Frontend Trip Edit is reached via [data-testid=edit-trip-<id>] on /trips list — clicking Update Trip on unchanged form redirects to /trips on success (no visible toast captured but success == navigation).",
+  "rca of the issue": "Root cause: Iter47 added supplier_id: str = '' to Trip model, but 235+ pre-existing docs in Mongo had supplier_id: None. Pydantic v2 rejected the null on PUT roundtrip → 422 → frontend's naive JSON.stringify(err.response.data.detail) rendered the array object in React → 'Objects are not valid as a React child' crash — masking the true 422 and preventing halting edits from persisting. Cascading effect: invoice.halting_total never recomputed because the trip save never succeeded, so View + Invoice PDF showed stale zeros. Fix: (a) Trip/Expenses @model_validator(mode='before') coerces None → default for all str-typed fields with non-None defaults; (b) startup backfill rewrites null → '' across trips/vehicles/expenses; (c) FE api.js interceptor flattens the Pydantic array into a human string; (d) TripForm.jsx no longer Number()-casts expenses.other_desc / other_remarks (string fields). All layers verified."
+}

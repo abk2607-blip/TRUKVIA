@@ -63,6 +63,26 @@ api.interceptors.request.use((cfg) => {
 // If a request to /auth/me returns 401 the session is truly invalid — clear it.
 // For any OTHER endpoint we do NOT clear the token: a transient permission /
 // backend error must never silently sign the user out.
+// Iter49 — Also normalise `err.response.data.detail` so callers can safely
+// interpolate it into React text nodes. FastAPI/Pydantic v2 returns a raw
+// array of {type, loc, msg, input, url} objects on 422, which crashes React
+// when rendered directly. We flatten it to a single human string and preserve
+// the raw payload under `.detail_raw` for advanced callers.
+function _flattenDetail(d) {
+  if (d == null) return null;
+  if (typeof d === "string") return d;
+  if (Array.isArray(d)) {
+    const parts = d.slice(0, 3).map((e) => {
+      const loc = Array.isArray(e?.loc) ? e.loc.filter((x) => x !== "body").join(".") : "";
+      const msg = e?.msg || "invalid";
+      return loc ? `${loc}: ${msg}` : msg;
+    });
+    return `Validation error — ${parts.join("; ")}`;
+  }
+  if (typeof d === "object") return d.message || d.msg || JSON.stringify(d);
+  return String(d);
+}
+
 api.interceptors.response.use(
   (r) => r,
   (err) => {
@@ -71,6 +91,11 @@ api.interceptors.response.use(
       const url = (err?.config?.url || "");
       if (status === 401 && url.includes("/auth/me")) {
         localStorage.removeItem("session_token");
+      }
+      // Normalise error detail so React text nodes never crash
+      if (err?.response?.data && err.response.data.detail !== undefined) {
+        err.response.data.detail_raw = err.response.data.detail;
+        err.response.data.detail = _flattenDetail(err.response.data.detail);
       }
     } catch {}
     return Promise.reject(err);
@@ -94,5 +119,32 @@ export const fmtDate = (iso) => {
     return new Date(iso).toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric" });
   } catch {
     return iso;
+  }
+};
+
+
+// Iter49 — Safely stringify any error payload for toast/UI display.
+// FastAPI/Pydantic v2 returns validation errors as an ARRAY of
+// {type, loc, msg, input, url} objects. Passing that array to a React text
+// node crashes with "Objects are not valid as a React child".
+// This helper always returns a human-readable single string.
+export const errMsg = (err, fallback = "Failed") => {
+  try {
+    const d = err?.response?.data?.detail;
+    if (!d) return err?.message || fallback;
+    if (typeof d === "string") return d;
+    if (Array.isArray(d)) {
+      // Pydantic v2 validation errors — surface the first field + msg
+      const parts = d.slice(0, 3).map((e) => {
+        const loc = Array.isArray(e?.loc) ? e.loc.filter((x) => x !== "body").join(".") : "";
+        const msg = e?.msg || "invalid";
+        return loc ? `${loc}: ${msg}` : msg;
+      });
+      return `Validation error — ${parts.join("; ")}`;
+    }
+    if (typeof d === "object") return d.message || d.msg || JSON.stringify(d);
+    return String(d);
+  } catch {
+    return fallback;
   }
 };
