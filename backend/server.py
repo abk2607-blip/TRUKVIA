@@ -118,21 +118,28 @@ async def _save_health_middleware(request: _FReq, call_next):
     try:
         method = request.method
         status = response.status_code
-        # Only care about write requests that failed
-        if method in ("POST", "PUT", "PATCH", "DELETE") and status >= 400:
-            path = request.url.path or ""
-            if path.startswith("/api/") and not path.startswith("/api/admin/"):
-                await db.save_health.insert_one({
-                    "ts": _dt.now(_tz.utc),
-                    "ts_iso": _dt.now(_tz.utc).isoformat(),
-                    "collection": _extract_collection(path),
-                    "method": method,
-                    "path": path,
-                    "status": status,
-                    "latency_ms": round((_time.perf_counter() - t0) * 1000, 1),
-                })
-                # Iter51 — Evaluate alerting rules (fire-and-forget so response is never blocked)
-                _asyncio.create_task(_evaluate_save_health_alerts())
+        path = request.url.path or ""
+        # Only track /api/* endpoints, never the admin/observability endpoints themselves
+        if not path.startswith("/api/") or path.startswith("/api/admin/"):
+            return response
+        # Iter54 — Login-Failure Tracking (P1b): 401/403 on /api/auth/* are
+        # logged even though they're GETs, because they represent genuine
+        # authentication failures.
+        is_auth_failure = path.startswith("/api/auth/") and status in (401, 403)
+        is_save_failure = method in ("POST", "PUT", "PATCH", "DELETE") and status >= 400
+        if is_save_failure or is_auth_failure:
+            await db.save_health.insert_one({
+                "ts": _dt.now(_tz.utc),
+                "ts_iso": _dt.now(_tz.utc).isoformat(),
+                "collection": _extract_collection(path),
+                "method": method,
+                "path": path,
+                "status": status,
+                "latency_ms": round((_time.perf_counter() - t0) * 1000, 1),
+                "kind": "auth_failure" if is_auth_failure else "save_failure",
+            })
+            # Iter51 — Evaluate alerting rules (fire-and-forget)
+            _asyncio.create_task(_evaluate_save_health_alerts())
     except Exception:
         pass
     return response
@@ -145,6 +152,9 @@ async def save_health(hours: int = 24):
     cutoff = _dt.now(_tz.utc) - _td(hours=hours)
     match = {"ts": {"$gte": cutoff}}
     total = await db.save_health.count_documents(match)
+    # Iter54 — Split totals so the Ops tile can show auth vs save failures separately.
+    auth_failures = await db.save_health.count_documents({**match, "kind": "auth_failure"})
+    save_failures = await db.save_health.count_documents({**match, "kind": "save_failure"})
     # Group by collection + status
     per_collection = await db.save_health.aggregate([
         {"$match": match},
@@ -164,6 +174,8 @@ async def save_health(hours: int = 24):
     return {
         "window_hours": hours,
         "total_failures": total,
+        "auth_failures": auth_failures,
+        "save_failures": save_failures,
         "per_collection": per_collection,
         "recent": recent,
         "generated_at": _dt.now(_tz.utc).isoformat(),
@@ -191,12 +203,12 @@ async def _run_regression_background():
                 cwd="/app/backend", env=env,
             )
             try:
-                stdout, _ = await _asyncio.wait_for(proc.communicate(), timeout=120)
+                stdout, _ = await _asyncio.wait_for(proc.communicate(), timeout=600)
                 rc = proc.returncode
                 out = (stdout or b"").decode(errors="replace")[-4000:]
             except _asyncio.TimeoutError:
                 proc.kill()
-                rc, out = 124, "regression suite timed out (>120s)"
+                rc, out = 124, "regression suite timed out (>600s)"
             elapsed = (_dt.now(_tz.utc) - started).total_seconds()
             # Iter52 — Don't mark interrupted subprocesses (SIGTERM=-15/SIGKILL=-9)
             # as regression failures. Those happen on backend restarts and should
@@ -319,7 +331,7 @@ async def deploy_readiness_run_now():
                 stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.STDOUT,
                 cwd="/app/backend", env=env,
             )
-            stdout, _ = await _asyncio.wait_for(proc.communicate(), timeout=120)
+            stdout, _ = await _asyncio.wait_for(proc.communicate(), timeout=600)
             rc = proc.returncode
             out = (stdout or b"").decode(errors="replace")[-2000:]
             elapsed = (_dt.now(_tz.utc) - started_at).total_seconds()
@@ -455,10 +467,16 @@ async def _evaluate_save_health_alerts():
         if not cfg.get("enabled", True):
             return None
         at = {**DEFAULT_ALERT_TYPES, **(cfg.get("alert_types") or {})}
-        if not at.get("save_failure", True):
+        # Iter54 — Respect alert_type toggles by narrowing the match window.
+        allowed_kinds = []
+        if at.get("save_failure", True):
+            allowed_kinds.append("save_failure")
+        if at.get("login_failure", True):
+            allowed_kinds.append("auth_failure")
+        if not allowed_kinds:
             return None
         cutoff = _dt.now(_tz.utc) - _td(hours=cfg["window_hours"])
-        match = {"ts": {"$gte": cutoff}}
+        match = {"ts": {"$gte": cutoff}, "kind": {"$in": allowed_kinds}}
         total = await db.save_health.count_documents(match)
         if total < cfg["threshold"]:
             return None

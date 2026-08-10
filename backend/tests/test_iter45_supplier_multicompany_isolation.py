@@ -42,9 +42,10 @@ def test_supplier_list_isolated_by_company():
     assert r.status_code == 200, r.text
     sid = r.json()["id"]
 
-    # List in A -> present
-    list_a = requests.get(f"{API}/suppliers", headers=_hdr(cid_a)).json()
-    assert any(s["id"] == sid for s in list_a)
+    # List in A -> present (direct GET, avoids the 2000-row list cap sorted by name)
+    r_get_a = requests.get(f"{API}/suppliers/{sid}", headers=_hdr(cid_a))
+    assert r_get_a.status_code == 200, f"Supplier not visible in Company A: {r_get_a.status_code}"
+    assert r_get_a.json()["id"] == sid
 
     # List in B -> absent
     list_b = requests.get(f"{API}/suppliers", headers=_hdr(cid_b)).json()

@@ -317,6 +317,8 @@ function SaveHealthTile() {
     onSuccess: () => { qc.invalidateQueries(["save-health-alert-config"]); setShowCfg(false); },
   });
   const total = data?.total_failures ?? 0;
+  const authFailures = data?.auth_failures ?? 0;
+  const saveFailures = data?.save_failures ?? 0;
   const tone = total === 0 ? "border-emerald-300 bg-emerald-50 text-emerald-900"
     : total <= 5 ? "border-amber-300 bg-amber-50 text-amber-900"
     : "border-rose-300 bg-rose-50 text-rose-900";
@@ -332,8 +334,19 @@ function SaveHealthTile() {
             <span data-testid="save-health-total" className="font-mono text-3xl font-black">{isLoading ? "…" : total}</span>
             <span className="text-xs font-semibold">{badge}</span>
           </div>
+          <div className="mt-1 flex items-center gap-3 text-[10px] font-mono">
+            <span data-testid="save-health-save-failures" className="flex items-center gap-1">
+              <span className="opacity-70 uppercase tracking-wider">Save</span>
+              <span className="font-bold">{saveFailures}</span>
+            </span>
+            <span className="opacity-40">·</span>
+            <span data-testid="save-health-auth-failures" className="flex items-center gap-1">
+              <span className="opacity-70 uppercase tracking-wider">Auth</span>
+              <span className="font-bold">{authFailures}</span>
+            </span>
+          </div>
           <div className="text-[10px] mt-1 opacity-70">
-            Write requests (POST/PUT/PATCH/DELETE) returning HTTP ≥ 400 across all collections.
+            Write requests (POST/PUT/PATCH/DELETE) returning HTTP ≥ 400 across all collections, plus 401/403 on <code className="font-mono">/api/auth/*</code>.
             {cfg && (
               <span className="ml-1">
                 Alert threshold: <b>{cfg.threshold}</b> / {cfg.window_hours}h
@@ -553,8 +566,14 @@ function SaveHealthTile() {
             {data.recent?.length ? (
               <ul className="space-y-1 text-[10px] font-mono">
                 {data.recent.slice(0, 10).map((r, i) => (
-                  <li key={i} className="flex justify-between gap-2 py-1 border-b border-current/10 last:border-0">
+                  <li key={i} className="flex justify-between gap-2 py-1 border-b border-current/10 last:border-0" data-testid={`save-health-recent-${i}`}>
                     <span className="opacity-70">{(r.ts || "").slice(11, 19)}</span>
+                    <span
+                      className={`px-1 rounded-sm text-[9px] font-bold uppercase tracking-wider ${r.kind === "auth_failure" ? "bg-rose-200 text-rose-900" : "bg-amber-200 text-amber-900"}`}
+                      data-testid={`save-health-recent-kind-${i}`}
+                    >
+                      {r.kind === "auth_failure" ? "AUTH" : "SAVE"}
+                    </span>
                     <span className="flex-1 truncate">{r.method} {r.path?.slice(0, 40)}</span>
                     <span className="font-bold">{r.status}</span>
                   </li>

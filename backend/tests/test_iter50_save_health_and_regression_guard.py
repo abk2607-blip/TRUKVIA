@@ -53,7 +53,8 @@ def test_save_health_captures_write_failure():
 
 
 def test_save_health_ignores_get_requests():
-    """GET requests, even 404s, must NOT be logged to save-health."""
+    """GET requests, even 404s, must NOT be logged to save-health — EXCEPT
+    401/403 on /api/auth/* which are legitimate auth-failure signals (Iter54)."""
     before = httpx.get(f"{BASE}/api/admin/save-health?hours=1", timeout=10).json()
     # Trigger a GET 404
     r = httpx.get(f"{BASE}/api/trips/does_not_exist_iter50",
@@ -61,11 +62,12 @@ def test_save_health_ignores_get_requests():
     # 404 or 200 (endpoint returns list) — doesn't matter, GET is never logged
     time.sleep(0.4)
     after = httpx.get(f"{BASE}/api/admin/save-health?hours=1", timeout=10).json()
-    # Only writes are tracked. The count MAY be equal or higher only due to
-    # concurrent tests. What we assert is that no `GET /api/trips` entry
-    # appears in the recent stream.
+    # Only writes + auth failures are tracked. Any GET row must be an auth
+    # failure on /api/auth/* — no other GET should be logged.
     for entry in after["recent"]:
-        assert entry.get("method") != "GET", f"GET request was logged: {entry}"
+        if entry.get("method") == "GET":
+            assert entry.get("path", "").startswith("/api/auth/") and entry.get("kind") == "auth_failure", \
+                f"non-auth GET request was logged: {entry}"
 
 
 def test_save_health_ignores_successful_writes():

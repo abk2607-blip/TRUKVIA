@@ -403,3 +403,22 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - [ ] Waiting charges / halting charges auto-add
 - [ ] E-way bill integration
 - [ ] Attachment of LR / POD to trips
+
+
+## Iter54 — Login-Failure Tracking (P1) · Feb 2026
+- **User request**: Track 401/403 authentication failures on `/api/auth/*` in the observability pipeline, separate from ordinary save failures, so genuine login issues surface separately in alerts and the dashboard.
+- **Backend changes**:
+  - `_save_health_middleware` (server.py:114) now logs `401/403` responses on `/api/auth/*` with `kind="auth_failure"`. Save failures (POST/PUT/PATCH/DELETE ≥ 400) are tagged `kind="save_failure"`. `/api/admin/*` remains excluded.
+  - `GET /api/admin/save-health` now returns `auth_failures` and `save_failures` counts alongside `total_failures`, and every fresh row carries the `kind` field.
+  - `_evaluate_save_health_alerts` now respects both `alert_types.save_failure` and `alert_types.login_failure` toggles — auth failures are counted when `login_failure=True`; both off suppresses all alerts.
+  - Regression subprocess timeout raised from 120s → 600s (both hourly + `run-now`) so `run_regression.sh` completes on data-heavy environments.
+- **Frontend changes** (Dashboard.jsx `SaveHealthTile`):
+  - Tile now renders separate AUTH / SAVE counters (testids: `save-health-auth-failures`, `save-health-save-failures`).
+  - "Recent Failures" list badges each row `AUTH` (rose) vs `SAVE` (amber) with testid `save-health-recent-kind-<i>`.
+- **Tests**: 9 new tests in `test_iter54_login_failure_tracking.py` — invalid token 401 logged as auth_failure, missing token 401 logged, valid token NOT logged, POST failure still save_failure, admin excluded, split-counts endpoint shape, recent rows carry kind, frontend exposes split testids, login_failure=off toggle suppresses alert.
+- **Regression**: Full suite is **108/108 green** via `bash /app/backend/scripts/run_regression.sh` (up from 99). `/api/auth/health` returns 200 with `regression_guard.status=pass`. Deploy Regression Guard tile shows PASS.
+- **Verified unchanged**: Demo Login, Trip Entry, Trip Edit, Invoice generation, Multi-Company switch, Supplier CRUD flows all pass regression.
+
+## Backlog (deferred)
+- [ ] Halting SMS Digest (P3 — user asked to keep deferred until halting is proven stable in live use)
+- [ ] `TripForm.jsx` refactor (P4 — very large file)

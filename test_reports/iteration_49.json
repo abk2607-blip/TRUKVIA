@@ -1,0 +1,34 @@
+{
+  "summary": "Iter54 (P1 Login-Failure Tracking) fully verified. Backend: all 9 iter54 tests pass (pytest direct + via bash run_regression.sh). Full regression via bash run_regression.sh printed 'Regression Guard PASSED — safe to deploy.' Live /api/admin/save-health returns the new split fields (total_failures=5237, auth_failures=406, save_failures=1024) with per_collection auth 401 rows and every recent row carrying kind='auth_failure' or 'save_failure' (verified against live endpoint). Frontend Dashboard exposes save-health-auth-failures (511), save-health-save-failures (1252), save-health-total (5570). After clicking 'View details' (save-health-toggle), 10 save-health-recent-kind-<i> badges render with mixed AUTH/SAVE labels. Demo login (data-testid='demo-login-button') → /dashboard works. Regressions verified: /trips (New Trip button present), /invoices, /suppliers all load without error boundary; multi-company switcher (active-company sidebar) renders companies. Deploy Regression Guard tile on Dashboard shows PASS. Testing type: both.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "/api/admin/deploy-readiness (API-triggered async subprocess)", "issue": "Same pre-existing flake documented in iteration_48.json — the API-triggered subprocess reports iter43 (or occasionally iter51 cooldown) failing while direct bash run_regression.sh is 108/108 green. Elapsed ~388s (well below the new 600s timeout). Consequence: /api/auth/health returns 503 with regression_guard.status=fail even though the ground-truth bash regression is PASS. NOT caused by iter54 — main agent's claim 'Deploy Guard remains PASS' is only true for bash-invoked runs, not for the API-triggered runner. The Dashboard 'Deploy Regression Guard' tile also shows PASS (uses cached run_regression history not the last async run's exit code)."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter54_login_failure_tracking.py",
+    "/app/backend/scripts/run_regression.sh"
+  ],
+  "action_items": [
+    "Pre-existing (not introduced by iter54): /api/auth/health reports status=fail because API-triggered async regression flakes on iter43 (ModuleNotFoundError: routers when cwd not /app/backend) OR iter51 cooldown timing. Bash-invoked regression is 100% green. Consider: ensure the async subprocess runner sets cwd=/app/backend before invoking run_regression.sh, matching the shebang's own `cd $(dirname $0)/..`. If it already does, investigate the environment-level PYTHONPATH difference for iter43 test_ai_chat_expenditure_tool_registered (imports `from routers.ai import ...`)."
+  ],
+  "critical_code_review_comments": [
+    "Docstring mismatch in review request: credentials note lists demo button as data-testid='demo-login-btn' but actual DOM testid is 'demo-login-button'. Update /app/memory/test_credentials.md (or the code) so future testing agents don't waste time.",
+    "server.py continues to grow — iter54 middleware, save-health split, alert-toggle logic added inline. Suggest extracting the middleware + save-health service into /app/backend/services/observability.py.",
+    "The auth-failure logging middleware fires on every 401 including expected legitimate 401s (e.g. unauthenticated pings) — auth_failures counter grew to 406/24h. Consider debouncing per IP or excluding /api/auth/health if noise becomes an alerting concern.",
+    "iter43 test test_ai_chat_expenditure_tool_registered imports `from routers.ai import ...` which only works when cwd=/app/backend. Wrap in a try/except pytest.skip or convert to absolute import (`backend.routers.ai`) to remove the flakiness."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (108/108 via bash run_regression.sh; iter54 9/9)", "frontend": "100%"},
+  "test_credentials": "Bearer test_session_bitumen_2026; frontend demo login testid='demo-login-button' (NOT 'demo-login-btn' as review request stated).",
+  "seed_data_creation": "None — iter54 test suite uses ephemeral rows and cleans up.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter54 P1 Login-Failure Tracking is fully green. Save-health split (auth_failures vs save_failures + per-row `kind` field) verified end-to-end (backend + Dashboard tile + expanded 'Recent Failures' badges). The only outstanding concern is the pre-existing API-triggered subprocess flake (iter43 module import OR iter51 cooldown timing) causing /api/auth/health to remain 503 — this is NOT an iter54 regression and was also called out in iteration_48.json. All requested regression flows (Demo Login, Trips, Invoices, Suppliers, Multi-Company) load cleanly. Skip re-running the full 108-test suite unless main agent touches middleware or save_health module again."
+}
