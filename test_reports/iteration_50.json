@@ -1,0 +1,39 @@
+{
+  "summary": "Iter55 TripForm refactor testing. Backend regression 108/108 passes (deploy-readiness status=pass, exit_code=0). Frontend refactor is functionally sound; all 9 extracted sections render and integrate correctly. Discovered and FIXED a P0 regression: TripForm.jsx and TripView.jsx were both fetching `GET /api/trips` (capped at 2000 records) and using `.data.find(t=>t.id===id)` client-side. When the tenant has >2000 trips (this environment has 5000), newly-created trips CANNOT be loaded in Edit or View pages — form stays empty (EMPTY defaults), save re-submits an empty payload. After fix (switch to `GET /api/trips/{id}`), all PRIMARY flows pass end-to-end: Create → Edit → Save → View → Halting-override → Invoice. Iter46 (halting_amount override persist=5000) PASS. Iter49 (expenses.other_remarks no 422) PASS. Freight preview ₹30,000 live PASS. Halting auto-compute (5 days → chargeable=3 → ₹3000) PASS. Customer receipts diesel row PASS (cr-total-diesel = ₹29,187.20 for 280L × ₹104.24). Invoice creation PASS (total=₹33,000 = freight ₹30,000 + halting ₹3,000, halting_total column present). Save-Health tile on dashboard shows AUTH/SAVE split (P1 regression preserved). Deploy Guard PASS · Safe to Deploy.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/trips", "issue": "Hard-capped at 2000 records regardless of `limit` query param. Trips are ordered by `date` DESC, so newer trips (created today) are hidden behind future-dated seed trips. Not a refactor regression, but exposes the bug we fixed on the frontend."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "TripForm.jsx / TripView.jsx", "issue": "FIXED: query was `api.get('/trips').data.find(t=>t.id===id)` — failed silently to `undefined` for trips beyond the 2000 record backend cap. Edit form initialised to EMPTY defaults, View page stuck on 'Loading trip…'. Fixed to use dedicated `GET /trips/{id}` endpoint.", "selector": "trip-form-page, trip-view-page", "priority": "P0"},
+      {"component": "HaltingSection.jsx", "issue": "Duplicate `data-testid=\"trip-total-halting-days\"` on both a <div> (when dates present, read-only) and an <input> (fallback). Only one is visible at a time so it works, but Playwright locators need `.first`. Consider renaming one.", "selector": "trip-total-halting-days", "priority": "LOW"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/test_reports/iteration_50.json"
+  ],
+  "action_items": [
+    "Consider raising the /api/trips list cap or add server-side pagination/filter params (customer_id, date range) so listing pages don't need client-side .find.",
+    "Rename the second occurrence of data-testid='trip-total-halting-days' (or drop it) to remove duplicate testids in the same DOM."
+  ],
+  "critical_code_review_comments": [
+    "TripForm.jsx line 51 (pre-fix) and TripView.jsx line 14 (pre-fix) — both used list-scan for a single-record lookup. This is inefficient (transfers 2000+ trips per edit/view page load) AND functionally broken beyond 2000 records. Now fixed to /trips/{id}.",
+    "TripForm.jsx (421 lines) refactor is clean — retains all state/mutations/effects verbatim; 9 section components correctly composed; save payload transformations unchanged (Iter49 other_remarks/other_desc string handling preserved). No business logic drift detected."
+  ],
+  "updated_files": [
+    "/app/frontend/src/pages/TripForm.jsx",
+    "/app/frontend/src/pages/TripView.jsx"
+  ],
+  "success_rate": {"backend": "100% (108/108 via deploy-readiness)", "frontend": "100% (all primary flows pass after fix)"},
+  "test_credentials": "Bearer test_session_bitumen_2026 (demo login button on /login)",
+  "seed_data_creation": "Created 1 test vehicle (AP99XX...) via API to obtain an OWN-type vehicle (existing seed only had a supplier vehicle in first page of results). Created 1 test trip (trip_a3af6321c6004411, Kondapalli→Vijayawada, tons=20, rate 1500, halting 3000→5000, expenses diesel=5000/toll=2000/batta=1500). 1 invoice generated for that trip (total ₹33,000).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Refactor validated. Fix applied: TripForm/TripView now use GET /trips/{id}. If retest needed, use trip_a3af6321c6004411 (Kondapalli→Vijayawada). Note: `GET /api/trips` returns only 2000 records; use dedicated /trips/{id} for single-record fetch. Supplier vehicle SupplierSection path was NOT tested via UI because only supplier vehicle in seed lookup index[0] was `supplier` — the module gates on vehicle_type='supplier', but Iter47 backend tests already cover that path (test_iter47_phase3_supplier_deep.py in the 108-suite). Multi-company switch was not exercised via UI toggling but 5 companies are visible and backend isolation is covered by test_iter45_supplier_multicompany_isolation.py.",
+  "rca of the issue": "TripForm.jsx (post-refactor) at line 51 kept the pre-refactor pattern: `queryFn: async () => (await api.get('/trips')).data.find(t => t.id === id)`. Backend `GET /api/trips` returns at most 2000 documents (Mongo cursor limit or explicit .to_list(2000)). This tenant has ~5000 trips with future-dated seed data (up to 2079) sorted DESC, so any trip with date <= 2076 is not in the returned window. When editing a freshly-created trip (date=2026), `.find` returns `undefined`, `useEffect(() => { if (trip) setForm({...}) })` never fires, form stays EMPTY, and the save button submits an empty payload (triggering HTML5 required-field validation and preventing edit). TripView had the identical bug causing perma-'Loading trip…'. Mitigation: switch both queries to `api.get('/trips/${id}')` which returns a single document via a dedicated endpoint that works regardless of list cap. Verified end-to-end after fix."
+}

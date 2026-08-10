@@ -11,7 +11,8 @@ export default function TripView() {
 
   const { data: trip } = useQuery({
     queryKey: ["trip-view", id],
-    queryFn: async () => (await api.get("/trips")).data.find((t) => t.id === id),
+    // Iter55 fix: dedicated GET (list is capped at 2000; newer trips were invisible)
+    queryFn: async () => (await api.get(`/trips/${id}`)).data,
   });
   const { data: customers = [] } = useQuery({ queryKey: ["customers"], queryFn: async () => (await api.get("/customers")).data });
   const { data: vehicles = [] } = useQuery({ queryKey: ["vehicles"], queryFn: async () => (await api.get("/vehicles")).data });

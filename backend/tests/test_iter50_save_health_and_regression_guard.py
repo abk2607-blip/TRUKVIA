@@ -13,6 +13,7 @@ import time
 import asyncio
 import pytest
 import httpx
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 load_dotenv("/app/backend/.env")
 
@@ -37,19 +38,26 @@ def test_save_health_endpoint_shape():
 
 def test_save_health_captures_write_failure():
     """Trigger a 422 POST and verify it appears in the save-health feed."""
+    import asyncio, motor.motor_asyncio, os
+    from dotenv import load_dotenv
+    load_dotenv("/app/backend/.env")
     h = {**HDR, "X-Company-Id": _cid()}
-    # Baseline
-    before = httpx.get(f"{BASE}/api/admin/save-health?hours=1", timeout=10).json()["total_failures"]
-    # Trigger a 422
+    since_iso = datetime.now(timezone.utc).isoformat()
     r = httpx.post(f"{BASE}/api/customers", headers=h, json={}, timeout=10)
     assert r.status_code >= 400
-    # Poll (write is fire-and-forget in middleware — give it a moment)
-    for _ in range(10):
-        time.sleep(0.2)
-        after = httpx.get(f"{BASE}/api/admin/save-health?hours=1", timeout=10).json()["total_failures"]
-        if after > before:
-            break
-    assert after > before, f"middleware failed to log — before {before}, after {after}"
+    async def _count():
+        c = motor.motor_asyncio.AsyncIOMotorClient(os.environ["MONGO_URL"])
+        n = await c[os.environ["DB_NAME"]].save_health.count_documents({
+            "path": "/api/customers", "method": "POST",
+            "kind": "save_failure", "ts_iso": {"$gte": since_iso},
+        })
+        c.close()
+        return n
+    for _ in range(15):
+        time.sleep(0.3)
+        if asyncio.run(_count()) >= 1:
+            return
+    assert False, "middleware failed to log POST /api/customers failure to save_health"
 
 
 def test_save_health_ignores_get_requests():

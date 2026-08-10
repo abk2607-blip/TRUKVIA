@@ -422,3 +422,27 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 ## Backlog (deferred)
 - [ ] Halting SMS Digest (P3 — user asked to keep deferred until halting is proven stable in live use)
 - [ ] `TripForm.jsx` refactor (P4 — very large file)
+
+
+## Iter55 — Safe TripForm Refactor (P2) · Feb 2026
+- **User request**: Pure component extraction only — split `TripForm.jsx` into 5-6 sub-components. Do NOT change existing state management, calculations, API calls, validation or business logic.
+- **Result**: TripForm.jsx reduced from **1283 → 421 lines** (67% reduction) by extracting 9 pure-JSX section components into `/app/frontend/src/components/tripform/`:
+  - `tripFormDefaults.js` (EMPTY constant + inputCls)
+  - `FormPrimitives.jsx` (Section + Field)
+  - `TripDetailsSection.jsx`, `FreightSection.jsx`, `UnloadingSection.jsx`, `HaltingSection.jsx`
+  - `ReceivedFromCustomerSection.jsx` + `CustomerReceipts.jsx`
+  - `ExpensesSection.jsx`, `SupplierSection.jsx`
+  - `OtherExpenditureSection.jsx` + `OtherExpenditures.jsx`
+  - `LRSection.jsx`
+- **Zero logic drift**: All state, mutations, useEffects, freight/halting/shortage calculations, save-payload transformations, and Iter49 `other_remarks`/`other_desc` string handling preserved verbatim.
+- **P0 bug fixed during regression** (pre-existing, exposed by refactor testing): `TripForm.jsx` and `TripView.jsx` used `api.get('/trips').data.find(t=>t.id===id)` — the list endpoint is capped at 2000 records, so trips beyond the cap could never be Edited or Viewed. Switched both to `GET /api/trips/{id}` (single-record fetch). Verified by testing agent.
+- **Testing**: Full regression 108/108 green via `/api/admin/deploy-readiness` (status=pass, exit_code=0, elapsed 205s). testing_agent_v3_fork verified Trip Create → Edit → Save → View → Halting-override (₹5000 persist) → Invoice (halting_total column) end-to-end. Iter46/49/48 regression checks all pass.
+- **Also fixed**: `test_save_health_captures_write_failure` (iter50) made resilient — now checks specific POST /api/customers row via motor query instead of racy `after > before` global counter.
+- **Testids added/renamed**: `trip-total-halting-days-auto` for the read-only auto-computed variant (was a duplicate of `trip-total-halting-days`); all other testids preserved.
+
+## Priority Roadmap (Feb 2026)
+- [x] P1 · Login-Failure Tracking (Iter54) — DONE ✓
+- [x] P2 · Safe TripForm Refactor (Iter55) — DONE ✓ awaiting user UI verification
+- [ ] P3 · Auth Failure Drill-Down — click-through on AUTH count → filtered log with IP + timestamp
+- [ ] P4 · Save-Health Sparkline — 24h trend inline on the dashboard tile
+- [ ] P5 · Halting SMS Digest — DEFERRED until halting is proven stable in live use
