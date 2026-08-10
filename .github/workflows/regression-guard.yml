@@ -1,0 +1,79 @@
+name: Regression Guard — block deploys on iter42-50 failure
+
+# Iter51 — This workflow enforces that no deploy proceeds when the critical
+# regression suite is broken. Add it as a Required Status Check on your
+# `main` branch protection rules.
+
+on:
+  push:
+    branches: [main, master, production]
+  pull_request:
+    branches: [main, master, production]
+  workflow_dispatch:
+
+jobs:
+  regression-guard:
+    name: Iter42-50 Regression Suite
+    runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install backend deps
+        run: |
+          cd backend
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Start backend (background)
+        env:
+          MONGO_URL: mongodb://localhost:27017
+          DB_NAME: regression_ci
+          CORS_ORIGINS: "*"
+          EMERGENT_LLM_KEY: dummy
+        run: |
+          cd backend
+          nohup uvicorn server:app --host 0.0.0.0 --port 8001 > /tmp/uvicorn.log 2>&1 &
+          # Wait for the backend to answer
+          for i in {1..30}; do
+            curl -sf http://localhost:8001/api/auth/health && exit 0 || sleep 1
+          done
+          echo "Backend failed to start"; cat /tmp/uvicorn.log; exit 1
+
+      - name: Run regression guard
+        env:
+          BACKEND_URL_INTERNAL: http://localhost:8001
+          MONGO_URL: mongodb://localhost:27017
+          DB_NAME: regression_ci
+        run: |
+          bash backend/scripts/run_regression.sh
+
+      - name: Run pre-deploy smoke (Trip + Halting E2E)
+        env:
+          BACKEND_URL: http://localhost:8001
+        run: |
+          bash backend/scripts/predeploy_check.sh
+
+      - name: Upload deploy-readiness artefact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deploy-readiness
+          path: /tmp/deploy_readiness.json
+          if-no-files-found: ignore
+
+      - name: Fail the job on non-zero
+        if: failure()
+        run: |
+          echo "::error::Regression guard blocked this deploy. See the pytest and predeploy_check output above."
+          exit 1

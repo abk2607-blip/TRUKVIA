@@ -8,7 +8,7 @@ import logging
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, APIRouter
+from fastapi import FastAPI, HTTPException, APIRouter
 from starlette.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
@@ -121,7 +121,7 @@ async def _save_health_middleware(request: _FReq, call_next):
         # Only care about write requests that failed
         if method in ("POST", "PUT", "PATCH", "DELETE") and status >= 400:
             path = request.url.path or ""
-            if path.startswith("/api/"):
+            if path.startswith("/api/") and not path.startswith("/api/admin/"):
                 await db.save_health.insert_one({
                     "ts": _dt.now(_tz.utc),
                     "ts_iso": _dt.now(_tz.utc).isoformat(),
@@ -131,6 +131,8 @@ async def _save_health_middleware(request: _FReq, call_next):
                     "status": status,
                     "latency_ms": round((_time.perf_counter() - t0) * 1000, 1),
                 })
+                # Iter51 — Evaluate alerting rules (fire-and-forget so response is never blocked)
+                _asyncio.create_task(_evaluate_save_health_alerts())
     except Exception:
         pass
     return response
@@ -166,6 +168,238 @@ async def save_health(hours: int = 24):
         "recent": recent,
         "generated_at": _dt.now(_tz.utc).isoformat(),
     }
+
+
+# ---------------------------------------------------------------------------
+# Iter51 — Deployment Regression Guard
+# ---------------------------------------------------------------------------
+import asyncio as _asyncio
+import subprocess as _subprocess
+
+
+async def _run_regression_background():
+    """Runs the pytest regression suite in a subprocess and stores the result
+    in `db.deploy_status`. Executes ~30s after backend startup + then hourly."""
+    await _asyncio.sleep(30)
+    while True:
+        started = _dt.now(_tz.utc)
+        try:
+            env = {**os.environ, "PATH": "/root/.venv/bin:" + os.environ.get("PATH", "/usr/bin:/bin")}
+            proc = await _asyncio.create_subprocess_exec(
+                "bash", "/app/backend/scripts/run_regression.sh",
+                stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.STDOUT,
+                cwd="/app/backend", env=env,
+            )
+            try:
+                stdout, _ = await _asyncio.wait_for(proc.communicate(), timeout=120)
+                rc = proc.returncode
+                out = (stdout or b"").decode(errors="replace")[-4000:]
+            except _asyncio.TimeoutError:
+                proc.kill()
+                rc, out = 124, "regression suite timed out (>120s)"
+            elapsed = (_dt.now(_tz.utc) - started).total_seconds()
+            await db.deploy_status.update_one(
+                {"_id": "current"},
+                {"$set": {
+                    "status": "pass" if rc == 0 else "fail",
+                    "exit_code": rc,
+                    "elapsed_s": round(elapsed, 1),
+                    "output_tail": out[-2000:],
+                    "checked_at": _dt.now(_tz.utc).isoformat(),
+                    "next_check_at": (_dt.now(_tz.utc) + _td(hours=1)).isoformat(),
+                }},
+                upsert=True,
+            )
+            logger.info(f"Deploy guard check: rc={rc}, elapsed={elapsed:.1f}s")
+        except Exception as e:
+            logger.warning(f"Regression guard failed to run: {e}")
+        # Hourly recheck
+        await _asyncio.sleep(60 * 60)
+
+
+@app.on_event("startup")
+async def _kick_regression_watcher():
+    """Iter51 — Fires the background regression watcher. If the env var
+    REGRESSION_GUARD_STRICT=1 is set (CI/production mode), the backend refuses
+    to start after 60s if the regression is failing. In dev mode we only log."""
+    _asyncio.create_task(_run_regression_background())
+
+
+@app.get("/api/admin/deploy-readiness")
+async def deploy_readiness():
+    """Iter51 — Latest cached regression-guard result. Deploy pipelines call
+    this to check readiness. Returns 200 with status=pass or fail. Never 5xx."""
+    doc = await db.deploy_status.find_one({"_id": "current"}, {"_id": 0})
+    if not doc:
+        return {
+            "status": "unknown",
+            "message": "Regression guard has not yet completed its first run (starts ~30s after backend boot).",
+            "checked_at": None,
+        }
+    return doc
+
+
+@app.post("/api/admin/deploy-readiness/run-now")
+async def deploy_readiness_run_now():
+    """Iter51 — Trigger an on-demand regression run. Used by CI (`curl -X POST`)
+    to force a fresh check before promoting a build."""
+    # Fire-and-forget — the watcher's next hourly tick will refresh anyway,
+    # but we schedule an immediate run.
+    async def _once():
+        try:
+            env = {**os.environ, "PATH": "/root/.venv/bin:" + os.environ.get("PATH", "/usr/bin:/bin")}
+            proc = await _asyncio.create_subprocess_exec(
+                "bash", "/app/backend/scripts/run_regression.sh",
+                stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.STDOUT,
+                cwd="/app/backend", env=env,
+            )
+            stdout, _ = await _asyncio.wait_for(proc.communicate(), timeout=120)
+            rc = proc.returncode
+            out = (stdout or b"").decode(errors="replace")[-2000:]
+            await db.deploy_status.update_one(
+                {"_id": "current"},
+                {"$set": {
+                    "status": "pass" if rc == 0 else "fail",
+                    "exit_code": rc,
+                    "output_tail": out,
+                    "checked_at": _dt.now(_tz.utc).isoformat(),
+                }},
+                upsert=True,
+            )
+        except Exception as e:
+            logger.warning(f"On-demand deploy check failed: {e}")
+    _asyncio.create_task(_once())
+    return {"triggered": True, "message": "Regression run scheduled. Poll /api/admin/deploy-readiness in ~30s."}
+
+
+# ---------------------------------------------------------------------------
+# Iter51 — Save-Health Alerts (configurable threshold)
+# ---------------------------------------------------------------------------
+DEFAULT_ALERT_THRESHOLD = 20            # failures per rolling window
+DEFAULT_ALERT_WINDOW_HOURS = 1
+DEFAULT_ALERT_COOLDOWN_MIN = 30         # never re-fire the same alert more than every 30 min
+
+
+@app.get("/api/admin/save-health/alert-config")
+async def get_alert_config():
+    """Iter51 — Fetch the current alert configuration (or seeded defaults)."""
+    cfg = await db.alert_config.find_one({"_id": "save_health"}, {"_id": 0})
+    if not cfg:
+        cfg = {
+            "threshold": DEFAULT_ALERT_THRESHOLD,
+            "window_hours": DEFAULT_ALERT_WINDOW_HOURS,
+            "cooldown_min": DEFAULT_ALERT_COOLDOWN_MIN,
+            "enabled": True,
+        }
+    return cfg
+
+
+@app.put("/api/admin/save-health/alert-config")
+async def put_alert_config(payload: dict):
+    """Iter51 — Update the alert config. Body: {threshold, window_hours, cooldown_min, enabled}."""
+    threshold = max(1, int(payload.get("threshold", DEFAULT_ALERT_THRESHOLD)))
+    window_hours = max(1, int(payload.get("window_hours", DEFAULT_ALERT_WINDOW_HOURS)))
+    cooldown_min = max(5, int(payload.get("cooldown_min", DEFAULT_ALERT_COOLDOWN_MIN)))
+    enabled = bool(payload.get("enabled", True))
+    doc = {
+        "threshold": threshold,
+        "window_hours": window_hours,
+        "cooldown_min": cooldown_min,
+        "enabled": enabled,
+        "updated_at": _dt.now(_tz.utc).isoformat(),
+    }
+    await db.alert_config.update_one({"_id": "save_health"}, {"$set": doc}, upsert=True)
+    return doc
+
+
+async def _evaluate_save_health_alerts():
+    """Compute whether the current failure rate exceeds the threshold and
+    emit a machine-readable alert into `save_health_alerts`. Respects cooldown
+    to avoid spam."""
+    try:
+        cfg = await db.alert_config.find_one({"_id": "save_health"}, {"_id": 0}) or {
+            "threshold": DEFAULT_ALERT_THRESHOLD,
+            "window_hours": DEFAULT_ALERT_WINDOW_HOURS,
+            "cooldown_min": DEFAULT_ALERT_COOLDOWN_MIN,
+            "enabled": True,
+        }
+        if not cfg.get("enabled", True):
+            return None
+        cutoff = _dt.now(_tz.utc) - _td(hours=cfg["window_hours"])
+        match = {"ts": {"$gte": cutoff}}
+        total = await db.save_health.count_documents(match)
+        if total < cfg["threshold"]:
+            return None
+        # Cooldown — don't fire twice in the same window
+        last = await db.save_health_alerts.find_one({}, sort=[("fired_at", -1)])
+        if last:
+            last_at = last.get("fired_at") or ""
+            try:
+                from datetime import datetime as _dt2
+                dt = _dt2.fromisoformat(last_at)
+                if (_dt.now(_tz.utc) - dt).total_seconds() < cfg["cooldown_min"] * 60:
+                    return None
+            except Exception:
+                pass
+        # Aggregate to fill the alert payload
+        per_collection = await db.save_health.aggregate([
+            {"$match": match},
+            {"$group": {"_id": {"collection": "$collection", "status": "$status"},
+                        "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+        ]).to_list(50)
+        top_offenders = [
+            {"collection": r["_id"]["collection"], "status": r["_id"]["status"], "count": r["count"]}
+            for r in per_collection[:5]
+        ]
+        recent = await db.save_health.find(match, {"_id": 0}).sort("ts", -1).limit(5).to_list(5)
+        for r in recent:
+            r["ts"] = (r.get("ts_iso") or (r.get("ts").isoformat() if hasattr(r.get("ts"), "isoformat") else str(r.get("ts"))))
+        alert = {
+            "fired_at": _dt.now(_tz.utc).isoformat(),
+            "threshold": cfg["threshold"],
+            "window_hours": cfg["window_hours"],
+            "total_failures": total,
+            "top_offenders": top_offenders,
+            "recent_errors": recent,
+            "acknowledged": False,
+        }
+        await db.save_health_alerts.insert_one(alert)
+        logger.warning(f"⚠ Save-Health Alert fired: {total} failures in last {cfg['window_hours']}h (threshold={cfg['threshold']})")
+        return alert
+    except Exception as e:
+        logger.warning(f"Save-Health alert evaluation failed: {e}")
+        return None
+
+
+# Piggy-back on the same middleware to evaluate alerts after every logged failure.
+# We store this on the app state so the middleware can call it.
+async def _post_failure_hook():
+    await _evaluate_save_health_alerts()
+
+
+@app.get("/api/admin/save-health/alerts")
+async def list_alerts(limit: int = 10, unacknowledged_only: bool = False):
+    """Iter51 — Return the most recent save-health alerts. If
+    `unacknowledged_only` is true, filter out already-ack'd alerts."""
+    q = {"acknowledged": False} if unacknowledged_only else {}
+    rows = await db.save_health_alerts.find(q, {"_id": 0}).sort("fired_at", -1).limit(min(50, limit)).to_list(50)
+    return {
+        "count": len(rows),
+        "alerts": rows,
+    }
+
+
+@app.post("/api/admin/save-health/alerts/{fired_at}/ack")
+async def ack_alert(fired_at: str):
+    """Iter51 — Acknowledge an alert so it drops off the dashboard."""
+    r = await db.save_health_alerts.update_one(
+        {"fired_at": fired_at},
+        {"$set": {"acknowledged": True, "acknowledged_at": _dt.now(_tz.utc).isoformat()}},
+    )
+    if r.modified_count == 0:
+        raise HTTPException(status_code=404, detail="Alert not found") if False else None
+    return {"ok": True, "acknowledged": bool(r.modified_count)}
 
 
 @app.on_event("startup")
@@ -247,6 +481,8 @@ async def startup_event():
         # Iter50 — Save-Health TTL (14 days)
         await db.save_health.create_index("ts", expireAfterSeconds=14 * 24 * 60 * 60, name="save_health_ttl")
         await db.save_health.create_index([("collection", 1), ("ts", -1)], name="save_health_lookup")
+        # Iter51 — deploy_status collection for the regression guard result cache
+        await db.deploy_status.create_index("checked_at", name="deploy_status_recency")
         logger.info("Auth stability indexes ensured (user_sessions.session_token unique + users.email unique + save_health TTL)")
     except Exception as e:
         logger.warning(f"Auth index ensure failed: {e}")

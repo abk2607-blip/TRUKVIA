@@ -1,8 +1,8 @@
 import React from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, fmtCurrency, fmtDate } from "@/api";
 import { Link } from "react-router-dom";
-import { TrendingUp, TrendingDown, Truck, FileText, Users, Wallet, ArrowUpRight, MessageCircle, AlertTriangle, Share2, Loader2 } from "lucide-react";
+import { TrendingUp, TrendingDown, Truck, FileText, Users, Wallet, ArrowUpRight, MessageCircle, AlertTriangle, Share2, Loader2, CheckCircle2 } from "lucide-react";
 import InsightsCard from "@/components/InsightsCard";
 import RecurringTripsCard from "@/components/RecurringTripsCard";
 import ExpenditureBreakdownCard from "@/components/ExpenditureBreakdownCard";
@@ -81,8 +81,14 @@ export default function Dashboard() {
       {/* Expenditure Breakdown — per-type spend chart */}
       <ExpenditureBreakdownCard />
 
-      {/* Iter50 — Save-Health Ops Tile */}
-      <SaveHealthTile />
+      {/* Iter50/51 — Ops Observability Row: Deploy Guard + Save-Health */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <DeployGuardTile />
+        <SaveHealthTile />
+      </div>
+
+      {/* Iter51 — Active Save-Health Alerts (banners) */}
+      <SaveHealthAlertsBanner />
 
       {/* KPI Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
@@ -290,15 +296,25 @@ function MiniStat({ testid, icon: Icon, label, value, sub }) {
 }
 
 
-// Iter50 — Save-Health Ops tile. Shows the total number of write requests
-// (POST/PUT/PATCH/DELETE) that returned >=400 in the last 24h, grouped by
-// collection with a drill-down toggle. Green when zero, amber >0, rose >5.
+// Iter50/51 — Save-Health Ops tile with threshold-config editor.
 function SaveHealthTile() {
+  const qc = useQueryClient();
   const [open, setOpen] = React.useState(false);
+  const [showCfg, setShowCfg] = React.useState(false);
   const { data, isLoading, refetch } = useQuery({
     queryKey: ["save-health"],
     queryFn: async () => (await api.get("/admin/save-health", { params: { hours: 24 } })).data,
     refetchInterval: 60 * 1000, // 1-min live refresh
+  });
+  const { data: cfg } = useQuery({
+    queryKey: ["save-health-alert-config"],
+    queryFn: async () => (await api.get("/admin/save-health/alert-config")).data,
+  });
+  const [formCfg, setFormCfg] = React.useState(null);
+  React.useEffect(() => { if (cfg) setFormCfg(cfg); }, [cfg]);
+  const saveCfg = useMutation({
+    mutationFn: async (payload) => (await api.put("/admin/save-health/alert-config", payload)).data,
+    onSuccess: () => { qc.invalidateQueries(["save-health-alert-config"]); setShowCfg(false); },
   });
   const total = data?.total_failures ?? 0;
   const tone = total === 0 ? "border-emerald-300 bg-emerald-50 text-emerald-900"
@@ -318,16 +334,72 @@ function SaveHealthTile() {
           </div>
           <div className="text-[10px] mt-1 opacity-70">
             Write requests (POST/PUT/PATCH/DELETE) returning HTTP ≥ 400 across all collections.
+            {cfg && (
+              <span className="ml-1">
+                Alert threshold: <b>{cfg.threshold}</b> / {cfg.window_hours}h
+                {!cfg.enabled && <span className="ml-1 text-zinc-500">(disabled)</span>}
+              </span>
+            )}
           </div>
         </div>
-        <button
-          data-testid="save-health-toggle"
-          onClick={() => { setOpen((o) => !o); if (!open) refetch(); }}
-          className="text-[10px] uppercase tracking-wider font-bold px-3 py-1.5 border border-current rounded-sm hover:bg-white/40"
-        >
-          {open ? "Hide" : "View details"}
-        </button>
+        <div className="flex flex-col gap-1">
+          <button
+            data-testid="save-health-toggle"
+            onClick={() => { setOpen((o) => !o); if (!open) refetch(); }}
+            className="text-[10px] uppercase tracking-wider font-bold px-3 py-1.5 border border-current rounded-sm hover:bg-white/40"
+          >
+            {open ? "Hide" : "View details"}
+          </button>
+          <button
+            data-testid="save-health-configure"
+            onClick={() => setShowCfg((s) => !s)}
+            className="text-[10px] uppercase tracking-wider font-bold px-3 py-1.5 border border-current rounded-sm hover:bg-white/40"
+          >
+            Configure
+          </button>
+        </div>
       </div>
+
+      {showCfg && formCfg && (
+        <div className="mt-4 pt-4 border-t border-current/20 space-y-3" data-testid="save-health-config-panel">
+          <div className="text-[10px] uppercase tracking-wider font-bold opacity-70">Alert Threshold Configuration</div>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-3 text-xs">
+            <label className="flex flex-col">
+              <span className="text-[10px] uppercase tracking-wider opacity-70 mb-1">Threshold (failures)</span>
+              <input data-testid="cfg-threshold" type="number" min="1" value={formCfg.threshold}
+                onChange={(e) => setFormCfg({ ...formCfg, threshold: Number(e.target.value) })}
+                className="border border-current/40 bg-white px-2 py-1 rounded-sm font-mono text-zinc-900" />
+            </label>
+            <label className="flex flex-col">
+              <span className="text-[10px] uppercase tracking-wider opacity-70 mb-1">Window (hours)</span>
+              <input data-testid="cfg-window" type="number" min="1" value={formCfg.window_hours}
+                onChange={(e) => setFormCfg({ ...formCfg, window_hours: Number(e.target.value) })}
+                className="border border-current/40 bg-white px-2 py-1 rounded-sm font-mono text-zinc-900" />
+            </label>
+            <label className="flex flex-col">
+              <span className="text-[10px] uppercase tracking-wider opacity-70 mb-1">Cooldown (min)</span>
+              <input data-testid="cfg-cooldown" type="number" min="5" value={formCfg.cooldown_min}
+                onChange={(e) => setFormCfg({ ...formCfg, cooldown_min: Number(e.target.value) })}
+                className="border border-current/40 bg-white px-2 py-1 rounded-sm font-mono text-zinc-900" />
+            </label>
+            <label className="flex items-center gap-2 text-xs mt-4">
+              <input data-testid="cfg-enabled" type="checkbox" checked={formCfg.enabled}
+                onChange={(e) => setFormCfg({ ...formCfg, enabled: e.target.checked })} />
+              <span>Alerts enabled</span>
+            </label>
+          </div>
+          <div className="flex gap-2">
+            <button data-testid="cfg-save" onClick={() => saveCfg.mutate(formCfg)}
+              className="px-3 py-1.5 bg-zinc-950 text-white text-[10px] uppercase tracking-wider font-bold rounded-sm">
+              Save Configuration
+            </button>
+            <button onClick={() => setShowCfg(false)}
+              className="px-3 py-1.5 border border-current text-[10px] uppercase tracking-wider font-bold rounded-sm">
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
 
       {open && data && (
         <div className="mt-4 pt-4 border-t border-current/20 grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="save-health-details">
@@ -371,3 +443,126 @@ function SaveHealthTile() {
     </div>
   );
 }
+
+
+// Iter51 — Deploy Guard status tile. Reads /api/admin/deploy-readiness and
+// shows the regression suite state so ops knows the deploy pipeline is safe.
+function DeployGuardTile() {
+  const [running, setRunning] = React.useState(false);
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ["deploy-readiness"],
+    queryFn: async () => (await api.get("/admin/deploy-readiness")).data,
+    refetchInterval: 60 * 1000,
+  });
+  const status = data?.status || "unknown";
+  const tone = status === "pass" ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+    : status === "fail" ? "border-rose-300 bg-rose-50 text-rose-900"
+    : "border-zinc-200 bg-zinc-50 text-zinc-700";
+  const badge = status === "pass" ? "🟢 Guard PASS · Safe to Deploy"
+    : status === "fail" ? "🔴 Guard FAIL · Deploy BLOCKED"
+    : "🟡 Not yet checked";
+  const runNow = async () => {
+    setRunning(true);
+    try {
+      await api.post("/admin/deploy-readiness/run-now");
+      setTimeout(() => { refetch(); setRunning(false); }, 20000);
+    } catch { setRunning(false); }
+  };
+  return (
+    <div data-testid="deploy-guard-tile" className={`border p-4 rounded-sm ${tone}`}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-[10px] uppercase tracking-[0.15em] font-bold flex items-center gap-2">
+            <CheckCircle2 size={12} /> Deploy Regression Guard
+          </div>
+          <div className="mt-2 text-xs font-bold" data-testid="deploy-guard-badge">{isLoading ? "…" : badge}</div>
+          {data?.checked_at && (
+            <div className="text-[10px] mt-1 opacity-70">
+              Last check: {new Date(data.checked_at).toLocaleTimeString()}
+              {data.elapsed_s != null && <span> · {data.elapsed_s}s</span>}
+              {data.exit_code != null && <span> · exit={data.exit_code}</span>}
+            </div>
+          )}
+          <div className="text-[10px] mt-1 opacity-70">
+            Runs iter42-50 (63 tests). If FAIL, block deploy: <code className="font-mono">bash scripts/predeploy_check.sh</code>
+          </div>
+        </div>
+        <button
+          data-testid="deploy-guard-run-now"
+          onClick={runNow}
+          disabled={running}
+          className="text-[10px] uppercase tracking-wider font-bold px-3 py-1.5 border border-current rounded-sm hover:bg-white/40 disabled:opacity-60"
+        >
+          {running ? "Running…" : "Re-run"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Iter51 — Save-Health Alerts banner. Shows only when an unacknowledged
+// alert exists (i.e. the failure count crossed the configured threshold).
+function SaveHealthAlertsBanner() {
+  const qc = useQueryClient();
+  const { data } = useQuery({
+    queryKey: ["save-health-alerts"],
+    queryFn: async () => (await api.get("/admin/save-health/alerts", { params: { unacknowledged_only: true, limit: 3 } })).data,
+    refetchInterval: 60 * 1000,
+  });
+  const ack = useMutation({
+    mutationFn: async (fired_at) => (await api.post(`/admin/save-health/alerts/${encodeURIComponent(fired_at)}/ack`)).data,
+    onSuccess: () => qc.invalidateQueries(["save-health-alerts"]),
+  });
+  const alerts = data?.alerts || [];
+  if (!alerts.length) return null;
+  return (
+    <div className="space-y-2" data-testid="save-health-alerts-banner">
+      {alerts.map((a) => (
+        <div key={a.fired_at} className="border-2 border-rose-500 bg-rose-50 text-rose-900 rounded-sm p-4">
+          <div className="flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <div className="text-[10px] uppercase tracking-[0.15em] font-black text-rose-700 flex items-center gap-2">
+                <AlertTriangle size={14} /> Save-Health Alert
+              </div>
+              <div className="mt-1 font-bold text-sm">
+                {a.total_failures} save failures in the last {a.window_hours}h — threshold was {a.threshold}.
+              </div>
+              <div className="text-[10px] mt-1 opacity-80">Fired at {new Date(a.fired_at).toLocaleString()}</div>
+              {a.top_offenders?.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-2 text-[10px]">
+                  {a.top_offenders.map((o, i) => (
+                    <span key={i} className="px-2 py-1 bg-white border border-rose-300 rounded-sm font-mono">
+                      {o.collection} · {o.status} · {o.count}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {a.recent_errors?.length > 0 && (
+                <details className="mt-2 text-[10px] font-mono">
+                  <summary className="cursor-pointer">Recent errors ({a.recent_errors.length})</summary>
+                  <ul className="mt-1 space-y-1">
+                    {a.recent_errors.slice(0, 5).map((r, i) => (
+                      <li key={i} className="flex gap-2">
+                        <span className="opacity-70">{(r.ts || "").slice(11, 19)}</span>
+                        <span>{r.method} {r.path?.slice(0, 60)}</span>
+                        <span className="font-bold">{r.status}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </div>
+            <button
+              data-testid={`ack-alert-${a.fired_at}`}
+              onClick={() => ack.mutate(a.fired_at)}
+              className="text-[10px] uppercase tracking-wider font-bold px-3 py-2 border border-rose-500 rounded-sm hover:bg-rose-100"
+            >
+              Acknowledge
+            </button>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+

@@ -38,12 +38,18 @@ CRITICAL_TESTS=(
   "tests/test_iter48_auth_stability.py"                # login/session hardening
   "tests/test_iter49_trip_edit_halting_regression.py"  # trip edit crash + halting flow
   "tests/test_iter50_save_health_and_regression_guard.py"  # ops observability + guard-of-guards
+  "tests/test_iter51_deploy_guard_and_alerts.py"       # deploy-readiness + configurable alerts
 )
 
-if ! command -v pytest >/dev/null 2>&1; then
+# Explicit venv PATH so this runs cleanly from asyncio subprocess (which
+# doesn't inherit the shell's activated venv)
+export PATH="/root/.venv/bin:$PATH"
+
+if ! python -m pytest --version >/dev/null 2>&1 && ! python3 -m pytest --version >/dev/null 2>&1; then
   echo -e "${RED}✗ pytest not found. Run: pip install -r requirements.txt${NC}"
   exit 2
 fi
+PYBIN=$(command -v python || command -v python3)
 
 FAILED=()
 for t in "${CRITICAL_TESTS[@]}"; do
@@ -52,7 +58,7 @@ for t in "${CRITICAL_TESTS[@]}"; do
     continue
   fi
   echo -e "${YELLOW}▶ Running $t${NC}"
-  if python -m pytest "$t" --tb=short -q 2>&1 | tee /tmp/reg_last.log | tail -5; then
+  if $PYBIN -m pytest "$t" --tb=short -q 2>&1 | tee /tmp/reg_last.log | tail -5; then
     echo -e "${GREEN}  ✓ $t passed${NC}"
   else
     echo -e "${RED}  ✗ $t FAILED${NC}"

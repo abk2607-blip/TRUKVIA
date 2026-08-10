@@ -242,6 +242,28 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
   - See CHANGELOG (invoice auto-recompute on fetch + new Reports → Supplier Statement tab with landscape PDF + WhatsApp share). Backfill: 220 legacy invoices recomputed. 61/61 tests pass.
 - [x] **Iter45 — Supplier Management Module (Phase 1: Foundation)** (Feb 2026)
   - New Supplier + SupplierPayment models (20 + 12 fields incl. audit); router `/suppliers/*` with CRUD, payments (mandatory delete-reason), Debit/Credit/Balance ledger, outstanding, vehicles link, dashboard. Trip-derived amounts (Freight/Adv/Diesel/Cust.Dsl/Shortage/Recovery/Bonus) flow into ledger via aggregation — zero duplicates. Backfill created Supplier records from legacy `vehicle.supplier_name`. Frontend `/suppliers/*` with 7 tabs. Multi-Company isolation hard-verified. 11/11 pytests.
+- [x] **Iter51 — Deploy-Guard Pipeline + Halting Filter + Configurable Save-Health Alerts + Sortable Halting Column** (Feb 2026)
+  - **User priority**: (1) Wire regression guard into deploy pipeline — highest priority given repeated regressions. (2) Halting-Only filter on /trips. (3) Save-Health alerts with configurable threshold, module, error count, time-period, error details. (4) Sortable Halting column.
+  - **P1: Deployment Regression Guard**
+    - New `/app/backend/scripts/predeploy_check.sh` — 3-stage guard: (a) full pytest iter42-51 regression, (b) live `/api/auth/health` + `/api/admin/save-health` probes, (c) synthetic Trip → Halting Edit → Invoice E2E smoke (asserts halting_amount goes 12k → 24k). Writes machine-readable `/tmp/deploy_readiness.json`. Exit codes 0/1/2/3 for pass/regression/auth/smoke failure so CI can block precisely.
+    - Backend `_run_regression_background()` async task in `server.py` — kicks 30s after boot, then hourly. Persists latest result to `deploy_status` collection with status, exit_code, elapsed_s, output_tail, checked_at.
+    - Endpoints `GET /api/admin/deploy-readiness` + `POST /api/admin/deploy-readiness/run-now` — deploy pipelines poll status, CI can force a fresh run before promotion.
+    - New `/app/.github/workflows/regression-guard.yml` — GitHub Actions workflow running `bash run_regression.sh` + `bash predeploy_check.sh` on push/PR/manual dispatch. Ready to plug into branch-protection rules as a Required Status Check.
+    - `run_regression.sh` now uses `python -m pytest` with explicit `/root/.venv/bin` PATH so it works from asyncio subprocess (not just from an interactive shell).
+    - Dashboard `DeployGuardTile` — tone-coded (green=pass, rose=fail, grey=unknown), auto-refreshes every 60s, shows last check timestamp + elapsed_s + exit_code, has a "Re-run" button that fires `/deploy-readiness/run-now`.
+  - **P2: Halting-Only filter**
+    - New `halting-only-toggle` chip in the /trips header (amber). Filters `t.halting_amount > 0`.
+    - New "halting summary" strip below the header showing "Showing X of Y trips · Halting only · Sorted by Halting … · Total halting across all trips: ₹Y" — never lies about total even when the visible list is filtered.
+    - Empty-state message `halting-empty-state` when filter matches nothing.
+  - **P3: Save-Health Alerts (configurable)**
+    - Backend endpoints: `GET/PUT /api/admin/save-health/alert-config` (fields threshold/window_hours/cooldown_min/enabled with minimum enforcement 1/1/5). `GET /api/admin/save-health/alerts?limit=N&unacknowledged_only=true`. `POST /api/admin/save-health/alerts/{fired_at}/ack`.
+    - `_evaluate_save_health_alerts()` — runs on every write-failure via middleware fire-and-forget. Computes total failures in the configured window, honours cooldown, stores an alert doc with `top_offenders[{collection,status,count}]` + `recent_errors[{ts,method,path,status}]` — exactly the fields the user requested (module, error count, time period, relevant error details).
+    - Dashboard `SaveHealthAlertsBanner` — rose banner cards per unacknowledged alert with top offenders + expandable recent errors + per-alert Acknowledge button.
+    - `SaveHealthTile` gains a "Configure" button that opens a threshold-config panel (threshold/window/cooldown/enabled inputs + Save/Cancel).
+  - **P4: Sortable Halting column**
+    - `halting-column-header` is a click-to-cycle sort control (off → desc → asc → off). Header text toggles ⇅ / ▼ / ▲.
+    - Sort persists together with the halting-only filter (both applied simultaneously in `displayedTrips` useMemo).
+  - Tests: **10 new** in `test_iter51_deploy_guard_and_alerts.py` — deploy-readiness contract, run-now trigger, script/workflow existence, config CRUD + minimum enforcement, alert firing + fields + cooldown + acknowledgement. **73/73 iter42-51 regression pass.** E2E Playwright: dashboard shows "🟢 Guard PASS · Safe to Deploy" + config panel opens; /trips halting-only filter narrows 866 → 303 trips; sort cycle ⇅→▼→▲ works.
 - [x] **Iter50 — Ops Observability + Regression Guard + Halting Column** (Feb 2026)
   - **User approval**: All 4 Iter49 next-action items approved for immediate build.
   - **1. Save-Health middleware & tile** — Every write request (POST/PUT/PATCH/DELETE) that returns HTTP ≥ 400 is captured into a `save_health` Mongo collection with (`ts`, `collection`, `method`, `path`, `status`, `latency_ms`). A dedicated `GET /api/admin/save-health?hours=24` endpoint aggregates by collection+status and returns the 10 most-recent raw failures. TTL index (14 days) auto-purges old rows. Frontend Dashboard: new tone-coded `SaveHealthTile` (green when total=0, amber 1-5, rose >5) with 1-minute auto-refresh + expandable drill-down showing per-collection counts and recent failure log with timestamps + latency. Data-testids: `save-health-tile`, `save-health-total`, `save-health-toggle`, `save-health-details`.

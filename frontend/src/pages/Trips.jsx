@@ -27,6 +27,33 @@ export default function Trips() {
   const { data: customers = [] } = useQuery({ queryKey: ["customers"], queryFn: async () => (await api.get("/customers")).data });
   const custMap = Object.fromEntries(customers.map((c) => [c.id, c.name]));
 
+  // Iter51 — Halting filter + halting-column sort
+  const [showHaltingOnly, setShowHaltingOnly] = React.useState(false);
+  const [sortHalting, setSortHalting] = React.useState(null); // null | "desc" | "asc"
+
+  const displayedTrips = React.useMemo(() => {
+    let list = trips;
+    if (showHaltingOnly) list = list.filter((t) => (t.halting_amount || 0) > 0);
+    if (sortHalting) {
+      const dir = sortHalting === "desc" ? -1 : 1;
+      list = [...list].sort((a, b) => ((a.halting_amount || 0) - (b.halting_amount || 0)) * dir);
+    }
+    return list;
+  }, [trips, showHaltingOnly, sortHalting]);
+
+  const cycleHaltingSort = () => {
+    setSortHalting((s) => (s === null ? "desc" : s === "desc" ? "asc" : null));
+  };
+
+  const totalHalting = React.useMemo(
+    () => trips.reduce((s, t) => s + (Number(t.halting_amount) || 0), 0),
+    [trips]
+  );
+  const haltingTripCount = React.useMemo(
+    () => trips.filter((t) => (t.halting_amount || 0) > 0).length,
+    [trips]
+  );
+
   const del = useMutation({
     mutationFn: async ({ id, reason }) => (await api.delete(`/trips/${id}`, { params: { reason } })).data,
     onSuccess: () => { toast.success("Trip deleted"); qc.invalidateQueries(); },
@@ -51,6 +78,18 @@ export default function Trips() {
           </h1>
         </div>
         <div className="flex gap-2">
+          <button
+            data-testid="halting-only-toggle"
+            onClick={() => setShowHaltingOnly((v) => !v)}
+            className={`px-3 py-2 text-xs uppercase tracking-wider font-semibold rounded-sm inline-flex items-center gap-2 border transition-colors
+              ${showHaltingOnly
+                ? "bg-amber-500 text-white border-amber-600 hover:bg-amber-600"
+                : "bg-white text-amber-800 border-amber-400 hover:bg-amber-50"}`}
+            title={showHaltingOnly ? "Show all trips" : "Show only trips with halting charges"}
+          >
+            <Clock size={14} /> {showHaltingOnly ? "Halting Only ·" : "Halting Only ·"}
+            <span className="font-mono font-bold">{haltingTripCount}</span>
+          </button>
           <Link to="/trips/import" data-testid="import-trips-btn" className="px-3 py-2 text-xs uppercase tracking-wider font-semibold border border-zinc-950 text-zinc-950 rounded-sm hover:bg-zinc-950 hover:text-white inline-flex items-center gap-2">
             <Plus size={14} /> Import Excel
           </Link>
@@ -59,6 +98,21 @@ export default function Trips() {
           </Link>
         </div>
       </header>
+
+      {/* Iter51 — Halting summary strip: total across all trips + filtered count */}
+      {trips.length > 0 && (
+        <div className="flex flex-wrap items-center gap-4 -mt-2 text-xs" data-testid="halting-summary">
+          <span className="text-zinc-500">
+            Showing <span className="font-bold text-zinc-900" data-testid="trip-count-shown">{displayedTrips.length}</span> of {trips.length} trips
+            {showHaltingOnly && <span className="ml-2 text-amber-700 font-bold">· Halting only</span>}
+            {sortHalting && <span className="ml-2 text-zinc-700 font-bold">· Sorted by Halting ({sortHalting === "desc" ? "high→low" : "low→high"})</span>}
+          </span>
+          <span className="text-zinc-500">
+            Total halting across all trips:
+            <span className="ml-1 font-mono font-bold text-amber-700" data-testid="total-halting-sum">{fmtCurrency(totalHalting)}</span>
+          </span>
+        </div>
+      )}
 
       <div className="border border-zinc-200 bg-white rounded-sm overflow-hidden">
         <div className="overflow-x-auto">
@@ -72,7 +126,15 @@ export default function Trips() {
                 <th className="text-left px-4 py-3 font-bold">Route · Load</th>
                 <th className="text-right px-4 py-3 font-bold">Tons</th>
                 <th className="text-right px-4 py-3 font-bold">Freight</th>
-                <th className="text-right px-4 py-3 font-bold" title="Total Halting Amount (Chargeable Days × Rate)">Halting</th>
+                <th
+                  data-testid="halting-column-header"
+                  onClick={cycleHaltingSort}
+                  role="button"
+                  className="text-right px-4 py-3 font-bold cursor-pointer select-none hover:bg-white/10"
+                  title="Click to sort by Halting Amount (desc → asc → off)"
+                >
+                  Halting {sortHalting === "desc" ? "▼" : sortHalting === "asc" ? "▲" : "⇅"}
+                </th>
                 <th className="text-right px-4 py-3 font-bold">Expense</th>
                 <th className="text-right px-4 py-3 font-bold">Profit</th>
                 <th className="text-center px-4 py-3 font-bold">Status</th>
@@ -80,7 +142,7 @@ export default function Trips() {
               </tr>
             </thead>
             <tbody className="divide-y divide-zinc-100">
-              {trips.map((t, idx) => {
+              {displayedTrips.map((t, idx) => {
                 const created = t.created_at ? new Date(t.created_at) : null;
                 const timeStr = created ? created.toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false }) : "";
                 return (
@@ -235,6 +297,11 @@ export default function Trips() {
               })}
               {trips.length === 0 && (
                 <tr><td colSpan={12} className="px-4 py-16 text-center text-zinc-400">No trips logged. Click "New Trip" to start.</td></tr>
+              )}
+              {trips.length > 0 && displayedTrips.length === 0 && (
+                <tr><td colSpan={12} className="px-4 py-16 text-center text-zinc-400" data-testid="halting-empty-state">
+                  No trips match the current filter. Turn off "Halting Only" to see all trips.
+                </td></tr>
               )}
             </tbody>
           </table>
