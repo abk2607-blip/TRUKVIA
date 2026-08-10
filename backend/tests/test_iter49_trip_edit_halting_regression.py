@@ -74,9 +74,9 @@ def test_trip_edit_with_null_supplier_id_no_422():
         c.close()
     asyncio.run(_corrupt())
 
-    # Fetch the corrupted trip and send it back untouched (mimicking the frontend)
-    r2 = httpx.get(f"{BASE}/api/trips", headers=h, timeout=15)
-    got = next((t for t in r2.json() if t["id"] == trip["id"]), None)
+    # Fetch the corrupted trip via the single-GET endpoint (avoids /trips 2000-cap)
+    r2 = httpx.get(f"{BASE}/api/trips/{trip['id']}", headers=h, timeout=15)
+    got = r2.json() if r2.status_code == 200 else None
     assert got is not None
     # /trips returns supplier_id — after backfill it should be "" not None
     # (or the model_validator coerces it). Either way the roundtrip must succeed.
@@ -116,8 +116,8 @@ def test_halting_flow_end_to_end():
     assert inv["halting_total"] == 12000.0
 
     # Simulate user editing halting via Trip Edit — bump rate to 3000
-    # Trip is now invoiced. Fetch the ORIGINAL trip doc back and change halting rate.
-    trip_now = next(t for t in httpx.get(f"{BASE}/api/trips", headers=h).json() if t["id"] == trip["id"])
+    # Trip is now invoiced. Fetch via single-GET (avoids 2000-cap).
+    trip_now = httpx.get(f"{BASE}/api/trips/{trip['id']}", headers=h).json()
     trip_now["halting_rate_per_day"] = 3000
     trip_now["total_halting_days"] = 12  # user typed 12 manually
     r_upd = httpx.put(f"{BASE}/api/trips/{trip['id']}", headers=h, json=trip_now, timeout=15)
@@ -127,8 +127,8 @@ def test_halting_flow_end_to_end():
     assert updated["chargeable_halting_days"] == 8
     assert updated["halting_amount"] == 24000.0  # 8 × 3000
 
-    # Trip View: fetch again from the list — value must persist
-    trip_view = next(t for t in httpx.get(f"{BASE}/api/trips", headers=h).json() if t["id"] == trip["id"])
+    # Trip View: fetch again via single-GET — value must persist
+    trip_view = httpx.get(f"{BASE}/api/trips/{trip['id']}", headers=h).json()
     assert trip_view["total_halting_days"] == 12
     assert trip_view["halting_amount"] == 24000.0
 
@@ -225,7 +225,7 @@ def test_expenses_other_remarks_null_coerced():
         await db.trips.update_one({"id": trip["id"]}, {"$set": {"expenses.other_remarks": None, "expenses.other_desc": None}})
         c.close()
     asyncio.run(_corrupt())
-    got = next(t for t in httpx.get(f"{BASE}/api/trips", headers=h).json() if t["id"] == trip["id"])
+    got = httpx.get(f"{BASE}/api/trips/{trip['id']}", headers=h).json()
     # Roundtrip — should succeed even with the corrupted state
     r2 = httpx.put(f"{BASE}/api/trips/{trip['id']}", headers=h, json=got, timeout=15)
     assert r2.status_code == 200, r2.text

@@ -654,3 +654,21 @@ async def quick_repeat_trip(last_trip_id: str, request: Request, user=Depends(ge
     await _log_audit(user, "trip", "create", entity_id=doc["id"], entity_ref=f"quick-repeat from {last_trip_id}")
     return doc
 
+
+
+# ============================================================================
+# Iter53 — Single trip lookup (must be LAST to avoid shadowing literal routes)
+# ============================================================================
+@router.get("/trips/{tid}")
+async def get_trip(tid: str, request: Request, user=Depends(get_current_user)):
+    """Single trip GET by id — avoids the 2000-row cap on /trips for edit/view
+    flows. Multi-company isolation enforced."""
+    cid = await _active_company_id(request, user)
+    doc = await db.trips.find_one(
+        {"id": tid, "user_id": user["user_id"], "company_id": cid},
+        {"_id": 0, "user_id": 0},
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    return doc
+

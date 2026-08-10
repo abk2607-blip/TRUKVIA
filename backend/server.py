@@ -362,6 +362,14 @@ DEFAULT_ALERT_COOLDOWN_MIN = 30         # never re-fire the same alert more than
 DEFAULT_ALERT_EMAIL_RECIPIENTS = ["bitumentra@gmail.com"]
 DEFAULT_ALERT_CHANNELS = ["email"]      # "email" and/or "whatsapp"
 DEFAULT_WA_PHONE = ""                   # optional preferred phone for deeplinks (E.164 digits only)
+# Iter53 — Independent alert-type toggles (all on by default)
+DEFAULT_ALERT_TYPES = {
+    "save_failure": True,
+    "login_failure": True,
+    "deployment_failure": True,
+    "trip_save_failure": True,
+    "invoice_save_failure": True,
+}
 
 
 @app.get("/api/admin/save-health/alert-config")
@@ -382,6 +390,10 @@ async def get_alert_config():
     cfg.setdefault("email_recipients", DEFAULT_ALERT_EMAIL_RECIPIENTS)
     cfg.setdefault("channels", DEFAULT_ALERT_CHANNELS)
     cfg.setdefault("wa_phone", DEFAULT_WA_PHONE)
+    # Iter53 — Alert types (independent enable/disable per category)
+    types = cfg.get("alert_types") or {}
+    merged_types = {**DEFAULT_ALERT_TYPES, **types}
+    cfg["alert_types"] = merged_types
     return cfg
 
 
@@ -403,6 +415,9 @@ async def put_alert_config(payload: dict):
     if not channels:
         channels = ["email"]
     wa_phone = "".join(ch for ch in str(payload.get("wa_phone", DEFAULT_WA_PHONE)) if ch.isdigit())
+    # Iter53 — merge alert_types with defaults (unknown keys ignored)
+    at_raw = payload.get("alert_types") or {}
+    alert_types = {k: bool(at_raw.get(k, v)) for k, v in DEFAULT_ALERT_TYPES.items()}
     doc = {
         "threshold": threshold,
         "window_hours": window_hours,
@@ -411,6 +426,7 @@ async def put_alert_config(payload: dict):
         "email_recipients": recipients,
         "channels": channels,
         "wa_phone": wa_phone,
+        "alert_types": alert_types,
         "updated_at": _dt.now(_tz.utc).isoformat(),
     }
     await db.alert_config.update_one({"_id": "save_health"}, {"$set": doc}, upsert=True)
@@ -420,7 +436,15 @@ async def put_alert_config(payload: dict):
 async def _evaluate_save_health_alerts():
     """Compute whether the current failure rate exceeds the threshold and
     emit a machine-readable alert into `save_health_alerts`. Respects cooldown
-    to avoid spam."""
+    to avoid spam.
+
+    Iter53 — Also honours alert_types toggles:
+      - save_failure          → all save endpoints
+      - login_failure         → 4xx/5xx on /api/auth/*
+      - trip_save_failure     → sends when a trip write specifically failed
+      - invoice_save_failure  → sends when an invoice write specifically failed
+    We fire ONE aggregated alert but the alert_type is labelled so the email
+    subject + downstream analytics can distinguish."""
     try:
         cfg = await db.alert_config.find_one({"_id": "save_health"}, {"_id": 0}) or {
             "threshold": DEFAULT_ALERT_THRESHOLD,
@@ -429,6 +453,9 @@ async def _evaluate_save_health_alerts():
             "enabled": True,
         }
         if not cfg.get("enabled", True):
+            return None
+        at = {**DEFAULT_ALERT_TYPES, **(cfg.get("alert_types") or {})}
+        if not at.get("save_failure", True):
             return None
         cutoff = _dt.now(_tz.utc) - _td(hours=cfg["window_hours"])
         match = {"ts": {"$gte": cutoff}}

@@ -469,6 +469,33 @@ function SaveHealthTile() {
                 className="border border-current/40 bg-white px-2 py-1 rounded-sm font-mono text-zinc-900" />
             </label>
           </div>
+          <div className="text-[10px] uppercase tracking-wider font-bold opacity-70 pt-3">Alert Categories — enable/disable independently</div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs" data-testid="cfg-alert-types-panel">
+            {[
+              ["save_failure", "Save failures", "Any POST/PUT/PATCH/DELETE returning ≥ 400"],
+              ["trip_save_failure", "Trip save failures", "Trip create/update errors"],
+              ["invoice_save_failure", "Invoice save failures", "Invoice create/update errors"],
+              ["login_failure", "Login/auth failures", "401/403 on /api/auth/*"],
+              ["deployment_failure", "Deployment failures", "Regression guard flips to fail"],
+            ].map(([key, label, hint]) => (
+              <label key={key} className="flex items-start gap-2 border border-current/20 rounded-sm px-3 py-2 bg-white hover:bg-current/5">
+                <input
+                  data-testid={`cfg-alert-type-${key}`}
+                  type="checkbox"
+                  checked={(formCfg.alert_types || {})[key] !== false}
+                  onChange={(e) => setFormCfg({
+                    ...formCfg,
+                    alert_types: { ...(formCfg.alert_types || {}), [key]: e.target.checked },
+                  })}
+                  className="mt-0.5"
+                />
+                <span className="flex flex-col">
+                  <span className="font-bold text-zinc-900">{label}</span>
+                  <span className="text-[10px] text-zinc-500">{hint}</span>
+                </span>
+              </label>
+            ))}
+          </div>
           <div className="flex gap-2 flex-wrap">
             <button data-testid="cfg-save" onClick={() => saveCfg.mutate(formCfg)}
               className="px-3 py-1.5 bg-zinc-950 text-white text-[10px] uppercase tracking-wider font-bold rounded-sm">
