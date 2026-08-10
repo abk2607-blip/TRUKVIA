@@ -74,6 +74,100 @@ for r in (
     app.include_router(r.router)
 
 
+# ---------------------------------------------------------------------------
+# Iter50 — Save-Health middleware & endpoint (Ops observability)
+# ---------------------------------------------------------------------------
+# Every write request (POST/PUT/PATCH/DELETE) that returns >= 400 is logged
+# with the resolved collection name so Ops can spot regressions within
+# minutes. Health rows expire naturally via a TTL index (14 days). The
+# /api/admin/save-health endpoint aggregates the last 24h and drives the
+# Dashboard tile.
+from fastapi import Request as _FReq
+from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+import re as _re, time as _time
+
+_COLLECTION_MAP = {
+    "trips": "trips",
+    "invoices": "invoices",
+    "customers": "customers",
+    "vehicles": "vehicles",
+    "drivers": "drivers",
+    "suppliers": "suppliers",
+    "supplier-payments": "supplier_payments",
+    "companies": "companies",
+    "products": "products",
+    "parties": "parties",
+    "expenditure-types": "expenditure_types",
+    "auth": "auth",
+}
+
+
+def _extract_collection(path: str) -> str:
+    """Extract a normalized collection name from an /api/... URL."""
+    m = _re.match(r"^/api/([a-z-]+)", path or "")
+    if not m:
+        return "other"
+    key = m.group(1)
+    return _COLLECTION_MAP.get(key, key)
+
+
+@app.middleware("http")
+async def _save_health_middleware(request: _FReq, call_next):
+    t0 = _time.perf_counter()
+    response = await call_next(request)
+    try:
+        method = request.method
+        status = response.status_code
+        # Only care about write requests that failed
+        if method in ("POST", "PUT", "PATCH", "DELETE") and status >= 400:
+            path = request.url.path or ""
+            if path.startswith("/api/"):
+                await db.save_health.insert_one({
+                    "ts": _dt.now(_tz.utc),
+                    "ts_iso": _dt.now(_tz.utc).isoformat(),
+                    "collection": _extract_collection(path),
+                    "method": method,
+                    "path": path,
+                    "status": status,
+                    "latency_ms": round((_time.perf_counter() - t0) * 1000, 1),
+                })
+    except Exception:
+        pass
+    return response
+
+
+@app.get("/api/admin/save-health")
+async def save_health(hours: int = 24):
+    """Iter50 — Aggregated save-failure counts + latest failures for the Ops tile.
+    Query param `hours` (default 24) controls the window."""
+    cutoff = _dt.now(_tz.utc) - _td(hours=hours)
+    match = {"ts": {"$gte": cutoff}}
+    total = await db.save_health.count_documents(match)
+    # Group by collection + status
+    per_collection = await db.save_health.aggregate([
+        {"$match": match},
+        {"$group": {"_id": {"collection": "$collection", "status": "$status"},
+                    "count": {"$sum": 1}}},
+        {"$sort": {"count": -1}},
+        {"$limit": 50},
+    ]).to_list(50)
+    per_collection = [
+        {"collection": r["_id"]["collection"], "status": r["_id"]["status"], "count": r["count"]}
+        for r in per_collection
+    ]
+    # Latest 10 raw failures for drill-down
+    recent = await db.save_health.find(match, {"_id": 0}).sort("ts", -1).limit(10).to_list(10)
+    for r in recent:
+        r["ts"] = (r.get("ts_iso") or (r.get("ts").isoformat() if hasattr(r.get("ts"), "isoformat") else str(r.get("ts"))))
+    return {
+        "window_hours": hours,
+        "total_failures": total,
+        "per_collection": per_collection,
+        "recent": recent,
+        "generated_at": _dt.now(_tz.utc).isoformat(),
+    }
+
+
 @app.on_event("startup")
 async def startup_event():
     try:
@@ -150,7 +244,10 @@ async def startup_event():
         # (rolling refresh + login-time cleanup keeps rows in check)
         await db.users.create_index("email", unique=True, name="uniq_user_email", sparse=True)
         await db.users.create_index("user_id", unique=True, name="uniq_user_id")
-        logger.info("Auth stability indexes ensured (user_sessions.session_token unique + users.email unique)")
+        # Iter50 — Save-Health TTL (14 days)
+        await db.save_health.create_index("ts", expireAfterSeconds=14 * 24 * 60 * 60, name="save_health_ttl")
+        await db.save_health.create_index([("collection", 1), ("ts", -1)], name="save_health_lookup")
+        logger.info("Auth stability indexes ensured (user_sessions.session_token unique + users.email unique + save_health TTL)")
     except Exception as e:
         logger.warning(f"Auth index ensure failed: {e}")
 

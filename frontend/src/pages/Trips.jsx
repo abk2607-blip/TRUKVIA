@@ -72,6 +72,7 @@ export default function Trips() {
                 <th className="text-left px-4 py-3 font-bold">Route · Load</th>
                 <th className="text-right px-4 py-3 font-bold">Tons</th>
                 <th className="text-right px-4 py-3 font-bold">Freight</th>
+                <th className="text-right px-4 py-3 font-bold" title="Total Halting Amount (Chargeable Days × Rate)">Halting</th>
                 <th className="text-right px-4 py-3 font-bold">Expense</th>
                 <th className="text-right px-4 py-3 font-bold">Profit</th>
                 <th className="text-center px-4 py-3 font-bold">Status</th>
@@ -138,6 +139,14 @@ export default function Trips() {
                   {/* Freight */}
                   <td className="px-4 py-3 text-right whitespace-nowrap font-mono text-sm font-semibold text-zinc-900">
                     {fmtCurrency(t.freight_amount)}
+                  </td>
+                  {/* Halting — dedicated column so drivers see waiting charges at-a-glance */}
+                  <td
+                    className={`px-4 py-3 text-right whitespace-nowrap font-mono text-sm ${t.halting_amount > 0 ? "text-amber-700 font-bold" : "text-zinc-300"}`}
+                    title={t.halting_amount > 0 ? `${t.chargeable_halting_days || 0} chargeable day(s) × ₹${t.halting_rate_per_day || 0}/day` : "No halting charges"}
+                    data-testid={`trip-halting-${t.id}`}
+                  >
+                    {t.halting_amount > 0 ? fmtCurrency(t.halting_amount) : "—"}
                   </td>
                   {/* Expense */}
                   <td className="px-4 py-3 text-right whitespace-nowrap font-mono text-sm text-rose-700">
@@ -225,7 +234,7 @@ export default function Trips() {
                 );
               })}
               {trips.length === 0 && (
-                <tr><td colSpan={11} className="px-4 py-16 text-center text-zinc-400">No trips logged. Click "New Trip" to start.</td></tr>
+                <tr><td colSpan={12} className="px-4 py-16 text-center text-zinc-400">No trips logged. Click "New Trip" to start.</td></tr>
               )}
             </tbody>
           </table>

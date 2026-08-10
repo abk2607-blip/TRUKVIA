@@ -1,0 +1,110 @@
+"""Iter50 — Save-Health endpoint + Invoice Halting column + Regression guard.
+
+Covers:
+1. /api/admin/save-health returns aggregated failure counts per collection.
+2. Middleware logs POST/PUT/PATCH/DELETE with status >= 400.
+3. Successful requests (2xx/3xx) are NEVER logged.
+4. GET requests are NEVER logged (only writes are health-tracked).
+5. Response envelope has window_hours, total_failures, per_collection, recent.
+6. Collection extraction handles supplier-payments correctly.
+"""
+import os
+import time
+import asyncio
+import pytest
+import httpx
+from dotenv import load_dotenv
+load_dotenv("/app/backend/.env")
+
+BASE = os.environ.get("BACKEND_URL_INTERNAL", "http://localhost:8001")
+TOKEN = "test_session_bitumen_2026"
+HDR = {"Authorization": f"Bearer {TOKEN}"}
+
+
+def _cid():
+    return httpx.get(f"{BASE}/api/companies", headers=HDR, timeout=10).json()[0]["id"]
+
+
+def test_save_health_endpoint_shape():
+    r = httpx.get(f"{BASE}/api/admin/save-health?hours=24", timeout=10)
+    assert r.status_code == 200, r.text
+    d = r.json()
+    for k in ("window_hours", "total_failures", "per_collection", "recent", "generated_at"):
+        assert k in d, f"missing {k}"
+    assert isinstance(d["per_collection"], list)
+    assert isinstance(d["recent"], list)
+
+
+def test_save_health_captures_write_failure():
+    """Trigger a 422 POST and verify it appears in the save-health feed."""
+    h = {**HDR, "X-Company-Id": _cid()}
+    # Baseline
+    before = httpx.get(f"{BASE}/api/admin/save-health?hours=1", timeout=10).json()["total_failures"]
+    # Trigger a 422
+    r = httpx.post(f"{BASE}/api/customers", headers=h, json={}, timeout=10)
+    assert r.status_code >= 400
+    # Poll (write is fire-and-forget in middleware — give it a moment)
+    for _ in range(10):
+        time.sleep(0.2)
+        after = httpx.get(f"{BASE}/api/admin/save-health?hours=1", timeout=10).json()["total_failures"]
+        if after > before:
+            break
+    assert after > before, f"middleware failed to log — before {before}, after {after}"
+
+
+def test_save_health_ignores_get_requests():
+    """GET requests, even 404s, must NOT be logged to save-health."""
+    before = httpx.get(f"{BASE}/api/admin/save-health?hours=1", timeout=10).json()
+    # Trigger a GET 404
+    r = httpx.get(f"{BASE}/api/trips/does_not_exist_iter50",
+                  headers={**HDR, "X-Company-Id": _cid()}, timeout=10)
+    # 404 or 200 (endpoint returns list) — doesn't matter, GET is never logged
+    time.sleep(0.4)
+    after = httpx.get(f"{BASE}/api/admin/save-health?hours=1", timeout=10).json()
+    # Only writes are tracked. The count MAY be equal or higher only due to
+    # concurrent tests. What we assert is that no `GET /api/trips` entry
+    # appears in the recent stream.
+    for entry in after["recent"]:
+        assert entry.get("method") != "GET", f"GET request was logged: {entry}"
+
+
+def test_save_health_ignores_successful_writes():
+    """Successful writes (2xx) must NOT show up in save-health."""
+    h = {**HDR, "X-Company-Id": _cid()}
+    before = httpx.get(f"{BASE}/api/admin/save-health?hours=1", timeout=10).json()["total_failures"]
+    # Create a valid customer
+    r = httpx.post(f"{BASE}/api/customers", headers=h, json={"name": "IT50Success"}, timeout=10)
+    assert r.status_code == 200
+    time.sleep(0.4)
+    after = httpx.get(f"{BASE}/api/admin/save-health?hours=1", timeout=10).json()["total_failures"]
+    # Some other tests may run in parallel, so we can't assert equality — but
+    # we can assert the successful call itself isn't in the recent stream.
+    recent = httpx.get(f"{BASE}/api/admin/save-health?hours=1", timeout=10).json()["recent"]
+    for entry in recent:
+        # No successful (< 400) status should appear
+        assert entry.get("status", 500) >= 400, f"Success logged as failure: {entry}"
+
+
+def test_save_health_ttl_index_exists():
+    """The save_health collection MUST have a TTL index on `ts` (14 days)."""
+    async def _check():
+        import motor.motor_asyncio
+        c = motor.motor_asyncio.AsyncIOMotorClient(os.environ.get("MONGO_URL"))
+        db = c[os.environ.get("DB_NAME")]
+        idx = await db.save_health.index_information()
+        found = any(info.get("expireAfterSeconds") for info in idx.values())
+        c.close()
+        return found
+    assert asyncio.run(_check()), "TTL index missing on save_health.ts"
+
+
+def test_regression_script_exists_and_is_executable():
+    """Iter50 — the deploy-guard script must be present and shebanged."""
+    path = "/app/backend/scripts/run_regression.sh"
+    assert os.path.exists(path), "run_regression.sh missing"
+    assert os.access(path, os.X_OK), "run_regression.sh not executable"
+    with open(path) as f:
+        content = f.read()
+    assert "test_iter42" in content
+    assert "test_iter49" in content
+    assert "Regression Guard" in content

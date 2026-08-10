@@ -81,6 +81,9 @@ export default function Dashboard() {
       {/* Expenditure Breakdown — per-type spend chart */}
       <ExpenditureBreakdownCard />
 
+      {/* Iter50 — Save-Health Ops Tile */}
+      <SaveHealthTile />
+
       {/* KPI Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         {stats.map((s) => (
@@ -282,6 +285,89 @@ function MiniStat({ testid, icon: Icon, label, value, sub }) {
       </div>
       <div className="mt-2 font-mono text-lg font-bold">{value}</div>
       {sub && <div className="text-[10px] text-zinc-500 mt-1">{sub}</div>}
+    </div>
+  );
+}
+
+
+// Iter50 — Save-Health Ops tile. Shows the total number of write requests
+// (POST/PUT/PATCH/DELETE) that returned >=400 in the last 24h, grouped by
+// collection with a drill-down toggle. Green when zero, amber >0, rose >5.
+function SaveHealthTile() {
+  const [open, setOpen] = React.useState(false);
+  const { data, isLoading, refetch } = useQuery({
+    queryKey: ["save-health"],
+    queryFn: async () => (await api.get("/admin/save-health", { params: { hours: 24 } })).data,
+    refetchInterval: 60 * 1000, // 1-min live refresh
+  });
+  const total = data?.total_failures ?? 0;
+  const tone = total === 0 ? "border-emerald-300 bg-emerald-50 text-emerald-900"
+    : total <= 5 ? "border-amber-300 bg-amber-50 text-amber-900"
+    : "border-rose-300 bg-rose-50 text-rose-900";
+  const badge = total === 0 ? "🟢 Healthy" : total <= 5 ? "🟡 Watch" : "🔴 Alert";
+  return (
+    <div data-testid="save-health-tile" className={`border p-4 rounded-sm ${tone}`}>
+      <div className="flex items-center justify-between">
+        <div>
+          <div className="text-[10px] uppercase tracking-[0.15em] font-bold flex items-center gap-2">
+            <AlertTriangle size={12} /> Save Health · Last 24h
+          </div>
+          <div className="mt-2 flex items-baseline gap-3">
+            <span data-testid="save-health-total" className="font-mono text-3xl font-black">{isLoading ? "…" : total}</span>
+            <span className="text-xs font-semibold">{badge}</span>
+          </div>
+          <div className="text-[10px] mt-1 opacity-70">
+            Write requests (POST/PUT/PATCH/DELETE) returning HTTP ≥ 400 across all collections.
+          </div>
+        </div>
+        <button
+          data-testid="save-health-toggle"
+          onClick={() => { setOpen((o) => !o); if (!open) refetch(); }}
+          className="text-[10px] uppercase tracking-wider font-bold px-3 py-1.5 border border-current rounded-sm hover:bg-white/40"
+        >
+          {open ? "Hide" : "View details"}
+        </button>
+      </div>
+
+      {open && data && (
+        <div className="mt-4 pt-4 border-t border-current/20 grid grid-cols-1 md:grid-cols-2 gap-4" data-testid="save-health-details">
+          <div>
+            <div className="text-[10px] uppercase tracking-wider font-bold opacity-70 mb-2">By Collection</div>
+            {data.per_collection?.length ? (
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left opacity-70 border-b border-current/20">
+                    <th className="py-1">Collection</th><th>Status</th><th className="text-right">Count</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.per_collection.map((r, i) => (
+                    <tr key={i} className="border-b border-current/10 last:border-0">
+                      <td className="py-1 font-mono">{r.collection}</td>
+                      <td className="font-mono">{r.status}</td>
+                      <td className="text-right font-mono font-bold">{r.count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            ) : <div className="text-xs italic opacity-60">No save failures in the last 24 hours.</div>}
+          </div>
+          <div>
+            <div className="text-[10px] uppercase tracking-wider font-bold opacity-70 mb-2">Recent Failures</div>
+            {data.recent?.length ? (
+              <ul className="space-y-1 text-[10px] font-mono">
+                {data.recent.slice(0, 10).map((r, i) => (
+                  <li key={i} className="flex justify-between gap-2 py-1 border-b border-current/10 last:border-0">
+                    <span className="opacity-70">{(r.ts || "").slice(11, 19)}</span>
+                    <span className="flex-1 truncate">{r.method} {r.path?.slice(0, 40)}</span>
+                    <span className="font-bold">{r.status}</span>
+                  </li>
+                ))}
+              </ul>
+            ) : <div className="text-xs italic opacity-60">Nothing recent.</div>}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
