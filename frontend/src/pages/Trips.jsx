@@ -36,7 +36,19 @@ export default function Trips() {
     if (showHaltingOnly) list = list.filter((t) => (t.halting_amount || 0) > 0);
     if (sortHalting) {
       const dir = sortHalting === "desc" ? -1 : 1;
-      list = [...list].sort((a, b) => ((a.halting_amount || 0) - (b.halting_amount || 0)) * dir);
+      // Iter52 — When sorting halting, consider age as a tiebreaker so older
+      // pending charges bubble up when amounts are equal.
+      const _age = (t) => {
+        const anchor = t.unloading_date || t.date;
+        if (!anchor) return 0;
+        const then = new Date(anchor).getTime();
+        return isNaN(then) ? 0 : (Date.now() - then) / 86400000;
+      };
+      list = [...list].sort((a, b) => {
+        const primary = ((a.halting_amount || 0) - (b.halting_amount || 0)) * dir;
+        if (primary !== 0) return primary;
+        return (_age(b) - _age(a));   // older first for both directions
+      });
     }
     return list;
   }, [trips, showHaltingOnly, sortHalting]);
@@ -208,7 +220,14 @@ export default function Trips() {
                     title={t.halting_amount > 0 ? `${t.chargeable_halting_days || 0} chargeable day(s) × ₹${t.halting_rate_per_day || 0}/day` : "No halting charges"}
                     data-testid={`trip-halting-${t.id}`}
                   >
-                    {t.halting_amount > 0 ? fmtCurrency(t.halting_amount) : "—"}
+                    {t.halting_amount > 0 ? (
+                      <div className="flex flex-col items-end gap-0.5">
+                        <span>{fmtCurrency(t.halting_amount)}</span>
+                        <HaltingAgeChip trip={t} />
+                      </div>
+                    ) : (
+                      "—"
+                    )}
                   </td>
                   {/* Expense */}
                   <td className="px-4 py-3 text-right whitespace-nowrap font-mono text-sm text-rose-700">
@@ -310,3 +329,37 @@ export default function Trips() {
     </div>
   );
 }
+
+
+// Iter52 — Halting Aging chip. Shows how many days a halting charge has been
+// pending so ops teams can chase the oldest ones first.
+// Age is calculated from `unloading_date` (or `date` as fallback) — that's
+// when the vehicle stopped waiting and the halting became "owed".
+// Tone:
+//   grey  (< 7 days)  — fresh
+//   amber (7-30 days) — chase soon
+//   rose  (> 30 days) — overdue, chase now
+function HaltingAgeChip({ trip }) {
+  const ageDays = React.useMemo(() => {
+    const anchor = trip.unloading_date || trip.date;
+    if (!anchor) return null;
+    const then = new Date(anchor);
+    if (isNaN(then.getTime())) return null;
+    const now = new Date();
+    return Math.floor((now - then) / (1000 * 60 * 60 * 24));
+  }, [trip.unloading_date, trip.date]);
+  if (ageDays == null || ageDays < 0) return null;
+  const tone = ageDays >= 30 ? "bg-rose-100 text-rose-700 border-rose-300"
+    : ageDays >= 7 ? "bg-amber-100 text-amber-700 border-amber-300"
+    : "bg-zinc-100 text-zinc-600 border-zinc-300";
+  return (
+    <span
+      data-testid={`trip-halting-age-${trip.id}`}
+      title={`Halting pending for ${ageDays} day(s) since ${trip.unloading_date || trip.date}`}
+      className={`inline-block text-[9px] font-mono font-bold px-1.5 py-0.5 rounded border ${tone}`}
+    >
+      {ageDays}d
+    </span>
+  );
+}
+

@@ -198,6 +198,13 @@ async def _run_regression_background():
                 proc.kill()
                 rc, out = 124, "regression suite timed out (>120s)"
             elapsed = (_dt.now(_tz.utc) - started).total_seconds()
+            # Iter52 — Don't mark interrupted subprocesses (SIGTERM=-15/SIGKILL=-9)
+            # as regression failures. Those happen on backend restarts and should
+            # not trigger strict-mode 503s.
+            if rc in (-15, -9, -2) and elapsed < 60:
+                logger.info(f"Deploy guard subprocess interrupted (rc={rc}, elapsed={elapsed:.1f}s) — status unchanged")
+                await _asyncio.sleep(60 * 60)
+                continue
             await db.deploy_status.update_one(
                 {"_id": "current"},
                 {"$set": {
@@ -210,11 +217,50 @@ async def _run_regression_background():
                 }},
                 upsert=True,
             )
+            # Iter52 — Also append to history collection (bounded to last 100)
+            try:
+                await db.deploy_status_history.insert_one({
+                    "checked_at": _dt.now(_tz.utc).isoformat(),
+                    "status": "pass" if rc == 0 else "fail",
+                    "exit_code": rc,
+                    "elapsed_s": round(elapsed, 1),
+                    "output_tail": out[-500:],
+                    "failed_tests": _extract_failed_tests(out),
+                })
+                # Keep only the latest 100 rows
+                count = await db.deploy_status_history.count_documents({})
+                if count > 100:
+                    to_del = await db.deploy_status_history.find({}, {"_id": 1}).sort("checked_at", 1).limit(count - 100).to_list(count)
+                    if to_del:
+                        await db.deploy_status_history.delete_many({"_id": {"$in": [d["_id"] for d in to_del]}})
+            except Exception as e:
+                logger.warning(f"Deploy history write failed: {e}")
             logger.info(f"Deploy guard check: rc={rc}, elapsed={elapsed:.1f}s")
         except Exception as e:
             logger.warning(f"Regression guard failed to run: {e}")
         # Hourly recheck
         await _asyncio.sleep(60 * 60)
+
+
+def _extract_failed_tests(out: str) -> list:
+    """Iter52 — Parse the pytest output for failed test names so Guard
+    History can show a quick 'what broke' summary without dumping the whole log."""
+    import re as _re2
+    if not out:
+        return []
+    fails = []
+    for m in _re2.finditer(r"FAILED\s+(tests/[\w./:]+)", out):
+        fails.append(m.group(1))
+    for m in _re2.finditer(r"✗ (tests/[\w./]+) FAILED", out):
+        fails.append(m.group(1))
+    # De-dupe preserving order
+    seen = set()
+    ordered = []
+    for f in fails:
+        if f not in seen:
+            seen.add(f)
+            ordered.append(f)
+    return ordered[:20]
 
 
 @app.on_event("startup")
@@ -239,6 +285,25 @@ async def deploy_readiness():
     return doc
 
 
+@app.get("/api/admin/deploy-history")
+async def deploy_history(limit: int = 30):
+    """Iter52 — Guard History: returns the last N regression runs with their
+    pass/fail status and (if failed) the list of broken test files. Drives
+    the sparkline / bar-chart on the Dashboard's Deploy Guard tile."""
+    rows = await db.deploy_status_history.find({}, {"_id": 0}).sort("checked_at", -1).limit(min(100, max(1, limit))).to_list(100)
+    # Return in chronological order for chart plotting
+    rows.reverse()
+    passes = sum(1 for r in rows if r.get("status") == "pass")
+    fails = sum(1 for r in rows if r.get("status") == "fail")
+    return {
+        "count": len(rows),
+        "passes": passes,
+        "fails": fails,
+        "pass_rate": round((passes / len(rows)) * 100, 1) if rows else 0.0,
+        "history": rows,
+    }
+
+
 @app.post("/api/admin/deploy-readiness/run-now")
 async def deploy_readiness_run_now():
     """Iter51 — Trigger an on-demand regression run. Used by CI (`curl -X POST`)
@@ -246,6 +311,7 @@ async def deploy_readiness_run_now():
     # Fire-and-forget — the watcher's next hourly tick will refresh anyway,
     # but we schedule an immediate run.
     async def _once():
+        started_at = _dt.now(_tz.utc)
         try:
             env = {**os.environ, "PATH": "/root/.venv/bin:" + os.environ.get("PATH", "/usr/bin:/bin")}
             proc = await _asyncio.create_subprocess_exec(
@@ -256,16 +322,31 @@ async def deploy_readiness_run_now():
             stdout, _ = await _asyncio.wait_for(proc.communicate(), timeout=120)
             rc = proc.returncode
             out = (stdout or b"").decode(errors="replace")[-2000:]
+            elapsed = (_dt.now(_tz.utc) - started_at).total_seconds()
             await db.deploy_status.update_one(
                 {"_id": "current"},
                 {"$set": {
                     "status": "pass" if rc == 0 else "fail",
                     "exit_code": rc,
+                    "elapsed_s": round(elapsed, 1),
                     "output_tail": out,
                     "checked_at": _dt.now(_tz.utc).isoformat(),
                 }},
                 upsert=True,
             )
+            # Iter52 — Also append to history
+            try:
+                await db.deploy_status_history.insert_one({
+                    "checked_at": _dt.now(_tz.utc).isoformat(),
+                    "status": "pass" if rc == 0 else "fail",
+                    "exit_code": rc,
+                    "elapsed_s": round(elapsed, 1),
+                    "output_tail": out[-500:],
+                    "failed_tests": _extract_failed_tests(out),
+                    "triggered_by": "manual",
+                })
+            except Exception:
+                pass
         except Exception as e:
             logger.warning(f"On-demand deploy check failed: {e}")
     _asyncio.create_task(_once())
@@ -278,11 +359,14 @@ async def deploy_readiness_run_now():
 DEFAULT_ALERT_THRESHOLD = 20            # failures per rolling window
 DEFAULT_ALERT_WINDOW_HOURS = 1
 DEFAULT_ALERT_COOLDOWN_MIN = 30         # never re-fire the same alert more than every 30 min
+DEFAULT_ALERT_EMAIL_RECIPIENTS = ["bitumentra@gmail.com"]
+DEFAULT_ALERT_CHANNELS = ["email"]      # "email" and/or "whatsapp"
+DEFAULT_WA_PHONE = ""                   # optional preferred phone for deeplinks (E.164 digits only)
 
 
 @app.get("/api/admin/save-health/alert-config")
 async def get_alert_config():
-    """Iter51 — Fetch the current alert configuration (or seeded defaults)."""
+    """Iter51/52 — Fetch the current alert configuration (or seeded defaults)."""
     cfg = await db.alert_config.find_one({"_id": "save_health"}, {"_id": 0})
     if not cfg:
         cfg = {
@@ -290,22 +374,43 @@ async def get_alert_config():
             "window_hours": DEFAULT_ALERT_WINDOW_HOURS,
             "cooldown_min": DEFAULT_ALERT_COOLDOWN_MIN,
             "enabled": True,
+            "email_recipients": DEFAULT_ALERT_EMAIL_RECIPIENTS,
+            "channels": DEFAULT_ALERT_CHANNELS,
+            "wa_phone": DEFAULT_WA_PHONE,
         }
+    # Backfill missing fields for existing rows written by earlier iters
+    cfg.setdefault("email_recipients", DEFAULT_ALERT_EMAIL_RECIPIENTS)
+    cfg.setdefault("channels", DEFAULT_ALERT_CHANNELS)
+    cfg.setdefault("wa_phone", DEFAULT_WA_PHONE)
     return cfg
 
 
 @app.put("/api/admin/save-health/alert-config")
 async def put_alert_config(payload: dict):
-    """Iter51 — Update the alert config. Body: {threshold, window_hours, cooldown_min, enabled}."""
+    """Iter51/52 — Update alert config.
+    Body: {threshold, window_hours, cooldown_min, enabled, email_recipients[], channels[], wa_phone}."""
     threshold = max(1, int(payload.get("threshold", DEFAULT_ALERT_THRESHOLD)))
     window_hours = max(1, int(payload.get("window_hours", DEFAULT_ALERT_WINDOW_HOURS)))
     cooldown_min = max(5, int(payload.get("cooldown_min", DEFAULT_ALERT_COOLDOWN_MIN)))
     enabled = bool(payload.get("enabled", True))
+    # Iter52 — recipients + channels
+    recips_raw = payload.get("email_recipients", DEFAULT_ALERT_EMAIL_RECIPIENTS) or []
+    if isinstance(recips_raw, str):
+        recips_raw = [s.strip() for s in recips_raw.split(",")]
+    recipients = [r.strip() for r in recips_raw if isinstance(r, str) and "@" in r]
+    channels = payload.get("channels", DEFAULT_ALERT_CHANNELS) or []
+    channels = [c for c in channels if c in ("email", "whatsapp")]
+    if not channels:
+        channels = ["email"]
+    wa_phone = "".join(ch for ch in str(payload.get("wa_phone", DEFAULT_WA_PHONE)) if ch.isdigit())
     doc = {
         "threshold": threshold,
         "window_hours": window_hours,
         "cooldown_min": cooldown_min,
         "enabled": enabled,
+        "email_recipients": recipients,
+        "channels": channels,
+        "wa_phone": wa_phone,
         "updated_at": _dt.now(_tz.utc).isoformat(),
     }
     await db.alert_config.update_one({"_id": "save_health"}, {"$set": doc}, upsert=True)
@@ -364,8 +469,35 @@ async def _evaluate_save_health_alerts():
             "recent_errors": recent,
             "acknowledged": False,
         }
+        # Iter52 — Attach a WhatsApp deeplink so users can manually forward the
+        # alert to any WA contact without a Twilio integration.
+        try:
+            from services_alerts import build_save_failure_whatsapp_text, build_whatsapp_deeplink
+            wa_text = build_save_failure_whatsapp_text(alert)
+            wa_phone = cfg.get("wa_phone", "") or None
+            alert["whatsapp_url"] = build_whatsapp_deeplink(wa_text, wa_phone)
+        except Exception as e:
+            logger.warning(f"WhatsApp deeplink build failed: {e}")
         await db.save_health_alerts.insert_one(alert)
         logger.warning(f"⚠ Save-Health Alert fired: {total} failures in last {cfg['window_hours']}h (threshold={cfg['threshold']})")
+
+        # Iter52 — Send email alert (fire-and-forget, non-blocking)
+        try:
+            channels = cfg.get("channels", ["email"])
+            recipients = cfg.get("email_recipients", []) or []
+            if "email" in channels and recipients:
+                from services_alerts import build_save_failure_email_html, send_alert_email
+                html = build_save_failure_email_html(alert)
+                subject = f"[Bitumen Transport] Save-Health Alert · {total} failures / {cfg['window_hours']}h"
+                res = await send_alert_email(recipients, subject, html)
+                # Persist the delivery outcome on the alert row
+                await db.save_health_alerts.update_one(
+                    {"fired_at": alert["fired_at"]},
+                    {"$set": {"email_delivery": res}},
+                )
+                logger.info(f"Alert email dispatch: {res}")
+        except Exception as e:
+            logger.warning(f"Alert email dispatch failed: {e}")
         return alert
     except Exception as e:
         logger.warning(f"Save-Health alert evaluation failed: {e}")
@@ -400,6 +532,50 @@ async def ack_alert(fired_at: str):
     if r.modified_count == 0:
         raise HTTPException(status_code=404, detail="Alert not found") if False else None
     return {"ok": True, "acknowledged": bool(r.modified_count)}
+
+
+@app.post("/api/admin/save-health/alerts/test")
+async def test_alert():
+    """Iter52 — Send a demo alert to the configured recipients so users can
+    verify email delivery + WhatsApp deeplink without waiting for a real
+    threshold breach. Also validates the from_name is set correctly."""
+    cfg = await get_alert_config()
+    recipients = cfg.get("email_recipients", []) or []
+    channels = cfg.get("channels", ["email"])
+    demo_alert = {
+        "fired_at": _dt.now(_tz.utc).isoformat(),
+        "threshold": cfg.get("threshold", 20),
+        "window_hours": cfg.get("window_hours", 1),
+        "total_failures": 42,
+        "top_offenders": [
+            {"collection": "trips", "status": 422, "count": 15},
+            {"collection": "invoices", "status": 500, "count": 12},
+            {"collection": "customers", "status": 400, "count": 15},
+        ],
+        "recent_errors": [
+            {"ts": _dt.now(_tz.utc).isoformat(), "method": "PUT", "path": "/api/trips/abc", "status": 422},
+            {"ts": _dt.now(_tz.utc).isoformat(), "method": "POST", "path": "/api/invoices", "status": 500},
+        ],
+    }
+    out = {"recipients": recipients, "channels": channels}
+    if "email" in channels and recipients:
+        try:
+            from services_alerts import build_save_failure_email_html, send_alert_email
+            html = build_save_failure_email_html(demo_alert)
+            subject = "[Bitumen Transport] TEST · Save-Health Alert email delivery check"
+            out["email"] = await send_alert_email(recipients, subject, html)
+        except Exception as e:
+            out["email"] = {"ok": False, "error": str(e)}
+    if "whatsapp" in channels or True:  # always compute WA URL for share
+        try:
+            from services_alerts import build_save_failure_whatsapp_text, build_whatsapp_deeplink
+            out["whatsapp_url"] = build_whatsapp_deeplink(
+                build_save_failure_whatsapp_text(demo_alert),
+                cfg.get("wa_phone", "") or None,
+            )
+        except Exception as e:
+            out["whatsapp_url_error"] = str(e)
+    return out
 
 
 @app.on_event("startup")

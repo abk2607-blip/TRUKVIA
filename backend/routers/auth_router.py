@@ -32,7 +32,15 @@ router = APIRouter(prefix="/api")
 async def auth_health():
     """Iter48 — Public diagnostic endpoint. Confirms the auth pipeline is alive
     WITHOUT requiring a valid session. Deployment health-checks + support
-    engineers use this to verify DB connectivity and index state."""
+    engineers use this to verify DB connectivity and index state.
+
+    Iter52 — STRICT deploy-gate mode. When env var REGRESSION_GUARD_STRICT=1,
+    this endpoint returns HTTP 503 whenever the latest deploy-readiness check
+    reports `status=fail`. Load balancers + Emergent's deploy healthcheck
+    treat 503 as a failed instance and will refuse to promote it to
+    production. This is the belt-and-braces enforcement that makes P1 real —
+    even if a developer bypasses GitHub Actions, they still can't ship a
+    broken build because the pod fails its own healthcheck."""
     try:
         # DB ping
         await db.command("ping")
@@ -42,14 +50,43 @@ async def auth_health():
                         for v in idx.values())
         # Demo token quick-check
         demo = await db.user_sessions.find_one({"session_token": DEMO_TOKEN}, {"_id": 0, "expires_at": 1})
-        return {
+
+        # Iter52 — Deploy-guard gating
+        strict_mode = os.environ.get("REGRESSION_GUARD_STRICT", "0") == "1"
+        guard_status = "unknown"
+        guard_exit_code = None
+        guard_checked_at = None
+        try:
+            gd = await db.deploy_status.find_one({"_id": "current"}, {"_id": 0})
+            if gd:
+                guard_status = gd.get("status", "unknown")
+                guard_exit_code = gd.get("exit_code")
+                guard_checked_at = gd.get("checked_at")
+        except Exception:
+            pass
+
+        payload = {
             "ok": True,
             "db": "up",
             "session_index_unique": has_unique,
             "demo_ready": bool(demo),
             "demo_expiry": (demo or {}).get("expires_at"),
+            "regression_guard": {
+                "status": guard_status,
+                "exit_code": guard_exit_code,
+                "checked_at": guard_checked_at,
+                "strict_mode": strict_mode,
+            },
             "timestamp": now_utc().isoformat(),
         }
+        # In strict mode, a failing regression forces 503 so deploys block
+        if strict_mode and guard_status == "fail":
+            payload["ok"] = False
+            payload["error"] = "Regression Guard FAILED — deploy blocked"
+            raise HTTPException(status_code=503, detail=payload)
+        return payload
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Auth pipeline degraded: {e}")
 

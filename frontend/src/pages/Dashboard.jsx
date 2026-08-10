@@ -388,10 +388,70 @@ function SaveHealthTile() {
               <span>Alerts enabled</span>
             </label>
           </div>
-          <div className="flex gap-2">
+          <div className="text-[10px] uppercase tracking-wider font-bold opacity-70 pt-2">Delivery Channels & Recipients</div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
+            <label className="flex flex-col md:col-span-2">
+              <span className="text-[10px] uppercase tracking-wider opacity-70 mb-1">Email recipients (comma-separated)</span>
+              <input data-testid="cfg-email-recipients" type="text"
+                value={(formCfg.email_recipients || []).join(", ")}
+                onChange={(e) => setFormCfg({ ...formCfg, email_recipients: e.target.value.split(",").map((s) => s.trim()).filter(Boolean) })}
+                className="border border-current/40 bg-white px-2 py-1 rounded-sm text-zinc-900"
+                placeholder="owner@example.com, ops@example.com" />
+            </label>
+            <label className="flex flex-col">
+              <span className="text-[10px] uppercase tracking-wider opacity-70 mb-1">Channels</span>
+              <div className="flex gap-3">
+                <label className="flex items-center gap-1 text-xs">
+                  <input data-testid="cfg-channel-email" type="checkbox"
+                    checked={(formCfg.channels || []).includes("email")}
+                    onChange={(e) => {
+                      const cur = new Set(formCfg.channels || []);
+                      e.target.checked ? cur.add("email") : cur.delete("email");
+                      setFormCfg({ ...formCfg, channels: Array.from(cur) });
+                    }} />
+                  <span>Email</span>
+                </label>
+                <label className="flex items-center gap-1 text-xs">
+                  <input data-testid="cfg-channel-whatsapp" type="checkbox"
+                    checked={(formCfg.channels || []).includes("whatsapp")}
+                    onChange={(e) => {
+                      const cur = new Set(formCfg.channels || []);
+                      e.target.checked ? cur.add("whatsapp") : cur.delete("whatsapp");
+                      setFormCfg({ ...formCfg, channels: Array.from(cur) });
+                    }} />
+                  <span>WhatsApp (manual share)</span>
+                </label>
+              </div>
+            </label>
+            <label className="flex flex-col">
+              <span className="text-[10px] uppercase tracking-wider opacity-70 mb-1">WhatsApp phone (optional, E.164 digits only)</span>
+              <input data-testid="cfg-wa-phone" type="text"
+                value={formCfg.wa_phone || ""}
+                onChange={(e) => setFormCfg({ ...formCfg, wa_phone: e.target.value.replace(/\D/g, "") })}
+                placeholder="919999999999"
+                className="border border-current/40 bg-white px-2 py-1 rounded-sm font-mono text-zinc-900" />
+            </label>
+          </div>
+          <div className="flex gap-2 flex-wrap">
             <button data-testid="cfg-save" onClick={() => saveCfg.mutate(formCfg)}
               className="px-3 py-1.5 bg-zinc-950 text-white text-[10px] uppercase tracking-wider font-bold rounded-sm">
               Save Configuration
+            </button>
+            <button data-testid="cfg-test-alert" onClick={async () => {
+              try {
+                const { data: r } = await api.post("/admin/save-health/alerts/test");
+                const sent = r?.email?.sent?.length || 0;
+                if (sent > 0) {
+                  alert(`Test email sent to ${sent} recipient(s). Also generated WhatsApp deeplink — check the recent alerts panel.`);
+                } else {
+                  alert(`Test complete. Result: ${JSON.stringify(r).slice(0, 200)}`);
+                }
+              } catch (e) {
+                alert(`Test failed: ${e?.response?.data?.detail || e?.message || "unknown error"}`);
+              }
+            }}
+              className="px-3 py-1.5 border border-current text-[10px] uppercase tracking-wider font-bold rounded-sm hover:bg-white/40">
+              Send Test Alert
             </button>
             <button onClick={() => setShowCfg(false)}
               className="px-3 py-1.5 border border-current text-[10px] uppercase tracking-wider font-bold rounded-sm">
@@ -445,13 +505,18 @@ function SaveHealthTile() {
 }
 
 
-// Iter51 — Deploy Guard status tile. Reads /api/admin/deploy-readiness and
-// shows the regression suite state so ops knows the deploy pipeline is safe.
+// Iter51/52 — Deploy Guard status tile with history bar (P4).
 function DeployGuardTile() {
   const [running, setRunning] = React.useState(false);
+  const [showHistory, setShowHistory] = React.useState(false);
   const { data, isLoading, refetch } = useQuery({
     queryKey: ["deploy-readiness"],
     queryFn: async () => (await api.get("/admin/deploy-readiness")).data,
+    refetchInterval: 60 * 1000,
+  });
+  const { data: hist } = useQuery({
+    queryKey: ["deploy-history"],
+    queryFn: async () => (await api.get("/admin/deploy-history", { params: { limit: 30 } })).data,
     refetchInterval: 60 * 1000,
   });
   const status = data?.status || "unknown";
@@ -484,8 +549,48 @@ function DeployGuardTile() {
             </div>
           )}
           <div className="text-[10px] mt-1 opacity-70">
-            Runs iter42-50 (63 tests). If FAIL, block deploy: <code className="font-mono">bash scripts/predeploy_check.sh</code>
+            Runs iter42-51 (73 tests). Enforced by <code className="font-mono">REGRESSION_GUARD_STRICT=1</code>.
           </div>
+          {/* Iter52 — Guard History mini bar */}
+          {hist?.history?.length > 0 && (
+            <div className="mt-3">
+              <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider opacity-70 mb-1">
+                <span>History · last {hist.count} runs</span>
+                <span className="font-bold">{hist.pass_rate}% pass · {hist.passes}✓ / {hist.fails}✗</span>
+              </div>
+              <div className="flex items-end gap-[2px] h-6" data-testid="deploy-guard-history-bars">
+                {hist.history.map((h, i) => (
+                  <div
+                    key={i}
+                    title={`${new Date(h.checked_at).toLocaleString()} — ${h.status.toUpperCase()}${h.failed_tests?.length ? " · " + h.failed_tests.join(", ") : ""}`}
+                    className={`flex-1 rounded-sm min-w-[3px] ${h.status === "pass" ? "bg-emerald-500" : "bg-rose-500"}`}
+                    style={{ height: `${h.status === "pass" ? 100 : 80}%` }}
+                  />
+                ))}
+              </div>
+              <button
+                data-testid="deploy-guard-history-toggle"
+                onClick={() => setShowHistory((s) => !s)}
+                className="mt-2 text-[10px] uppercase tracking-wider font-bold underline opacity-70 hover:opacity-100"
+              >
+                {showHistory ? "Hide" : "See"} failed runs
+              </button>
+              {showHistory && (
+                <div className="mt-2 text-[10px] font-mono space-y-1" data-testid="deploy-guard-history-list">
+                  {hist.history.filter((h) => h.status === "fail").slice(-10).map((h, i) => (
+                    <div key={i} className="flex gap-2 border-b border-current/10 py-1">
+                      <span className="opacity-70">{new Date(h.checked_at).toLocaleString()}</span>
+                      <span className="text-rose-700 font-bold">FAIL</span>
+                      <span className="truncate">{(h.failed_tests || []).join(", ") || "(no test list captured)"}</span>
+                    </div>
+                  ))}
+                  {hist.history.filter((h) => h.status === "fail").length === 0 && (
+                    <div className="italic opacity-60">No failed runs recorded yet 🎉</div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
         </div>
         <button
           data-testid="deploy-guard-run-now"
@@ -552,13 +657,26 @@ function SaveHealthAlertsBanner() {
                 </details>
               )}
             </div>
-            <button
-              data-testid={`ack-alert-${a.fired_at}`}
-              onClick={() => ack.mutate(a.fired_at)}
-              className="text-[10px] uppercase tracking-wider font-bold px-3 py-2 border border-rose-500 rounded-sm hover:bg-rose-100"
-            >
-              Acknowledge
-            </button>
+            <div className="flex flex-col gap-2 items-end shrink-0">
+              {a.whatsapp_url && (
+                <a
+                  data-testid={`share-wa-${a.fired_at}`}
+                  href={a.whatsapp_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-[10px] uppercase tracking-wider font-bold px-3 py-2 border border-emerald-600 bg-emerald-50 text-emerald-900 rounded-sm hover:bg-emerald-100 inline-flex items-center gap-1"
+                >
+                  📱 Share on WhatsApp
+                </a>
+              )}
+              <button
+                data-testid={`ack-alert-${a.fired_at}`}
+                onClick={() => ack.mutate(a.fired_at)}
+                className="text-[10px] uppercase tracking-wider font-bold px-3 py-2 border border-rose-500 rounded-sm hover:bg-rose-100"
+              >
+                Acknowledge
+              </button>
+            </div>
           </div>
         </div>
       ))}
