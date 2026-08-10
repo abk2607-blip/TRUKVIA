@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Request, Response, Depends, Upload
 from fastapi.responses import StreamingResponse
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
-import io, os, uuid, secrets, re, requests, base64
+import io, os, uuid, secrets, re, requests, base64, logging
 
 from db import db
 from models import (
@@ -11,7 +11,7 @@ from models import (
     InvoiceCreateRequest, InvoiceUpdateRequest, PaymentAdd, FileRef, AuditLog,
     now_utc, new_id,
 )
-from auth import get_current_user, _has_perm, require_perm
+from auth import get_current_user, _has_perm, require_perm, DEMO_TOKEN, _ensure_demo_session
 from company import (
     _active_company_id, _get_or_create_default_company,
     _backfill_company_id, _backfill_to_default,
@@ -24,7 +24,57 @@ from services import (
     _state_code, _gstin_checksum,
 )
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api")
+
+@router.get("/auth/health")
+async def auth_health():
+    """Iter48 — Public diagnostic endpoint. Confirms the auth pipeline is alive
+    WITHOUT requiring a valid session. Deployment health-checks + support
+    engineers use this to verify DB connectivity and index state."""
+    try:
+        # DB ping
+        await db.command("ping")
+        # Index check
+        idx = await db.user_sessions.index_information()
+        has_unique = any("session_token" in [k[0] for k in v.get("key", [])] and v.get("unique")
+                        for v in idx.values())
+        # Demo token quick-check
+        demo = await db.user_sessions.find_one({"session_token": DEMO_TOKEN}, {"_id": 0, "expires_at": 1})
+        return {
+            "ok": True,
+            "db": "up",
+            "session_index_unique": has_unique,
+            "demo_ready": bool(demo),
+            "demo_expiry": (demo or {}).get("expires_at"),
+            "timestamp": now_utc().isoformat(),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=f"Auth pipeline degraded: {e}")
+
+
+@router.post("/auth/demo-login")
+async def demo_login():
+    """Iter48 — Server-side Demo Login. Provisions the demo user + session
+    server-side and returns the token. Frontend no longer has to hardcode a
+    static string; if this endpoint changes token strategy, only the backend
+    changes. Prevents "Demo Login not working" caused by stale localStorage."""
+    try:
+        user_id = await _ensure_demo_session()
+        return {
+            "session_token": DEMO_TOKEN,
+            "user_id": user_id,
+            "email": "demo@bitumen-transport.local",
+            "name": "Demo User",
+            "picture": "",
+            "expires_at": (now_utc() + timedelta(days=30)).isoformat(),
+            "notice": "Demo mode — data may be shared across testers.",
+        }
+    except Exception as e:
+        logger.exception("demo-login provisioning failed")
+        raise HTTPException(status_code=500, detail=f"Demo login provisioning failed: {e}")
+
 
 @router.post("/auth/session")
 async def create_session(request: Request, response: Response):
@@ -44,7 +94,7 @@ async def create_session(request: Request, response: Response):
     data = r.json()
 
     email = data["email"]
-    # Find or create user
+    # Find or create user — race-safe upsert
     existing = await db.users.find_one({"email": email}, {"_id": 0})
     if existing:
         user_id = existing["user_id"]
@@ -54,22 +104,41 @@ async def create_session(request: Request, response: Response):
         )
     else:
         user_id = f"user_{uuid.uuid4().hex[:12]}"
-        await db.users.insert_one({
-            "user_id": user_id,
-            "email": email,
-            "name": data.get("name", ""),
-            "picture": data.get("picture", ""),
-            "created_at": now_utc().isoformat(),
-        })
+        try:
+            await db.users.insert_one({
+                "user_id": user_id,
+                "email": email,
+                "name": data.get("name", ""),
+                "picture": data.get("picture", ""),
+                "created_at": now_utc().isoformat(),
+            })
+        except Exception:
+            # Duplicate email (concurrent OAuth) — fall through to existing row
+            row = await db.users.find_one({"email": email}, {"_id": 0})
+            if not row:
+                raise
+            user_id = row["user_id"]
 
     session_token = data["session_token"]
     expires_at = now_utc() + timedelta(days=7)
-    await db.user_sessions.insert_one({
-        "user_id": user_id,
-        "session_token": session_token,
-        "expires_at": expires_at.isoformat(),
-        "created_at": now_utc().isoformat(),
-    })
+    # Iter48 — UPSERT (was insert_one). Prevents duplicate session-token rows.
+    await db.user_sessions.update_one(
+        {"session_token": session_token},
+        {"$set": {
+            "user_id": user_id,
+            "session_token": session_token,
+            "expires_at": expires_at.isoformat(),
+            "created_at": now_utc().isoformat(),
+        }},
+        upsert=True,
+    )
+
+    # Iter48 — Best-effort cleanup of expired rows for this user (never blocks login)
+    try:
+        cutoff = now_utc().isoformat()
+        await db.user_sessions.delete_many({"user_id": user_id, "expires_at": {"$lt": cutoff}})
+    except Exception:
+        pass
 
     response.set_cookie(
         key="session_token",
@@ -100,7 +169,12 @@ async def me(user=Depends(get_current_user)):
 @router.post("/auth/logout")
 async def logout(request: Request, response: Response):
     token = request.cookies.get("session_token")
-    if token:
+    if not token:
+        auth = request.headers.get("Authorization", "")
+        if auth.startswith("Bearer "):
+            token = auth[7:]
+    if token and token != DEMO_TOKEN:
+        # Never delete the shared demo token — testers depend on it staying alive
         await db.user_sessions.delete_one({"session_token": token})
     response.delete_cookie("session_token", path="/")
     return {"ok": True}

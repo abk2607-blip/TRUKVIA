@@ -76,9 +76,22 @@ export default function Login() {
 
           <button
             data-testid="demo-login-button"
-            onClick={() => {
-              localStorage.setItem("session_token", "test_session_bitumen_2026");
-              window.location.href = "/dashboard";
+            onClick={async () => {
+              // Iter48 — server-side provisioning ensures the token+user exist BEFORE
+              // we redirect. Fixes "Demo Login not working" caused by races.
+              try {
+                const { data } = await (await import("@/api")).api.post("/auth/demo-login");
+                localStorage.setItem("session_token", data.session_token);
+                localStorage.setItem("auth_user", JSON.stringify({
+                  user_id: data.user_id, email: data.email, name: data.name, picture: data.picture,
+                }));
+                window.location.href = "/dashboard";
+              } catch (e) {
+                // Fallback: use the hardcoded token so testers are never fully stuck
+                console.error("Demo login endpoint failed, falling back to static token:", e);
+                localStorage.setItem("session_token", "test_session_bitumen_2026");
+                window.location.href = "/dashboard";
+              }
             }}
             className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 bg-amber-500 text-white text-sm font-semibold uppercase tracking-wider rounded-sm border border-amber-500 hover:bg-amber-600 transition-colors"
           >

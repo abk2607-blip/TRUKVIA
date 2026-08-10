@@ -242,6 +242,35 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
   - See CHANGELOG (invoice auto-recompute on fetch + new Reports → Supplier Statement tab with landscape PDF + WhatsApp share). Backfill: 220 legacy invoices recomputed. 61/61 tests pass.
 - [x] **Iter45 — Supplier Management Module (Phase 1: Foundation)** (Feb 2026)
   - New Supplier + SupplierPayment models (20 + 12 fields incl. audit); router `/suppliers/*` with CRUD, payments (mandatory delete-reason), Debit/Credit/Balance ledger, outstanding, vehicles link, dashboard. Trip-derived amounts (Freight/Adv/Diesel/Cust.Dsl/Shortage/Recovery/Bonus) flow into ledger via aggregation — zero duplicates. Backfill created Supplier records from legacy `vehicle.supplier_name`. Frontend `/suppliers/*` with 7 tabs. Multi-Company isolation hard-verified. 11/11 pytests.
+- [x] **Iter48 — Auth Stability Hardening (Critical Fix — resolves recurring login/session bugs)** (Feb 2026)
+  - **User pain point**: "Login working inconsistently, users logged out mid-form, Demo Login not opening — treat as critical stability issue before publishing".
+  - **Root causes identified (5 concurrent bugs)**:
+    1. `user_sessions.session_token` had **no unique index** → duplicate rows on repeat OAuth login → `find_one` returned stale user_id → wrong-user scoping / phantom logouts.
+    2. `create_session` used `insert_one` (not upsert) → every login inserted a new row for the same token.
+    3. No index on `session_token` at all → full collection scan on every API call → intermittent timeouts under load.
+    4. `users.email` had no unique index → concurrent OAuth could create duplicate user rows.
+    5. Frontend `AuthContext.checkAuth` fired `GET /auth/me` on EVERY page mount even when no token was in localStorage → first response was 401 → interceptor cleared the (empty) token → user bounced to Login. The initial 401 in normal traffic was the "silent logout" complaint.
+  - **Server-side fixes** (`server.py` startup):
+    - De-duplicates existing `user_sessions` rows (keeps newest per token) on startup.
+    - Ensures `user_sessions.session_token` UNIQUE index.
+    - Ensures `users.email` UNIQUE (sparse) and `users.user_id` UNIQUE indexes.
+    - Logs the outcome so ops can verify from container logs.
+  - **`routers/auth_router.py` fixes**:
+    - `create_session` now uses `update_one(..., upsert=True)` → never creates duplicates.
+    - Handles `DuplicateKeyError` on user insert (falls back to existing row) so concurrent OAuth is race-safe.
+    - Best-effort delete of expired sessions per-user on each login (keeps table small).
+    - Added **`POST /api/auth/demo-login`** — server-side demo provisioning that returns `{session_token, user_id, email, expires_at}`. Frontend now hits this endpoint FIRST, then redirects. Prevents the "Demo button does nothing" race.
+    - Added **`GET /api/auth/health`** — public diagnostic endpoint (no auth needed) returning `{ok, db, session_index_unique, demo_ready, demo_expiry}`. Deployment health checks + support engineers use this to verify the auth pipeline without a session token.
+    - `POST /api/auth/logout` now **preserves the shared demo token** — any tester logging out never breaks Demo Login for others.
+  - **Frontend fixes**:
+    - `AuthContext.jsx`: `checkAuth` short-circuits when no `session_token` is in localStorage (avoids the pre-login 401). Uses `useRef` in-flight dedup. Adds a 5-minute heartbeat that pings `/auth/me` so stale tokens are caught early (before the user submits a form and loses typed data). Non-401 errors NEVER clear the session.
+    - `Login.jsx`: Demo Login button now calls `/api/auth/demo-login` first (async) to server-provision the session, THEN sets localStorage + redirects. Falls back to the hardcoded token only if the endpoint errors out — testers are never fully stuck.
+  - **Post-deploy safety guarantees**:
+    - Multiple users can log in concurrently — each Google OAuth produces a unique session_token; unique index prevents cross-user leakage.
+    - No user is ever logged out due to a transient network error / 5xx — only an explicit 401 on `/auth/me` clears the session.
+    - Session heartbeat catches expired tokens BEFORE form submit so no typed data is lost.
+    - Auth pipeline observability via `/api/auth/health` (returns 503 if DB is down).
+  - Tests: **10 new** (`test_iter48_auth_stability.py`) — health endpoint public, demo-login provisioning + idempotency, Bearer auth on /me, unauthenticated 401, unique-index DB-level enforcement, duplicate-key detection, logout preserves demo, expired session rejected. **51/51 iter42-48 regression pass.** E2E Playwright verified: fresh Demo Login → dashboard loads → all API calls 200 → navigate to Trip form → token + user cache persist.
 - [x] **Iter47 — Supplier Management Module (Phase 3: Deep Monthly Statement + Vehicle→Supplier strict enforcement)** (Feb 2026)
   - **Deep Monthly Statement** — `/api/reports/supplier-statement` (JSON) and `/api/reports/supplier-statement.pdf` now accept `opening_mode` (`master` | `carry_forward`) and return a new `deep` block: `opening_balance`, `opening_type` (payable/advance), `opening_source`, `movements_debit`, `movements_credit`, `payments_out_total`, `payments_in_total`, `closing_balance`, `closing_type`. `carry_forward` recomputes previous-period closing via `_supplier_ledger_closing()` (trips + payments up to start-1 day) and uses it as opening. Sample: Feb trip nets 12,000 Dr → March carry-forward opening = ₹12,000 Dr.
   - **PDF layout** now leads with a 9-row "Deep Monthly Statement" summary table (Opening / Movements DR / CR / Freight / Bonus / Advance / Diesel / Cust Dsl / Shortage / Recovery / Payments / Closing) with dark header, source-of-opening subtitle, and highlighted closing row. A separate "Payments in Period" table is emitted when supplier_payments fall in the range.
