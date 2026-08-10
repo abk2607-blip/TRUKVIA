@@ -446,3 +446,23 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - [ ] P3 · Auth Failure Drill-Down — click-through on AUTH count → filtered log with IP + timestamp
 - [ ] P4 · Save-Health Sparkline — 24h trend inline on the dashboard tile
 - [ ] P5 · Halting SMS Digest — DEFERRED until halting is proven stable in live use
+
+## Iter56 — Trip Log Search & Filter (server-side) · Feb 2026
+- **User request**: Comprehensive search/filter on /trips with (a) single date + date range + latest-first, (b) searchable Customer / Vehicle / Supplier dropdowns, (c) free-text search (Trip / LR / Vehicle / Customer), (d) filters combine with AND, (e) Clear Filters button, (f) server-side pagination, (g) active-company isolation, (h) row click opens Trip View, (i) filters never mutate trip data.
+- **Backend** (`/app/backend/routers/trips.py`): `GET /api/trips` extended with query params `customer_id, vehicle_id, supplier_id, status, date, date_from, date_to, q, halting_only, limit (≤2000), offset`. Free-text `q` matches lr_number, vehicle_number, from_location, to_location, external_invoice_no, customer_invoice_no, waybill_no, driver_name, supplier_name, and — via denormalised lookup — customer name. Returns array + `X-Total-Count` + `X-Has-More` response headers. Company-scoped by active company. Sort preserved (date desc, created_at desc).
+- **Frontend** (`/app/frontend/src/pages/Trips.jsx`): New filter bar with (i) debounced free-text search (300ms), (ii) date-from / date-to inputs + quick presets (7d / 30d / 90d), (iii) searchable Customer / Vehicle / Supplier dropdowns via `SearchableSelect`, (iv) Clear Filters button showing active-filter count badge, (v) server-side pagination (100/page, Prev/Next). Filter+sort+halting-only work together. Row click → `/trips/{id}/view`; action buttons in row use `event.stopPropagation`.
+- **Tests**: 16 new pytest cases in `test_iter56_trip_search_filter.py` — pagination headers, individual filter axes (customer/vehicle/supplier/date single/date range/q by LR/vehicle/customer name/location/halting-only), combined AND filters, latest-first sort, multi-company isolation, frontend testid presence.
+- **Regression**: Full suite **124/124 green** (was 108, +16). Deploy Guard status=pass, exit=0, elapsed=223s. `/api/auth/health` = 200.
+- **Testing agent verified**: 9032 → 27 trips on q=Kondapalli, 9032 → 42 on date-range, AND-semantics verified (date+q strict subset), multi-company switch clears results correctly, row click navigates to Trip View, Delete button uses stopPropagation.
+
+## Priority Roadmap (Feb 2026 — updated)
+- [x] P1 · Login-Failure Tracking (Iter54) — DONE
+- [x] P2 · Safe TripForm Refactor (Iter55) — DONE
+- [x] P3 · Trip Log Search & Filter (Iter56) — DONE, awaiting user UI verification
+- [ ] P4 · Auth Failure Drill-Down — clickable AUTH count → filtered log with IP + timestamp
+- [ ] P5 · Save-Health Sparkline — 24h trend on the dashboard tile
+- [ ] P6 · Halting SMS Digest — deferred until halting proven stable in live use
+- [ ] Nice-to-have: `data-testid="deploy-guard-status"` on Dashboard tile (testing agent finding)
+- [ ] Nice-to-have: testids on SearchableSelect popover search inputs
+- [ ] Data hygiene: clean up duplicate `BKA Logistics 17` / `TEST_*` companies from demo tenant
+

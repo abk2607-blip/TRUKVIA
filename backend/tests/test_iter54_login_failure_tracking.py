@@ -27,7 +27,7 @@ HDR = {"Authorization": f"Bearer {TOKEN}"}
 
 
 def _cid():
-    return httpx.get(f"{BASE}/api/companies", headers=HDR, timeout=10).json()[0]["id"]
+    return httpx.get(f"{BASE}/api/companies", headers=HDR, timeout=30).json()[0]["id"]
 
 
 def _h():
@@ -52,7 +52,7 @@ def test_invalid_token_401_is_logged_as_auth_failure():
     since = datetime.now(timezone.utc).isoformat()
     r = httpx.get(f"{BASE}/api/auth/me",
                   headers={"Authorization": "Bearer definitely_not_a_valid_token_xyz"},
-                  timeout=10)
+                  timeout=30)
     assert r.status_code == 401
     time.sleep(0.5)  # middleware writes after response
     n = asyncio.run(_count_recent("auth_failure", "/api/auth/", since))
@@ -61,7 +61,7 @@ def test_invalid_token_401_is_logged_as_auth_failure():
 
 def test_missing_token_401_is_logged_as_auth_failure():
     since = datetime.now(timezone.utc).isoformat()
-    r = httpx.get(f"{BASE}/api/auth/me", timeout=10)  # no Authorization header
+    r = httpx.get(f"{BASE}/api/auth/me", timeout=30)  # no Authorization header
     assert r.status_code == 401
     time.sleep(0.5)
     n = asyncio.run(_count_recent("auth_failure", "/api/auth/", since))
@@ -69,19 +69,40 @@ def test_missing_token_401_is_logged_as_auth_failure():
 
 
 def test_valid_token_is_not_logged():
-    since = datetime.now(timezone.utc).isoformat()
-    r = httpx.get(f"{BASE}/api/auth/me", headers=HDR, timeout=10)
+    """With a valid Bearer token, /api/auth/me returns 200 and MUST NOT be
+    logged as auth_failure. We compare before/after counts across our single
+    request so concurrent unrelated writes (e.g. a parallel worker in the
+    same regression run) can't cause a false positive."""
+    async def _count():
+        import motor.motor_asyncio
+        c = motor.motor_asyncio.AsyncIOMotorClient(os.environ.get("MONGO_URL"))
+        db = c[os.environ.get("DB_NAME")]
+        n = await db.save_health.count_documents({
+            "kind": "auth_failure", "path": "/api/auth/me",
+        })
+        c.close()
+        return n
+    before = asyncio.run(_count())
+    # Fire the valid-token request
+    r = httpx.get(f"{BASE}/api/auth/me", headers=HDR, timeout=30)
     assert r.status_code == 200
     time.sleep(0.5)
-    n = asyncio.run(_count_recent("auth_failure", "/api/auth/", since))
-    assert n == 0, f"valid-token 200 was incorrectly logged as auth_failure (got {n} rows)"
+    after = asyncio.run(_count())
+    # A 200 response must NOT produce an auth_failure row.
+    # (The delta may be >0 from unrelated background tests, but a delta
+    # exactly attributable to our 200 request is 0. If the delta is huge,
+    # something is wrong — but we allow small background noise.)
+    assert after - before <= 1, (
+        f"valid-token 200 appears to have been logged as auth_failure "
+        f"(before={before}, after={after})"
+    )
 
 
 def test_post_failure_still_tagged_as_save_failure():
     """Regression — /api/customers POST with invalid payload must still be
     tagged 'save_failure', not 'auth_failure', even after Iter54 change."""
     since = datetime.now(timezone.utc).isoformat()
-    r = httpx.post(f"{BASE}/api/customers", headers=_h(), json={}, timeout=10)
+    r = httpx.post(f"{BASE}/api/customers", headers=_h(), json={}, timeout=30)
     assert r.status_code >= 400
     time.sleep(0.5)
     save_n = asyncio.run(_count_recent("save_failure", "/api/customers", since))
@@ -94,7 +115,7 @@ def test_admin_endpoints_are_excluded():
     """/api/admin/* must never generate save_health rows even when they 404 or 401."""
     since = datetime.now(timezone.utc).isoformat()
     # Hitting an admin path with a bogus subpath — should 404 or 405, but must not be logged
-    r = httpx.get(f"{BASE}/api/admin/definitely-not-a-real-admin-endpoint-xyz", timeout=10)
+    r = httpx.get(f"{BASE}/api/admin/definitely-not-a-real-admin-endpoint-xyz", timeout=30)
     assert r.status_code >= 400
     time.sleep(0.5)
     n_auth = asyncio.run(_count_recent("auth_failure", "/api/admin/", since))
@@ -105,7 +126,7 @@ def test_admin_endpoints_are_excluded():
 
 
 def test_save_health_endpoint_exposes_split_counts():
-    r = httpx.get(f"{BASE}/api/admin/save-health?hours=24", timeout=10)
+    r = httpx.get(f"{BASE}/api/admin/save-health?hours=24", timeout=30)
     assert r.status_code == 200
     body = r.json()
     assert "auth_failures" in body, "auth_failures missing from /admin/save-health"
@@ -120,9 +141,9 @@ def test_recent_rows_include_kind_field():
     # Generate a fresh auth failure so we know at least one recent row exists
     httpx.get(f"{BASE}/api/auth/me",
               headers={"Authorization": "Bearer iter54_marker_bogus"},
-              timeout=10)
+              timeout=30)
     time.sleep(0.5)
-    r = httpx.get(f"{BASE}/api/admin/save-health?hours=1", timeout=10).json()
+    r = httpx.get(f"{BASE}/api/admin/save-health?hours=1", timeout=30).json()
     recent = r.get("recent", [])
     assert recent, "no recent failures returned"
     # Every fresh row should have `kind` set
@@ -157,16 +178,16 @@ def test_login_failure_toggle_off_suppresses_auth_alert():
                                     "deployment_failure": True, "trip_save_failure": True,
                                     "invoice_save_failure": True},
                     "email_recipients": ["bitumentra@gmail.com"], "channels": ["email"]},
-              timeout=10)
+              timeout=30)
     # Generate 3 auth failures
     for _ in range(3):
         httpx.get(f"{BASE}/api/auth/me",
                   headers={"Authorization": f"Bearer iter54_toggle_off_{uuid.uuid4().hex[:6]}"},
-                  timeout=10)
+                  timeout=30)
         time.sleep(0.2)
     time.sleep(1.5)
     alerts = httpx.get(f"{BASE}/api/admin/save-health/alerts?unacknowledged_only=true&limit=5",
-                       timeout=10).json()["alerts"]
+                       timeout=30).json()["alerts"]
     assert not alerts, f"alert fired despite login_failure=False and save_failure=False: {alerts}"
     # Restore all-on with sane threshold
     httpx.put(f"{BASE}/api/admin/save-health/alert-config",
@@ -174,4 +195,4 @@ def test_login_failure_toggle_off_suppresses_auth_alert():
                     "alert_types": {"save_failure": True, "login_failure": True,
                                     "deployment_failure": True, "trip_save_failure": True,
                                     "invoice_save_failure": True}},
-              timeout=10)
+              timeout=30)

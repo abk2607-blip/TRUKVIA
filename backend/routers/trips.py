@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Request, Response, Depends, UploadFile, File
+from fastapi import APIRouter, HTTPException, Request, Response, Depends, UploadFile, File, Query
 from fastapi.responses import StreamingResponse
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
@@ -85,15 +85,95 @@ async def _enforce_supplier_link(payload: Trip, uid: str, cid: str):
 
 
 @router.get("/trips")
-async def list_trips(request: Request, user=Depends(get_current_user), customer_id: Optional[str] = None, status: Optional[str] = None):
+async def list_trips(
+    request: Request,
+    response: Response,
+    user=Depends(get_current_user),
+    customer_id: Optional[str] = None,
+    vehicle_id: Optional[str] = None,
+    supplier_id: Optional[str] = None,
+    status: Optional[str] = None,
+    date: Optional[str] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+    q: Optional[str] = None,
+    halting_only: bool = False,
+    limit: int = Query(2000, ge=1, le=2000),
+    offset: int = Query(0, ge=0),
+):
+    """Iter56 — server-side search/filter + pagination.
+
+    All filters are combined with AND. Company-scoped by the active company.
+    Default behaviour (no query params) is preserved: returns up to 2000 trips
+    sorted by (date desc, created_at desc). Total match count is exposed via
+    the `X-Total-Count` header so the client can render pagination controls
+    without a second round-trip.
+    """
     cid = await _active_company_id(request, user)
     await _backfill_to_default(user["user_id"])
-    q = {"user_id": user["user_id"], "company_id": cid}
+    mongo_q: dict = {"user_id": user["user_id"], "company_id": cid}
     if customer_id:
-        q["customer_id"] = customer_id
+        mongo_q["customer_id"] = customer_id
+    if vehicle_id:
+        mongo_q["vehicle_id"] = vehicle_id
+    if supplier_id:
+        mongo_q["supplier_id"] = supplier_id
     if status:
-        q["status"] = status
-    docs = await db.trips.find(q, {"_id": 0, "user_id": 0}).sort([("date", -1), ("created_at", -1)]).to_list(2000)
+        mongo_q["status"] = status
+    if halting_only:
+        mongo_q["halting_amount"] = {"$gt": 0}
+    # Date filtering — single `date` takes precedence over range.
+    if date:
+        mongo_q["date"] = date
+    else:
+        rng = {}
+        if date_from:
+            rng["$gte"] = date_from
+        if date_to:
+            rng["$lte"] = date_to
+        if rng:
+            mongo_q["date"] = rng
+    # Free-text search across trip identifiers (case-insensitive regex).
+    # Includes: lr_number, trip_number, vehicle_number, customer_name (denormalised),
+    # from_location, to_location, external_invoice_no, waybill_no.
+    if q and q.strip():
+        import re as _re
+        pattern = _re.compile(_re.escape(q.strip()), _re.IGNORECASE)
+        # Look up matching customer IDs so a name search matches too.
+        cust_ids: list = []
+        try:
+            cust_docs = await db.customers.find(
+                {"user_id": user["user_id"], "company_id": cid, "name": pattern},
+                {"id": 1, "_id": 0},
+            ).to_list(50)
+            cust_ids = [c["id"] for c in cust_docs]
+        except Exception:
+            cust_ids = []
+        or_clauses = [
+            {"lr_number": pattern},
+            {"vehicle_number": pattern},
+            {"from_location": pattern},
+            {"to_location": pattern},
+            {"external_invoice_no": pattern},
+            {"customer_invoice_no": pattern},
+            {"waybill_no": pattern},
+            {"driver_name": pattern},
+            {"supplier_name": pattern},
+        ]
+        if cust_ids:
+            or_clauses.append({"customer_id": {"$in": cust_ids}})
+        mongo_q["$or"] = or_clauses
+
+    total = await db.trips.count_documents(mongo_q)
+    cursor = (db.trips
+              .find(mongo_q, {"_id": 0, "user_id": 0})
+              .sort([("date", -1), ("created_at", -1)])
+              .skip(offset).limit(limit))
+    docs = await cursor.to_list(limit)
+    # Expose pagination metadata via headers (backward-compatible with array body).
+    response.headers["X-Total-Count"] = str(total)
+    response.headers["X-Has-More"] = "true" if (offset + len(docs)) < total else "false"
+    response.headers["Access-Control-Expose-Headers"] = "X-Total-Count, X-Has-More"
     return docs
 
 @router.post("/trips")
