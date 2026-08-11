@@ -20,6 +20,15 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter60 — Phase B: Driver Trip History + Policy Pagination/Search + Mandatory Deactivation Reason** (Feb 2026)
+  - **Driver Trip History**: New `GET /api/drivers/{did}/trips` endpoint — company-scoped, filters by date range, paginated (limit=200 default, max 500). Returns denormalised customer names + rolled-up totals (trip_count, shortage_kg, excess_kg, recovery_amount) and per-trip driver_recovery snapshot passed through as-is. Trip = single source of truth: driver history reads directly from `trips` collection filtered by `driver_id`.
+  - **Historical Snapshot Immutability verified**: Trip edits (from_location, tons, etc.) update derived values via `refresh_trip_driver_recovery_from_snapshot()` which never re-resolves the policy — `allowed_limit_kg` and `policy_id` stay locked to what was applicable on the original Trip date. Verified in `test_driver_trip_history_edit_updates_but_snapshot_preserved`.
+  - **Policy Search + Pagination**: `GET /api/driver-shortage-policies` now accepts `q` (case-insensitive over name/remarks/product_category), `active_only`, `limit`, `offset`. Returns `{items, total, limit, offset}`.
+  - **Mandatory Deactivation Reason**: `DELETE /api/driver-shortage-policies/{pid}` now requires JSON body `DeactivatePolicyIn(reason: str, min_length=3)`. Policy is soft-deactivated (never hard-deleted since historical trips reference it). Stores `deactivation_reason`, `deactivated_at`, `deactivated_by`.
+  - **Frontend**: New `DriverTripHistory.jsx` page at `/drivers/:id/history` with 4 stat tiles (trips/shortage/excess/recovery), date-range filter, paginated trips table with all 13 columns. `DriverShortagePolicies.jsx` gets search input, active-only checkbox, total-counter, prev/next pagination. `Drivers.jsx` has a per-driver History link.
+  - **Multi-Company Isolation**: Verified — accessing Driver A from Company B returns 404; Company B's policy list does not include Company A's policies; Company B cannot PUT-update Company A's policies.
+  - Tests: **10 new** in `test_iter60_driver_history_and_policy_pagination.py`. Fixed a pagination-related regression in `test_iter59` (list endpoint now paginated). **Full regression 199/199 pass across iter42-60.** Frontend E2E (Playwright): 100% green — 282 policies filtered by search (37) and active-only (226); deactivation flow (empty reason blocked, valid reason succeeds); Driver History renders driver name + 4 stat tiles + trips table for a live driver with 4 trips, 70000 KG total shortage, ₹10,21,552 recovery.
+
 ## Implemented (Feb 2026)
 - [x] Emergent Google OAuth: /api/auth/session, /api/auth/me, /api/auth/logout
 - [x] Company Settings CRUD

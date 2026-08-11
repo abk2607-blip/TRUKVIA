@@ -16,10 +16,19 @@ export default function DriverShortagePolicies() {
   const [editing, setEditing] = React.useState(null); // null | "new" | policy.id
   const [form, setForm] = React.useState(EMPTY_POLICY);
 
-  const { data: policies = [], isLoading } = useQuery({
-    queryKey: ["driver-shortage-policies"],
-    queryFn: async () => (await api.get("/driver-shortage-policies")).data,
+  const [q, setQ] = React.useState("");
+  const [activeOnly, setActiveOnly] = React.useState(false);
+  const [page, setPage] = React.useState(0);
+  const PAGE_SIZE = 25;
+  const { data: pageData, isLoading } = useQuery({
+    queryKey: ["driver-shortage-policies", q, activeOnly, page],
+    queryFn: async () => (await api.get("/driver-shortage-policies", {
+      params: { q, active_only: activeOnly, limit: PAGE_SIZE, offset: page * PAGE_SIZE },
+    })).data,
+    keepPreviousData: true,
   });
+  const policies = pageData?.items || [];
+  const total = pageData?.total || 0;
 
   const save = useMutation({
     mutationFn: async () => {
@@ -43,7 +52,8 @@ export default function DriverShortagePolicies() {
   });
 
   const deactivate = useMutation({
-    mutationFn: async (pid) => (await api.delete(`/driver-shortage-policies/${pid}`)).data,
+    mutationFn: async ({ pid, reason }) =>
+      (await api.request({ url: `/driver-shortage-policies/${pid}`, method: "DELETE", data: { reason } })).data,
     onSuccess: () => { toast.success("Policy deactivated"); qc.invalidateQueries({ queryKey: ["driver-shortage-policies"] }); },
     onError: (e) => toast.error(e?.response?.data?.detail || "Failed"),
   });
@@ -142,6 +152,30 @@ export default function DriverShortagePolicies() {
       )}
 
       <div className="border border-zinc-200 bg-white rounded-sm overflow-hidden">
+        <div className="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-zinc-100 bg-zinc-50">
+          <input
+            data-testid="policy-search"
+            type="text"
+            value={q}
+            onChange={(e) => { setQ(e.target.value); setPage(0); }}
+            placeholder="Search by name, category or remarks…"
+            className="border border-zinc-300 px-3 py-1.5 rounded-sm text-xs w-64 focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none"
+          />
+          <label className="inline-flex items-center gap-1.5 text-xs font-semibold cursor-pointer">
+            <input
+              data-testid="policy-active-only"
+              type="checkbox"
+              checked={activeOnly}
+              onChange={(e) => { setActiveOnly(e.target.checked); setPage(0); }}
+              className="accent-emerald-500"
+            />
+            Active only
+          </label>
+          <div className="flex-1" />
+          <span className="text-[11px] text-zinc-500" data-testid="policy-total">
+            {isLoading ? "Loading…" : `${total.toLocaleString()} polic${total === 1 ? "y" : "ies"}`}
+          </span>
+        </div>
         <table className="w-full text-sm" data-testid="policies-table">
           <thead className="bg-zinc-950 text-white text-[10px] uppercase tracking-wider">
             <tr>
@@ -184,7 +218,11 @@ export default function DriverShortagePolicies() {
                   {p.active && (
                     <button
                       data-testid={`deactivate-policy-${p.id}`}
-                      onClick={() => { if (window.confirm(`Deactivate policy "${p.name}"? Old Trips referencing this policy will retain their historical snapshot.`)) deactivate.mutate(p.id); }}
+                      onClick={() => {
+                        const reason = window.prompt(`Deactivate policy "${p.name}"? Enter a mandatory reason (this is kept for audit — historical Trips referencing this policy will retain their snapshot).`);
+                        if (!reason || reason.trim().length < 3) { toast.error("Reason required (min 3 chars)"); return; }
+                        deactivate.mutate({ pid: p.id, reason: reason.trim() });
+                      }}
                       className="p-1.5 border border-rose-200 rounded-sm text-rose-700 hover:bg-rose-600 hover:text-white transition"
                       title="Deactivate"
                     ><Ban size={12} /></button>
@@ -194,6 +232,25 @@ export default function DriverShortagePolicies() {
             ))}
           </tbody>
         </table>
+        {total > PAGE_SIZE && (
+          <div className="flex items-center justify-between px-4 py-3 border-t border-zinc-200 bg-zinc-50 text-xs" data-testid="policy-pagination">
+            <span>Page {page + 1} of {Math.ceil(total / PAGE_SIZE)}</span>
+            <div className="flex gap-2">
+              <button
+                data-testid="policy-prev"
+                disabled={page === 0}
+                onClick={() => setPage(p => Math.max(0, p - 1))}
+                className="px-3 py-1 text-[11px] uppercase tracking-wider font-bold border border-zinc-300 rounded-sm disabled:opacity-40 hover:bg-white"
+              >Prev</button>
+              <button
+                data-testid="policy-next"
+                disabled={(page + 1) * PAGE_SIZE >= total}
+                onClick={() => setPage(p => p + 1)}
+                className="px-3 py-1 text-[11px] uppercase tracking-wider font-bold border border-zinc-300 rounded-sm disabled:opacity-40 hover:bg-white"
+              >Next</button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

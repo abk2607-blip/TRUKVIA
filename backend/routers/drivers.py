@@ -75,4 +75,106 @@ async def delete_driver(did: str, request: Request, user=Depends(get_current_use
     await db.drivers.delete_one({"id": did, "user_id": user["user_id"], "company_id": cid})
     return {"ok": True}
 
+
+@router.get("/drivers/{did}/trips")
+async def driver_trip_history(
+    did: str, request: Request, user=Depends(get_current_user),
+    date_from: str = "", date_to: str = "",
+    limit: int = 200, offset: int = 0,
+):
+    """Iter60 · Phase B — Driver Trip History.
+
+    Trip is the SOURCE OF TRUTH: this endpoint reads directly from the
+    `trips` collection filtered by `driver_id`. No duplicate storage.
+
+    Company-scoped. Historical shortage-policy snapshot on each trip
+    (`driver_recovery`) is passed through as-is — Trip edits update the
+    derived system values but never re-resolve the policy.
+    """
+    cid = await _active_company_id(request, user)
+    # Verify driver exists in this company (privacy + 404 clarity)
+    drv = await db.drivers.find_one(
+        {"id": did, "user_id": user["user_id"], "company_id": cid},
+        {"_id": 0},
+    )
+    if not drv:
+        raise HTTPException(status_code=404, detail="Driver not found")
+    q = {"user_id": user["user_id"], "company_id": cid, "driver_id": did}
+    if date_from or date_to:
+        rng = {}
+        if date_from: rng["$gte"] = date_from
+        if date_to: rng["$lte"] = date_to
+        q["date"] = rng
+    total = await db.trips.count_documents(q)
+    trips = await (db.trips.find(q, {"_id": 0, "user_id": 0})
+                   .sort([("date", -1), ("created_at", -1)])
+                   .skip(max(0, offset)).limit(min(max(1, limit), 500))
+                   .to_list(min(max(1, limit), 500)))
+    # Denormalise customer names + roll up totals for the header stat strip
+    cust_ids = list({t.get("customer_id") for t in trips if t.get("customer_id")})
+    cust_map = {}
+    if cust_ids:
+        c_docs = await db.customers.find(
+            {"id": {"$in": cust_ids}, "user_id": user["user_id"]},
+            {"_id": 0, "id": 1, "name": 1},
+        ).to_list(len(cust_ids))
+        cust_map = {c["id"]: c["name"] for c in c_docs}
+    # Build the requested trip-history columns per row
+    rows = []
+    tot_shortage_kg = tot_excess_kg = tot_recovery = 0.0
+    for t in trips:
+        dr = t.get("driver_recovery") or {}
+        recovery = float(dr.get("final_recovery_amount") or 0)
+        tot_recovery += recovery
+        shortage_kg = float(dr.get("actual_shortage_kg") or (t.get("shortage_qty") or 0) * 1000)
+        excess_kg = round(float(t.get("excess_qty") or 0) * 1000, 3)
+        tot_shortage_kg += shortage_kg
+        tot_excess_kg += excess_kg
+        rows.append({
+            "trip_id": t["id"],
+            "date": t.get("date"),
+            "trip_number": t.get("trip_number") or "",
+            "lr_number": t.get("lr_number") or "",
+            "vehicle_number": t.get("vehicle_number") or "",
+            "customer_id": t.get("customer_id"),
+            "customer_name": cust_map.get(t.get("customer_id"), ""),
+            "loading_point": t.get("from_location") or t.get("supplier_loading_point") or "",
+            "unloading_point": t.get("to_location") or t.get("supplier_unloading_point") or "",
+            "product": t.get("load_details") or "",
+            "loaded_qty_mt": t.get("tons") or 0,
+            "unloaded_qty_mt": t.get("unloaded_qty") or 0,
+            "shortage_qty_kg": shortage_kg,
+            "excess_qty_kg": excess_kg,
+            "product_rate_per_mt": t.get("product_rate_per_mt") or 0,
+            "freight_amount": t.get("freight_amount") or 0,
+            "status": t.get("status") or "pending",
+            # Historical policy snapshot — MUST be shown as-is (never re-resolved)
+            "driver_recovery": {
+                "policy_id": dr.get("policy_id"),
+                "policy_version": dr.get("policy_version"),
+                "policy_name": dr.get("policy_name"),
+                "allowed_limit_kg": dr.get("allowed_limit_kg"),
+                "actual_shortage_kg": dr.get("actual_shortage_kg"),
+                "system_recoverable_shortage_kg": dr.get("system_recoverable_shortage_kg"),
+                "system_recovery_amount": dr.get("system_recovery_amount"),
+                "final_recovery_amount": dr.get("final_recovery_amount"),
+                "override": dr.get("override"),
+                "policy_missing": dr.get("policy_missing", False),
+            } if dr else None,
+        })
+    return {
+        "driver": {"id": drv["id"], "name": drv["name"], "phone": drv.get("phone")},
+        "total": total,
+        "limit": min(max(1, limit), 500),
+        "offset": max(0, offset),
+        "totals": {
+            "shortage_kg": round(tot_shortage_kg, 3),
+            "excess_kg": round(tot_excess_kg, 3),
+            "recovery_amount": round(tot_recovery, 2),
+            "trip_count": len(rows),
+        },
+        "trips": rows,
+    }
+
+
 # ==================== Trip Bulk Import ====================

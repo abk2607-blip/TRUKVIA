@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, fmtCurrency } from "@/api";
 import { toast } from "sonner";
 import { Plus, Pencil, Trash2, X, Truck } from "lucide-react";
+import { Link } from "react-router-dom";
 
 const EMPTY = { name: "", phone: "", license_number: "", notes: "" };
 
@@ -78,6 +79,9 @@ export default function Drivers() {
                 <td className="px-4 py-3 text-right font-mono">{Number(d.stats?.tons ?? 0).toFixed(2)}</td>
                 <td className="px-4 py-3 text-right font-mono text-amber-800">{fmtCurrency(d.stats?.batta ?? 0)}</td>
                 <td className="px-4 py-3 text-right">
+                  <Link to={`/drivers/${d.id}/history`} data-testid={`history-driver-${d.id}`} className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-indigo-200 text-indigo-700 rounded-sm mr-2 hover:bg-indigo-50">
+                    <Truck size={12} /> History
+                  </Link>
                   <button data-testid={`edit-driver-${d.id}`} onClick={() => openEdit(d)} className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-zinc-200 rounded-sm mr-2 hover:bg-zinc-950 hover:text-white">
                     <Pencil size={12} /> Edit
                   </button>

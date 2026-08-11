@@ -184,13 +184,36 @@ async def refresh_trip_driver_recovery_from_snapshot(trip: dict) -> Optional[dic
 
 
 @router.get("/driver-shortage-policies")
-async def list_policies(request: Request, user=Depends(get_current_user)):
+async def list_policies(
+    request: Request, user=Depends(get_current_user),
+    q: str = "", active_only: bool = False,
+    limit: int = 50, offset: int = 0,
+):
+    """Iter60 · Search + pagination over the policy master.
+
+    - `q` matches name / remarks / product_category (case-insensitive)
+    - `active_only` excludes soft-deleted policies
+    - Historical policies are still returned when not filtering — they
+      must remain visible because past Trips reference them.
+    """
     cid = await _active_company_id(request, user)
-    docs = await db.driver_shortage_policies.find(
-        {"user_id": user["user_id"], "company_id": cid},
-        {"_id": 0},
-    ).sort([("effective_from", -1), ("version", -1)]).to_list(500)
-    return docs
+    mongo_q: dict = {"user_id": user["user_id"], "company_id": cid}
+    if active_only:
+        mongo_q["active"] = True
+    if q and q.strip():
+        import re as _re
+        pat = _re.compile(_re.escape(q.strip()), _re.IGNORECASE)
+        mongo_q["$or"] = [
+            {"name": pat}, {"remarks": pat}, {"product_category": pat},
+        ]
+    total = await db.driver_shortage_policies.count_documents(mongo_q)
+    limit = min(max(1, int(limit or 50)), 500)
+    offset = max(0, int(offset or 0))
+    docs = await (db.driver_shortage_policies.find(mongo_q, {"_id": 0})
+                  .sort([("effective_from", -1), ("version", -1)])
+                  .skip(offset).limit(limit)
+                  .to_list(limit))
+    return {"items": docs, "total": total, "limit": limit, "offset": offset}
 
 
 @router.post("/driver-shortage-policies")
@@ -254,19 +277,34 @@ async def update_policy(pid: str, payload: ShortagePolicyIn, request: Request,
     return doc
 
 
+class DeactivatePolicyIn(BaseModel):
+    reason: str = Field(..., min_length=3, max_length=500)
+
+
 @router.delete("/driver-shortage-policies/{pid}")
-async def delete_policy(pid: str, request: Request,
+async def delete_policy(pid: str, request: Request, payload: DeactivatePolicyIn,
                         user=Depends(get_current_user)):
-    """Soft-deactivate the policy (never hard delete — historical snapshots
-    on old Trips may still reference this policy by id/version)."""
+    """Iter60 — Soft-deactivate the policy with a MANDATORY reason.
+
+    We never hard-delete: historical snapshots on Trips may still reference
+    this policy_id/version. The reason is stored on the record for audit.
+    """
     cid = await _active_company_id(request, user)
+    now = datetime.now(timezone.utc).isoformat()
     r = await db.driver_shortage_policies.update_one(
         {"id": pid, "user_id": user["user_id"], "company_id": cid},
-        {"$set": {"active": False, "updated_at": datetime.now(timezone.utc).isoformat()}},
+        {"$set": {
+            "active": False,
+            "updated_at": now,
+            "updated_by": user["user_id"],
+            "deactivation_reason": payload.reason.strip(),
+            "deactivated_at": now,
+            "deactivated_by": user["user_id"],
+        }},
     )
     if r.modified_count == 0:
         raise HTTPException(status_code=404, detail="Policy not found")
-    return {"ok": True, "deactivated": True}
+    return {"ok": True, "deactivated": True, "reason": payload.reason.strip()}
 
 
 @router.get("/driver-shortage-policies/resolve")

@@ -96,8 +96,10 @@ def test_policy_crud(env):
     }, timeout=60).json()
     assert r["shortage_limit_kg"] == 120
     assert r["version"] == 2
-    # Soft delete
-    d = httpx.delete(f"{BASE}/api/driver-shortage-policies/{p['id']}", headers=_h(env["cid"]), timeout=60).json()
+    # Soft delete (Iter60 — reason mandatory)
+    d = httpx.request("DELETE", f"{BASE}/api/driver-shortage-policies/{p['id']}",
+                      headers=_h(env["cid"]), json={"reason": "test cleanup iter59"},
+                      timeout=60).json()
     assert d["ok"] is True and d.get("deactivated") is True
 
 
@@ -189,7 +191,9 @@ def test_policy_change_does_not_recalc_old_trips(env):
                    "2026-06-20", shortage_mt=0.150, product_rate=104.24)
     original = dict(t["driver_recovery"])
     # Now bump the OLD policy limit dramatically
-    old_policies = httpx.get(f"{BASE}/api/driver-shortage-policies", headers=_h(env["cid"]), timeout=60).json()
+    old_resp = httpx.get(f"{BASE}/api/driver-shortage-policies", headers=_h(env["cid"]),
+                         params={"q": f"HistOld_{UNIQUE}", "limit": 100}, timeout=60).json()
+    old_policies = old_resp.get("items", old_resp) if isinstance(old_resp, dict) else old_resp
     hist_old = next(p for p in old_policies if p["name"] == f"HistOld_{UNIQUE}")
     httpx.put(f"{BASE}/api/driver-shortage-policies/{hist_old['id']}", headers=_h(env["cid"]), json={
         "name": hist_old["name"], "shortage_limit_kg": 999, "unit": "KG",
@@ -248,7 +252,8 @@ def test_multi_company_isolation():
     cid_a, cid_b = comps[0]["id"], comps[1]["id"]
     p_a = _make_policy(cid_a, f"IsolA_{UNIQUE}", 100, "2026-01-01")
     # Policy from A must NOT appear in B's list
-    b_list = httpx.get(f"{BASE}/api/driver-shortage-policies", headers=_h(cid_b), timeout=60).json()
+    b_resp = httpx.get(f"{BASE}/api/driver-shortage-policies", headers=_h(cid_b), timeout=60).json()
+    b_list = b_resp.get("items") if isinstance(b_resp, dict) else b_resp
     assert not any(x["id"] == p_a["id"] for x in b_list), "policy leaked across companies"
     # Resolve in B must NOT return A's policy
     b_resolve = httpx.get(f"{BASE}/api/driver-shortage-policies/resolve",
