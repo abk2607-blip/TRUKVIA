@@ -541,3 +541,26 @@ Three features shipped in one iteration. Full regression **149/149 green** (`/ap
 - [x] P5 · Bulk Trip Actions + Auth IP Burst + Sparkline Deep-Dive (Iter58) — DONE
 - [ ] Halting SMS Digest — deferred until halting proven stable in live use (user's ask: only after Trip Edit → Save → View → Invoice PDF is confirmed stable)
 
+
+## Iter59 · Phase A — Driver Shortage Policy Engine · Feb 2026
+First of 3 phases for the Driver Module expansion. Phases B (Driver Trip History) and C (Salary & Payment Ledger) are **explicitly deferred** — user wants them built on the same source-of-truth architecture (Trip → Driver History → Ledger), no duplicate data entry.
+
+### What ships in Phase A
+- **`driver_shortage_policies` collection** with `{name, shortage_limit_kg, unit, effective_from, effective_to, product_category?, active, version, company_id, remarks, created_at, created_by, updated_at, updated_by}`.
+- **CRUD endpoints** at `/api/driver-shortage-policies` (list/create/update/soft-delete + `?trip_date=` resolve helper). Updates bump `version`. Delete is SOFT (never hard) so historical snapshots can still reference the policy.
+- **Effective-date lookup** (`resolve_policy_for_trip`) uses the **Trip Date**, never `datetime.now()`. Selection: active + `effective_from ≤ trip_date` + (`effective_to null` OR `effective_to ≥ trip_date`). Product-category-specific policies win over catch-all.
+- **Historical snapshot on Trip CREATE**: `trip.driver_recovery = {policy_id, policy_version, policy_name, allowed_limit_kg, effective_from, applied_at, actual_shortage_kg, product_rate, system_recoverable_shortage_kg, system_recovery_amount, final_recovery_amount, override, policy_missing}`.
+- **Trip UPDATE preserves the original snapshot** — `refresh_trip_driver_recovery_from_snapshot` recomputes ONLY the derived `system_*` values using the EXISTING `allowed_limit_kg`; policy_id/version/effective_from never change. Legacy pre-Iter59 trips get their first snapshot on next edit.
+- **Recovery formula**: `system_recoverable_kg = max(0, actual_shortage_kg − allowed_limit_kg)`, `system_recovery_amount = recoverable × product_rate`. Matches the user's numeric examples: 80/100→0, 100/100→0, 150/100→50KG × ₹104.24 = **₹5212**, 150/150→0.
+- **Manual override**: `POST /api/trips/{tid}/driver-recovery/override` with `{override_amount, override_recoverable_kg?, reason}`. Reason mandatory (min 3 chars, rejected 400/422). Preserves `system_*` values alongside override. Appends to `driver_recovery_history` audit trail with by/at/action. Pass `override_amount=null` to clear.
+- **Frontend**: new `/drivers/shortage-policies` page with CRUD form + version-tracked table + sidebar nav (`nav-shortage-policies`).
+
+### Test evidence
+- **10/10 pytest cases** in `test_iter59_driver_shortage_policy.py` cover: CRUD, effective-date lookup, all 4 shortage/limit examples, snapshot on create, snapshot preservation on update (verified by adding a newer 200KG policy — old 100KG snapshot stayed), policy-limit edit after old trip exists (old trip unchanged), override with audit, override rejects blank reason, override clear reverts to system calc, multi-company isolation.
+- **Full regression 159/159 green** via `/api/admin/deploy-readiness` (exit=0, 244s). `/api/auth/health = 200`.
+- **testing_agent_v3_fork iteration_54.json**: 100% success both backend and frontend. Verified immutability of snapshot by adding a 300KG policy after trip creation — snapshot stayed at original 200KG. Override + audit + version bump verified via UI.
+
+## Next Sessions (deferred, user-approved order)
+- [ ] **Iter60 · Phase B — Driver Trip History**: `GET /api/drivers/{id}/trips` server-side filtered, driver detail page with Trip History tab (Date, Trip No, LR, Vehicle, Customer, LP/UP, Product, Load/Unload/Shortage/Excess Qty, Product Rate, Freight, Recovery). Excess kept separate from recovery.
+- [ ] **Iter61 · Phase C — Salary & Payment Ledger**: `driver_salaries` (monthly, non-overwriting) + `driver_payments` collections. `GET /drivers/{id}/ledger` chronological + `/statement?month=` settlement math. PDF + CSV export. Trip remains source-of-truth (no duplicate earnings entry).
+

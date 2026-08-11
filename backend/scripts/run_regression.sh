@@ -46,6 +46,7 @@ CRITICAL_TESTS=(
   "tests/test_iter56_trip_search_filter.py"            # Iter56 — Trip Log search/filter/pagination
   "tests/test_iter57_saved_filters_export_drill_spark.py"  # Iter57 — saved views, export, auth drill, sparkline
   "tests/test_iter58_bulk_actions_ipburst_sparkdrill.py"  # Iter58 — bulk actions + auth IP burst + spark drill
+  "tests/test_iter59_driver_shortage_policy.py"           # Iter59 · Phase A — Driver Shortage Policy Engine
 )
 
 # Explicit venv PATH so this runs cleanly from asyncio subprocess (which

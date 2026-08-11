@@ -11,6 +11,7 @@ import Customers from "@/pages/Customers";
 import CustomerHistory from "@/pages/CustomerHistory";
 import Suppliers from "@/pages/Suppliers";
 import Drivers from "@/pages/Drivers";
+import DriverShortagePolicies from "@/pages/DriverShortagePolicies";
 import Products from "@/pages/Products";
 import Vehicles from "@/pages/Vehicles";
 import Fuel from "@/pages/Fuel";
@@ -66,6 +67,7 @@ function AppRouter() {
       <Route path="/suppliers/*" element={<Protected><Suppliers /></Protected>} />
       <Route path="/parties" element={<Protected><Parties /></Protected>} />
       <Route path="/drivers" element={<Protected><Drivers /></Protected>} />
+      <Route path="/drivers/shortage-policies" element={<Protected><DriverShortagePolicies /></Protected>} />
       <Route path="/vehicles" element={<Protected><Vehicles /></Protected>} />
       <Route path="/products" element={<Protected><Products /></Protected>} />
       <Route path="/fuel" element={<Protected><Fuel /></Protected>} />

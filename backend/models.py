@@ -134,7 +134,7 @@ class Driver(BaseModel):
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
 
 class Trip(BaseModel):
-    model_config = ConfigDict(extra="ignore")
+    model_config = ConfigDict(extra="allow")
 
     @model_validator(mode="before")
     @classmethod

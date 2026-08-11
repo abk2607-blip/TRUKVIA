@@ -344,6 +344,17 @@ async def create_trip(payload: Trip, request: Request, user=Depends(get_current_
     payload = _compute_trip(payload)
     doc = payload.model_dump()
     doc["user_id"] = user["user_id"]
+    # Iter59 · Phase A — Snapshot the applicable Driver Shortage Policy onto
+    # the Trip at CREATE time. Future policy edits will NEVER change this
+    # snapshot.
+    try:
+        from routers.driver_shortage_policies import build_trip_driver_recovery_snapshot
+        snap = await build_trip_driver_recovery_snapshot(user["user_id"], cid, doc)
+        if snap is not None:
+            doc["driver_recovery"] = snap
+    except Exception as _e:
+        # Never block trip create because of policy issues; log for ops.
+        import logging; logging.getLogger(__name__).warning(f"driver_recovery snapshot failed: {_e}")
     await db.trips.insert_one(doc)
     doc.pop("user_id", None)
     doc.pop("_id", None)
@@ -375,6 +386,33 @@ async def update_trip(tid: str, payload: Trip, request: Request, user=Depends(ge
     doc["user_id"] = user["user_id"]
     doc["invoice_id"] = existing.get("invoice_id")
     doc["status"] = existing.get("status", "pending")
+    # Iter59 · Phase A — CRITICAL: preserve the historical policy snapshot.
+    # We NEVER re-resolve the policy on update. Instead we recompute the
+    # system_* values using the ORIGINAL allowed_limit_kg from the snapshot,
+    # preserving override + audit history. If the existing trip pre-dated
+    # Iter59 (no snapshot), we take one now using the current trip_date so
+    # the trip finally has a policy attached — but subsequent edits still
+    # won't re-resolve.
+    try:
+        from routers.driver_shortage_policies import (
+            refresh_trip_driver_recovery_from_snapshot,
+            build_trip_driver_recovery_snapshot,
+        )
+        prev_snap = existing.get("driver_recovery")
+        doc["driver_recovery_history"] = existing.get("driver_recovery_history") or []
+        if prev_snap:
+            # Preserve original policy identity; only recompute derived values.
+            doc["driver_recovery"] = {
+                **prev_snap,
+                **(await refresh_trip_driver_recovery_from_snapshot({**doc, "driver_recovery": prev_snap}) or {}),
+            }
+        elif doc.get("driver_id"):
+            # Legacy trip → capture initial snapshot now
+            snap = await build_trip_driver_recovery_snapshot(user["user_id"], cid, doc)
+            if snap is not None:
+                doc["driver_recovery"] = snap
+    except Exception as _e:
+        import logging; logging.getLogger(__name__).warning(f"driver_recovery preserve failed: {_e}")
     await db.trips.update_one({"id": tid, "user_id": user["user_id"], "company_id": cid}, {"$set": doc})
     if existing.get("invoice_id"):
         await _recompute_invoice(existing["invoice_id"], user)
