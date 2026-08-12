@@ -8,32 +8,45 @@ import { inputCls } from "./tripFormDefaults";
 export default function SupplierSection({
   form, setForm, suppliers,
   supplierFreightLive, supplierNetPayable, supplierProfit,
+  onQuickAddSupplier,
 }) {
   return (
     <Section title="Supplier Vehicle · సప్లయర్ వాహనం">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <Field label="Supplier · సప్లయర్" required>
-          <SearchableSelect
-            dataTestId="trip-supplier-picker"
-            value={form.supplier_id || ""}
-            onChange={(sid) => {
-              const s = suppliers.find((x) => x.id === sid);
-              setForm({
-                ...form,
-                supplier_id: sid || "",
-                supplier_name: s ? s.name : form.supplier_name,
-              });
-            }}
-            placeholder="Select supplier…"
-            options={suppliers.map((s) => ({
-              value: s.id,
-              label: s.name,
-              meta: [s.mobile, s.gst_in].filter(Boolean).join(" · "),
-            }))}
-          />
+          <div className="flex items-center gap-2">
+            <div className="flex-1">
+              <SearchableSelect
+                dataTestId="trip-supplier-picker"
+                value={form.supplier_id || ""}
+                onChange={(sid) => {
+                  const s = suppliers.find((x) => x.id === sid);
+                  setForm({
+                    ...form,
+                    supplier_id: sid || "",
+                    supplier_name: s ? s.name : form.supplier_name,
+                  });
+                }}
+                placeholder="Select supplier…"
+                options={suppliers.map((s) => ({
+                  value: s.id,
+                  label: s.name,
+                  meta: [s.mobile, s.gst_in].filter(Boolean).join(" · "),
+                }))}
+              />
+            </div>
+            {onQuickAddSupplier && (
+              <button
+                type="button"
+                data-testid="trip-quickadd-supplier-btn"
+                onClick={onQuickAddSupplier}
+                className="px-3 py-2 text-xs uppercase tracking-wider font-semibold bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 whitespace-nowrap"
+              >+ New</button>
+            )}
+          </div>
           {!form.supplier_id && (
             <div className="text-[10px] text-rose-700 mt-1 font-bold">
-              ⚠ Supplier selection is mandatory for supplier vehicles. <a href="/suppliers/add" target="_blank" rel="noopener" className="underline">+ Add new</a>
+              ⚠ Supplier selection is mandatory for supplier vehicles.
             </div>
           )}
         </Field>

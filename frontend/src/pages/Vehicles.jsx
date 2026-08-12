@@ -2,14 +2,16 @@ import React, { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, X, Truck, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { Plus, Pencil, Trash2, X, Truck, AlertTriangle, CheckCircle2, Users } from "lucide-react";
 import FileAttachments from "@/components/FileAttachments";
 import { StateSelect } from "@/lib/states";
+import SearchableSelect from "@/components/SearchableSelect";
+import { QuickAddSupplier } from "@/components/QuickAddModals";
 
 const EMPTY = {
-  vehicle_number: "", vehicle_type: "own",
+  vehicle_number: "", vehicle_type: "own", is_active: true,
   owner_name: "", owner_phone: "", owner_state: "",
-  supplier_name: "", supplier_contact_person: "", supplier_mobile: "", supplier_state: "", supplier_gstin: "",
+  supplier_id: "", supplier_name: "", supplier_contact_person: "", supplier_mobile: "", supplier_state: "", supplier_gstin: "",
   make_model: "", capacity_tons: 0,
   rc_expiry: "", fc_expiry: "", insurance_expiry: "", permit_expiry: "", puc_expiry: "",
   remarks: "", notes: "",
@@ -28,10 +30,15 @@ export default function Vehicles() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY);
+  const [showQaSupplier, setShowQaSupplier] = useState(false);
 
   const { data: vehicles = [] } = useQuery({
     queryKey: ["vehicles"],
     queryFn: async () => (await api.get("/vehicles")).data,
+  });
+  const { data: suppliers = [] } = useQuery({
+    queryKey: ["suppliers"],
+    queryFn: async () => (await api.get("/suppliers")).data,
   });
 
   const save = useMutation({
@@ -78,9 +85,11 @@ export default function Vehicles() {
           <thead className="bg-zinc-50 text-[10px] uppercase tracking-wider text-zinc-500">
             <tr>
               <th className="text-left px-3 py-2 font-semibold">Vehicle</th>
-              <th className="text-left px-3 py-2 font-semibold">Owner</th>
+              <th className="text-left px-3 py-2 font-semibold">Type</th>
+              <th className="text-left px-3 py-2 font-semibold">Owner / Supplier</th>
               <th className="text-left px-3 py-2 font-semibold">Make/Model</th>
               <th className="text-right px-3 py-2 font-semibold">Cap (T)</th>
+              <th className="text-center px-3 py-2 font-semibold">Status</th>
               {DOCS.map(([, label]) => (
                 <th key={label} className="text-left px-3 py-2 font-semibold">{label}</th>
               ))}
@@ -91,9 +100,25 @@ export default function Vehicles() {
             {vehicles.map((v) => (
               <tr key={v.id} data-testid={`vehicle-row-${v.id}`} className="border-t border-zinc-100">
                 <td className="px-3 py-3 font-mono font-bold flex items-center gap-2"><Truck size={14} className="text-zinc-400" /> {v.vehicle_number}</td>
-                <td className="px-3 py-3 text-xs">{v.owner_name || "—"}</td>
+                <td className="px-3 py-3 text-xs">
+                  {v.vehicle_type === "supplier" ? (
+                    <span data-testid={`vehicle-type-badge-${v.id}`} className="inline-block px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-[10px] uppercase tracking-wider font-bold">Supplier</span>
+                  ) : (
+                    <span data-testid={`vehicle-type-badge-${v.id}`} className="inline-block px-2 py-0.5 rounded-full bg-sky-50 text-sky-800 border border-sky-200 text-[10px] uppercase tracking-wider font-bold">Own</span>
+                  )}
+                </td>
+                <td className="px-3 py-3 text-xs" data-testid={`vehicle-owner-cell-${v.id}`}>
+                  {v.vehicle_type === "supplier" ? (v.supplier_name || <span className="text-rose-600">— not linked</span>) : (v.owner_name || "—")}
+                </td>
                 <td className="px-3 py-3 text-xs">{v.make_model || "—"}</td>
                 <td className="px-3 py-3 text-right font-mono">{Number(v.capacity_tons || 0).toFixed(1)}</td>
+                <td className="px-3 py-3 text-center">
+                  {v.is_active === false ? (
+                    <span data-testid={`vehicle-status-${v.id}`} className="inline-block px-2 py-0.5 rounded-full bg-zinc-100 text-zinc-600 border border-zinc-300 text-[10px] uppercase tracking-wider font-bold">Inactive</span>
+                  ) : (
+                    <span data-testid={`vehicle-status-${v.id}`} className="inline-block px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-800 border border-emerald-200 text-[10px] uppercase tracking-wider font-bold">Active</span>
+                  )}
+                </td>
                 {DOCS.map(([field]) => {
                   const a = v.alerts?.[field];
                   return (
@@ -115,7 +140,7 @@ export default function Vehicles() {
               </tr>
             ))}
             {vehicles.length === 0 && (
-              <tr><td colSpan={11} className="px-4 py-12 text-center text-zinc-400">No vehicles registered.</td></tr>
+              <tr><td colSpan={13} className="px-4 py-12 text-center text-zinc-400">No vehicles registered.</td></tr>
             )}
           </tbody>
         </table>
@@ -141,15 +166,73 @@ export default function Vehicles() {
               <F label="Owner Phone"><input data-testid="vehicle-owner-phone" value={form.owner_phone} onChange={(e) => setForm({ ...form, owner_phone: e.target.value })} className={ic} placeholder="For renewal reminders" /></F>
               {form.vehicle_type === "supplier" && (
                 <>
-                  <F label="Supplier Name"><input data-testid="vehicle-supplier-name" value={form.supplier_name} onChange={(e) => setForm({ ...form, supplier_name: e.target.value })} className={ic} /></F>
-                  <F label="Supplier Contact Person"><input data-testid="vehicle-supplier-contact" value={form.supplier_contact_person} onChange={(e) => setForm({ ...form, supplier_contact_person: e.target.value })} className={ic} /></F>
-                  <F label="Supplier Mobile"><input data-testid="vehicle-supplier-mobile" value={form.supplier_mobile} onChange={(e) => setForm({ ...form, supplier_mobile: e.target.value })} className={ic} /></F>
-                  <F label="Supplier GSTIN"><input data-testid="vehicle-supplier-gstin" value={form.supplier_gstin || ""} onChange={(e) => setForm({ ...form, supplier_gstin: e.target.value })} className={ic} /></F>
-                  <F label="Supplier State"><StateSelect value={form.supplier_state} onChange={(v) => setForm({ ...form, supplier_state: v })} dataTestId="vehicle-supplier-state" className={ic + " bg-white"} /></F>
+                  <div className="md:col-span-2 border border-amber-200 bg-amber-50 rounded-sm p-3">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-amber-800 flex items-center gap-1"><Users size={12} /> Supplier · linked by ID (not free text) *</label>
+                    <div className="mt-1 flex items-center gap-2">
+                      <div className="flex-1">
+                        <SearchableSelect
+                          dataTestId="vehicle-supplier-picker"
+                          value={form.supplier_id || ""}
+                          onChange={(sid) => {
+                            const s = suppliers.find((x) => x.id === sid);
+                            setForm({
+                              ...form,
+                              supplier_id: sid,
+                              supplier_name: s ? s.name : "",
+                              supplier_contact_person: s?.contact_person || form.supplier_contact_person,
+                              supplier_mobile: s?.mobile || form.supplier_mobile,
+                              supplier_gstin: s?.gst_in || form.supplier_gstin,
+                              supplier_state: s?.state || form.supplier_state,
+                            });
+                          }}
+                          placeholder="Search supplier by name / phone / GSTIN…"
+                          options={suppliers.map((s) => ({
+                            value: s.id,
+                            label: s.name,
+                            meta: [s.mobile, s.gst_in].filter(Boolean).join(" · "),
+                          }))}
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        data-testid="vehicle-quickadd-supplier-btn"
+                        onClick={() => setShowQaSupplier(true)}
+                        className="px-3 py-2 text-xs uppercase tracking-wider font-semibold bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 inline-flex items-center gap-1 whitespace-nowrap"
+                      ><Plus size={12} /> New</button>
+                    </div>
+                    {!form.supplier_id && (
+                      <div className="text-[10px] text-rose-700 mt-1 font-bold">
+                        ⚠ Supplier ID is required for supplier vehicles. Linking by ID keeps the master consistent.
+                      </div>
+                    )}
+                    {form.supplier_name && (
+                      <div className="text-[10px] text-zinc-600 mt-2">
+                        Linked to <span className="font-bold">{form.supplier_name}</span>
+                        {form.supplier_mobile && <> · {form.supplier_mobile}</>}
+                        {form.supplier_gstin && <> · {form.supplier_gstin}</>}
+                      </div>
+                    )}
+                  </div>
                 </>
               )}
               <F label="Make/Model"><input data-testid="vehicle-model" value={form.make_model} onChange={(e) => setForm({ ...form, make_model: e.target.value })} className={ic} placeholder="Tata LPT 3118" /></F>
               <F label="Capacity (Tons)"><input data-testid="vehicle-capacity" type="number" step="0.1" min="0" value={form.capacity_tons} onChange={(e) => setForm({ ...form, capacity_tons: e.target.value })} className={ic} /></F>
+              <F label="Active Status">
+                <div className="flex items-center gap-2 pt-2">
+                  <label className="inline-flex items-center gap-2 cursor-pointer text-sm">
+                    <input
+                      data-testid="vehicle-is-active"
+                      type="checkbox"
+                      checked={form.is_active !== false}
+                      onChange={(e) => setForm({ ...form, is_active: e.target.checked })}
+                      className="h-4 w-4 accent-emerald-600"
+                    />
+                    <span className={form.is_active !== false ? "text-emerald-800 font-semibold" : "text-zinc-500"}>
+                      {form.is_active !== false ? "Active — selectable for new Trips" : "Inactive — hidden from Trip picker"}
+                    </span>
+                  </label>
+                </div>
+              </F>
               <F label="Remarks"><input data-testid="vehicle-remarks" value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} className={ic} /></F>
               {DOCS.map(([field, label]) => (
                 <F key={field} label={`${label} Expiry`}>
@@ -175,6 +258,23 @@ export default function Vehicles() {
             </form>
           </div>
         </div>
+      )}
+
+      {showQaSupplier && (
+        <QuickAddSupplier
+          onCreated={(s) => {
+            setForm((f) => ({
+              ...f,
+              supplier_id: s.id,
+              supplier_name: s.name,
+              supplier_contact_person: s.contact_person || f.supplier_contact_person,
+              supplier_mobile: s.mobile || f.supplier_mobile,
+              supplier_gstin: s.gst_in || f.supplier_gstin,
+              supplier_state: s.state || f.supplier_state,
+            }));
+          }}
+          onClose={() => setShowQaSupplier(false)}
+        />
       )}
     </div>
   );

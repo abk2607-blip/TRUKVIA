@@ -1,8 +1,9 @@
 import React, { useState } from "react";
 import { api } from "@/api";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { X } from "lucide-react";
+import { X, Plus } from "lucide-react";
+import SearchableSelect from "@/components/SearchableSelect";
 
 const ic = "w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none bg-white";
 const lbl = "text-[10px] font-bold uppercase tracking-wider text-zinc-500";
@@ -26,9 +27,9 @@ export function QuickAddCustomer({ prefillName = "", onCreated, onClose }) {
   const [f, setF] = useState({ name: prefillName, phone: "", gstin: "", state: "", address: "", pincode: "" });
   const m = useMutation({
     mutationFn: async () => (await api.post("/customers", f)).data,
-    onSuccess: (d) => {
+    onSuccess: async (d) => {
       toast.success("Customer added");
-      qc.invalidateQueries({ queryKey: ["customers"] });
+      await qc.refetchQueries({ queryKey: ["customers"] });
       onCreated?.(d);
       onClose?.();
     },
@@ -61,9 +62,9 @@ export function QuickAddDriver({ prefillName = "", onCreated, onClose }) {
   const [f, setF] = useState({ name: prefillName, phone: "", license_number: "", notes: "" });
   const m = useMutation({
     mutationFn: async () => (await api.post("/drivers", f)).data,
-    onSuccess: (d) => {
+    onSuccess: async (d) => {
       toast.success("Driver added");
-      qc.invalidateQueries({ queryKey: ["drivers"] });
+      await qc.refetchQueries({ queryKey: ["drivers"] });
       onCreated?.(d);
       onClose?.();
     },
@@ -92,18 +93,25 @@ export function QuickAddVehicle({ prefillNumber = "", onCreated, onClose }) {
   const [f, setF] = useState({
     vehicle_number: prefillNumber.toUpperCase(),
     vehicle_type: "own",
+    is_active: true,
     owner_name: "",
     owner_phone: "",
     make_model: "",
     capacity_tons: 0,
+    supplier_id: "",
     supplier_name: "",
     supplier_mobile: "",
   });
+  const { data: suppliers = [] } = useQuery({
+    queryKey: ["suppliers"],
+    queryFn: async () => (await api.get("/suppliers")).data,
+  });
+  const [showQaSupplier, setShowQaSupplier] = useState(false);
   const m = useMutation({
     mutationFn: async () => (await api.post("/vehicles", { ...f, capacity_tons: Number(f.capacity_tons || 0) })).data,
-    onSuccess: (d) => {
+    onSuccess: async (d) => {
       toast.success("Vehicle added");
-      qc.invalidateQueries({ queryKey: ["vehicles"] });
+      await qc.refetchQueries({ queryKey: ["vehicles"] });
       onCreated?.(d);
       onClose?.();
     },
@@ -131,16 +139,50 @@ export function QuickAddVehicle({ prefillNumber = "", onCreated, onClose }) {
           <div><label className={lbl}>Capacity (Tons)</label><input type="number" step="0.1" min="0" data-testid="qa-veh-capacity" value={f.capacity_tons} onChange={(e) => setF({ ...f, capacity_tons: e.target.value })} className={ic} /></div>
         </div>
         {f.vehicle_type === "supplier" && (
-          <div className="grid grid-cols-2 gap-3">
-            <div><label className={lbl}>Supplier Name</label><input data-testid="qa-veh-sup-name" value={f.supplier_name} onChange={(e) => setF({ ...f, supplier_name: e.target.value })} className={ic} /></div>
-            <div><label className={lbl}>Supplier Mobile</label><input data-testid="qa-veh-sup-mobile" value={f.supplier_mobile} onChange={(e) => setF({ ...f, supplier_mobile: e.target.value })} className={ic} /></div>
+          <div className="border border-amber-200 bg-amber-50 rounded-sm p-3">
+            <label className={`${lbl} text-amber-800`}>Supplier · linked by ID *</label>
+            <div className="mt-1 flex items-center gap-2">
+              <div className="flex-1">
+                <SearchableSelect
+                  dataTestId="qa-veh-supplier-picker"
+                  value={f.supplier_id || ""}
+                  onChange={(sid) => {
+                    const s = suppliers.find((x) => x.id === sid);
+                    setF({
+                      ...f,
+                      supplier_id: sid,
+                      supplier_name: s?.name || "",
+                      supplier_mobile: s?.mobile || "",
+                    });
+                  }}
+                  placeholder="Search supplier…"
+                  options={suppliers.map((s) => ({ value: s.id, label: s.name, meta: [s.mobile, s.gst_in].filter(Boolean).join(" · ") }))}
+                />
+              </div>
+              <button type="button" data-testid="qa-veh-add-supplier-btn" onClick={() => setShowQaSupplier(true)}
+                className="px-3 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 inline-flex items-center gap-1 whitespace-nowrap">
+                <Plus size={12} /> New
+              </button>
+            </div>
+            {!f.supplier_id && (
+              <div className="text-[10px] text-rose-700 mt-1 font-bold">⚠ Supplier ID required for supplier vehicles.</div>
+            )}
+            {f.supplier_name && (
+              <div className="text-[10px] text-zinc-600 mt-1">Linked to <b>{f.supplier_name}</b>{f.supplier_mobile ? ` · ${f.supplier_mobile}` : ""}</div>
+            )}
           </div>
         )}
         <div className="flex justify-end gap-2 pt-2">
           <button type="button" onClick={onClose} className="px-4 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm">Cancel</button>
-          <button type="submit" data-testid="qa-veh-save" disabled={m.isPending} className="px-4 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm disabled:opacity-50">{m.isPending ? "Saving…" : "Save Vehicle"}</button>
+          <button type="submit" data-testid="qa-veh-save" disabled={m.isPending || (f.vehicle_type === "supplier" && !f.supplier_id)} className="px-4 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm disabled:opacity-50">{m.isPending ? "Saving…" : "Save Vehicle"}</button>
         </div>
       </form>
+      {showQaSupplier && (
+        <QuickAddSupplier
+          onCreated={(s) => setF((x) => ({ ...x, supplier_id: s.id, supplier_name: s.name, supplier_mobile: s.mobile || "" }))}
+          onClose={() => setShowQaSupplier(false)}
+        />
+      )}
     </ModalShell>
   );
 }
@@ -150,9 +192,9 @@ export function QuickAddProduct({ prefillName = "", onCreated, onClose }) {
   const [f, setF] = useState({ name: prefillName || "Bitumen VG 40", hsn_sac: "996791", default_rate: 0 });
   const m = useMutation({
     mutationFn: async () => (await api.post("/products", { ...f, default_rate: Number(f.default_rate || 0) })).data,
-    onSuccess: (d) => {
+    onSuccess: async (d) => {
       toast.success("Product added");
-      qc.invalidateQueries({ queryKey: ["products"] });
+      await qc.refetchQueries({ queryKey: ["products"] });
       onCreated?.(d);
       onClose?.();
     },
@@ -169,6 +211,51 @@ export function QuickAddProduct({ prefillName = "", onCreated, onClose }) {
         <div className="flex justify-end gap-2 pt-2">
           <button type="button" onClick={onClose} className="px-4 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm">Cancel</button>
           <button type="submit" data-testid="qa-prd-save" disabled={m.isPending} className="px-4 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm disabled:opacity-50">{m.isPending ? "Saving…" : "Save Product"}</button>
+        </div>
+      </form>
+    </ModalShell>
+  );
+}
+
+// Iter63 — Quick Add Supplier (called from Vehicle Master, Trip's Supplier Section, and QuickAddVehicle)
+export function QuickAddSupplier({ prefillName = "", onCreated, onClose }) {
+  const qc = useQueryClient();
+  const [f, setF] = useState({
+    name: prefillName || "",
+    contact_person: "",
+    mobile: "",
+    gst_in: "",
+    state: "",
+    address: "",
+    is_active: true,
+  });
+  const m = useMutation({
+    mutationFn: async () => (await api.post("/suppliers", f)).data,
+    onSuccess: async (d) => {
+      toast.success("Supplier added");
+      // Iter63 fix — await refetch so parent picker sees the new supplier BEFORE onCreated fires.
+      await qc.refetchQueries({ queryKey: ["suppliers"] });
+      onCreated?.(d);
+      onClose?.();
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Failed"),
+  });
+  return (
+    <ModalShell title="Quick Add — Supplier" onClose={onClose} testId="quickadd-supplier-modal">
+      <form onSubmit={(e) => { e.preventDefault(); m.mutate(); }} className="space-y-3">
+        <div><label className={lbl}>Supplier Name *</label><input required data-testid="qa-sup-name" autoFocus value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} className={ic} placeholder="Kondapalli Fleet Owners" /></div>
+        <div className="grid grid-cols-2 gap-3">
+          <div><label className={lbl}>Contact Person</label><input data-testid="qa-sup-contact" value={f.contact_person} onChange={(e) => setF({ ...f, contact_person: e.target.value })} className={ic} /></div>
+          <div><label className={lbl}>Mobile *</label><input required data-testid="qa-sup-mobile" value={f.mobile} onChange={(e) => setF({ ...f, mobile: e.target.value })} className={ic} placeholder="98xxxxxxxx" /></div>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div><label className={lbl}>GSTIN</label><input data-testid="qa-sup-gstin" value={f.gst_in} onChange={(e) => setF({ ...f, gst_in: e.target.value.toUpperCase() })} className={ic} /></div>
+          <div><label className={lbl}>State</label><input data-testid="qa-sup-state" value={f.state} onChange={(e) => setF({ ...f, state: e.target.value })} className={ic} placeholder="Andhra Pradesh" /></div>
+        </div>
+        <div><label className={lbl}>Address</label><input data-testid="qa-sup-address" value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} className={ic} /></div>
+        <div className="flex justify-end gap-2 pt-2">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm">Cancel</button>
+          <button type="submit" data-testid="qa-sup-save" disabled={m.isPending} className="px-4 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm disabled:opacity-50">{m.isPending ? "Saving…" : "Save Supplier"}</button>
         </div>
       </form>
     </ModalShell>

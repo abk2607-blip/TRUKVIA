@@ -27,10 +27,14 @@ from services import (
 router = APIRouter(prefix="/api")
 
 @router.get("/vehicles")
-async def list_vehicles(request: Request, user=Depends(get_current_user)):
+async def list_vehicles(request: Request, user=Depends(get_current_user), active_only: bool = False):
     cid = await _active_company_id(request, user)
     await _backfill_to_default(user["user_id"])
-    docs = await db.vehicles.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(1000)
+    q = {"user_id": user["user_id"], "company_id": cid}
+    if active_only:
+        # Iter63 — trip picker filter. Treat missing/legacy is_active as active
+        q["$or"] = [{"is_active": True}, {"is_active": {"$exists": False}}]
+    docs = await db.vehicles.find(q, {"_id": 0, "user_id": 0}).to_list(1000)
     return [_vehicle_expiry_stats(v) for v in docs]
 
 @router.post("/vehicles")

@@ -52,11 +52,19 @@ export default function TripDetailsSection({
             onCreateNew={() => setQaOpen("vehicle")}
             createLabel="+ Add New Vehicle"
             placeholder="Search vehicle…"
-            options={vehicles.map((v) => ({
-              value: v.id,
-              label: v.vehicle_number,
-              meta: [v.vehicle_type === "supplier" ? "Supplier" : "Own", v.owner_name || v.supplier_name].filter(Boolean).join(" · "),
-            }))}
+            options={vehicles
+              // Iter63 · C — hide inactive vehicles from picker, but keep the
+              // currently-selected one visible when editing an old trip.
+              .filter((v) => v.is_active !== false || v.vehicle_number === form.vehicle_number)
+              .map((v) => ({
+                value: v.id,
+                label: v.vehicle_number,
+                meta: [
+                  v.vehicle_type === "supplier" ? "Supplier" : "Own",
+                  v.vehicle_type === "supplier" ? v.supplier_name : v.owner_name,
+                  v.is_active === false ? "· INACTIVE" : "",
+                ].filter(Boolean).join(" · "),
+              }))}
           />
           <input
             data-testid="trip-vehicle"

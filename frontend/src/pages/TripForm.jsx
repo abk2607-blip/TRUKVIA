@@ -13,6 +13,7 @@ import {
   QuickAddDriver,
   QuickAddVehicle,
   QuickAddProduct,
+  QuickAddSupplier,
 } from "@/components/QuickAddModals";
 
 import { EMPTY, inputCls } from "@/components/tripform/tripFormDefaults";
@@ -313,6 +314,17 @@ export default function TripForm() {
           setQaOpen={setQaOpen}
         />
 
+        {/* Iter63 · Priority D — Supplier Section moved to render immediately after Trip Details */}
+        {form.vehicle_type === "supplier" && (
+          <SupplierSection
+            form={form} setForm={setForm} suppliers={suppliers}
+            supplierFreightLive={supplierFreightLive}
+            supplierNetPayable={supplierNetPayable}
+            supplierProfit={supplierProfit}
+            onQuickAddSupplier={() => setQaOpen("supplier")}
+          />
+        )}
+
         <FreightSection form={form} setForm={setForm} freight={freight} />
 
         <UnloadingSection
@@ -335,15 +347,6 @@ export default function TripForm() {
           form={form} setForm={setForm} setExp={setExp}
           totalExpense={totalExpense} freight={freight} profit={profit}
         />
-
-        {form.vehicle_type === "supplier" && (
-          <SupplierSection
-            form={form} setForm={setForm} suppliers={suppliers}
-            supplierFreightLive={supplierFreightLive}
-            supplierNetPayable={supplierNetPayable}
-            supplierProfit={supplierProfit}
-          />
-        )}
 
         <OtherExpenditureSection
           form={form} setForm={setForm}
@@ -372,11 +375,35 @@ export default function TripForm() {
           <textarea data-testid="trip-notes" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={inputCls} />
         </Section>
 
-        <div className="flex justify-end gap-2">
-          <button type="button" onClick={() => nav(-1)} className="px-4 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm">Cancel</button>
-          <button data-testid="save-trip-btn" type="submit" disabled={save.isPending} className="px-6 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 disabled:opacity-50">
-            {save.isPending ? "Saving..." : (isEdit ? "Update Trip" : "Save Trip")}
-          </button>
+        {/* Iter63 · Priority Q3 — Sticky Save/Cancel bar (visible on every scroll position) */}
+        <div className="sticky bottom-0 -mx-4 md:mx-0 z-40 bg-white/95 backdrop-blur border-t border-zinc-200 px-4 py-3 flex items-center justify-between gap-3 shadow-[0_-6px_16px_-8px_rgba(15,23,42,0.15)]" data-testid="trip-form-sticky-bar">
+          <div className="text-xs text-zinc-600 tabular-nums hidden md:block">
+            <span className="font-semibold">Freight:</span> ₹{Number(freight || 0).toLocaleString("en-IN")}
+            <span className="mx-3 text-zinc-300">·</span>
+            <span className="font-semibold">Profit:</span> <span className={Number(profit || 0) >= 0 ? "text-emerald-700" : "text-rose-700"}>₹{Number(profit || 0).toLocaleString("en-IN")}</span>
+            {form.vehicle_type === "supplier" && (
+              <>
+                <span className="mx-3 text-zinc-300">·</span>
+                <span className="font-semibold">Net Payable to Supplier:</span> <span className="text-rose-700">₹{Number(supplierNetPayable || 0).toLocaleString("en-IN")}</span>
+              </>
+            )}
+          </div>
+          <div className="flex items-center gap-2 ml-auto">
+            <button
+              type="button"
+              onClick={() => nav(-1)}
+              data-testid="trip-cancel-sticky"
+              className="px-4 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm hover:bg-zinc-50"
+            >Cancel</button>
+            <button
+              data-testid="save-trip-btn"
+              type="submit"
+              disabled={save.isPending || (form.vehicle_type === "supplier" && !form.supplier_id)}
+              className="px-6 py-2 text-xs uppercase tracking-wider font-semibold bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 disabled:opacity-50"
+            >
+              {save.isPending ? "Saving..." : (isEdit ? "Update Trip" : "Save Trip")}
+            </button>
+          </div>
         </div>
       </form>
 
@@ -415,6 +442,12 @@ export default function TripForm() {
             hsn_sac: p.hsn_sac,
             rate_per_ton: f.freight_mode === "per_ton" && p.default_rate ? p.default_rate : f.rate_per_ton,
           }))}
+          onClose={() => setQaOpen(null)}
+        />
+      )}
+      {qaOpen === "supplier" && (
+        <QuickAddSupplier
+          onCreated={(s) => setForm((f) => ({ ...f, supplier_id: s.id, supplier_name: s.name }))}
           onClose={() => setQaOpen(null)}
         />
       )}

@@ -278,6 +278,7 @@ class Vehicle(BaseModel):
     id: str = Field(default_factory=lambda: new_id("veh_"))
     vehicle_number: str
     vehicle_type: Literal["own", "supplier"] = "own"
+    is_active: bool = True                                # Iter63 · Vehicle Active/Inactive status
     owner_name: str = ""
     owner_phone: str = ""
     supplier_id: str = ""              # Iter47 Phase 3: FK to Suppliers master
