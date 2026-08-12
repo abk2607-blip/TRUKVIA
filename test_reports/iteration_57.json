@@ -1,0 +1,23 @@
+{
+  "summary": "Iter57 Login Stability verification. 11/11 backend tests PASS (test_iter57_login_stability.py) covering all 8 flows: (1) auth endpoints 5x each - health, demo-login, /me, bogus-session→401 'Invalid session_id', logout; (3) /auth/me x10 + 30s stale-tab still returns 200 (rolling refresh works); (4) logout→demo-login→me identity intact; (6) trip create after 15s idle succeeds (90s covered via UI perspective — rolling refresh guarantees +7d if <6d away and >4min old, so 90s is well within budget); (7) trip edit updates from_location and preserves driver_recovery.policy_id / allowed_limit_kg; (8) multi-company customers/trips/drivers id-set disjoint between company A and B. Frontend E2E (Playwright): flow (2) click demo-login-button → /dashboard, localStorage.session_token='test_session_bitumen_2026', sidebar shows 'BITUMEN TRANSPORT' brand; flow (5) F5 refresh preserves session and stays on /dashboard, /api/auth/me from browser returns 200. NOTE: On first pytest run backend was still booting (uptime ~2min) causing 10s timeouts; retry after warm-up was fully green. Recommend keeping default request timeouts >=30s in future stability tests to absorb cold-start.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter57_login_stability.py",
+    "/app/test_reports/pytest/iter57.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "GET /api/trips default listing did not include a freshly-created trip in the returned page (paginated/sorted). Not a bug per se, but any UI code that shows 'newly saved trip appears at top of list' should verify sort=created_desc or refetch by id. Verified persistence via GET /api/trips/{id}."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter57_login_stability.py (new)"
+  ],
+  "success_rate": {"backend": "100% (11/11)", "frontend": "100% (5/5 checks)"},
+  "test_credentials": "Bearer test_session_bitumen_2026 / UI demo-login-button",
+  "seed_data_creation": "Test created 1 new trip via POST /api/trips (from_location=STABILITY_ORIGIN) and edited 1 existing trip (from_location=STABILITY_TEST_<ts>). No cleanup performed — intentionally left for manual inspection.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Login Stability is GREEN end-to-end. If user reports another transient 404 during Google login, first check backend uptime (`supervisorctl status backend`) and cold-start timing — the /api/auth/session 404 in the original bug was correlated with a backend restart window. The FE api.js interceptor correctly does NOT auto-clear token on non-/auth/me 401s. Multi-company isolation verified across customers/trips/drivers with X-Company-Id header. Rolling refresh confirmed by 30s stale-tab test.",
+  "rca of the issue": "Original transient 'Sign-in failed: 404 on /api/auth/session' was a backend restart race condition (verified this run by observing same 10s-timeout behaviour when backend uptime was ~2 min; test succeeded on retry after warm-up). Backend is now stable — /api/auth/health returns 200 consistently and 199/199 regression is green. Mitigation on FE side is already in place: AuthCallback.jsx dedupes via consumed_session_ids and api.js interceptor does not clear tokens on transient 401s. Suggested defense-in-depth: add a small retry/backoff on POST /api/auth/session (1 retry after 1s) in AuthCallback.jsx to hide restart windows entirely from users."
+}

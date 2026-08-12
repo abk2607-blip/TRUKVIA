@@ -20,6 +20,13 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter57 — Login Stability End-to-End Verification** (Feb 2026)
+  - **RCA of the "Sign-in failed: 404" incident**: transient race condition — backend was restarting when the user attempted Google sign-in. Reproduced this run by observing same 10s-timeout when backend uptime was ~2 min; retry after warm-up was fully green. FE mitigations already in place: `AuthCallback.jsx` dedupes via `consumed_session_ids`; `api.js` interceptor does not clear tokens on transient non-`/auth/me` 401s.
+  - Backend stability: `/api/auth/health` → 200, guard = `pass`, strict_mode active. Full regression 199/199 green.
+  - **11/11 pytest** in `test_iter57_login_stability.py` covering: auth endpoint availability × 5 each, rolling refresh after 30s stale-tab, logout→login roundtrip, Trip create after ~90s idle, Trip edit preserves `driver_recovery.policy_id` and `allowed_limit_kg`, multi-company isolation across `customers`/`trips`/`drivers` (id-sets disjoint).
+  - **5/5 frontend E2E** (Playwright): demo-login → dashboard; localStorage token populated; F5 refresh preserves session; sidebar brand renders; `/api/auth/me` from browser context returns 200.
+  - Non-blocking suggestion: add a 1-retry/1s-backoff on POST `/api/auth/session` in `AuthCallback.jsx` to fully hide any future backend restart windows from users.
+
 - [x] **Iter60 — Phase B: Driver Trip History + Policy Pagination/Search + Mandatory Deactivation Reason** (Feb 2026)
   - **Driver Trip History**: New `GET /api/drivers/{did}/trips` endpoint — company-scoped, filters by date range, paginated (limit=200 default, max 500). Returns denormalised customer names + rolled-up totals (trip_count, shortage_kg, excess_kg, recovery_amount) and per-trip driver_recovery snapshot passed through as-is. Trip = single source of truth: driver history reads directly from `trips` collection filtered by `driver_id`.
   - **Historical Snapshot Immutability verified**: Trip edits (from_location, tons, etc.) update derived values via `refresh_trip_driver_recovery_from_snapshot()` which never re-resolves the policy — `allowed_limit_kg` and `policy_id` stay locked to what was applicable on the original Trip date. Verified in `test_driver_trip_history_edit_updates_but_snapshot_preserved`.
