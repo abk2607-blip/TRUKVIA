@@ -63,20 +63,43 @@ export default function AuthCallback() {
     markConsumed(session_id);
 
     (async () => {
-      try {
-        const { data } = await api.post("/auth/session", { session_id });
+      // Iter62 · Priority 2 — Auth Retry Cushion.
+      // Backend restart windows can transiently 404 the /auth/session
+      // exchange. We retry ONCE after a 1s pause for exactly two
+      // classes of transient failures (404 route-not-yet-mounted,
+      // 502/503 gateway/guard). Genuine 401/400 errors ("Invalid
+      // session_id", "Emergent verification failed") are NOT retried
+      // and surface immediately — real auth failures must remain
+      // observable.
+      const _sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const _isTransient = (status) => status === 404 || status === 502 || status === 503;
+      const _exchange = async () => {
+        try {
+          return { ok: true, data: (await api.post("/auth/session", { session_id })).data };
+        } catch (err) {
+          return { ok: false, err };
+        }
+      };
+      let result = await _exchange();
+      if (!result.ok && _isTransient(result.err?.response?.status)) {
+        // Give the backend ~1s to finish booting, then try one more time.
+        await _sleep(1000);
+        result = await _exchange();
+      }
+      if (result.ok) {
+        const data = result.data;
         try { if (data.session_token) localStorage.setItem("session_token", data.session_token); } catch {}
         setUser(data);
         toast.success("Signed in");
         navigate("/dashboard", { replace: true, state: { user: data } });
-      } catch (e) {
-        // Surface the actual error to help diagnose future failures
-        const detail = e?.response?.data?.detail || e?.message || "Unknown error";
-        // eslint-disable-next-line no-console
-        console.error("Auth exchange failed:", detail, e?.response?.status);
-        toast.error(`Sign-in failed: ${detail}`);
-        navigate("/", { replace: true });
+        return;
       }
+      const e = result.err;
+      const detail = e?.response?.data?.detail || e?.message || "Unknown error";
+      // eslint-disable-next-line no-console
+      console.error("Auth exchange failed:", detail, e?.response?.status);
+      toast.error(`Sign-in failed: ${detail}`);
+      navigate("/", { replace: true });
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

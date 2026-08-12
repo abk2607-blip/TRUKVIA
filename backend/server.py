@@ -38,6 +38,7 @@ from routers import (
     suppliers as suppliers_r,
     saved_filters as saved_filters_r,
     driver_shortage_policies as driver_shortage_policies_r,
+    driver_ledger as driver_ledger_r,
 )
 
 ROOT_DIR = Path(__file__).parent
@@ -73,6 +74,7 @@ for r in (
     reports_r, gst_r, files_r, team_r, audit_r,
     templates_r, ai_r, expenditure_types_r, suppliers_r,
     saved_filters_r, driver_shortage_policies_r,
+    driver_ledger_r,
 ):
     app.include_router(r.router)
 

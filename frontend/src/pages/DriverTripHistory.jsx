@@ -3,7 +3,7 @@ import React from "react";
 import { useParams, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api, fmtCurrency, fmtDate } from "@/api";
-import { ArrowLeft, Eye, AlertTriangle } from "lucide-react";
+import { ArrowLeft, Eye, AlertTriangle, Download, FileText, Wallet } from "lucide-react";
 
 export default function DriverTripHistory() {
   const { id } = useParams();
@@ -26,6 +26,18 @@ export default function DriverTripHistory() {
   const total = data?.total || 0;
   const ic = "border border-zinc-300 px-3 py-1.5 rounded-sm text-xs focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none bg-white";
 
+  const exportHistory = (fmt) => {
+    api.get(`/drivers/${id}/trips/export`, {
+      params: { format: fmt, date_from: dateFrom, date_to: dateTo }, responseType: "blob",
+    }).then((res) => {
+      const blob = new Blob([res.data], { type: fmt === "csv" ? "text/csv" : "application/pdf" });
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = `driver-trips-${driver?.name || id}-${dateFrom || "all"}_to_${dateTo || "now"}.${fmt}`;
+      link.click();
+    });
+  };
+
   return (
     <div className="space-y-6" data-testid="driver-trip-history-page">
       <header className="flex items-end justify-between border-b border-zinc-200 pb-4">
@@ -41,6 +53,17 @@ export default function DriverTripHistory() {
               Trip is the source of truth. All driver-assigned Trips flow here automatically. Historical shortage policy is preserved per Trip.
             </p>
           </div>
+        </div>
+        <div className="flex items-center gap-2">
+          <Link to={`/drivers/${id}/ledger`} data-testid="link-driver-ledger" className="inline-flex items-center gap-1 text-xs px-3 py-1.5 border border-emerald-200 text-emerald-800 rounded-sm hover:bg-emerald-50 uppercase tracking-wider font-semibold">
+            <Wallet size={12} /> Driver Ledger
+          </Link>
+          <button data-testid="export-history-csv" onClick={() => exportHistory("csv")} className="inline-flex items-center gap-1 text-xs px-3 py-1.5 border border-zinc-300 rounded-sm hover:bg-zinc-50 uppercase tracking-wider">
+            <Download size={12} /> CSV
+          </button>
+          <button data-testid="export-history-pdf" onClick={() => exportHistory("pdf")} className="inline-flex items-center gap-1 text-xs px-3 py-1.5 border border-zinc-300 rounded-sm hover:bg-zinc-50 uppercase tracking-wider">
+            <FileText size={12} /> PDF
+          </button>
         </div>
       </header>
 

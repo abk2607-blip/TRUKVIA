@@ -356,6 +356,12 @@ async def create_trip(payload: Trip, request: Request, user=Depends(get_current_
         # Never block trip create because of policy issues; log for ops.
         import logging; logging.getLogger(__name__).warning(f"driver_recovery snapshot failed: {_e}")
     await db.trips.insert_one(doc)
+    # Iter61 · Phase C — Mirror driver_recovery to Driver Ledger (Trip = SSoT)
+    try:
+        from routers.driver_ledger import sync_trip_recovery_to_ledger
+        await sync_trip_recovery_to_ledger(user["user_id"], cid, doc)
+    except Exception as _e:
+        import logging; logging.getLogger(__name__).warning(f"ledger sync (create) failed: {_e}")
     doc.pop("user_id", None)
     doc.pop("_id", None)
     await _log_audit(user, "trip", "create", entity_id=doc["id"], entity_ref=doc.get("vehicle_number", ""))
@@ -414,6 +420,23 @@ async def update_trip(tid: str, payload: Trip, request: Request, user=Depends(ge
     except Exception as _e:
         import logging; logging.getLogger(__name__).warning(f"driver_recovery preserve failed: {_e}")
     await db.trips.update_one({"id": tid, "user_id": user["user_id"], "company_id": cid}, {"$set": doc})
+    # Iter61 · Phase C — Keep Driver Ledger mirror in sync on Trip edit.
+    # If driver was reassigned, sync will remove the old-driver row and
+    # (re)create under new driver.  If recovery went to 0, the row is
+    # deleted entirely.
+    try:
+        from routers.driver_ledger import sync_trip_recovery_to_ledger
+        await sync_trip_recovery_to_ledger(user["user_id"], cid, {**doc, "id": tid})
+        # Old-driver cleanup if driver_id changed
+        if existing.get("driver_id") and existing["driver_id"] != doc.get("driver_id"):
+            await db.driver_ledger_entries.delete_many({
+                "user_id": user["user_id"], "company_id": cid,
+                "driver_id": existing["driver_id"],
+                "entry_type": "trip_recovery", "source": "system",
+                "reference.kind": "trip", "reference.id": tid,
+            })
+    except Exception as _e:
+        import logging; logging.getLogger(__name__).warning(f"ledger sync (update) failed: {_e}")
     if existing.get("invoice_id"):
         await _recompute_invoice(existing["invoice_id"], user)
     changes = _diff_dict(existing, doc, ["freight_amount", "tons", "rate_per_ton", "supplier_freight", "total_expense", "profit", "vehicle_number", "vehicle_type"])
@@ -587,6 +610,12 @@ async def delete_trip(tid: str, request: Request, reason: str = "", user=Depends
         raise HTTPException(status_code=404, detail="Trip not found")
     linked_invoice_id = existing.get("invoice_id")
     await db.trips.delete_one({"id": tid, "user_id": user["user_id"], "company_id": cid})
+    # Iter61 · Phase C — Remove mirrored ledger entry (Trip = SSoT)
+    try:
+        from routers.driver_ledger import delete_trip_recovery_from_ledger
+        await delete_trip_recovery_from_ledger(user["user_id"], cid, tid)
+    except Exception as _e:
+        import logging; logging.getLogger(__name__).warning(f"ledger sync (delete) failed: {_e}")
     if linked_invoice_id:
         await _recompute_invoice(linked_invoice_id, user)
     await _log_audit(user, "trip", "delete", entity_id=tid, entity_ref=existing.get("vehicle_number", ""), reason=reason,

@@ -177,4 +177,154 @@ async def driver_trip_history(
     }
 
 
+@router.get("/drivers/{did}/trips/export")
+async def driver_trip_history_export(
+    did: str, request: Request, user=Depends(get_current_user),
+    format: str = "csv", date_from: str = "", date_to: str = "",
+):
+    """Iter62 · Priority 3 — Export Driver Trip History as CSV or PDF.
+
+    Returns the same rows shown in the UI table. Range-filtered by the
+    same date_from/date_to arguments.
+    """
+    fmt = (format or "csv").lower()
+    if fmt not in ("csv", "pdf"):
+        raise HTTPException(status_code=400, detail="format must be 'csv' or 'pdf'")
+    # Reuse the same aggregation path — pull up to 5000 trips for export
+    inner = await driver_trip_history(did, request, user, date_from, date_to, 5000, 0)
+    drv = inner["driver"]
+    trips = inner["trips"]
+    totals = inner["totals"]
+    company = await db.companies.find_one(
+        {"id": (await _active_company_id(request, user)), "user_id": user["user_id"]},
+        {"_id": 0}) or {}
+    fname = f"driver-trips-{drv['name'].replace(' ', '_')}-{(date_from or 'all')}_to_{(date_to or 'now')}"
+    if fmt == "csv":
+        import csv as _csv
+        buf = io.StringIO()
+        w = _csv.writer(buf)
+        w.writerow([f"Driver Trip History — {drv['name']}"])
+        w.writerow([f"Company: {company.get('name','')}",
+                    f"Period: {date_from or '—'} to {date_to or '—'}"])
+        w.writerow([f"Total Trips: {totals['trip_count']}",
+                    f"Shortage: {totals['shortage_kg']:.1f} KG",
+                    f"Excess: {totals['excess_kg']:.1f} KG",
+                    f"Recovery: {totals['recovery_amount']:.2f}"])
+        w.writerow([])
+        w.writerow([
+            "Date", "LR", "Trip #", "Vehicle", "Customer",
+            "Loading Point", "Unloading Point", "Product",
+            "Loaded MT", "Unloaded MT", "Shortage KG", "Excess KG",
+            "Product Rate", "Freight Amount", "Driver Recovery", "Policy",
+        ])
+        for r in trips:
+            dr = r.get("driver_recovery") or {}
+            w.writerow([
+                r.get("date", ""), r.get("lr_number", ""), r.get("trip_number", ""),
+                r.get("vehicle_number", ""), r.get("customer_name", ""),
+                r.get("loading_point", ""), r.get("unloading_point", ""),
+                r.get("product", ""),
+                f"{r.get('loaded_qty_mt', 0)}", f"{r.get('unloaded_qty_mt', 0)}",
+                f"{r.get('shortage_qty_kg', 0):.2f}", f"{r.get('excess_qty_kg', 0):.2f}",
+                f"{r.get('product_rate_per_mt', 0)}", f"{r.get('freight_amount', 0):.2f}",
+                f"{dr.get('final_recovery_amount', 0):.2f}" if dr else "0.00",
+                (dr.get("policy_name") or "—") if dr else "—",
+            ])
+        return StreamingResponse(
+            io.BytesIO(buf.getvalue().encode("utf-8-sig")),
+            media_type="text/csv",
+            headers={"Content-Disposition": f'attachment; filename="{fname}.csv"'},
+        )
+    # PDF
+    pdf_bytes = _build_trip_history_pdf(company, drv, trips, totals, date_from, date_to)
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{fname}.pdf"'},
+    )
+
+
+def _build_trip_history_pdf(company, driver, trips, totals, date_from, date_to):
+    from io import BytesIO
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer
+    buf = BytesIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=landscape(A4),
+        leftMargin=10*mm, rightMargin=10*mm, topMargin=10*mm, bottomMargin=10*mm,
+        title=f"Driver Trip History — {driver.get('name','')}",
+    )
+    styles = getSampleStyleSheet()
+    story = []
+    C_INK = colors.HexColor("#0F172A")
+    C_MUTED = colors.HexColor("#64748B")
+    C_LINE = colors.HexColor("#E2E8F0")
+    C_HEAD = colors.HexColor("#1E293B")
+    h1 = ParagraphStyle("h1", parent=styles["Heading1"], fontSize=14, textColor=C_INK, spaceAfter=4)
+    small = ParagraphStyle("small", parent=styles["Normal"], fontSize=9, textColor=C_MUTED)
+    story.append(Paragraph(f"<b>{company.get('name','—')}</b>", h1))
+    story.append(Paragraph(
+        f"Driver Trip History — <b>{driver.get('name','')}</b> ({driver.get('phone','—')}) · "
+        f"Period: {date_from or '—'} to {date_to or '—'}", small))
+    story.append(Spacer(1, 4))
+    # Summary strip
+    summary = [["Trips", "Shortage KG", "Excess KG", "Recovery"],
+               [str(totals["trip_count"]),
+                f"{totals['shortage_kg']:.1f}", f"{totals['excess_kg']:.1f}",
+                f"₹ {totals['recovery_amount']:,.2f}"]]
+    ts = Table(summary, colWidths=[30*mm, 30*mm, 30*mm, 40*mm])
+    ts.setStyle(TableStyle([
+        ("FONTSIZE", (0,0), (-1,-1), 9),
+        ("TEXTCOLOR", (0,0), (-1,0), C_MUTED),
+        ("FONTNAME", (0,1), (-1,1), "Helvetica-Bold"),
+        ("LINEBELOW", (0,0), (-1,0), 0.25, C_LINE),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 3),
+        ("TOPPADDING", (0,0), (-1,-1), 3),
+    ]))
+    story.append(ts)
+    story.append(Spacer(1, 6))
+    # Trip rows
+    header = ["Date", "LR", "Vehicle", "Customer",
+              "Loading → Unloading", "Product",
+              "Ld MT", "Ul MT", "Short KG", "Exc KG",
+              "Rate", "Freight", "Recovery"]
+    rows = [header]
+    for r in trips:
+        dr = r.get("driver_recovery") or {}
+        rows.append([
+            r.get("date", ""), r.get("lr_number", "") or "—",
+            r.get("vehicle_number", ""),
+            (r.get("customer_name", "") or "")[:22],
+            f"{(r.get('loading_point','') or '—')[:12]} → {(r.get('unloading_point','') or '—')[:12]}",
+            (r.get("product", "") or "")[:14],
+            f"{r.get('loaded_qty_mt', 0)}", f"{r.get('unloaded_qty_mt', 0)}",
+            f"{r.get('shortage_qty_kg', 0):.1f}", f"{r.get('excess_qty_kg', 0):.1f}",
+            f"{r.get('product_rate_per_mt', 0)}",
+            f"{r.get('freight_amount', 0):,.0f}",
+            f"{dr.get('final_recovery_amount', 0):,.0f}" if dr else "0",
+        ])
+    if len(rows) == 1:
+        rows.append(["—"] * 13)
+    col_w = [20*mm, 20*mm, 22*mm, 30*mm, 45*mm, 22*mm, 12*mm, 12*mm, 15*mm, 15*mm, 15*mm, 18*mm, 20*mm]
+    tbl = Table(rows, colWidths=col_w, repeatRows=1)
+    tbl.setStyle(TableStyle([
+        ("FONTSIZE", (0,0), (-1,-1), 7),
+        ("BACKGROUND", (0,0), (-1,0), C_HEAD),
+        ("TEXTCOLOR", (0,0), (-1,0), colors.white),
+        ("FONTNAME", (0,0), (-1,0), "Helvetica-Bold"),
+        ("LINEBELOW", (0,0), (-1,0), 0.4, C_LINE),
+        ("LINEBELOW", (0,1), (-1,-1), 0.15, C_LINE),
+        ("ALIGN", (6,1), (12,-1), "RIGHT"),
+        ("VALIGN", (0,0), (-1,-1), "MIDDLE"),
+        ("BOTTOMPADDING", (0,0), (-1,-1), 3),
+        ("TOPPADDING", (0,0), (-1,-1), 3),
+    ]))
+    story.append(tbl)
+    doc.build(story)
+    return buf.getvalue()
+
+
 # ==================== Trip Bulk Import ====================

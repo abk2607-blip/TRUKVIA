@@ -13,6 +13,7 @@ import Suppliers from "@/pages/Suppliers";
 import Drivers from "@/pages/Drivers";
 import DriverShortagePolicies from "@/pages/DriverShortagePolicies";
 import DriverTripHistory from "@/pages/DriverTripHistory";
+import DriverLedger from "@/pages/DriverLedger";
 import Products from "@/pages/Products";
 import Vehicles from "@/pages/Vehicles";
 import Fuel from "@/pages/Fuel";
@@ -70,6 +71,7 @@ function AppRouter() {
       <Route path="/drivers" element={<Protected><Drivers /></Protected>} />
       <Route path="/drivers/shortage-policies" element={<Protected><DriverShortagePolicies /></Protected>} />
       <Route path="/drivers/:id/history" element={<Protected><DriverTripHistory /></Protected>} />
+      <Route path="/drivers/:id/ledger" element={<Protected><DriverLedger /></Protected>} />
       <Route path="/vehicles" element={<Protected><Vehicles /></Protected>} />
       <Route path="/products" element={<Protected><Products /></Protected>} />
       <Route path="/fuel" element={<Protected><Fuel /></Protected>} />

@@ -15,6 +15,9 @@ export default function DriverShortagePolicies() {
   const qc = useQueryClient();
   const [editing, setEditing] = React.useState(null); // null | "new" | policy.id
   const [form, setForm] = React.useState(EMPTY_POLICY);
+  // Iter62 · Priority 4 — proper ERP-style deactivation dialog
+  const [deactivateTarget, setDeactivateTarget] = React.useState(null); // policy | null
+  const [deactivateReason, setDeactivateReason] = React.useState("");
 
   const [q, setQ] = React.useState("");
   const [activeOnly, setActiveOnly] = React.useState(false);
@@ -54,7 +57,11 @@ export default function DriverShortagePolicies() {
   const deactivate = useMutation({
     mutationFn: async ({ pid, reason }) =>
       (await api.request({ url: `/driver-shortage-policies/${pid}`, method: "DELETE", data: { reason } })).data,
-    onSuccess: () => { toast.success("Policy deactivated"); qc.invalidateQueries({ queryKey: ["driver-shortage-policies"] }); },
+    onSuccess: () => {
+      toast.success("Policy deactivated");
+      qc.invalidateQueries({ queryKey: ["driver-shortage-policies"] });
+      setDeactivateTarget(null); setDeactivateReason("");
+    },
     onError: (e) => toast.error(e?.response?.data?.detail || "Failed"),
   });
 
@@ -218,11 +225,7 @@ export default function DriverShortagePolicies() {
                   {p.active && (
                     <button
                       data-testid={`deactivate-policy-${p.id}`}
-                      onClick={() => {
-                        const reason = window.prompt(`Deactivate policy "${p.name}"? Enter a mandatory reason (this is kept for audit — historical Trips referencing this policy will retain their snapshot).`);
-                        if (!reason || reason.trim().length < 3) { toast.error("Reason required (min 3 chars)"); return; }
-                        deactivate.mutate({ pid: p.id, reason: reason.trim() });
-                      }}
+                      onClick={() => { setDeactivateTarget(p); setDeactivateReason(""); }}
                       className="p-1.5 border border-rose-200 rounded-sm text-rose-700 hover:bg-rose-600 hover:text-white transition"
                       title="Deactivate"
                     ><Ban size={12} /></button>
@@ -252,6 +255,58 @@ export default function DriverShortagePolicies() {
           </div>
         )}
       </div>
+
+      {/* Iter62 · Priority 4 — Policy deactivation dialog (mandatory reason). */}
+      {deactivateTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/45 backdrop-blur-sm p-4" data-testid="deactivate-dialog">
+          <div className="bg-white w-full max-w-lg border border-zinc-950 rounded-sm shadow-2xl">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-200">
+              <h3 className="font-bold flex items-center gap-2 text-rose-700">
+                <Ban size={16} /> Deactivate Policy
+              </h3>
+              <button onClick={() => setDeactivateTarget(null)} className="text-zinc-500 hover:text-zinc-950 text-lg leading-none">×</button>
+            </div>
+            <div className="p-5 space-y-3">
+              <div className="text-sm">
+                Deactivate <span className="font-bold">"{deactivateTarget.name}"</span>?
+              </div>
+              <div className="text-xs text-zinc-600 bg-amber-50 border border-amber-200 p-2 rounded-sm">
+                Historical Trips referencing this policy will <b>retain their snapshot</b> — this only prevents new Trips from picking it up. A mandatory reason will be recorded in the audit log.
+              </div>
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Reason (min 3 chars) *</label>
+                <textarea
+                  data-testid="deactivate-reason-input"
+                  rows={3}
+                  autoFocus
+                  value={deactivateReason}
+                  onChange={(e) => setDeactivateReason(e.target.value)}
+                  placeholder="e.g. Superseded by 2026-Q2 revised policy, per management circular #124"
+                  className="mt-1 w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm focus:border-rose-600 focus:ring-1 focus:ring-rose-600 outline-none bg-white"
+                />
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  data-testid="deactivate-cancel-btn"
+                  onClick={() => { setDeactivateTarget(null); setDeactivateReason(""); }}
+                  className="px-4 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm hover:bg-zinc-50"
+                >Cancel</button>
+                <button
+                  type="button"
+                  data-testid="deactivate-confirm-btn"
+                  disabled={deactivate.isPending || deactivateReason.trim().length < 3}
+                  onClick={() => {
+                    if (deactivateReason.trim().length < 3) { toast.error("Reason required (min 3 chars)"); return; }
+                    deactivate.mutate({ pid: deactivateTarget.id, reason: deactivateReason.trim() });
+                  }}
+                  className="px-4 py-2 text-xs uppercase tracking-wider bg-rose-600 text-white rounded-sm hover:bg-rose-700 disabled:opacity-50"
+                >{deactivate.isPending ? "Deactivating…" : "Confirm Deactivate"}</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
