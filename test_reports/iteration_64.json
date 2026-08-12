@@ -1,0 +1,31 @@
+{
+  "summary": "Iter64 · P1/P2/P3 tested end-to-end. Backend regression pytest (test_iter64_supplier_chip_vehicle_audit_bulk_import.py): 5 passed, 1 skipped (expected — demo single-company). Frontend E2E via Playwright verified: P1 Supplier Trip Summary Chip renders with all 10 stsc-* fields on /trips/{id}/view for supplier trips and is correctly hidden on own trips. P2 Vehicle status dialog works (empty/2-char reason disabled, valid reason enabled, effective date prefilled). Deactivate + Reactivate mutations succeed; backend audit trail records both events (verified via API: audit_total=2, actions=['reactivated','deactivated']). P3 Bulk Import CSV upload → preview shows total=5/valid=2/errors=3 with row-level rejection for missing vehicle_number + unknown supplier + within-file duplicate; commit inserts 2 vehicles, toast 'Imported 2 vehicles', modal closes, table refreshes. Sample CSV download link present. Trip picker filter code (TripDetailsSection.jsx:58) hides inactive vehicles while preserving currently-selected one for edits.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "Vehicles.jsx · Vehicle Audit Modal", "issue": "React Query cache for ['vehicle-audit', vid] is not invalidated after PATCH /vehicles/{vid}/status. Consequence: if user opens audit modal, closes it, changes status, then re-opens audit for the SAME vehicle in the same session, the modal shows stale audit rows (missing the just-added event). Backend data is correct (verified via direct API call: audit_total=2). Fix: add qc.invalidateQueries({ queryKey: ['vehicle-audit', editing.id] }) inside statusMut.onSuccess in /app/frontend/src/pages/Vehicles.jsx line 62.", "selector": "[data-testid=vehicle-audit-modal]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter64_supplier_chip_vehicle_audit_bulk_import.py",
+    "/app/test_reports/pytest/pytest_results.xml"
+  ],
+  "action_items": [
+    "Invalidate ['vehicle-audit', vid] React Query key inside statusMut.onSuccess in Vehicles.jsx so audit modal shows fresh events after status change without a page reload.",
+    "Consider documenting that Trip View URL is /trips/{id}/view (not /trips/{id}) — the review request text used the shorter form which returns dashboard route."
+  ],
+  "critical_code_review_comments": [
+    "Vehicles.jsx is 587 lines — approaching the 700-line guideline. Bulk Import modal + Status Dialog + Audit Modal could be extracted into separate components for maintainability.",
+    "TripView.jsx recomputes netPayable/supplierProfit locally (lines 35-36) when the review request says 'no re-calculation'. The chip uses these local recomputed values via kind='total'/'profit' rows. Server returns net_supplier_payable + supplier_profit (both were null in test but that is server-side compute_totals concern). Consider preferring server values (trip.net_supplier_payable) with local values as fallback."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (5/5, 1 skipped as expected)", "frontend": "95% (only minor cache-invalidation bug)"},
+  "test_credentials": "Bearer test_session_bitumen_2026 · demo-login-button (server-provisioned demo user)",
+  "seed_data_creation": "Created 2 vehicles via Bulk Import (TESTBI001, TESTBI002) + 1 supplier trip trip_ff0aef38a8cf4eea using vehicle AP66IT56 + supplier sup_6245f458b35b4b2f. Both vehicles left in ACTIVE state after cleanup.",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Trip view URL uses /trips/{id}/view. Supplier trips must have vehicle_type=='supplier' AND non-null supplier_id linked to Supplier Master to render chip. Bulk import CSV columns: vehicle_number, vehicle_type, supplier_name OR supplier_id, owner_name, owner_phone, make_model, capacity_tons, remarks, is_active. Demo dataset has zero supplier trips by default — must be created via POST /api/trips with fields {tons, freight_mode, vehicle_type:'supplier', supplier_id, ...}.",
+  "rca_of_the_issue": "Audit stale-cache: React Query caches per key. statusMut.onSuccess invalidates ['vehicles'] but not ['vehicle-audit', vid]. When the audit modal opens with the same vehicle after a status change, useQuery returns cached (pre-mutation) audit list until stale time expires. Backend data is authoritative and correct."
+}

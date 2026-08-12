@@ -32,8 +32,17 @@ export default function TripView() {
   const supShortage = Number(trip.supplier_shortage_deduction || 0);
   const supOther = Number(trip.supplier_other_recoveries || 0);
   const supIncome = Number(trip.supplier_other_income || 0);
-  const netPayable = supFreight - supAdvance - supDiesel - supShortage - supOther + supIncome;
-  const supplierProfit = Number(trip.freight_amount || 0) - netPayable;
+  const customerDieselAdj = Number(trip.customer_diesel_received || 0);
+  // Iter64 fix — prefer SERVER-computed values (single source of truth). Local
+  // recompute is kept only as a graceful fallback for older trips where the
+  // server may not have persisted these keys yet.  Formula matches
+  // services.compute_totals exactly (includes customer_diesel_received).
+  const netPayable = trip.supplier_net_payable != null
+    ? Number(trip.supplier_net_payable)
+    : (supFreight - supAdvance - supDiesel - customerDieselAdj - supShortage - supOther + supIncome);
+  const supplierProfit = trip.profit != null && isSupplier
+    ? Number(trip.profit)
+    : (Number(trip.freight_amount || 0) - netPayable);
   const e = trip.expenses || {};
 
   return (
@@ -69,6 +78,37 @@ export default function TripView() {
         <Stat label={isSupplier ? "Net Payable" : "Total Expense"} value={fmtCurrency(trip.total_expense)} accent="rose" />
         <Stat label="Profit" value={fmtCurrency(trip.profit)} accent={trip.profit >= 0 ? "emerald" : "rose"} />
       </div>
+
+      {/* Iter64 · Priority 1 — Supplier Trip Summary Chip.
+          All figures read straight from the server-computed trip (services.compute_totals) —
+          no re-calculation happens here so it can never drift from the Supplier Statement. */}
+      {isSupplier && (
+        <section
+          data-testid="supplier-trip-summary-chip"
+          className="border border-amber-300 bg-amber-50/60 rounded-sm px-4 py-3"
+        >
+          <div className="flex items-center justify-between border-b border-amber-200 pb-2 mb-2">
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] uppercase tracking-[0.15em] font-bold text-amber-900">Supplier Settlement · Compact Summary</span>
+              <span data-testid="stsc-supplier-name" className="text-xs font-bold text-zinc-950">{trip.supplier_name || "—"}</span>
+            </div>
+            <div className="text-[10px] text-amber-800">
+              Same figures shown in Reports → Supplier Statement · <span className="font-semibold">no separate calculation</span>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-x-4 gap-y-2 text-xs">
+            <ChipRow tid="stsc-actual-freight" label="Actual Freight" value={trip.freight_amount} />
+            <ChipRow tid="stsc-supplier-freight" label="Supplier Freight" value={supFreight} />
+            <ChipRow tid="stsc-supplier-advance" label="Supplier Advance" value={-supAdvance} kind="debit" />
+            <ChipRow tid="stsc-supplier-diesel" label="Supplier Diesel" value={-supDiesel} kind="debit" />
+            <ChipRow tid="stsc-customer-diesel-adj" label="Customer Diesel Adj." value={-Number(trip.customer_diesel_received || 0)} kind="debit" />
+            <ChipRow tid="stsc-other-deductions" label="Other Deductions" value={-(supShortage + supOther)} kind="debit" />
+            <ChipRow tid="stsc-other-additions" label="Other Additions" value={supIncome} kind="credit" />
+            <ChipRow tid="stsc-final-payable" label="Final Supplier Payable" value={netPayable} kind="total" />
+            <ChipRow tid="stsc-supplier-profit" label="Supplier Profit (Ours)" value={supplierProfit} kind={supplierProfit >= 0 ? "profit" : "loss"} />
+          </div>
+        </section>
+      )}
 
       {/* Customer */}
       <Section title="Customer · కస్టమర్">
@@ -297,6 +337,23 @@ function Row({ k, v, mono, strong }) {
     <div className="flex justify-between border-b border-zinc-100 py-1.5">
       <span className="text-zinc-500 text-[11px] uppercase tracking-wider font-semibold">{k}</span>
       <span className={`${mono ? "font-mono" : ""} ${strong ? "font-bold" : ""}`}>{v}</span>
+    </div>
+  );
+}
+
+// Iter64 · Priority 1 — Compact row for the Supplier Trip Summary Chip.
+function ChipRow({ tid, label, value, kind }) {
+  const cls = {
+    debit: "text-rose-700",
+    credit: "text-emerald-700",
+    total: "text-zinc-950 font-bold",
+    profit: "text-emerald-800 font-bold",
+    loss: "text-rose-800 font-bold",
+  }[kind] || "text-zinc-800";
+  return (
+    <div className="flex justify-between items-baseline gap-2" data-testid={tid}>
+      <span className="text-[10px] uppercase tracking-wider text-zinc-600 truncate">{label}</span>
+      <span className={`font-mono tabular-nums ${cls}`}>{fmtCurrency(value)}</span>
     </div>
   );
 }

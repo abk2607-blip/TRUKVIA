@@ -50,6 +50,7 @@ CRITICAL_TESTS=(
   "tests/test_iter60_driver_history_and_policy_pagination.py"  # Iter60 · Phase B — Driver Trip History + Policy pagination + deactivation reason
   "tests/test_iter61_driver_salary_ledger.py"             # Iter61 · Phase C — Driver Salary & Payment Ledger
   "tests/test_iter63_supplier_vehicle_master.py"          # Iter63 · Supplier Vehicle Master integration + Active/Inactive
+  "tests/test_iter64_supplier_chip_vehicle_audit_bulk_import.py"  # Iter64 · Supplier chip + Vehicle status audit + Bulk import
 )
 
 # Explicit venv PATH so this runs cleanly from asyncio subprocess (which
