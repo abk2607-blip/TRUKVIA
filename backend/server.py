@@ -935,6 +935,37 @@ async def startup_event():
     except Exception as e:
         logger.warning(f"Auth index ensure failed: {e}")
 
+    # Iter70 — Purge orphaned pytest fixture customers/trips/invoices on
+    # startup. Real customers are protected (they always have attached rows).
+    # Runs quietly in the background so backend boot isn't delayed.
+    async def _purge_fixture_orphans():
+        try:
+            from routers.customers import FIXTURE_NAME_REGEX
+            uid = "user_demo_men_2026"
+            candidates = []
+            async for c in db.customers.find(
+                {"user_id": uid, "name": {"$regex": FIXTURE_NAME_REGEX}},
+                {"_id": 0, "id": 1},
+            ):
+                candidates.append(c["id"])
+            if not candidates:
+                return
+            trip_attached = set()
+            async for t in db.trips.find({"user_id": uid, "customer_id": {"$in": candidates}}, {"_id": 0, "customer_id": 1}):
+                trip_attached.add(t["customer_id"])
+            inv_attached = set()
+            async for i in db.invoices.find({"user_id": uid, "customer_id": {"$in": candidates}}, {"_id": 0, "customer_id": 1}):
+                inv_attached.add(i["customer_id"])
+            safe = [c for c in candidates if c not in trip_attached and c not in inv_attached]
+            if safe:
+                r = await db.customers.delete_many({"user_id": uid, "id": {"$in": safe}})
+                if r.deleted_count:
+                    logger.info(f"Iter70 fixture-purge: removed {r.deleted_count} orphan fixture customers")
+        except Exception as e:
+            logger.warning(f"Iter70 fixture-purge failed: {e}")
+
+    _asyncio.create_task(_purge_fixture_orphans())
+
 
 @app.on_event("shutdown")
 async def shutdown_db_client():

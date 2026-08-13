@@ -73,23 +73,23 @@ def test_search_by_name_phone_gstin_and_code():
     code = f"CUST-{UNIQUE}"
     _mkcust(ha, name, phone=phone, gstin=gstin, customer_code=code)
 
-    # Partial name — case-insensitive
-    r = httpx.get(f"{BASE}/api/customers?q={UNIQUE.lower()}", headers=ha, timeout=30).json()
+    # Partial name — case-insensitive (fixture names need include_fixtures)
+    r = httpx.get(f"{BASE}/api/customers?q={UNIQUE.lower()}&include_fixtures=true", headers=ha, timeout=30).json()
     assert r["total"] >= 1
     assert any(name in c["name"] for c in r["items"])
 
     # Partial phone
-    r = httpx.get(f"{BASE}/api/customers?q={phone[:6]}", headers=ha, timeout=30).json()
+    r = httpx.get(f"{BASE}/api/customers?q={phone[:6]}&include_fixtures=true", headers=ha, timeout=30).json()
     assert r["total"] >= 1
     assert any(c.get("phone") == phone for c in r["items"])
 
     # Partial GSTIN (mid-string)
-    r = httpx.get(f"{BASE}/api/customers?q={gstin[2:7]}", headers=ha, timeout=30).json()
+    r = httpx.get(f"{BASE}/api/customers?q={gstin[2:7]}&include_fixtures=true", headers=ha, timeout=30).json()
     assert r["total"] >= 1
     assert any(c.get("gstin") == gstin for c in r["items"])
 
     # Customer code partial
-    r = httpx.get(f"{BASE}/api/customers?q={code[:8]}", headers=ha, timeout=30).json()
+    r = httpx.get(f"{BASE}/api/customers?q={code[:8]}&include_fixtures=true", headers=ha, timeout=30).json()
     assert r["total"] >= 1
     assert any(c.get("customer_code") == code for c in r["items"])
 
@@ -99,8 +99,8 @@ def test_search_is_case_insensitive():
     ha = {**HDR, "X-Company-Id": cs[0]["id"]}
     name = f"{UNIQUE}_CaseCheck"
     _mkcust(ha, name)
-    r_lower = httpx.get(f"{BASE}/api/customers?q={name.lower()}", headers=ha, timeout=30).json()
-    r_upper = httpx.get(f"{BASE}/api/customers?q={name.upper()}", headers=ha, timeout=30).json()
+    r_lower = httpx.get(f"{BASE}/api/customers?q={name.lower()}&include_fixtures=true", headers=ha, timeout=30).json()
+    r_upper = httpx.get(f"{BASE}/api/customers?q={name.upper()}&include_fixtures=true", headers=ha, timeout=30).json()
     assert r_lower["total"] >= 1 and r_upper["total"] >= 1
     assert any(c["name"] == name for c in r_lower["items"])
     assert any(c["name"] == name for c in r_upper["items"])
@@ -131,12 +131,41 @@ def test_ids_param_force_includes_and_dedupes():
     # Search for something that will not match c1/c2 to prove they are still returned
     r = httpx.get(
         f"{BASE}/api/customers",
-        params={"q": "ZZZ_DEF_NOT_MATCH_XYZ", "ids": f"{c1['id']},{c2['id']}", "limit": 5},
+        params={"q": "ZZZ_DEF_NOT_MATCH_XYZ", "ids": f"{c1['id']},{c2['id']}", "limit": 5, "include_fixtures": "true"},
         headers=ha, timeout=30,
     ).json()
     got_ids = [c["id"] for c in r["items"]]
     assert c1["id"] in got_ids and c2["id"] in got_ids
     assert len(got_ids) == len(set(got_ids)), "ids force-include must dedupe"
+
+
+def test_ids_only_returns_just_those_customers():
+    """Iter70 — When only `ids` is passed (no q, no pagination), the response
+    must contain ONLY the requested customers, not first-page + ids."""
+    cs = _companies()
+    ha = {**HDR, "X-Company-Id": cs[0]["id"]}
+    c1 = _mkcust(ha, f"{UNIQUE}_IdsOnly1")
+    c2 = _mkcust(ha, f"{UNIQUE}_IdsOnly2")
+    r = httpx.get(f"{BASE}/api/customers", params={"ids": f"{c1['id']},{c2['id']}"}, headers=ha, timeout=30).json()
+    got = {c["id"] for c in r["items"]}
+    assert got == {c1["id"], c2["id"]}, f"ids-only lookup polluted with extras: {got}"
+    assert r["total"] == 2
+
+
+def test_fixture_customers_hidden_by_default_in_paginated_browse():
+    """Iter70 — Paginated browse (no q) must NOT return pytest fixture customers
+    (names matching IT\\d+, TEST_, etc.). This keeps the demo tenant clean for
+    real users. Fixtures still appear when `include_fixtures=true` is passed."""
+    cs = _companies()
+    ha = {**HDR, "X-Company-Id": cs[0]["id"]}
+    fix_cust = _mkcust(ha, f"{UNIQUE}_HiddenTest")  # matches IT\\d+ regex
+    # Browse without include_fixtures — must NOT show it
+    r = httpx.get(f"{BASE}/api/customers?limit=200", headers=ha, timeout=30).json()
+    got_ids = {c["id"] for c in r["items"]}
+    assert fix_cust["id"] not in got_ids, "fixture customer leaked into default browse"
+    # With include_fixtures=true, it can be found
+    r2 = httpx.get(f"{BASE}/api/customers?limit=200&include_fixtures=true&q={UNIQUE}", headers=ha, timeout=30).json()
+    assert any(c["id"] == fix_cust["id"] for c in r2["items"])
 
 
 # ---------------------------------------------------------------------------
@@ -158,13 +187,13 @@ def test_tenant_isolation_across_companies():
     b_cust = _mkcust(hb, f"{marker}_B")
 
     # Search in company A — must NOT see B's customer
-    ra = httpx.get(f"{BASE}/api/customers?q={marker}", headers=ha, timeout=30).json()
+    ra = httpx.get(f"{BASE}/api/customers?q={marker}&include_fixtures=true", headers=ha, timeout=30).json()
     a_ids = {c["id"] for c in ra["items"]}
     assert a_cust["id"] in a_ids
     assert b_cust["id"] not in a_ids, "company A search leaked company B customer"
 
     # And vice-versa
-    rb = httpx.get(f"{BASE}/api/customers?q={marker}", headers=hb, timeout=30).json()
+    rb = httpx.get(f"{BASE}/api/customers?q={marker}&include_fixtures=true", headers=hb, timeout=30).json()
     b_ids = {c["id"] for c in rb["items"]}
     assert b_cust["id"] in b_ids
     assert a_cust["id"] not in b_ids, "company B search leaked company A customer"

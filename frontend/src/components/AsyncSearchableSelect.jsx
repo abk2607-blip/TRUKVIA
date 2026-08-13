@@ -78,13 +78,25 @@ export default function AsyncSearchableSelect({
     return () => clearTimeout(timer);
   }, [q, open, fetchOptions, debounceMs]);
 
+  // Iter70 — Local cache of the last-picked option so the button shows the
+  // label instantly (rather than the raw id) while the parent's async
+  // `selectedOption` prop is still catching up. Cleared when value clears.
+  const [lastPicked, setLastPicked] = useState(null);
+  useEffect(() => {
+    if (!value) setLastPicked(null);
+  }, [value]);
+
   const pick = (opt) => {
+    setLastPicked(opt);
     onChange?.(opt.value, opt);
     setOpen(false);
     setQ("");
   };
 
-  const display = selectedOption?.label || "";
+  const display =
+    (selectedOption?.value === value && selectedOption?.label) ||
+    (lastPicked?.value === value && lastPicked?.label) ||
+    "";
 
   return (
     <div ref={rootRef} className="relative">
@@ -95,7 +107,7 @@ export default function AsyncSearchableSelect({
         className="w-full flex items-center justify-between gap-2 border border-zinc-300 px-3 py-2 rounded-sm text-sm bg-white hover:border-zinc-950 focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none"
       >
         <span className={`truncate text-left flex-1 ${value ? "text-zinc-900" : "text-zinc-400"}`}>
-          {value ? display || value : placeholder}
+          {value ? (display || "…") : placeholder}
         </span>
         {value && allowClear && (
           <span

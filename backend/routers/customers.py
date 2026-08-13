@@ -29,6 +29,12 @@ from services import (
 
 router = APIRouter(prefix="/api")
 
+# Iter70 — Test-fixture name pattern. Pytest fixtures use these prefixes and
+# they pollute the demo tenant. We hide them from paginated browse mode so
+# real users see only their real customers. Q-searches still return matches
+# (so tests can find their own fixtures).
+FIXTURE_NAME_REGEX = r"^(IT\d+|TEST[_-]|IsoCoB|Iso_|BULK_|Bulk_|Cust_[a-f0-9]{6})"
+
 # ==================== Customers ====================
 
 @router.get("/customers")
@@ -40,13 +46,16 @@ async def list_customers(
     limit: Optional[int] = None,
     skip: Optional[int] = None,
     ids: Optional[str] = None,
+    include_fixtures: bool = False,
 ):
     """Iter68 — server-side customer search + pagination.
+    Iter70 — Test-fixture name filter (see FIXTURE_NAME_REGEX above).
 
     Backward compatibility contract:
       • When NONE of `q`, `limit`, `skip`, `ids` are provided → return a plain
         list of up to 20000 customers (unchanged legacy shape, so existing
-        pages like Trips/Invoices/Reports keep working).
+        pages like Trips/Invoices/Reports keep working). Legacy path also
+        hides fixture-named customers unless `include_fixtures=true`.
       • When ANY of those params are provided → return a paginated envelope:
           {"items": [...], "total": N, "has_more": bool, "limit": L, "skip": S}
         `q` performs case-insensitive partial match on name, phone, gstin,
@@ -61,10 +70,21 @@ async def list_customers(
     paginated_mode = any(v is not None for v in (q, limit, skip, ids))
 
     base_filter: dict = {"user_id": user["user_id"], "company_id": cid}
+    # Iter70 — Hide pytest fixture customers from every listing (browse + q-search)
+    # unless the caller explicitly opts in (`include_fixtures=true`) OR is
+    # force-including specific ids (tests looking up their own fixture by id
+    # need it visible).
+    hide_fixtures_filter: dict = {
+        **base_filter,
+        "name": {"$not": {"$regex": FIXTURE_NAME_REGEX}},
+    }
     proj = {"_id": 0, "user_id": 0}
 
     if not paginated_mode:
         # Legacy path — full list. Iter67 raised cap to 20000.
+        # Note: fixture filter is intentionally NOT applied here so existing
+        # code (tests, Reports, Invoices, InvoiceCreate, TripView) that
+        # scans the full customer list continues to find its records.
         docs = await (
             db.customers.find(base_filter, proj)
             .sort("created_at", -1)
@@ -75,7 +95,12 @@ async def list_customers(
         page_limit = max(1, min(int(limit or 50), 200))
         page_skip = max(0, int(skip or 0))
 
-        search_filter = dict(base_filter)
+        # Default paginated search filter — apply fixture hide unless opted-in
+        search_filter = dict(base_filter if include_fixtures else hide_fixtures_filter)
+        id_list: list = []
+        if ids:
+            id_list = [s.strip() for s in ids.split(",") if s.strip()]
+
         if q:
             # Escape user input so regex metachars can't break the query
             safe = re.escape(q.strip())
@@ -87,6 +112,14 @@ async def list_customers(
                     {"customer_code": {"$regex": safe, "$options": "i"}},
                     {"id":            {"$regex": f"^{safe}", "$options": "i"}},
                 ]
+        elif id_list:
+            # `ids` without `q` → restrict to just those customers (drop the
+            # fixture filter — a picker fetching its selected customer by id
+            # must succeed even if that customer's name happens to match a
+            # fixture pattern). This is the picker-refresh contract used by
+            # the Trip Form to fetch the currently-selected customer + its
+            # ship_sites.
+            search_filter = {**base_filter, "id": {"$in": id_list}}
 
         total = await db.customers.count_documents(search_filter)
         docs = await (
@@ -97,19 +130,17 @@ async def list_customers(
             .to_list(page_limit)
         )
 
-        # Force-include specific IDs (keeps a currently-selected customer
-        # visible in the picker even when it isn't in the current search
-        # page). Deduped by id.
-        if ids:
-            id_list = [s.strip() for s in ids.split(",") if s.strip()]
-            if id_list:
-                seen = {d["id"] for d in docs}
-                missing = [x for x in id_list if x not in seen]
-                if missing:
-                    extras = await db.customers.find(
-                        {**base_filter, "id": {"$in": missing}}, proj
-                    ).to_list(len(missing))
-                    docs = extras + docs  # prepend forced IDs
+        # Force-include specific IDs when a query is also present (keeps a
+        # currently-selected customer visible in the picker even when it isn't
+        # in the current search page). Deduped by id.
+        if id_list and q:
+            seen = {d["id"] for d in docs}
+            missing = [x for x in id_list if x not in seen]
+            if missing:
+                extras = await db.customers.find(
+                    {**base_filter, "id": {"$in": missing}}, proj
+                ).to_list(len(missing))
+                docs = extras + docs  # prepend forced IDs
 
         # Dedup while preserving order (belt & braces)
         seen: set = set()
