@@ -19,6 +19,32 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 ## Architecture
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
+
+## Backlog — DO NOT START WITHOUT EXPLICIT USER APPROVAL (locked Feb 2026)
+Priority order — next agent MUST wait for the user's go-ahead before touching any of these:
+
+1. **Halting SMS Digest — WAITING for user's live-verification sign-off.**
+   Do NOT enable the 6 PM SMS digest until the user has personally verified this full chain and given explicit approval:
+   Supplier Vehicle Trip → Halting Calculation → Edit → Save → Trip View → Invoice PDF → Supplier Statement / Settlement.
+   User will confirm the Halting amount is correct at every stage before we flip the switch.
+
+2. **Vehicle Master Refactor — LATER (technical improvement).**
+   Do NOT touch `Vehicles.jsx` (~600 lines) unless it's needed for a critical bug fix. Purely cosmetic/code-hygiene refactor — user explicitly deferred it to protect working paid-in-blood UI.
+
+3. **Bulk Ship-To Import (CSV/XLSX) — LATER.**
+   Keep in backlog. User will trigger this once customers with a large number of delivery/project sites appear.
+
+4. **Default Ship-To by Route — FUTURE ENHANCEMENT.**
+   When implemented later, MUST follow these rules verbatim:
+   - Route matching should suggest / auto-select the customer's matching Ship-To site.
+   - Automatic selection MUST be based ONLY on the currently selected Customer.
+   - MUST NEVER select a Ship-To belonging to another Customer.
+   - Auto-selected Ship-To MUST remain editable before Trip Save.
+   - If no confident route match exists, do NOT guess — leave the normal Ship-To selection available.
+   - Manual user selection MUST always override the automatic suggestion.
+   - Maintain complete Multi-Company isolation.
+
+
 - [x] **Iter68 — Server-side Customer Search** (Feb 2026)
   - **Backend** — `GET /api/customers` extended with optional `q`, `limit`, `skip`, `ids` params. When ANY of them are present, the endpoint returns a paginated envelope `{items, total, has_more, limit, skip}`; when NONE are present, the legacy plain-array shape is preserved so Trips/Invoices/Reports/InvoiceCreate/TripView/InvoiceView/Reports/Parties/TripTemplates/CustomerHistory keep working unchanged. `q` performs case-insensitive partial match on `name`, `phone`, `gstin`, and `customer_code` (with regex metachars escaped for safety), plus prefix match on `id`. `limit` capped 1–200 (default 50). `ids=<comma-list>` force-includes those customers in the result set — used by the Trip Form picker so the currently-selected customer stays visible even when it's outside the current search page. Tenant isolation (user_id + company_id) always enforced; `ids` lookup is also tenant-scoped so it can never leak across companies. Results deduped by id.
   - **Model** — `Customer` gained an optional `customer_code: str = ""` field for the searchable short human-friendly code.
