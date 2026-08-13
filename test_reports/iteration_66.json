@@ -1,0 +1,61 @@
+{
+  "summary": "Iter67 · Invoice PDF Phase D (BILL TO | SHIP TO | META redesign) VERIFIED end-to-end at the backend + PDF layer. Ran existing test_iter67_invoice_pdf_ship_to_ref.py → 4/4 GREEN. Added new test_iter67_extras.py with 3 additional regression tests → 3/3 GREEN. All 7 tests pass covering: same-site single SHIP TO block, mixed-site 'Mixed — see per-trip' header + per-trip Ship-To lines, per-trip Customer Ref no inheritance (ONLY-T1-REF appears exactly once), fallback to to_location when ship_site_id empty, GST/CGST+SGST intra-state, IGST inter-state, ₹ symbol, HSN/SAC, TERMS & CONDITIONS, Amount in Words ('Rupees'), and multi-company isolation (Company B cannot see Company A's customer nor its ship-sites). PDF text extraction via pypdf confirmed. Frontend UI partial-verified: /trips/new renders trip-ship-site SearchableSelect + trip-customer-reference input (both data-testids present); TripView /trips/{id}/view correctly renders tripview-customer-ref = 'UI-VIEW-REF-42' for our seeded trip. HOWEVER — a pre-existing scaling issue prevents full E2E validation of the ship-site picker in the trip form and the Ship-To section on TripView (details below).",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "TripView Ship-To section",
+        "issue": "Ship-To Site Name displays '(site removed)' for a freshly-created trip whose customer is NOT in the /api/customers first-1000-cap window. TripView.jsx reads customer.ship_sites from the (capped) customers listing (line 127); when the customer falls outside the cap, the site lookup silently fails. Root cause = /api/customers list endpoint hard-caps at 1000 (routers/customers.py line 38 `.to_list(1000)`) with no working search/pagination; ALL customers with ship_sites in the current DB are beyond position 1000, so TripView will show '(site removed)' for every iter66/67 trip in prod today.",
+        "selector": "[data-testid=\"tripview-ship-site-name\"]",
+        "priority": "HIGH"
+      },
+      {
+        "component": "Trip form ship-site picker (TripDetailsSection)",
+        "issue": "Ship-site SearchableSelect is fed from customer.ship_sites which is only populated when the customer is in the first 1000 rows of /api/customers. In the current DB no customer with ship-sites is visible (0 of 1000 have ship_sites populated). The picker itself and its search-by-address logic are correctly wired (SearchableSelect meta search + TripDetailsSection includes s.address in meta), but the end-to-end path is unreachable via the UI. Same root cause as above.",
+        "selector": "[data-testid=\"trip-ship-site\"]",
+        "priority": "HIGH"
+      }
+    ],
+    "integration_issues": [
+      {
+        "flow": "Customer list → dependent pickers (ship-site, trip customer, invoice customer)",
+        "issue": "/api/customers returns max 1000 (oldest first) with no search filter honoured server-side. limit query param is ignored/capped. Any customer created after row 1000 becomes invisible to every picker across the app, and any dependent nested field (customer.ship_sites, customer.gstin lookups, etc.) is lost. This will silently degrade iter66/67 functionality in prod.",
+        "affected_selectors": ["[data-testid=\"trip-customer\"]", "[data-testid=\"trip-ship-site\"]", "[data-testid=\"tripview-ship-site-name\"]"]
+      }
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter67_invoice_pdf_ship_to_ref.py",
+    "/app/backend/tests/test_iter67_extras.py",
+    "/app/test_reports/pytest/iter67.xml",
+    "/app/test_reports/pytest/iter67_extras.xml"
+  ],
+  "action_items": [
+    "HIGH: Fix /api/customers list endpoint — either raise the 1000 cap, add server-side sort by created_at DESC so newest customers stay visible, or (best) honour the `search` query param and add proper pagination. Current behaviour makes ship-site + customer-ref invisible in the UI for any newly-created customer past row 1000.",
+    "HIGH: TripView.jsx line 127 should fetch the customer's ship-sites via GET /api/customers/{id}/ship-sites (already exists) instead of relying on the potentially-stale/capped /api/customers listing. Same pattern as the iter55 fix that switched trip lookup to /trips/{id}.",
+    "MEDIUM: Consider similar fetch in TripForm / TripDetailsSection — load /customers/{cid}/ship-sites when a customer is selected, rather than expecting ship_sites to be embedded on the listing payload."
+  ],
+  "critical_code_review_comments": [
+    "routers/customers.py:38 — `.to_list(1000)` is a hard cap with no server-side search or created-at sort. This is now blocking iter66/67 UI features in the current DB state (every real user's newest customer falls outside this window).",
+    "TripView.jsx:127 — reads customer.ship_sites from the listing rather than a dedicated fetch; brittle to list caps and to any endpoint that trims embedded fields for perf.",
+    "SearchableSelect meta-search is correct (line 56: `(o.meta || \"\").toLowerCase().includes(qLower)`) — the search-by-address requirement is satisfied AT THE COMPONENT LEVEL. Only the upstream data pipeline is broken.",
+    "invoice PDF (pdf/invoice.py) — correctly resolves site by trip.ship_site_id server-side and does NOT depend on the frontend customer-list, so all PDF regressions pass. Good separation."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter67_extras.py (new — 3 tests: intra-state CGST/SGST, inter-state IGST, multi-company isolation)"
+  ],
+  "success_rate": {
+    "backend": "100% (7/7 — 4 iter67 + 3 extras)",
+    "frontend": "Partial — data-testids and TripView customer-ref confirmed; Ship-To picker + TripView Ship-To section unreachable due to pre-existing /api/customers 1000-cap issue"
+  },
+  "test_credentials": "Bearer test_session_bitumen_2026 · UI: [data-testid=\"demo-login-button\"]",
+  "seed_data_creation": "Created 'IT67UI Customer' (cust_b520bfe8222540e8) with sites Vijayawada Plant + Guntur Depot, and 'IT67UI2' (cust_bc871183df354024) with site UITestSite + trip trip_ac60dcaf916d4b2b (customer_reference_number='UI-VIEW-REF-42'). Both remain in DB — they are useful reproduction data for the /api/customers 1000-cap bug (they are beyond position 1000). pytest tests create IT67_* + IT67X_* customers, vehicles AP67A* + AP67X*, sites Vijayawada Plant/Guntur Depot/IntraSite. All persisted.",
+  "retest_needed": true,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "PDF backend layer for iter67 is rock-solid — 7/7 tests green. The real blocker for full UI verification is the /api/customers 1000-cap issue in routers/customers.py:38 which pre-dates iter67 but silently breaks the new ship-site picker + TripView Ship-To display. Once fixed, re-run the ship-site picker Playwright script (search by 'MG Road' → Guntur Depot at top; search by 'Vija' → Vijayawada Plant at top) against seeded IT67UI Customer. Also verify TripView on trip_ac60dcaf916d4b2b → tripview-ship-site-name should read 'UITestSite' (currently shows '(site removed)').",
+  "rca_of_the_issue": "The invoice PDF redesign (iter67) itself is correct — pdf/invoice.py resolves site data server-side via trip.ship_site_id → customer.ship_sites lookup within the same request, entirely independent of the customer list endpoint. Backend tests confirm same-site, mixed-site, no-inheritance, fallback, GST/IGST, ₹, HSN, T&C, Amount-in-Words, and multi-company isolation all work. The frontend gap is caused by a pre-existing /api/customers list cap (1000 rows, no sort, no server search) that makes recently-created customers invisible to every UI picker — this now cascades into iter66/67 features (trip-ship-site picker + TripView Ship-To) whose customer data all lives beyond that 1000-row window. Reproduction: create any new customer + ship-site + trip → open trip in TripView → Site Name renders as '(site removed)'. Mitigation: fix the list endpoint (sort by created_at DESC + honour server-side search) OR change TripView + TripDetailsSection to fetch /customers/{id}/ship-sites on demand."
+}

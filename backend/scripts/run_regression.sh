@@ -53,6 +53,7 @@ CRITICAL_TESTS=(
   "tests/test_iter64_supplier_chip_vehicle_audit_bulk_import.py"  # Iter64 · Supplier chip + Vehicle status audit + Bulk import
   "tests/test_iter65_halting_verify.py"                   # Iter65 · Halting Live Verification endpoint contract
   "tests/test_iter66_ship_sites_and_customer_ref.py"      # Iter66 · Ship-To sites + Trip customer reference number
+  "tests/test_iter67_invoice_pdf_ship_to_ref.py"          # Iter67 · Invoice PDF · BILL TO | SHIP TO + Customer Ref column
 )
 
 # Explicit venv PATH so this runs cleanly from asyncio subprocess (which

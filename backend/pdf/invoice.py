@@ -138,7 +138,43 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
     story.append(header_tbl)
     story.append(Spacer(1, 8))
 
-    # ================== BILL TO  +  META CARD ==================
+    # ================== BILL TO  +  SHIP TO  +  META CARD ==================
+    # Iter66 · Phase D — build per-trip Ship-To resolution and detect
+    # whether all trips share ONE site or are Mixed.
+    ship_sites_by_id = {s.get("id"): s for s in (customer.get("ship_sites") or [])}
+
+    def _resolve_ship_to(trip: dict) -> dict:
+        sid = trip.get("ship_site_id") or ""
+        s = ship_sites_by_id.get(sid) if sid else None
+        if s:
+            return {
+                "site_name": s.get("site_name") or "",
+                "address": s.get("address") or "",
+                "gstin": s.get("gstin") or "",
+                "state": s.get("state") or "",
+                "pincode": s.get("pincode") or "",
+                "phone": s.get("phone") or "",
+                "linked": True,
+            }
+        # Fallback: trip's free-text to_location
+        return {
+            "site_name": trip.get("to_location") or "",
+            "address": "",
+            "gstin": "",
+            "state": "",
+            "pincode": "",
+            "phone": "",
+            "linked": False,
+        }
+
+    per_trip_ship = [_resolve_ship_to(t) for t in trips]
+    _st_keys = {
+        (s["site_name"], s["address"], s["gstin"], s["state"], s["pincode"])
+        for s in per_trip_ship
+    } if per_trip_ship else set()
+    _ship_mixed = len(_st_keys) > 1
+    _common_ship = per_trip_ship[0] if per_trip_ship and not _ship_mixed else None
+
     bill_lines = [
         Paragraph("BILL TO", styles["SectLbl"]),
         Spacer(1, 2),
@@ -154,13 +190,38 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
     if customer.get("phone"):
         bill_lines.append(Paragraph(f"Ph: {customer['phone']}", styles["BodyMut"]))
 
+    # SHIP TO block — always rendered (never manually entered on Invoice)
+    ship_lines = [Paragraph("SHIP TO", styles["SectLbl"]), Spacer(1, 2)]
+    if _ship_mixed:
+        ship_lines.append(Paragraph("<b>Mixed — see per-trip below</b>", styles["BillName"]))
+        ship_lines.append(Paragraph("Trips in this invoice ship to multiple sites. Each Trip row lists its own Ship-To.", styles["BodyMut"]))
+    elif _common_ship and (_common_ship["site_name"] or _common_ship["address"]):
+        ship_lines.append(Paragraph(_common_ship["site_name"] or "—", styles["BillName"]))
+        if _common_ship["address"]:
+            ship_lines.append(Paragraph(_common_ship["address"], styles["BodyMut"]))
+        _ship_id_bits = []
+        if _common_ship["gstin"]:
+            _ship_id_bits.append(f"<b>GSTIN</b> {_common_ship['gstin']}")
+        if _common_ship["state"]:
+            _ship_id_bits.append(f"<b>State</b> {_common_ship['state']}")
+        if _common_ship["pincode"]:
+            _ship_id_bits.append(f"<b>PIN</b> {_common_ship['pincode']}")
+        if _ship_id_bits:
+            ship_lines.append(Paragraph("   ".join(_ship_id_bits), styles["Body"]))
+        if _common_ship["phone"]:
+            ship_lines.append(Paragraph(f"Ph: {_common_ship['phone']}", styles["BodyMut"]))
+        if not _common_ship["linked"]:
+            ship_lines.append(Paragraph("<font color='#94A3B8' size='6.5'><i>From trip location (no site linked)</i></font>", styles["Body"]))
+    else:
+        ship_lines.append(Paragraph("—", styles["BillName"]))
+
     meta_rows = [
-        [Paragraph("Invoice No", styles["SectLbl"]), Paragraph(invoice.get("invoice_number", "—"), styles["SmallB"])],
+        [Paragraph("Our Invoice No", styles["SectLbl"]), Paragraph(invoice.get("invoice_number", "—"), styles["SmallB"])],
         [Paragraph("Invoice Date", styles["SectLbl"]), Paragraph(invoice.get("invoice_date", "—"), styles["SmallB"])],
         [Paragraph("HSN/SAC", styles["SectLbl"]), Paragraph(invoice.get("hsn_sac") or company.get("hsn_sac", "996791"), styles["SmallB"])],
         [Paragraph("GST Type", styles["SectLbl"]), Paragraph("CGST+SGST" if invoice.get("gst_type") == "cgst_sgst" else "IGST", styles["SmallB"])],
     ]
-    meta_tbl = Table(meta_rows, colWidths=[24 * mm, 40 * mm])
+    meta_tbl = Table(meta_rows, colWidths=[22 * mm, 32 * mm])
     meta_tbl.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), C_META),
         ("FONTSIZE", (0, 0), (-1, -1), 8),
@@ -171,16 +232,25 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
         ("LINEBELOW", (0, 0), (-1, -2), 0.3, C_LINE),
     ]))
 
-    bill_tbl = Table([[bill_lines]], colWidths=[118 * mm])
+    bill_tbl = Table([[bill_lines]], colWidths=[66 * mm])
     bill_tbl.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), C_BILL),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("LEFTPADDING", (0, 0), (-1, -1), 10),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
         ("TOPPADDING", (0, 0), (-1, -1), 8),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
     ]))
-    party_tbl = Table([[bill_tbl, meta_tbl]], colWidths=[118 * mm, 68 * mm])
+    ship_tbl = Table([[ship_lines]], colWidths=[62 * mm])
+    ship_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), C_BILL),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+    ]))
+    party_tbl = Table([[bill_tbl, ship_tbl, meta_tbl]], colWidths=[66 * mm, 62 * mm, 58 * mm])
     party_tbl.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("LEFTPADDING", (0, 0), (-1, -1), 0),
@@ -209,10 +279,25 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
     sub_row_indices = []  # 0-based indexes of sub rows (for style spans)
     for idx, t in enumerate(trips, start=1):
         route = f"{t.get('from_location','')} → {t.get('to_location','')}"
-        cust_inv = t.get("customer_invoice_no", "") or t.get("waybill_no", "")
-        route_html = route
-        if cust_inv:
-            route_html = f"{route}<br/><font size='6.5' color='#64748B'>Cust Inv: {cust_inv}</font>"
+        # Iter66 · Phase D — Customer Ref No is stored per-trip and NEVER inherited.
+        # Blank stays blank. Kept clearly separate from Our Invoice No shown in the meta card above.
+        cust_ref = t.get("customer_reference_number") or ""
+        # Backwards-compat: fall back to legacy customer_invoice_no / waybill_no ONLY if the
+        # new field is empty AND the old fields have a value; but per Phase D spec we do NOT
+        # inherit across trips — this fallback is per-trip only.
+        if not cust_ref:
+            cust_ref = t.get("customer_invoice_no") or t.get("waybill_no") or ""
+        route_html_parts = [route]
+        # Per-trip Ship-To when mixed
+        if _ship_mixed:
+            _st = per_trip_ship[idx - 1]
+            _site_str = _st["site_name"] or "—"
+            if _st["address"]:
+                _site_str = f"{_site_str} · {_st['address']}"
+            route_html_parts.append(f"<font size='6.5' color='#64748B'><b>Ship-To:</b> {_site_str}</font>")
+        if cust_ref:
+            route_html_parts.append(f"<font size='6.5' color='#64748B'><b>Cust Ref:</b> {cust_ref}</font>")
+        route_html = "<br/>".join(route_html_parts)
 
         if t.get("freight_mode") == "per_ton":
             rate_html = f"Per Ton<br/><font size='6.5' color='#64748B'>₹ {_fmt(t.get('rate_per_ton', 0))} / MT</font>"

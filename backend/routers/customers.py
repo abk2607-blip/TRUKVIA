@@ -35,7 +35,12 @@ router = APIRouter(prefix="/api")
 async def list_customers(request: Request, user=Depends(get_current_user), with_balance: bool = False):
     cid = await _active_company_id(request, user)
     await _backfill_to_default(user["user_id"])
-    docs = await db.customers.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(1000)
+    # Iter67 fix — raise cap to 20000 (demo has 10k+ customers) and sort by
+    # newest first so recently-added customers with ship-sites remain visible
+    # to every UI picker.
+    docs = await (db.customers.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "user_id": 0})
+                  .sort("created_at", -1)
+                  .to_list(20000))
     if with_balance:
         invs = await db.invoices.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "customer_id": 1, "balance_due": 1, "total_amount": 1, "gross_total": 1, "amount_paid": 1}).to_list(5000)
         bal_map: dict = {}
