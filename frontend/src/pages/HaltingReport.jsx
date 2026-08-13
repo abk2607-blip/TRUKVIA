@@ -1,7 +1,8 @@
 import React, { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { api, fmtCurrency } from "@/api";
-import { Clock } from "lucide-react";
+import { Clock, ShieldCheck } from "lucide-react";
 
 export default function HaltingReport() {
   const [start, setStart] = useState("");
@@ -23,6 +24,9 @@ export default function HaltingReport() {
           </h1>
         </div>
         <div className="flex items-end gap-2">
+          <Link to="/reports/halting-verify" data-testid="halting-verify-link" className="inline-flex items-center gap-1 text-xs px-3 py-1.5 border border-indigo-300 text-indigo-800 rounded-sm hover:bg-indigo-50 uppercase tracking-wider font-semibold self-end">
+            <ShieldCheck size={12} /> Halting Verify Audit
+          </Link>
           <div>
             <label className="text-[10px] uppercase tracking-wider font-bold text-zinc-500">Start</label>
             <input data-testid="halting-start-date" type="date" value={start} onChange={(e) => setStart(e.target.value)} className="mt-1 border border-zinc-300 px-3 py-1.5 rounded-sm text-sm" />

@@ -327,7 +327,7 @@ export default function Vehicles() {
                 <div><b>CSV / XLSX columns:</b> vehicle_number, vehicle_type (own/supplier), supplier_name OR supplier_id, owner_name, owner_phone, make_model, capacity_tons, remarks, is_active (true/false)</div>
                 <div><b>Duplicates:</b> existing vehicle numbers (and duplicates within the file) are rejected with an error line — not silently overwritten.</div>
                 <div><b>Suppliers:</b> for supplier vehicles, the supplier_id or supplier_name must already exist in Supplier Master (case-insensitive match). Add missing suppliers first.</div>
-                <div><b>Sample:</b> <a data-testid="download-sample-csv" href="#" onClick={(e) => { e.preventDefault(); downloadSampleVehicleCSV(); }} className="text-indigo-700 underline">Download sample CSV</a></div>
+                <div><b>Sample:</b> <a data-testid="download-sample-csv" href="#" onClick={(e) => { e.preventDefault(); downloadSampleVehicleCSV(); }} className="text-indigo-700 underline">CSV</a> · <a data-testid="download-sample-xlsx" href="#" onClick={async (e) => { e.preventDefault(); const res = await api.get("/vehicles/bulk-import/sample.xlsx", { responseType: "blob" }); const link = document.createElement("a"); link.href = URL.createObjectURL(new Blob([res.data])); link.download = "vehicles_sample_import.xlsx"; link.click(); }} className="text-indigo-700 underline">Excel (.xlsx)</a></div>
               </div>
               <div>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Select CSV or XLSX file *</label>
@@ -438,7 +438,17 @@ export default function Vehicles() {
       )}
 
       {/* Iter64 · Priority 2 — Vehicle status change dialog */}
-      {statusDialog && editing?.id && (
+      {statusDialog && editing?.id && (() => {
+        // Iter65 · Priority 4 — compute inactive duration for reactivation guard
+        let inactiveDays = 0;
+        if (statusDialog.mode === "reactivate" && editing.last_status_change_effective_date) {
+          try {
+            const dt = new Date(editing.last_status_change_effective_date + "T00:00:00");
+            inactiveDays = Math.floor((Date.now() - dt.getTime()) / (1000 * 60 * 60 * 24));
+          } catch { inactiveDays = 0; }
+        }
+        const showLongInactiveWarning = statusDialog.mode === "reactivate" && inactiveDays > 90;
+        return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/45 backdrop-blur-sm p-4" data-testid="vehicle-status-dialog">
           <div className="bg-white w-full max-w-lg border border-zinc-950 rounded-sm shadow-2xl">
             <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-200">
@@ -454,6 +464,24 @@ export default function Vehicles() {
                   ? "Inactive vehicles are hidden from new Trip pickers. Historical Trips using this vehicle remain unchanged. A mandatory reason is recorded in the audit trail."
                   : "Reactivation makes the vehicle available for new Trips again. The reactivation event is recorded permanently — prior inactive history is preserved."}
               </div>
+              {showLongInactiveWarning && (
+                <div className="text-xs bg-rose-50 border border-rose-300 rounded-sm p-3 space-y-1" data-testid="vehicle-reactivate-warning">
+                  <div className="font-bold text-rose-800 flex items-center gap-1"><AlertTriangle size={12} /> This vehicle has been INACTIVE for {inactiveDays} days</div>
+                  <div className="text-rose-700">Last inactive effective date: <span className="font-mono font-semibold">{editing.last_status_change_effective_date}</span></div>
+                  <div className="text-rose-700">Reason: <span className="italic">{editing.last_status_change_reason || "—"}</span></div>
+                  <div className="text-[11px] text-zinc-700 mt-2">Please confirm you have re-verified RC, FC, Insurance, Permit and PUC documents before reactivating. The complete inactive/reactivation audit history will be preserved.</div>
+                  <label className="flex items-center gap-2 mt-2 cursor-pointer text-xs">
+                    <input
+                      data-testid="vehicle-reactivate-confirm-check"
+                      type="checkbox"
+                      checked={!!statusDialog.long_inactive_ack}
+                      onChange={(e) => setStatusDialog({ ...statusDialog, long_inactive_ack: e.target.checked })}
+                      className="h-4 w-4 accent-rose-600"
+                    />
+                    <span className="font-semibold text-rose-800">I have verified the vehicle is fit to return to service.</span>
+                  </label>
+                </div>
+              )}
               <div>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Reason (min 3 chars) *</label>
                 <textarea data-testid="vehicle-status-reason" rows={3} autoFocus value={statusDialog.reason}
@@ -471,7 +499,7 @@ export default function Vehicles() {
                 <button type="button" data-testid="vehicle-status-cancel" onClick={() => setStatusDialog(null)}
                   className="px-4 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm hover:bg-zinc-50">Cancel</button>
                 <button type="button" data-testid="vehicle-status-confirm"
-                  disabled={statusMut.isPending || statusDialog.reason.trim().length < 3 || !statusDialog.effective_date}
+                  disabled={statusMut.isPending || statusDialog.reason.trim().length < 3 || !statusDialog.effective_date || (showLongInactiveWarning && !statusDialog.long_inactive_ack)}
                   onClick={() => statusMut.mutate()}
                   className={`px-4 py-2 text-xs uppercase tracking-wider text-white rounded-sm disabled:opacity-50 ${statusDialog.mode === "deactivate" ? "bg-rose-600 hover:bg-rose-700" : "bg-emerald-600 hover:bg-emerald-700"}`}
                 >{statusMut.isPending ? "Saving…" : (statusDialog.mode === "deactivate" ? "Confirm Deactivate" : "Confirm Reactivate")}</button>
@@ -479,7 +507,8 @@ export default function Vehicles() {
             </div>
           </div>
         </div>
-      )}
+        );
+      })()}
 
       {/* Iter64 · Priority 2 — Vehicle audit history viewer */}
       {showAudit && (

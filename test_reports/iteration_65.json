@@ -1,0 +1,28 @@
+{
+  "summary": "Iter65 · P1 (Halting Verify) + P3 (XLSX sample) + P4 (Reactivation Guard) end-to-end verified. Backend regression: 10/10 GREEN (test_iter65_halting_verify.py 6/6 + new test_iter65_xlsx_and_reactivation.py 4/4). Frontend E2E via Playwright: (a) /reports/halting-verify renders with all 4 stat tiles (stat-total/stat-ok/stat-mismatch + verdict card 'ALL GREEN — safe to enable SMS Digest' when mismatch_count=0), filters and refresh work, only-mismatches checkbox correctly hides OK rows. (b) Vehicles page bulk-import-modal exposes 'Excel (.xlsx)' link → downloads vehicles_sample_import.xlsx (6383 bytes, PK magic, 'Vehicles' + 'Instructions' sheets, 3 sample rows). (c) P4 reactivation guard: for a vehicle deactivated 100 days ago, the status dialog shows vehicle-reactivate-warning ('This vehicle has been INACTIVE for 100 days', last_status_change_effective_date + reason rendered), the acknowledgement checkbox exists and is initially unchecked, vehicle-status-confirm is DISABLED with valid reason+date until the check is ticked, then enables. For a vehicle deactivated 10 days ago the warning banner is NOT rendered and confirm gates only on reason ≥3 + effective_date. Backend PATCH /vehicles/{vid}/status permits the reactivation and adds a 'reactivated' row to /vehicles/{vid}/status-audit (audit contains both actions).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter65_halting_verify.py",
+    "/app/backend/tests/test_iter65_xlsx_and_reactivation.py",
+    "/app/test_reports/pytest/iter65_full.xml"
+  ],
+  "action_items": [
+    "OPTIONAL cleanup: /app/backend/routers/reports.py lines 1163-1179 contain an orphan duplicate of _public_base_url body (unreachable code after the correct return above) — dead code, should be removed."
+  ],
+  "critical_code_review_comments": [
+    "reports.py has ~15 lines of orphan/duplicated code (lines 1163-1179) after the `_public_base_url` function — an unreachable copy of the same function body. Harmless but noise.",
+    "HaltingVerify.jsx `okCount` is derived from `rows.filter(status==='OK').length` while `mismatch_count` comes from server. When only_mismatches=true the server strips OK rows, so stat-ok reads 0 even though the underlying data-set has OK trips. Consider deriving okCount as `data.total - data.mismatch_count` so the tile stays truthful across filter states.",
+    "Vehicles.jsx now 617 lines — still under the 700-line guideline but growing; the Status Dialog + Reactivation Guard block (lines 440-510) is a natural extraction candidate."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter65_xlsx_and_reactivation.py (new — 4 tests for XLSX sample + reactivation persistence + audit)"
+  ],
+  "success_rate": {"backend": "100% (10/10)", "frontend": "100% (P1 + P3 + P4 all green)"},
+  "test_credentials": "Bearer test_session_bitumen_2026 · demo-login-button (server-provisioned demo user)",
+  "seed_data_creation": "Created AP99UI100D (deactivated 100d ago) + AP99UI010D (deactivated 10d ago) for the reactivation guard UI test — BOTH DELETED after testing. Halting-verify pytest module creates trips dated 2026-06-01 to 2026-06-04 in the default company (persisted, unique customer IT65_C_* + vehicle AP65A*).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "P1 Halting Verify verdict card is the operational gate for enabling the deferred 6 PM Halting SMS Digest — as of this run mismatch_count=0 on the default company so verdict reads 'ALL GREEN — safe to enable SMS Digest'. To re-run the >90d reactivation guard UI test, create a vehicle then PATCH /vehicles/{vid}/status with effective_date = today-100d, reason ≥3 chars, is_active=false; edit the vehicle → click vehicle-toggle-status-btn → vehicle-reactivate-warning + vehicle-reactivate-confirm-check appear. Do NOT hit GET /api/vehicles/{vid} — that endpoint does not exist; use GET /api/vehicles and filter client-side.",
+  "rca_of_the_issue": "No new bugs. Minor code review: reports.py duplicate function body (lines 1163-1179) is dead code left from an earlier refactor. HaltingVerify.jsx stat-ok double-counts (from filtered rows) so it silently reads 0 when only_mismatches=true even though the true OK count is (data.total - data.mismatch_count)."
+}

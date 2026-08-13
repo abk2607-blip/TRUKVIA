@@ -1002,6 +1002,145 @@ async def share_supplier_statement(
     }
 
 
+# ============ Iter65 · Priority 1 — Halting Live Verification ============
+@router.get("/reports/halting-verify")
+async def halting_verify(request: Request, user=Depends(get_current_user),
+                          date_from: str = "", date_to: str = "",
+                          only_mismatches: bool = False, limit: int = 200):
+    """Return every Trip that has halting activity in the window, along with
+    per-stage values so we can verify Halting is consistent across
+    Trip Entry → Auto Calc → Trip View → Invoice → Supplier Settlement.
+
+    All values come from server-persisted Trip records — no re-derivation
+    happens here so any mismatch reveals a real data-integrity issue.
+    """
+    cid = await _active_company_id(request, user)
+    q = {"user_id": user["user_id"], "company_id": cid,
+         "$or": [{"total_halting_days": {"$gt": 0}}, {"halting_amount": {"$gt": 0}}]}
+    if date_from or date_to:
+        rng = {}
+        if date_from: rng["$gte"] = date_from
+        if date_to: rng["$lte"] = date_to
+        q["date"] = rng
+    trips = await (db.trips.find(q, {"_id": 0, "user_id": 0})
+                   .sort("date", -1)
+                   .to_list(min(max(50, limit), 1000)))
+    # Bulk-load invoices referenced by these trips
+    invoice_ids = list({t.get("invoice_id") for t in trips if t.get("invoice_id")})
+    invoices_by_id = {}
+    if invoice_ids:
+        async for inv in db.invoices.find(
+            {"user_id": user["user_id"], "company_id": cid, "id": {"$in": invoice_ids}},
+            {"_id": 0, "user_id": 0},
+        ):
+            invoices_by_id[inv["id"]] = inv
+    rows = []
+    mismatches = 0
+    for t in trips:
+        # ---- Stage A: Trip Entry inputs (as stored) ----
+        loading_date = t.get("loading_date") or ""
+        unloading_date = t.get("unloading_date") or ""
+        grace_days = int(t.get("grace_days") or 0)
+        stored_total = int(t.get("total_halting_days") or 0)
+        stored_chargeable = int(t.get("chargeable_halting_days") or 0)
+        stored_rate = float(t.get("halting_rate_per_day") or 0)
+        stored_amount = float(t.get("halting_amount") or 0)
+        override = bool(t.get("halting_amount_override"))
+        # ---- Stage B: Recompute using the same formula (services.compute_totals) ----
+        dates_present = False
+        expected_total = stored_total
+        if loading_date and unloading_date:
+            try:
+                _ld = datetime.fromisoformat(loading_date).date()
+                _ud = datetime.fromisoformat(unloading_date).date()
+                expected_total = max((_ud - _ld).days, 0)
+                dates_present = True
+            except Exception:
+                pass
+        expected_chargeable = max(expected_total - grace_days, 0)
+        expected_amount = round(expected_chargeable * stored_rate, 2) if not override else stored_amount
+        # ---- Stage C: Invoice mirror ----
+        invoice_stage = None
+        inv = invoices_by_id.get(t.get("invoice_id"))
+        if inv:
+            # Invoices reference trips by trip_ids list; per-line halting is
+            # not stored, but the invoice halting_total is the sum of all
+            # referenced trips' halting_amount.  We verify that this trip is
+            # actually in trip_ids (data-integrity link) and report the
+            # invoice's aggregate halting.
+            invoice_stage = {
+                "invoice_id": inv["id"],
+                "invoice_number": inv.get("invoice_number"),
+                "invoice_status": inv.get("status"),
+                "trip_linked": t["id"] in (inv.get("trip_ids") or []),
+                "invoice_line_halting": float(stored_amount),          # this trip's contribution
+                "invoice_total_halting": float(inv.get("halting_total", 0)),
+            }
+        # ---- Stage D: Supplier settlement ----
+        # Halting is CUSTOMER-side (customer billable). Supplier gets their own
+        # supplier_freight and is not affected by halting_amount. Explicitly show
+        # this so operators know it's expected.
+        supplier_stage = None
+        if t.get("vehicle_type") == "supplier":
+            supplier_stage = {
+                "supplier_id": t.get("supplier_id"),
+                "supplier_name": t.get("supplier_name"),
+                "supplier_freight": float(t.get("supplier_freight", 0)),
+                "note": "Halting is customer-side revenue; supplier settlement does NOT include it.",
+            }
+        # ---- Mismatch flags ----
+        flags = []
+        if dates_present and stored_total != expected_total:
+            flags.append(f"total_halting_days stored={stored_total}, expected from dates={expected_total}")
+        if stored_chargeable != expected_chargeable and not override:
+            flags.append(f"chargeable_halting_days stored={stored_chargeable}, expected={expected_chargeable}")
+        if not override and abs(stored_amount - expected_amount) > 0.01:
+            flags.append(f"halting_amount stored={stored_amount}, expected={expected_amount:.2f}")
+        if invoice_stage and not invoice_stage["trip_linked"]:
+            flags.append(f"invoice {invoice_stage['invoice_number']} does not list this trip in trip_ids")
+        if flags:
+            mismatches += 1
+        if only_mismatches and not flags:
+            continue
+        rows.append({
+            "trip_id": t["id"],
+            "trip_number": t.get("trip_number"),
+            "date": t.get("date"),
+            "lr_number": t.get("lr_number"),
+            "vehicle_number": t.get("vehicle_number"),
+            "vehicle_type": t.get("vehicle_type", "own"),
+            "customer_name": t.get("customer_name"),
+            "trip_entry": {
+                "loading_date": loading_date, "unloading_date": unloading_date,
+                "dates_present": dates_present,
+                "grace_days": grace_days,
+                "halting_rate_per_day": stored_rate,
+                "halting_amount_override": override,
+            },
+            "halting_calc": {
+                "total_halting_days_stored": stored_total,
+                "total_halting_days_expected": expected_total,
+                "grace_days_applied": grace_days,
+                "chargeable_halting_days_stored": stored_chargeable,
+                "chargeable_halting_days_expected": expected_chargeable,
+                "halting_amount_stored": stored_amount,
+                "halting_amount_expected": expected_amount,
+            },
+            "invoice_stage": invoice_stage,
+            "supplier_stage": supplier_stage,
+            "flags": flags,
+            "status": "OK" if not flags else "MISMATCH",
+        })
+    return {
+        "total": len(trips),
+        "returned": len(rows),
+        "mismatch_count": mismatches,
+        "date_from": date_from or None,
+        "date_to": date_to or None,
+        "rows": rows,
+    }
+
+
 def _public_base_url(request):
     """Return the public HTTPS base URL for building share links."""
     url = os.environ.get("REACT_APP_BACKEND_URL") or os.environ.get("PUBLIC_BASE_URL")

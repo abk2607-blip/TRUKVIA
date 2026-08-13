@@ -379,6 +379,68 @@ async def bulk_import_commit(request: Request, file: UploadFile = File(...),
     }
 
 
+@router.get("/vehicles/bulk-import/sample.xlsx")
+async def bulk_import_sample_xlsx(user=Depends(get_current_user)):
+    """Iter65 · Priority 3 — Downloadable XLSX template for Bulk Vehicle Import."""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Vehicles"
+    headers = [
+        "vehicle_number", "vehicle_type", "supplier_id", "supplier_name",
+        "owner_name", "owner_phone", "make_model", "capacity_tons",
+        "remarks", "is_active",
+    ]
+    header_font = Font(bold=True, color="FFFFFF")
+    header_fill = PatternFill("solid", fgColor="1E293B")
+    for c_idx, h in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=c_idx, value=h)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = Alignment(horizontal="center")
+    # Sample rows
+    samples = [
+        ["AP16TA1001", "own", "", "", "Ravi Kumar", "9998887777", "Tata LPT 3118", 25, "Own truck", "true"],
+        ["AP16TA1002", "supplier", "", "Kondapalli Fleet Owners", "", "", "Ashok Leyland 3720", 32, "Hired", "true"],
+        ["AP16TA1003", "own", "", "", "Sita Rao", "", "BharatBenz 2823", 26, "Under maintenance", "false"],
+    ]
+    for r_idx, row in enumerate(samples, start=2):
+        for c_idx, val in enumerate(row, start=1):
+            ws.cell(row=r_idx, column=c_idx, value=val)
+    # Instructions sheet
+    ws2 = wb.create_sheet("Instructions")
+    inst = [
+        ["Column", "Required", "Description"],
+        ["vehicle_number", "YES", "e.g. AP16TA1234. Must be unique. Case-insensitive."],
+        ["vehicle_type", "YES", "'own' or 'supplier'."],
+        ["supplier_id", "For supplier only", "Preferred — links by ID. Get from Supplier master."],
+        ["supplier_name", "Fallback", "If supplier_id is empty, name must match an existing supplier."],
+        ["owner_name", "Optional", "Any free text."],
+        ["owner_phone", "Optional", "For renewal reminders."],
+        ["make_model", "Optional", "e.g. Tata LPT 3118"],
+        ["capacity_tons", "Optional", "Numeric."],
+        ["remarks", "Optional", "Any notes."],
+        ["is_active", "Optional", "true / false. Defaults to true if empty."],
+    ]
+    for r_idx, row in enumerate(inst, start=1):
+        for c_idx, val in enumerate(row, start=1):
+            cell = ws2.cell(row=r_idx, column=c_idx, value=val)
+            if r_idx == 1:
+                cell.font = header_font; cell.fill = header_fill
+    for w in (ws, ws2):
+        for col in w.columns:
+            max_len = max(len(str(c.value or "")) for c in col) + 2
+            w.column_dimensions[col[0].column_letter].width = min(max_len, 40)
+    buf = io.BytesIO()
+    wb.save(buf); buf.seek(0)
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="vehicles_sample_import.xlsx"'},
+    )
+
+
 # ==================== Fuel Log ====================
 
 
