@@ -9,7 +9,7 @@ import ExpenditureBreakdownCard from "@/components/ExpenditureBreakdownCard";
 
 export default function Dashboard() {
   const [digestLoading, setDigestLoading] = React.useState(false);
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isError, error, refetch } = useQuery({
     queryKey: ["dashboard"],
     queryFn: async () => (await api.get("/dashboard")).data,
   });
@@ -22,7 +22,10 @@ export default function Dashboard() {
     queryFn: async () => (await api.get("/invoices/overdue", { params: { days: 30 } })).data,
   });
 
-  if (isLoading) return <div className="text-zinc-500">Loading...</div>;
+  // Iter69 — Never block the whole Dashboard on any single API. Render the
+  // shell + skeletons immediately so the user sees the app open in <1s and
+  // widgets fill in as their data arrives. A hard failure surfaces inline
+  // with a retry button instead of a permanent "Loading…" screen.
   const d = data || {};
 
   const stats = [
@@ -49,7 +52,7 @@ export default function Dashboard() {
             onClick={async () => {
               setDigestLoading(true);
               try {
-                const { data: d } = await api.get("/ai/daily-digest");
+                const { data: d } = await api.get("/ai/daily-digest", { timeout: 60000 });
                 window.open(d.whatsapp_url, "_blank");
               } catch (e) {
                 console.error(e);
@@ -71,6 +74,29 @@ export default function Dashboard() {
           </Link>
         </div>
       </header>
+
+      {/* Iter69 — Non-blocking status banner. Only appears when the primary
+          `/dashboard` call is still loading OR failed; the rest of the page
+          remains interactive so the user can navigate elsewhere via the sidebar. */}
+      {isLoading && (
+        <div data-testid="dashboard-loading-banner" className="border border-zinc-200 bg-zinc-50 rounded-sm px-4 py-2 text-xs text-zinc-600 flex items-center gap-2">
+          <Loader2 size={12} className="animate-spin" />
+          Loading your dashboard data…
+        </div>
+      )}
+      {isError && !isLoading && (
+        <div data-testid="dashboard-error-banner" className="border border-rose-300 bg-rose-50 rounded-sm px-4 py-3 text-xs text-rose-800 flex items-center justify-between gap-3">
+          <div>
+            <div className="font-bold uppercase tracking-wider mb-0.5">Dashboard data couldn't load</div>
+            <div>{error?.response?.data?.detail || error?.message || "Please retry — the rest of the app is available in the sidebar."}</div>
+          </div>
+          <button
+            data-testid="dashboard-retry-btn"
+            onClick={() => refetch()}
+            className="px-3 py-1.5 text-[11px] uppercase tracking-wider font-semibold bg-rose-600 text-white rounded-sm hover:bg-rose-700"
+          >Retry</button>
+        </div>
+      )}
 
       {/* AI Smart Insights */}
       <InsightsCard />

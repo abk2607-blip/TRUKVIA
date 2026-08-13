@@ -8,12 +8,12 @@ export default function InsightsCard() {
   const qc = useQueryClient();
   const { data, isFetching, isLoading } = useQuery({
     queryKey: ["ai-insights"],
-    queryFn: async () => (await api.get("/ai/insights")).data,
+    queryFn: async () => (await api.get("/ai/insights", { timeout: 60000 })).data,
     staleTime: 6 * 60 * 60 * 1000,
     retry: false,
   });
   const refresh = useMutation({
-    mutationFn: async () => (await api.post("/ai/insights/refresh")).data,
+    mutationFn: async () => (await api.post("/ai/insights/refresh", null, { timeout: 60000 })).data,
     onSuccess: (d) => { qc.setQueryData(["ai-insights"], d); toast.success("Insights refreshed"); },
     onError: (e) => toast.error(e?.response?.data?.detail || "Refresh failed"),
   });

@@ -189,8 +189,18 @@ async def dashboard_expenditure_detail(
     match_type = (type or "").strip().lower()
     if not match_type:
         raise HTTPException(status_code=400, detail="type is required")
+    # Iter69 — Push the date filter down into the mongo query so tenants with
+    # >20k trips (formerly capped in-memory) don't silently drop rows.
+    q: dict = {"user_id": uid, "company_id": cid}
+    if start or end:
+        drange: dict = {}
+        if start:
+            drange["$gte"] = start
+        if end:
+            drange["$lte"] = end
+        q["date"] = drange
     trips = await db.trips.find(
-        {"user_id": uid, "company_id": cid},
+        q,
         {"_id": 0, "id": 1, "date": 1, "lr_number": 1, "vehicle_number": 1,
          "from_location": 1, "to_location": 1, "other_expenditures": 1},
     ).to_list(20000)

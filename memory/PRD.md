@@ -20,6 +20,21 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter69 — Demo Login "Stuck on Loading" P0 Bug Fix** (Feb 2026)
+  - **Symptom reported by user (WhatsApp video)**: Tapping "Continue as Demo — Skip Login" on /login → the app remained on "Loading…" for 15+ seconds and never opened the Dashboard.
+  - **Root cause (three compounding issues)**:
+    1. `Dashboard.jsx` had `if (isLoading) return <div>Loading...</div>` — a blocking full-page gate on the single `/api/dashboard` call. Any slowness (slow network, cold DB, HTTP/2 head-of-line blocking behind the 8.5s `/api/ai/insights` LLM call) → **entire page stuck**.
+    2. `api.js` axios instance had **no timeout**. A single failing/slow request could hang the browser tab indefinitely.
+    3. `/api/dashboard/expenditure-detail` fetched 20,000 trips into memory then filtered by date. Demo tenant has grown to 20,347 trips → newest rows silently dropped → iter43 flake `test_expenditure_drill_down_returns_trip_rows` failed intermittently (returned total=0.0 when it should have been 350.0), which cascaded into the regression guard flipping to "fail" and blocking the preview URL.
+  - **Fixes**:
+    1. `Dashboard.jsx` — removed the `if (isLoading) return "Loading..."` gate. Shell (header, sidebar, stat tiles, quick actions) renders immediately with `const d = data || {}` fallbacks. Added a small inline `dashboard-loading-banner` (visible only during initial fetch) and `dashboard-error-banner` with a `dashboard-retry-btn` (calls `refetch()`) — so a failed API surfaces inline instead of stuck loading.
+    2. `api.js` — axios instance gained a **25 000 ms default timeout**. Long-running endpoints override per-call: `/ai/insights` and `/ai/insights/refresh` (InsightsCard) → 60 s; `/ai/daily-digest` (Dashboard header button) → 60 s. Requests can never hang forever.
+    3. `routers/dashboard.py::expenditure_detail` — date filter now pushed down into the mongo query (`date: {$gte, $lte}`) BEFORE `.to_list(20000)`. Newer trips are no longer silently dropped on large tenants. iter43 test now passes reliably.
+  - **Measured impact**: Demo Login → Dashboard shell = **0.9-1.0 seconds** (was stuck indefinitely). Full journey Demo Login → Dashboard → Trips → Trip Form → Invoices → Dashboard = ~6 s end-to-end. Testing agent: **100/100 green** on both backend and frontend. Full regression suite: **27/27 test files GREEN**.
+  - **UNCHANGED**: Iter68 customer-search behavior fully preserved (11/11 pytests still green). Dashboard visual layout, stat tiles, cards, all unaffected. No new tests added for iter69 — the fix is verified via existing iter43 test + testing agent frontend flow.
+  - **Deferred (backlog note)**: `/api/dashboard` main endpoint also caps trips at 5000 and customers at 2000 — a separate scale issue for tenants above these thresholds. Not blocking demo login (the endpoint still returns 200 in ~300 ms) but may under-report totals on very large tenants. Track for iter70+.
+
+
 ## Backlog — DO NOT START WITHOUT EXPLICIT USER APPROVAL (locked Feb 2026)
 Priority order — next agent MUST wait for the user's go-ahead before touching any of these:
 

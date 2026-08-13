@@ -39,6 +39,10 @@ export const setActiveCompanyId = (cid) => {
 export const api = axios.create({
   baseURL: API,
   withCredentials: false,
+  // Iter69 — Hard client-side timeout so a stuck request can never leave the
+  // UI hanging on "Loading…" forever. Long-running endpoints (LLM insights,
+  // PDF generation) may override per-call via `{timeout: N}`.
+  timeout: 25000,
 });
 
 // Attach Bearer token from localStorage as a fallback for browsers that
