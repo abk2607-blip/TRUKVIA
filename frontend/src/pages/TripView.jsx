@@ -118,8 +118,27 @@ export default function TripView() {
           <Row k="GSTIN" v={customer.gstin || "—"} />
           <Row k="Address" v={customer.address || "—"} />
           <Row k="State / Pincode" v={`${customer.state || "—"} · ${customer.pincode || "—"}`} />
+          <Row k="Customer Ref No." v={<span data-testid="tripview-customer-ref">{trip.customer_reference_number || "—"}</span>} strong />
         </Grid2>
       </Section>
+
+      {/* Iter66 · Phase C — Ship-To Site */}
+      {(() => {
+        const site = (customer.ship_sites || []).find((s) => s.id === trip.ship_site_id);
+        if (!site && !trip.ship_site_id) return null;   // no site selected — fallback = to_location shown in Load & Route
+        return (
+          <Section title="Ship-To · అన్‌లోడింగ్ సైట్">
+            <Grid2>
+              <Row k="Site Name" v={<span data-testid="tripview-ship-site-name">{site?.site_name || (trip.ship_site_id ? "(site removed)" : trip.to_location || "—")}</span>} strong />
+              <Row k="Contact" v={site?.contact_person || "—"} />
+              <Row k="Phone" v={site?.phone || "—"} />
+              <Row k="GSTIN" v={site?.gstin || customer.gstin || "—"} />
+              <Row k="Address" v={<span data-testid="tripview-ship-site-address">{site?.address || trip.to_location || "—"}</span>} />
+              <Row k="State / Pincode" v={`${site?.state || "—"} · ${site?.pincode || "—"}`} />
+            </Grid2>
+          </Section>
+        );
+      })()}
 
       {/* Vehicle */}
       <Section title="Vehicle · వాహనం">

@@ -80,6 +80,105 @@ async def delete_customer(cid: str, request: Request, user=Depends(get_current_u
     return {"ok": True}
 
 
+# ============================================================================
+# Iter66 · Phase A — Ship-To Sites CRUD (nested under Customer)
+# Stored as embedded array `ship_sites: [ShipSite]` on the Customer document.
+# ============================================================================
+from models import ShipSite as _ShipSite
+
+async def _get_customer_or_404(user_id: str, cid: str, customer_id: str) -> dict:
+    doc = await db.customers.find_one(
+        {"id": customer_id, "user_id": user_id, "company_id": cid},
+        {"_id": 0, "user_id": 0},
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Customer not found")
+    return doc
+
+
+@router.get("/customers/{cid}/ship-sites")
+async def list_ship_sites(cid: str, request: Request, user=Depends(get_current_user),
+                           active_only: bool = False):
+    company_id = await _active_company_id(request, user)
+    doc = await _get_customer_or_404(user["user_id"], company_id, cid)
+    sites = doc.get("ship_sites") or []
+    if active_only:
+        sites = [s for s in sites if s.get("is_active") is not False]
+    return {"items": sites, "total": len(sites)}
+
+
+@router.post("/customers/{cid}/ship-sites")
+async def create_ship_site(cid: str, payload: _ShipSite, request: Request,
+                           user=Depends(get_current_user)):
+    company_id = await _active_company_id(request, user)
+    doc = await _get_customer_or_404(user["user_id"], company_id, cid)
+    new_site = payload.model_dump()
+    existing = doc.get("ship_sites") or []
+    # Enforce single default — if this one is default, clear others.
+    if new_site.get("is_default"):
+        for s in existing:
+            s["is_default"] = False
+    # If it's the first site, auto-mark default for better UX.
+    if not existing:
+        new_site["is_default"] = True
+    existing.append(new_site)
+    await db.customers.update_one(
+        {"id": cid, "user_id": user["user_id"], "company_id": company_id},
+        {"$set": {"ship_sites": existing}},
+    )
+    return new_site
+
+
+@router.put("/customers/{cid}/ship-sites/{sid}")
+async def update_ship_site(cid: str, sid: str, payload: _ShipSite, request: Request,
+                            user=Depends(get_current_user)):
+    company_id = await _active_company_id(request, user)
+    doc = await _get_customer_or_404(user["user_id"], company_id, cid)
+    sites = doc.get("ship_sites") or []
+    idx = next((i for i, s in enumerate(sites) if s.get("id") == sid), -1)
+    if idx == -1:
+        raise HTTPException(status_code=404, detail="Ship site not found")
+    updated = payload.model_dump()
+    updated["id"] = sid  # never let the id change
+    # Enforce single default
+    if updated.get("is_default"):
+        for i, s in enumerate(sites):
+            if i != idx:
+                s["is_default"] = False
+    sites[idx] = updated
+    await db.customers.update_one(
+        {"id": cid, "user_id": user["user_id"], "company_id": company_id},
+        {"$set": {"ship_sites": sites}},
+    )
+    return updated
+
+
+@router.delete("/customers/{cid}/ship-sites/{sid}")
+async def delete_ship_site(cid: str, sid: str, request: Request,
+                            user=Depends(get_current_user)):
+    """Soft-delete a ship site by setting is_active=False.  Never hard-deletes
+    because historical Trips may reference it by ship_site_id."""
+    company_id = await _active_company_id(request, user)
+    doc = await _get_customer_or_404(user["user_id"], company_id, cid)
+    sites = doc.get("ship_sites") or []
+    idx = next((i for i, s in enumerate(sites) if s.get("id") == sid), -1)
+    if idx == -1:
+        raise HTTPException(status_code=404, detail="Ship site not found")
+    sites[idx]["is_active"] = False
+    # If this was the default, pick another active one as default automatically.
+    if sites[idx].get("is_default"):
+        sites[idx]["is_default"] = False
+        for s in sites:
+            if s.get("is_active") is not False and not s.get("is_default"):
+                s["is_default"] = True
+                break
+    await db.customers.update_one(
+        {"id": cid, "user_id": user["user_id"], "company_id": company_id},
+        {"$set": {"ship_sites": sites}},
+    )
+    return {"ok": True}
+
+
 
 # ============================================================================
 # Customer Transaction History (Iter36) — myBillBook-style single-screen ledger

@@ -3,6 +3,8 @@
 
 export const EMPTY = {
   customer_id: "",
+  ship_site_id: "",                 // Iter66 · Phase B
+  customer_reference_number: "",    // Iter66 · Phase B
   date: new Date().toISOString().slice(0, 10),
   vehicle_number: "",
   vehicle_id: "",

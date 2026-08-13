@@ -3,8 +3,9 @@ import { Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, X, FileText } from "lucide-react";
+import { Plus, Pencil, Trash2, X, FileText, MapPin } from "lucide-react";
 import { StateSelect } from "@/lib/states";
+import ShipSitesModal from "@/components/ShipSitesModal";
 
 const EMPTY = { name: "", address: "", phone: "", gstin: "", pan: "", state: "" };
 
@@ -13,6 +14,7 @@ export default function Customers() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY);
+  const [shipCust, setShipCust] = useState(null);   // Iter66 · Phase B — ship sites manager modal
 
   const { data: customers = [], isLoading } = useQuery({
     queryKey: ["customers"],
@@ -80,6 +82,9 @@ export default function Customers() {
                   <Link data-testid={`history-customer-${c.id}`} to={`/customers/history/${c.id}`} className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-indigo-300 text-indigo-700 rounded-sm mr-2 hover:bg-indigo-600 hover:text-white transition">
                     <FileText size={12} /> History
                   </Link>
+                  <button data-testid={`ship-sites-customer-${c.id}`} onClick={() => setShipCust(c)} className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-amber-300 text-amber-800 rounded-sm mr-2 hover:bg-amber-600 hover:text-white transition">
+                    <MapPin size={12} /> Ship-To ({(c.ship_sites || []).filter((s) => s.is_active !== false).length})
+                  </button>
                   <button data-testid={`edit-customer-${c.id}`} onClick={() => openEdit(c)} className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-zinc-200 rounded-sm mr-2 hover:bg-zinc-950 hover:text-white">
                     <Pencil size={12} /> Edit
                   </button>
@@ -174,6 +179,10 @@ export default function Customers() {
             </form>
           </div>
         </div>
+      )}
+
+      {shipCust && (
+        <ShipSitesModal customer={shipCust} onClose={() => setShipCust(null)} />
       )}
     </div>
   );

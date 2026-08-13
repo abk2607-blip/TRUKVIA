@@ -70,6 +70,22 @@ class Company(BaseModel):
     udyam_registration: str = ""  # MSME / Udyam Registration No. — appears in Invoice T&C
     is_default: bool = False
 
+class ShipSite(BaseModel):
+    """Iter66 · Phase A — a customer's Ship-To / consignee site location.
+    A Customer may have many.  ship_site_id on a Trip picks one."""
+    id: str = Field(default_factory=lambda: new_id("ship_"))
+    site_name: str
+    address: str = ""
+    gstin: str = ""
+    state: str = ""
+    state_code: str = ""
+    pincode: str = ""
+    contact_person: str = ""
+    phone: str = ""
+    is_default: bool = False
+    is_active: bool = True
+
+
 class Customer(BaseModel):
     id: str = Field(default_factory=lambda: new_id("cust_"))
     name: str
@@ -84,6 +100,7 @@ class Customer(BaseModel):
     advance_balance: float = 0.0     # surplus payments; carried on the customer
     notes: str = ""
     reminder_enabled: bool = True
+    ship_sites: List[ShipSite] = Field(default_factory=list)   # Iter66 · Phase A — multi Ship-To
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
 
 class Expenses(BaseModel):
@@ -197,6 +214,8 @@ class Trip(BaseModel):
     consignor_name: str = ""
     consignee_id: Optional[str] = None
     consignee_name: str = ""
+    ship_site_id: str = ""                       # Iter66 · Phase A — selected Customer.ship_sites[].id (fallback to to_location if empty)
+    customer_reference_number: str = ""          # Iter66 · Phase A — customer's own invoice/ref no. per trip; NEVER inherited
     tons: float
     from_location: str = ""
     to_location: str = ""

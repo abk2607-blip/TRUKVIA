@@ -1,4 +1,5 @@
 // Iter55 — Extracted verbatim from TripForm.jsx. Pure JSX; state lives in parent.
+// Iter66 · Phase B — added Ship-To Site picker + Customer Reference Number.
 import React from "react";
 import SearchableSelect from "@/components/SearchableSelect";
 import { Section, Field } from "./FormPrimitives";
@@ -9,6 +10,18 @@ export default function TripDetailsSection({
   customers, vehicles, drivers, products,
   setQaOpen,
 }) {
+  // Selected customer's active ship sites
+  const selectedCustomer = customers.find((c) => c.id === form.customer_id);
+  const shipSites = (selectedCustomer?.ship_sites || []).filter((s) => s.is_active !== false);
+
+  // Auto-select customer's default site whenever customer changes AND no site picked yet.
+  React.useEffect(() => {
+    if (!form.customer_id || form.ship_site_id) return;
+    const def = shipSites.find((s) => s.is_default);
+    if (def) setForm((f) => ({ ...f, ship_site_id: def.id }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.customer_id]);
+
   return (
     <Section title="వివరాలు · Trip Details">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -19,7 +32,7 @@ export default function TripDetailsSection({
           <SearchableSelect
             dataTestId="trip-customer"
             value={form.customer_id}
-            onChange={(v) => setForm({ ...form, customer_id: v })}
+            onChange={(v) => setForm({ ...form, customer_id: v, ship_site_id: "" })}
             onCreateNew={() => setQaOpen("customer")}
             createLabel="+ Add New Customer"
             placeholder="Search customer…"
@@ -130,6 +143,54 @@ export default function TripDetailsSection({
         </Field>
         <Field label="To · వరకు">
           <input data-testid="trip-to" value={form.to_location} onChange={(e) => setForm({ ...form, to_location: e.target.value })} className={inputCls} />
+        </Field>
+
+        {/* Iter66 · Phase B — Ship-To Site picker (only when customer has sites) */}
+        <Field label="Ship-To Site · అన్‌లోడింగ్ సైట్">
+          <div className="flex items-center gap-2">
+            <div className="flex-1">
+              <SearchableSelect
+                dataTestId="trip-ship-site"
+                value={form.ship_site_id || ""}
+                onChange={(sid) => setForm({ ...form, ship_site_id: sid || "" })}
+                placeholder={selectedCustomer ? "Select site…" : "Pick customer first"}
+                options={shipSites.map((s) => ({
+                  value: s.id,
+                  label: s.site_name + (s.is_default ? " · Default" : ""),
+                  meta: [s.address, s.state, s.pincode].filter(Boolean).join(" · "),
+                }))}
+              />
+            </div>
+            {selectedCustomer && (
+              <button
+                type="button"
+                data-testid="trip-quickadd-ship-site-btn"
+                onClick={() => setQaOpen("ship-site")}
+                className="px-3 py-2 text-xs uppercase tracking-wider font-semibold bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 whitespace-nowrap"
+              >+ New</button>
+            )}
+          </div>
+          {form.ship_site_id && (() => {
+            const s = shipSites.find((x) => x.id === form.ship_site_id);
+            return s ? (
+              <div className="text-[10px] text-zinc-600 mt-1">
+                {s.address || "—"}{s.gstin ? ` · GSTIN ${s.gstin}` : ""}
+              </div>
+            ) : null;
+          })()}
+          {selectedCustomer && shipSites.length === 0 && (
+            <div className="text-[10px] text-zinc-500 mt-1">No sites saved for this customer. The "To" location above will be used as the fallback ship-to on the invoice.</div>
+          )}
+        </Field>
+        <Field label="Customer Ref / Ref No. · కస్టమర్ రిఫరెన్స్">
+          <input
+            data-testid="trip-customer-reference"
+            value={form.customer_reference_number || ""}
+            onChange={(e) => setForm({ ...form, customer_reference_number: e.target.value })}
+            className={inputCls}
+            placeholder="e.g. CUS-INV-2026-4567"
+          />
+          <div className="text-[10px] text-zinc-500 mt-1">Customer's own invoice / reference number for this trip. Blank stays blank — never inherited from another trip.</div>
         </Field>
       </div>
     </Section>

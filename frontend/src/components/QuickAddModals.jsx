@@ -261,3 +261,52 @@ export function QuickAddSupplier({ prefillName = "", onCreated, onClose }) {
     </ModalShell>
   );
 }
+
+// Iter66 · Phase B — Quick Add Ship-To Site (from Trip Entry)
+export function QuickAddShipSite({ customerId, onCreated, onClose }) {
+  const qc = useQueryClient();
+  const [f, setF] = useState({
+    site_name: "",
+    address: "",
+    gstin: "",
+    state: "",
+    state_code: "",
+    pincode: "",
+    contact_person: "",
+    phone: "",
+    is_default: false,
+    is_active: true,
+  });
+  const m = useMutation({
+    mutationFn: async () => (await api.post(`/customers/${customerId}/ship-sites`, f)).data,
+    onSuccess: async (d) => {
+      toast.success("Ship-To site added");
+      await qc.refetchQueries({ queryKey: ["customers"] });
+      await qc.refetchQueries({ queryKey: ["ship-sites", customerId] });
+      onCreated?.(d);
+      onClose?.();
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Failed"),
+  });
+  return (
+    <ModalShell title="Quick Add — Ship-To Site" onClose={onClose} testId="quickadd-ship-site-modal">
+      <form onSubmit={(e) => { e.preventDefault(); m.mutate(); }} className="space-y-3">
+        <div><label className={lbl}>Site Name *</label><input required data-testid="qa-site-name" autoFocus value={f.site_name} onChange={(e) => setF({ ...f, site_name: e.target.value })} className={ic} placeholder="Vijayawada Plant" /></div>
+        <div><label className={lbl}>Address</label><textarea rows={2} data-testid="qa-site-address" value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} className={ic} /></div>
+        <div className="grid grid-cols-2 gap-3">
+          <div><label className={lbl}>State</label><input data-testid="qa-site-state" value={f.state} onChange={(e) => setF({ ...f, state: e.target.value })} className={ic} placeholder="Andhra Pradesh" /></div>
+          <div><label className={lbl}>PIN Code</label><input data-testid="qa-site-pincode" value={f.pincode} onChange={(e) => setF({ ...f, pincode: e.target.value })} className={ic} /></div>
+        </div>
+        <div><label className={lbl}>GSTIN (if different from billing)</label><input data-testid="qa-site-gstin" value={f.gstin} onChange={(e) => setF({ ...f, gstin: e.target.value.toUpperCase() })} className={ic} /></div>
+        <label className="inline-flex items-center gap-2 text-sm cursor-pointer">
+          <input data-testid="qa-site-default" type="checkbox" checked={f.is_default} onChange={(e) => setF({ ...f, is_default: e.target.checked })} className="h-4 w-4 accent-amber-600" />
+          <span className={f.is_default ? "text-amber-800 font-semibold" : "text-zinc-600"}>Mark as default site for this customer</span>
+        </label>
+        <div className="flex justify-end gap-2 pt-2">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm">Cancel</button>
+          <button type="submit" data-testid="qa-site-save" disabled={m.isPending} className="px-4 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm disabled:opacity-50">{m.isPending ? "Saving…" : "Save Site"}</button>
+        </div>
+      </form>
+    </ModalShell>
+  );
+}

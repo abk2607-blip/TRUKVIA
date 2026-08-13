@@ -14,6 +14,7 @@ import {
   QuickAddVehicle,
   QuickAddProduct,
   QuickAddSupplier,
+  QuickAddShipSite,
 } from "@/components/QuickAddModals";
 
 import { EMPTY, inputCls } from "@/components/tripform/tripFormDefaults";
@@ -448,6 +449,13 @@ export default function TripForm() {
       {qaOpen === "supplier" && (
         <QuickAddSupplier
           onCreated={(s) => setForm((f) => ({ ...f, supplier_id: s.id, supplier_name: s.name }))}
+          onClose={() => setQaOpen(null)}
+        />
+      )}
+      {qaOpen === "ship-site" && form.customer_id && (
+        <QuickAddShipSite
+          customerId={form.customer_id}
+          onCreated={(s) => setForm((f) => ({ ...f, ship_site_id: s.id }))}
           onClose={() => setQaOpen(null)}
         />
       )}
