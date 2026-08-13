@@ -1,0 +1,22 @@
+{
+  "summary": "Iter68 — Server-side Customer Search verified end-to-end. All 11 backend pytest cases in test_iter68_customer_search.py pass (legacy no-params shape, paginated envelope, limit cap 200, q partial match across name/phone/gstin/customer_code, case-insensitive, regex metachar escaping, no duplicates, ids force-include with dedup, cross-tenant isolation, skip/has_more, empty-q pagination). Public URL verified: /api/customers returns list of 7842 (legacy) and /api/customers?limit=3 returns paginated envelope. Frontend UI verified via Playwright: /customers debounced search (typing 'a' narrowed 7842→2796 in ~300ms), Prev disabled at page 0, Next advances to different rows, Prev restores. TripForm /trips/new async customer picker fetched 50 options for 'a', selecting one populated the ship-site picker. Trips/Invoices/Reports pages load with no error banners — backward-compat legacy list shape preserved. with_balance=true also still returns legacy list shape (7842).",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter68_customer_search.py",
+    "/app/test_reports/pytest/iter68_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "customers.py list_customers: page_limit/page_skip is computed twice (once inside the paginated branch, once at return). Minor duplication — extract to a single computation before the branch. Non-blocking.",
+    "The `ids` id-lookup uses base_filter (tenant-scoped) — tenant isolation is enforced correctly here. Test confirms A's id under B's headers is excluded.",
+    "regex `^{safe}` on `id` field is an OK optimization for exact/prefix id lookup via q, but ensure this doesn't cause confusion since the primary id-forced-include path is via `ids=`."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Bearer test_session_bitumen_2026 (demo session)",
+  "seed_data_creation": "Tests created TEST customers with UNIQUE prefix IT68_* — no cleanup performed (Iter68 test pattern; low volume).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter68 customer server-side search is stable. Ensure future changes to /api/customers keep the paginated_mode branch guard (any of q/limit/skip/ids). with_balance is intentionally NOT in that tuple so CustomerHistory's /api/customers?with_balance=true keeps returning legacy array. AsyncSearchableSelect input testid is `{dataTestId}-input`, options are `{dataTestId}-opt-{id}`."
+}

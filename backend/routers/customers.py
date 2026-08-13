@@ -32,15 +32,95 @@ router = APIRouter(prefix="/api")
 # ==================== Customers ====================
 
 @router.get("/customers")
-async def list_customers(request: Request, user=Depends(get_current_user), with_balance: bool = False):
+async def list_customers(
+    request: Request,
+    user=Depends(get_current_user),
+    with_balance: bool = False,
+    q: Optional[str] = None,
+    limit: Optional[int] = None,
+    skip: Optional[int] = None,
+    ids: Optional[str] = None,
+):
+    """Iter68 — server-side customer search + pagination.
+
+    Backward compatibility contract:
+      • When NONE of `q`, `limit`, `skip`, `ids` are provided → return a plain
+        list of up to 20000 customers (unchanged legacy shape, so existing
+        pages like Trips/Invoices/Reports keep working).
+      • When ANY of those params are provided → return a paginated envelope:
+          {"items": [...], "total": N, "has_more": bool, "limit": L, "skip": S}
+        `q` performs case-insensitive partial match on name, phone, gstin,
+        and customer_code. Tenant isolation (user_id + company_id) is always
+        enforced. `ids` (comma-separated) forcibly includes those customers
+        in the result set (used by pickers to keep the currently-selected
+        customer visible even when it is outside the search page).
+    """
     cid = await _active_company_id(request, user)
     await _backfill_to_default(user["user_id"])
-    # Iter67 fix — raise cap to 20000 (demo has 10k+ customers) and sort by
-    # newest first so recently-added customers with ship-sites remain visible
-    # to every UI picker.
-    docs = await (db.customers.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "user_id": 0})
-                  .sort("created_at", -1)
-                  .to_list(20000))
+
+    paginated_mode = any(v is not None for v in (q, limit, skip, ids))
+
+    base_filter: dict = {"user_id": user["user_id"], "company_id": cid}
+    proj = {"_id": 0, "user_id": 0}
+
+    if not paginated_mode:
+        # Legacy path — full list. Iter67 raised cap to 20000.
+        docs = await (
+            db.customers.find(base_filter, proj)
+            .sort("created_at", -1)
+            .to_list(20000)
+        )
+    else:
+        # Iter68 — search / paginated path
+        page_limit = max(1, min(int(limit or 50), 200))
+        page_skip = max(0, int(skip or 0))
+
+        search_filter = dict(base_filter)
+        if q:
+            # Escape user input so regex metachars can't break the query
+            safe = re.escape(q.strip())
+            if safe:
+                search_filter["$or"] = [
+                    {"name":          {"$regex": safe, "$options": "i"}},
+                    {"phone":         {"$regex": safe, "$options": "i"}},
+                    {"gstin":         {"$regex": safe, "$options": "i"}},
+                    {"customer_code": {"$regex": safe, "$options": "i"}},
+                    {"id":            {"$regex": f"^{safe}", "$options": "i"}},
+                ]
+
+        total = await db.customers.count_documents(search_filter)
+        docs = await (
+            db.customers.find(search_filter, proj)
+            .sort("created_at", -1)
+            .skip(page_skip)
+            .limit(page_limit)
+            .to_list(page_limit)
+        )
+
+        # Force-include specific IDs (keeps a currently-selected customer
+        # visible in the picker even when it isn't in the current search
+        # page). Deduped by id.
+        if ids:
+            id_list = [s.strip() for s in ids.split(",") if s.strip()]
+            if id_list:
+                seen = {d["id"] for d in docs}
+                missing = [x for x in id_list if x not in seen]
+                if missing:
+                    extras = await db.customers.find(
+                        {**base_filter, "id": {"$in": missing}}, proj
+                    ).to_list(len(missing))
+                    docs = extras + docs  # prepend forced IDs
+
+        # Dedup while preserving order (belt & braces)
+        seen: set = set()
+        unique_docs: list = []
+        for d in docs:
+            if d["id"] in seen:
+                continue
+            seen.add(d["id"])
+            unique_docs.append(d)
+        docs = unique_docs
+
     if with_balance:
         invs = await db.invoices.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "customer_id": 1, "balance_due": 1, "total_amount": 1, "gross_total": 1, "amount_paid": 1}).to_list(5000)
         bal_map: dict = {}
@@ -51,6 +131,17 @@ async def list_customers(request: Request, user=Depends(get_current_user), with_
             bal_map[k] = bal_map.get(k, 0.0) + float(i.get("balance_due", 0))
         for c in docs:
             c["outstanding_balance"] = round(bal_map.get(c["id"], 0.0), 2)
+
+    if paginated_mode:
+        page_limit = max(1, min(int(limit or 50), 200))
+        page_skip = max(0, int(skip or 0))
+        return {
+            "items": docs,
+            "total": total,
+            "has_more": (page_skip + len(docs)) < total,
+            "limit": page_limit,
+            "skip": page_skip,
+        }
     return docs
 
 @router.post("/customers")

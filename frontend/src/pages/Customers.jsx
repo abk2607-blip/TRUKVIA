@@ -1,25 +1,48 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { api } from "@/api";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, X, FileText, MapPin } from "lucide-react";
+import { Plus, Pencil, Trash2, X, FileText, MapPin, Search, Loader2 } from "lucide-react";
 import { StateSelect } from "@/lib/states";
 import ShipSitesModal from "@/components/ShipSitesModal";
 
 const EMPTY = { name: "", address: "", phone: "", gstin: "", pan: "", state: "" };
+const PAGE_SIZE = 50;
 
 export default function Customers() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY);
-  const [shipCust, setShipCust] = useState(null);   // Iter66 · Phase B — ship sites manager modal
+  const [shipCust, setShipCust] = useState(null);
 
-  const { data: customers = [], isLoading } = useQuery({
-    queryKey: ["customers"],
-    queryFn: async () => (await api.get("/customers")).data,
+  // Iter68 — debounced server-side search
+  const [rawQuery, setRawQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [page, setPage] = useState(0);
+
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setDebouncedQuery(rawQuery.trim());
+      setPage(0);
+    }, 300);
+    return () => clearTimeout(t);
+  }, [rawQuery]);
+
+  const { data, isLoading, isFetching } = useQuery({
+    queryKey: ["customers-paginated", debouncedQuery, page],
+    queryFn: async () => {
+      const params = { limit: PAGE_SIZE, skip: page * PAGE_SIZE };
+      if (debouncedQuery) params.q = debouncedQuery;
+      return (await api.get("/customers", { params })).data;
+    },
+    placeholderData: keepPreviousData,
   });
+
+  const customers = data?.items || [];
+  const total = data?.total ?? 0;
+  const hasMore = data?.has_more ?? false;
 
   const save = useMutation({
     mutationFn: async () => {
@@ -30,6 +53,7 @@ export default function Customers() {
     },
     onSuccess: () => {
       toast.success(editing ? "Customer updated" : "Customer created");
+      qc.invalidateQueries({ queryKey: ["customers-paginated"] });
       qc.invalidateQueries({ queryKey: ["customers"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });
       setOpen(false); setEditing(null); setForm(EMPTY);
@@ -39,11 +63,18 @@ export default function Customers() {
 
   const del = useMutation({
     mutationFn: async (id) => (await api.delete(`/customers/${id}`)).data,
-    onSuccess: () => { toast.success("Deleted"); qc.invalidateQueries({ queryKey: ["customers"] }); },
+    onSuccess: () => {
+      toast.success("Deleted");
+      qc.invalidateQueries({ queryKey: ["customers-paginated"] });
+      qc.invalidateQueries({ queryKey: ["customers"] });
+    },
   });
 
   const openEdit = (c) => { setEditing(c); setForm({ ...EMPTY, ...c }); setOpen(true); };
   const openNew = () => { setEditing(null); setForm(EMPTY); setOpen(true); };
+
+  const start = total === 0 ? 0 : page * PAGE_SIZE + 1;
+  const end = Math.min((page + 1) * PAGE_SIZE, total);
 
   return (
     <div className="space-y-6" data-testid="customers-page">
@@ -59,6 +90,34 @@ export default function Customers() {
           <Plus size={14} /> Add Customer
         </button>
       </header>
+
+      {/* Iter68 — server-side search bar */}
+      <div className="flex items-center gap-3">
+        <div className="relative flex-1 max-w-md">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+          <input
+            data-testid="customer-search-input"
+            value={rawQuery}
+            onChange={(e) => setRawQuery(e.target.value)}
+            placeholder="Search name, phone, GSTIN, or code…"
+            className="w-full border border-zinc-300 pl-9 pr-9 py-2 rounded-sm text-sm focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none bg-white"
+          />
+          {rawQuery && (
+            <button
+              type="button"
+              data-testid="customer-search-clear"
+              onClick={() => setRawQuery("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-rose-600"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+        <div className="text-xs text-zinc-500" data-testid="customer-search-count">
+          {isFetching && <Loader2 size={12} className="inline animate-spin mr-1" />}
+          {debouncedQuery ? `${total} match${total === 1 ? "" : "es"} for “${debouncedQuery}”` : `${total} customers`}
+        </div>
+      </div>
 
       <div className="border border-zinc-200 bg-white rounded-sm overflow-hidden">
         <table className="w-full text-sm" data-testid="customers-table">
@@ -95,10 +154,34 @@ export default function Customers() {
               </tr>
             ))}
             {!isLoading && customers.length === 0 && (
-              <tr><td colSpan={5} className="px-4 py-12 text-center text-zinc-400">No customers yet.</td></tr>
+              <tr><td colSpan={5} className="px-4 py-12 text-center text-zinc-400" data-testid="customers-empty">
+                {debouncedQuery ? `No customers match “${debouncedQuery}”.` : "No customers yet."}
+              </td></tr>
             )}
           </tbody>
         </table>
+
+        {/* Iter68 — pagination controls */}
+        {total > 0 && (
+          <div className="flex items-center justify-between border-t border-zinc-100 px-4 py-2 text-xs text-zinc-600 bg-zinc-50" data-testid="customer-pagination">
+            <div>Showing <b>{start}</b>–<b>{end}</b> of <b>{total}</b></div>
+            <div className="flex items-center gap-2">
+              <button
+                data-testid="customer-page-prev"
+                disabled={page === 0 || isFetching}
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+                className="px-3 py-1 border border-zinc-300 rounded-sm hover:bg-white disabled:opacity-40"
+              >Prev</button>
+              <span>Page {page + 1}</span>
+              <button
+                data-testid="customer-page-next"
+                disabled={!hasMore || isFetching}
+                onClick={() => setPage((p) => p + 1)}
+                className="px-3 py-1 border border-zinc-300 rounded-sm hover:bg-white disabled:opacity-40"
+              >Next</button>
+            </div>
+          </div>
+        )}
       </div>
 
       {open && (

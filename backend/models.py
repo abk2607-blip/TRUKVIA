@@ -96,6 +96,7 @@ class Customer(BaseModel):
     pan: str = ""
     state: str = ""
     pincode: str = ""
+    customer_code: str = ""          # Iter68 — optional short human-friendly code; searchable
     opening_balance: float = 0.0
     advance_balance: float = 0.0     # surplus payments; carried on the customer
     notes: str = ""

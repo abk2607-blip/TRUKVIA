@@ -1,7 +1,13 @@
 // Iter55 — Extracted verbatim from TripForm.jsx. Pure JSX; state lives in parent.
 // Iter66 · Phase B — added Ship-To Site picker + Customer Reference Number.
+// Iter68 — Customer dropdown switched to server-side async search; ship-sites
+// are fetched on demand for the selected customer to avoid loading all
+// customers up front.
 import React from "react";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "@/api";
 import SearchableSelect from "@/components/SearchableSelect";
+import AsyncSearchableSelect from "@/components/AsyncSearchableSelect";
 import { Section, Field } from "./FormPrimitives";
 import { inputCls } from "./tripFormDefaults";
 
@@ -10,9 +16,44 @@ export default function TripDetailsSection({
   customers, vehicles, drivers, products,
   setQaOpen,
 }) {
-  // Selected customer's active ship sites
-  const selectedCustomer = customers.find((c) => c.id === form.customer_id);
+  // Iter68 — Fetch selected customer's full record (name + ship_sites) via
+  // the paginated endpoint using `ids`. Only runs when customer_id is set.
+  const { data: selCustResp } = useQuery({
+    queryKey: ["customer-detail", form.customer_id],
+    queryFn: async () =>
+      (await api.get("/customers", { params: { ids: form.customer_id, limit: 1 } })).data,
+    enabled: !!form.customer_id,
+    staleTime: 60000,
+  });
+  const selectedCustomer =
+    selCustResp?.items?.find?.((c) => c.id === form.customer_id) ||
+    customers.find((c) => c.id === form.customer_id) ||
+    null;
   const shipSites = (selectedCustomer?.ship_sites || []).filter((s) => s.is_active !== false);
+
+  // Async fetcher for customer picker (server-side search)
+  const fetchCustomers = React.useCallback(async (q) => {
+    const params = { limit: 50 };
+    if (q) params.q = q;
+    if (form.customer_id) params.ids = form.customer_id; // keep current visible
+    const { data } = await api.get("/customers", { params });
+    const items = data?.items || [];
+    return items.map((c) => ({
+      value: c.id,
+      label: c.name,
+      meta: [c.gstin, c.state, c.phone].filter(Boolean).join(" · "),
+    }));
+  }, [form.customer_id]);
+
+  const selectedCustomerOption = selectedCustomer
+    ? {
+        value: selectedCustomer.id,
+        label: selectedCustomer.name,
+        meta: [selectedCustomer.gstin, selectedCustomer.state, selectedCustomer.phone]
+          .filter(Boolean)
+          .join(" · "),
+      }
+    : null;
 
   // Auto-select customer's default site whenever customer changes AND no site picked yet.
   React.useEffect(() => {
@@ -20,7 +61,7 @@ export default function TripDetailsSection({
     const def = shipSites.find((s) => s.is_default);
     if (def) setForm((f) => ({ ...f, ship_site_id: def.id }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.customer_id]);
+  }, [form.customer_id, shipSites.length]);
 
   return (
     <Section title="వివరాలు · Trip Details">
@@ -29,18 +70,15 @@ export default function TripDetailsSection({
           <input type="date" data-testid="trip-date" required value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className={inputCls} />
         </Field>
         <Field label="Customer · కస్టమర్" required>
-          <SearchableSelect
+          <AsyncSearchableSelect
             dataTestId="trip-customer"
             value={form.customer_id}
+            selectedOption={selectedCustomerOption}
+            fetchOptions={fetchCustomers}
             onChange={(v) => setForm({ ...form, customer_id: v, ship_site_id: "" })}
             onCreateNew={() => setQaOpen("customer")}
             createLabel="+ Add New Customer"
             placeholder="Search customer…"
-            options={customers.map((c) => ({
-              value: c.id,
-              label: c.name,
-              meta: [c.gstin, c.state, c.phone].filter(Boolean).join(" · "),
-            }))}
           />
         </Field>
         <Field label="Vehicle No · వాహనం" required>

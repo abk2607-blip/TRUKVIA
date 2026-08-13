@@ -30,6 +30,8 @@ export function QuickAddCustomer({ prefillName = "", onCreated, onClose }) {
     onSuccess: async (d) => {
       toast.success("Customer added");
       await qc.refetchQueries({ queryKey: ["customers"] });
+      await qc.invalidateQueries({ queryKey: ["customers-paginated"] });
+      await qc.invalidateQueries({ queryKey: ["customer-detail"] });
       onCreated?.(d);
       onClose?.();
     },

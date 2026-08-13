@@ -32,6 +32,8 @@ export default function ShipSitesModal({ customer, onClose }) {
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ["ship-sites", customer.id] });
     qc.invalidateQueries({ queryKey: ["customers"] });
+    qc.invalidateQueries({ queryKey: ["customers-paginated"] });
+    qc.invalidateQueries({ queryKey: ["customer-detail"] });
   };
   const save = useMutation({
     mutationFn: async () => {

@@ -38,7 +38,9 @@ export default function TripForm() {
   const isEdit = Boolean(id);
   const [form, setForm] = useState(EMPTY);
 
-  const { data: customers = [] } = useQuery({ queryKey: ["customers"], queryFn: async () => (await api.get("/customers")).data });
+  // Iter68 — customers are now server-searched inside TripDetailsSection;
+  // no need to load the full list upfront.
+  const customers = [];
   const { data: drivers = [] } = useQuery({ queryKey: ["drivers"], queryFn: async () => (await api.get("/drivers")).data });
   const { data: products = [] } = useQuery({ queryKey: ["products"], queryFn: async () => (await api.get("/products")).data });
   const { data: vehicles = [] } = useQuery({ queryKey: ["vehicles"], queryFn: async () => (await api.get("/vehicles")).data });
