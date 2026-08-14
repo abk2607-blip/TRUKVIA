@@ -88,7 +88,14 @@ export default function Dashboard() {
         <div data-testid="dashboard-error-banner" className="border border-rose-300 bg-rose-50 rounded-sm px-4 py-3 text-xs text-rose-800 flex items-center justify-between gap-3">
           <div>
             <div className="font-bold uppercase tracking-wider mb-0.5">Dashboard data couldn't load</div>
-            <div>{error?.response?.data?.detail || error?.message || "Please retry — the rest of the app is available in the sidebar."}</div>
+            <div>
+              {(() => {
+                const s = error?.response?.status;
+                if (s === 404 || s === 502 || s === 503)
+                  return "Backend is restarting. This usually clears in a few seconds — click retry, or wait.";
+                return error?.response?.data?.detail || error?.message || "Please retry — the rest of the app is available in the sidebar.";
+              })()}
+            </div>
           </div>
           <button
             data-testid="dashboard-retry-btn"

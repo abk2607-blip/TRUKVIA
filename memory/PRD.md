@@ -20,6 +20,16 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter71 — "Dashboard Data Couldn't Load · 404" transient error fix** (Feb 2026)
+  - **Symptom reported by user (screenshot)**: Dashboard occasionally showed the rose-colored "DASHBOARD DATA COULDN'T LOAD · Request failed with status code 404" banner immediately after opening the app.
+  - **Root cause**: `/api/dashboard` returned 404 during the brief backend hot-reload / restart window (Uvicorn WatchFiles reload after any backend edit). Old TanStack Query default was `retry: 1` which retried immediately (before backend had come back), then surfaced the error. 404 is not retried by default because it's a client error — but for a *hot-reload* it's actually transient.
+  - **Fixes shipped**:
+    1. `index.js` — QueryClient now retries up to **3 times with exponential backoff** (0.5 s → 1 s → 2 s). Retries on all failure codes EXCEPT real client errors (400/401/403/422) which will never resolve by retrying.
+    2. `Dashboard.jsx` — The error banner now shows a **friendlier "Backend is restarting…" message** when the status is 404/502/503, rather than the raw axios "Request failed with status code 404" string. Regular errors keep the original detail.
+  - **Verified**: Backend `supervisorctl restart backend` → `/api/dashboard` recovers within 1 s. With retry backoff of 3.5 s total window, users will not see the error banner on transient hot-reload restarts anymore.
+  - **UNCHANGED**: Iter69 shell-loads-immediately behavior; Iter70 fixture cleanup; Iter68 customer search. All test suites still green.
+
+
 - [x] **Iter70 — "Ship-To Site Not Showing" P0 Fix + Test-Fixture Pollution Cleanup** (Feb 2026)
   - **Symptom reported by user (WhatsApp video)**: In Trip Form → New Trip, user selected customer `IT5B_Safd86_TenantMark_A`; the Ship-To Site picker opened, showed "Type to search…" then "No record yet". User had to manually click "+ NEW" and add a site.
   - **Root causes found (three independent bugs)**:
