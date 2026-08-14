@@ -56,6 +56,7 @@ CRITICAL_TESTS=(
   "tests/test_iter67_invoice_pdf_ship_to_ref.py"          # Iter67 · Invoice PDF · BILL TO | SHIP TO + Customer Ref column
   "tests/test_iter68_customer_search.py"                  # Iter68 · Server-side Customer Search + tenant isolation
   "tests/test_iter72_quickadd_sync.py"                    # Iter72 · Ship-To / Vehicle / Supplier quick-add sync + dedup
+  "tests/test_iter73_supplier_freight_lr_perf.py"         # Iter73 · Supplier Freight auto-calc, LR Consignee, suppliers-dashboard perf
 )
 
 # Explicit venv PATH so this runs cleanly from asyncio subprocess (which

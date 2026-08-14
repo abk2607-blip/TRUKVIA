@@ -20,6 +20,21 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter73 — Supplier Freight auto-calc · LR Consignee auto-fill · Suppliers page 260× speed-up** (Feb 2026)
+  - **User-reported P0 bugs**: (1) Supplier Freight not auto-calculating even with rate + tonnage entered → user thought calc was broken. (2) Suppliers page took 60+ seconds to open. (3) LR Consignee Site Location was blank — should default from Trip "TO" (or Ship-To if selected).
+  - **Root causes found**:
+    1. **Frontend Supplier Freight field never auto-populated**. `supplierFreightLive` was computed and shown in the "Supplier Freight (Live)" tile, but the actual `form.supplier_freight` input stayed blank until user typed it manually — so the value that hit the backend was 0 unless the user copied it.
+    2. **`/api/suppliers-dashboard` looped through 9,524 suppliers calling `_build_ledger()` per supplier** (~3 mongo queries each → ~30,000 sequential DB roundtrips → 58 s response). Frontend showed "Loading…" for the whole minute.
+    3. **LR Consignee Site Location** was only saved if the user manually typed it into the LR section of the Trip Form. No auto-fill from Ship-To or Trip TO in either the UI OR the PDF (PDF had a `to_location` fallback but the form was blank so users assumed it wasn't working).
+  - **Fixes shipped**:
+    1. **TripForm.jsx** — new `useEffect` mirrors `supplierFreightLive` → `form.supplier_freight` whenever supplier vehicle is selected AND rate/quantity inputs are non-zero. User manual edits are still respected (the effect only writes when the target ≠ current AND auto-compute inputs are present).
+    2. **routers/suppliers.py `/api/suppliers-dashboard`** — rewritten as bulk aggregation. Three queries total: (a) all suppliers, (b) all supplier trips (projected fields only), (c) all supplier payments. Aggregate in memory using the same formulas `_build_ledger` uses. Also handles legacy trips that carry only `supplier_name` (no `supplier_id`) via a case-insensitive name→id map. **Measured 58 s → 0.22 s (260× faster)**.
+    3. **pdf/lr.py** — new helper `_resolve_consignee_site(trip, customer)` implements the spec'd priority: (1) manual override on trip (respects historical data) → (2) Ship-To site's `site_name · address` + contact → (3) `trip.to_location` fallback. Applied in the LR PDF builder.
+    4. **TripDetailsSection.jsx** — new `useEffect` auto-populates `form.consignee_site_location` from either the selected Ship-To (site_name · address) or `to_location`. Uses a `lastAutoConsigneeRef` so the effect only overwrites when the field is blank OR still matches the last auto-value (user typing = user owns the field).
+  - **Verified**: Playwright end-to-end — Suppliers page loads in **1.55 s** (was 60 s+); Trip Form Consignee Site Location auto-fills with `MEGHA CONSTRUCTIONS · NAGERKURNOOL` when Ship-To is picked. 5 new iter73 pytests lock all fixes. **Full regression 29/29 test files GREEN**.
+  - **UNCHANGED**: Existing supplier statement, supplier vehicle mapping, supplier payments; LR data written on save (never overwritten by auto-populate); trip.customer, invoice PDF, halting flows. All still green.
+
+
 - [x] **Iter72 — Ship-To / Vehicle / Supplier Quick-Add Sync + Root-Cause Hardening** (Feb 2026)
   - **User-reported P0 bugs**: (1) Ship-To added via Customer Master OR Trip-Form Quick Add didn't appear in the Trip Ship-To dropdown without a full page refresh. (2) Vehicle Quick Add from Trip Form didn't reflect in either Trip picker or Vehicle Master. (3) Assigning a Supplier to a Vehicle in Master didn't auto-populate the Supplier column when that vehicle was later selected in a Trip. User also demanded: no duplicates, no free-text supplier, permanent IDs, strict company isolation.
   - **Root causes found**:

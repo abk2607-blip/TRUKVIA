@@ -12,6 +12,42 @@ from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer, KeepTogether, Image, PageBreak,
 )
 
+def _resolve_consignee_site(trip: dict, customer: dict) -> tuple[str, str]:
+    """Iter73 — Resolve LR consignee site location + contact.
+
+    Priority (never overwrites what the user manually saved on the trip):
+      1. Explicit `consignee_site_location` value on the trip (already-saved manual override)
+      2. Selected Ship-To site on the trip → its site_name + address; contact person → site contact
+      3. Fallback → trip.to_location
+
+    Returns (site_location, site_contact).
+    """
+    manual_loc = (trip.get("consignee_site_location") or "").strip()
+    manual_ct = (trip.get("consignee_site_contact") or "").strip()
+    ship_site_id = (trip.get("ship_site_id") or "").strip()
+
+    # Manual override wins — respect historical / user-entered data.
+    if manual_loc:
+        return manual_loc, manual_ct or "—"
+
+    # Ship-To selected → use its site name + address
+    if ship_site_id and isinstance(customer.get("ship_sites"), list):
+        site = next((s for s in customer["ship_sites"] if s.get("id") == ship_site_id), None)
+        if site:
+            name = (site.get("site_name") or "").strip()
+            addr = (site.get("address") or "").strip()
+            loc = " · ".join(x for x in [name, addr] if x)
+            contact_bits = [
+                (site.get("contact_person") or "").strip(),
+                (site.get("phone") or "").strip(),
+            ]
+            contact = " · ".join(x for x in contact_bits if x)
+            return (loc or (trip.get("to_location") or "—")), (manual_ct or contact or "—")
+
+    # Fallback — Trip Details "TO"
+    return (trip.get("to_location") or "—"), (manual_ct or "—")
+
+
 def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
     buf = BytesIO()
     doc = SimpleDocTemplate(
@@ -77,14 +113,15 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
     story.append(gc_tbl)
 
     consignor_name = trip.get("consignor_name") or trip.get("from_location") or "—"
-    site_loc = trip.get("consignee_site_location") or trip.get("to_location") or "—"
+    # Iter73 — Consignee location priority: manual override → Ship-To → to_location
+    site_loc, site_contact = _resolve_consignee_site(trip, customer)
     party = [
         [Paragraph("<b>Consignor</b>", styles["LRSmallBold"]),
          Paragraph("<b>Consignee (M/s)</b>", styles["LRSmallBold"])],
         [Paragraph(consignor_name, styles["LRBody"]),
          Paragraph(f"<b>{customer.get('name','')}</b><br/>{customer.get('address','')}<br/>GSTIN: {customer.get('gstin','—')} · Pincode: {customer.get('pincode','—')}", styles["LRBody"])],
         [Paragraph(f"<b>Site Location:</b> {site_loc}", styles["LRSmall"]),
-         Paragraph(f"<b>Site Contact:</b> {trip.get('consignee_site_contact','—')}", styles["LRSmall"])],
+         Paragraph(f"<b>Site Contact:</b> {site_contact}", styles["LRSmall"])],
     ]
     party_tbl = Table(party, colWidths=[95 * mm, 95 * mm])
     party_tbl.setStyle(TableStyle([

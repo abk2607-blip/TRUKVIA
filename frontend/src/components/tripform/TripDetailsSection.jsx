@@ -63,6 +63,30 @@ export default function TripDetailsSection({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.customer_id, shipSites.length]);
 
+  // Iter73 — Auto-populate LR "Consignee Site Location" from Ship-To or "TO"
+  // WITHOUT overwriting user's manual edits. Priority:
+  //   1. If Ship-To selected → "Site Name · Address"
+  //   2. Else → to_location
+  // The write only fires when `consignee_site_location` is empty OR still
+  // matches the previous auto-value (so once the user types, they own it).
+  const lastAutoConsigneeRef = React.useRef("");
+  React.useEffect(() => {
+    let target = "";
+    if (form.ship_site_id) {
+      const s = shipSites.find((x) => x.id === form.ship_site_id);
+      if (s) {
+        target = [s.site_name, s.address].filter(Boolean).join(" · ").trim();
+      }
+    }
+    if (!target) target = (form.to_location || "").trim();
+    const current = (form.consignee_site_location || "").trim();
+    if (target && (current === "" || current === lastAutoConsigneeRef.current)) {
+      lastAutoConsigneeRef.current = target;
+      setForm((f) => ({ ...f, consignee_site_location: target }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.ship_site_id, form.to_location, shipSites.length]);
+
   return (
     <Section title="వివరాలు · Trip Details">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

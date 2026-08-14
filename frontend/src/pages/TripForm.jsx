@@ -217,6 +217,38 @@ export default function TripForm() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.tons, unloadedQ, productRate, form.shortage_amount_override, form.excess_amount_override]);
 
+  // Iter73 — Supplier Freight auto-sync. When user is on `per_ton` or `fixed`  // freight mode AND has entered the rate/tonnage inputs, mirror the live
+  // computed value into `form.supplier_freight` so the field isn't left blank
+  // in the UI and the value that hits the backend matches what the user sees
+  // in the "Supplier Freight (Live)" tile. User manual edits are still
+  // respected — the effect only writes when the live value differs from the
+  // current form value AND the inputs are non-zero.
+  useEffect(() => {
+    if (form.vehicle_type !== "supplier") return;
+    const mode = form.supplier_freight_mode;
+    const shouldAuto =
+      (mode === "per_ton" && Number(form.supplier_rate_per_ton || 0) > 0) ||
+      (mode === "fixed" &&
+        ((Number(form.supplier_round_trip_kms || 0) > 0 && Number(form.supplier_rate_per_km_per_ton || 0) > 0) ||
+         Number(form.supplier_fixed_amount || 0) > 0));
+    if (!shouldAuto) return;
+    const target = Number(supplierFreightLive.toFixed(2));
+    const current = Number(Number(form.supplier_freight || 0).toFixed(2));
+    if (target !== current) {
+      setForm((f) => ({ ...f, supplier_freight: target }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    form.vehicle_type,
+    form.supplier_freight_mode,
+    form.supplier_rate_per_ton,
+    form.supplier_rate_per_km_per_ton,
+    form.supplier_round_trip_kms,
+    form.supplier_fixed_amount,
+    form.supplier_quantity,
+    form.tons,
+  ]);
+
   useEffect(() => {
     if (!form.halting_amount_override) {
       setForm((f) => ({ ...f, total_halting_days: totalHaltingDaysLive, chargeable_halting_days: autoChargeableDays, halting_amount: haltingAmountLive }));
