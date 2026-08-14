@@ -237,10 +237,32 @@ async def list_ship_sites(cid: str, request: Request, user=Depends(get_current_u
 @router.post("/customers/{cid}/ship-sites")
 async def create_ship_site(cid: str, payload: _ShipSite, request: Request,
                            user=Depends(get_current_user)):
+    """Iter72 — Adds a Ship-To site to a customer.
+    * Trims site_name; reject blank.
+    * Dedup — if an ACTIVE ship-site with the same site_name (case-insensitive)
+      already exists for this customer, return that existing site instead of
+      creating a duplicate.
+    * If it's the first site → auto-mark default.
+    * Enforces single default per customer.
+    """
     company_id = await _active_company_id(request, user)
     doc = await _get_customer_or_404(user["user_id"], company_id, cid)
-    new_site = payload.model_dump()
+    payload.site_name = (payload.site_name or "").strip()
+    if not payload.site_name:
+        raise HTTPException(status_code=400, detail="site_name is required")
+
     existing = doc.get("ship_sites") or []
+    key = payload.site_name.casefold()
+    dup = next(
+        (s for s in existing
+         if (s.get("site_name") or "").strip().casefold() == key
+         and s.get("is_active") is not False),
+        None,
+    )
+    if dup:
+        return dup
+
+    new_site = payload.model_dump()
     # Enforce single default — if this one is default, clear others.
     if new_site.get("is_default"):
         for s in existing:

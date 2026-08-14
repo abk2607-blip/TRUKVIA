@@ -29,7 +29,7 @@ def env():
         "state": "Andhra Pradesh", "gst_in": "37ABCDE1234F1Z5",
     }, timeout=60).json()
     veh = httpx.post(f"{BASE}/api/vehicles", headers=ha, json={
-        "vehicle_number": f"AP64A{UNIQUE[:5]}", "vehicle_type": "supplier",
+        "vehicle_number": f"AP64A{UNIQUE[-6:]}", "vehicle_type": "supplier",
         "supplier_id": sup["id"], "supplier_name": sup["name"],
         "capacity_tons": 30.0,
     }, timeout=60).json()
@@ -76,7 +76,7 @@ def test_supplier_trip_chip_figures_match_server(env):
 def test_status_change_requires_reason(env):
     ha = env["ha"]
     v = httpx.post(f"{BASE}/api/vehicles", headers=ha, json={
-        "vehicle_number": f"AP64B{UNIQUE[:5]}", "vehicle_type": "own",
+        "vehicle_number": f"AP64B{UNIQUE[-6:]}", "vehicle_type": "own",
     }, timeout=60).json()
     # Missing reason
     bad = httpx.patch(f"{BASE}/api/vehicles/{v['id']}/status", headers=ha, json={
@@ -92,7 +92,7 @@ def test_status_change_requires_reason(env):
 def test_deactivate_reactivate_creates_immutable_audit(env):
     ha = env["ha"]
     v = httpx.post(f"{BASE}/api/vehicles", headers=ha, json={
-        "vehicle_number": f"AP64C{UNIQUE[:5]}", "vehicle_type": "own",
+        "vehicle_number": f"AP64C{UNIQUE[-6:]}", "vehicle_type": "own",
     }, timeout=60).json()
     # Deactivate
     r1 = httpx.patch(f"{BASE}/api/vehicles/{v['id']}/status", headers=ha, json={
@@ -188,7 +188,7 @@ def test_status_audit_and_import_multi_company_isolation(env):
     hb = _h(env["cid_b"])
     # Deactivate a vehicle in A
     v = httpx.post(f"{BASE}/api/vehicles", headers=ha, json={
-        "vehicle_number": f"AP64F{UNIQUE[:5]}", "vehicle_type": "own",
+        "vehicle_number": f"AP64F{UNIQUE[-6:]}", "vehicle_type": "own",
     }, timeout=60).json()
     httpx.patch(f"{BASE}/api/vehicles/{v['id']}/status", headers=ha, json={
         "is_active": False, "reason": "isolation test",

@@ -58,7 +58,10 @@ async def list_suppliers(
             {"mobile": {"$regex": q, "$options": "i"}},
             {"contact_person": {"$regex": q, "$options": "i"}},
         ]
-    rows = await db.suppliers.find(query, {"_id": 0, "user_id": 0}).sort("name", 1).to_list(2000)
+    # Iter72 — Raise cap from 2000 → 20000 for parity with /api/customers +
+    # /api/vehicles. Demo tenant accumulates supplier fixtures from tests and
+    # 2000-cap silently drops rows from the SupplierSection picker.
+    rows = await db.suppliers.find(query, {"_id": 0, "user_id": 0}).sort("name", 1).to_list(20000)
     return rows
 
 

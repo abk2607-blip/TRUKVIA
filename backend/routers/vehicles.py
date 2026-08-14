@@ -39,8 +39,53 @@ async def list_vehicles(request: Request, user=Depends(get_current_user), active
 
 @router.post("/vehicles")
 async def create_vehicle(payload: Vehicle, request: Request, user=Depends(get_current_user)):
+    """Iter72 — Root-cause hardening:
+    * Trim + upper-case vehicle_number; reject blanks.
+    * Deduplicate: if a vehicle with the same vehicle_number already exists in
+      this company, return the existing record instead of inserting a duplicate.
+    * For supplier vehicles, validate supplier_id belongs to this company AND
+      hydrate supplier_name / mobile / gstin / state / contact_person from the
+      supplier master so the vehicle row is the source of truth (frontend can't
+      accidentally store stale text).
+    """
     cid = await _active_company_id(request, user)
-    payload.vehicle_number = payload.vehicle_number.upper().strip()
+    payload.vehicle_number = (payload.vehicle_number or "").upper().strip()
+    if not payload.vehicle_number:
+        raise HTTPException(status_code=400, detail="vehicle_number is required")
+
+    # Dedup — return existing row (idempotent Quick Add)
+    existing = await db.vehicles.find_one(
+        {"user_id": user["user_id"], "company_id": cid, "vehicle_number": payload.vehicle_number},
+        {"_id": 0, "user_id": 0},
+    )
+    if existing:
+        return _vehicle_expiry_stats(existing)
+
+    # Supplier hydration + validation
+    if payload.vehicle_type == "supplier":
+        if not (payload.supplier_id or "").strip():
+            raise HTTPException(status_code=400, detail="supplier_id is required for supplier vehicles")
+        sup = await db.suppliers.find_one(
+            {"id": payload.supplier_id, "user_id": user["user_id"], "company_id": cid},
+            {"_id": 0},
+        )
+        if not sup:
+            raise HTTPException(status_code=400, detail="Supplier not found in this company")
+        # Source of truth: supplier master
+        payload.supplier_name = sup.get("name") or ""
+        payload.supplier_contact_person = sup.get("contact_person") or ""
+        payload.supplier_mobile = sup.get("mobile") or ""
+        payload.supplier_state = sup.get("state") or ""
+        payload.supplier_gstin = sup.get("gst_in") or sup.get("gstin") or ""
+    else:
+        # Own/Hired vehicles never carry supplier text.
+        payload.supplier_id = ""
+        payload.supplier_name = ""
+        payload.supplier_contact_person = ""
+        payload.supplier_mobile = ""
+        payload.supplier_state = ""
+        payload.supplier_gstin = ""
+
     doc = payload.model_dump()
     doc["user_id"] = user["user_id"]
     doc["company_id"] = cid

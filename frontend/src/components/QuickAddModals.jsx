@@ -283,8 +283,15 @@ export function QuickAddShipSite({ customerId, onCreated, onClose }) {
     mutationFn: async () => (await api.post(`/customers/${customerId}/ship-sites`, f)).data,
     onSuccess: async (d) => {
       toast.success("Ship-To site added");
-      await qc.refetchQueries({ queryKey: ["customers"] });
-      await qc.refetchQueries({ queryKey: ["ship-sites", customerId] });
+      // Iter72 — Invalidate EVERY query that renders ship_sites so the Trip
+      // Form picker, Customer table, and any open modal see the new site
+      // without a page refresh.
+      await Promise.all([
+        qc.refetchQueries({ queryKey: ["customers"] }),
+        qc.refetchQueries({ queryKey: ["customers-paginated"] }),
+        qc.refetchQueries({ queryKey: ["customer-detail", customerId] }),
+        qc.refetchQueries({ queryKey: ["ship-sites", customerId] }),
+      ]);
       onCreated?.(d);
       onClose?.();
     },

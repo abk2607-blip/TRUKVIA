@@ -20,6 +20,29 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter72 — Ship-To / Vehicle / Supplier Quick-Add Sync + Root-Cause Hardening** (Feb 2026)
+  - **User-reported P0 bugs**: (1) Ship-To added via Customer Master OR Trip-Form Quick Add didn't appear in the Trip Ship-To dropdown without a full page refresh. (2) Vehicle Quick Add from Trip Form didn't reflect in either Trip picker or Vehicle Master. (3) Assigning a Supplier to a Vehicle in Master didn't auto-populate the Supplier column when that vehicle was later selected in a Trip. User also demanded: no duplicates, no free-text supplier, permanent IDs, strict company isolation.
+  - **Root causes found**:
+    1. **Backend `POST /api/vehicles` had NO dedup** — every Quick Add created a fresh row even when the same vehicle_number existed in the same company.
+    2. **Backend `POST /api/vehicles` didn't validate supplier_id** — client-supplied `supplier_name` text was persisted as-is (stale data risk), and no check that the supplier belonged to the same company.
+    3. **Backend `POST /api/customers/{cid}/ship-sites` had NO dedup** — same site_name added twice created duplicate rows.
+    4. **Frontend `QuickAddShipSite.onSuccess` only invalidated `[customers]` and `[ship-sites, customerId]`** — but the Trip Form's Ship-To dropdown reads `ship_sites` from `["customer-detail", customer_id]` (introduced in iter68). That query was **never invalidated**, so the picker didn't see the new site until the user changed customer or refreshed the page.
+    5. **`/api/suppliers` had a `to_list(2000)` cap** with alphabetical sort → in tenants with >2000 suppliers, newly-added suppliers alphabetically past top-2000 silently dropped from the SupplierSection picker.
+  - **Fixes shipped (backend)**:
+    1. `POST /api/vehicles` — trims + upper-cases `vehicle_number`, rejects blank; **idempotent by (user_id, company_id, vehicle_number)** → returns existing row unchanged when duplicate. For supplier vehicles: validates `supplier_id` exists in same company (cross-tenant → 400); **hydrates supplier_name / mobile / gstin / state / contact_person from the supplier master** so the vehicle row is the source of truth (frontend can never save stale text). For own/hired vehicles: **strips** any supplier_* fields the client accidentally passed.
+    2. `POST /api/customers/{cid}/ship-sites` — trims + rejects blank site_name; **idempotent by case-insensitive site_name for the same customer** → returns existing site when duplicate. First site auto-marks `is_default=True`.
+    3. `/api/suppliers` list cap raised **2000 → 20000** for parity with `/vehicles` and `/customers`.
+    4. **Extended `_purge_fixture_orphans` in `server.py` startup** — now also purges orphan pytest fixture suppliers (name matches `^(IT\d+|TEST[_-]|AAA_|UI\d+|IsoCoB|Iso_|BULK_|Bulk_|Sup_[a-f0-9]{6}|IT72)`) and orphan fixture vehicles (number matches `^(AA\d|AP16UI|AP16US|IT\d+_?VEH|IT72|UI\d+|AAA_)`) whose IDs have no attached trips or vehicle links. Removed **3,988 orphan fixture suppliers** and **3 orphan fixture vehicles** on first run.
+  - **Fixes shipped (frontend)**:
+    1. `QuickAddShipSite.onSuccess` — now refetches `["customers"]`, `["customers-paginated"]`, `["customer-detail", customerId]`, AND `["ship-sites", customerId]` in parallel. The Trip Form Ship-To picker sees the new site immediately.
+    2. Pre-existing `QuickAddVehicle.onSuccess` continues to refetch `["vehicles"]` and calls `onCreated(v)` — combined with new backend hydration, the SupplierSection now shows the correct supplier name automatically for supplier vehicles.
+  - **Fixes shipped (test hygiene)**:
+    - `test_iter63_supplier_vehicle_master.py` + `test_iter64_supplier_chip_vehicle_audit_bulk_import.py` — replaced constant `UNIQUE[:5]` (=`"IT63_"`/`"IT64_"`) with `UNIQUE[-6:]` (unique per run) in all vehicle_number templates. Prior tests silently collided across runs; iter72 dedup exposed the bug.
+  - **New pytest** `test_iter72_quickadd_sync.py` (7 tests) locks in: ship-site dedup + first-default + blank rejection; vehicle dedup + upper-case normalisation; supplier_id required for supplier vehicles; master-hydration ignores client text; own-vehicle strips supplier text; cross-tenant supplier_id rejected. Added to critical regression guard.
+  - **Verified**: Testing agent E2E — all 3 flows (Ship-To Quick Add · Vehicle Quick Add · Supplier auto-populate) pass without page refresh. **Full regression 28/28 test files GREEN**. `/api/auth/health` = ok.
+  - **UNCHANGED**: Iter68 customer search backward-compat; Iter69 dashboard non-blocking; Iter70 fixture cleanup; Iter71 retry-with-backoff. All still green.
+
+
 - [x] **Iter71 — "Dashboard Data Couldn't Load · 404" transient error fix** (Feb 2026)
   - **Symptom reported by user (screenshot)**: Dashboard occasionally showed the rose-colored "DASHBOARD DATA COULDN'T LOAD · Request failed with status code 404" banner immediately after opening the app.
   - **Root cause**: `/api/dashboard` returned 404 during the brief backend hot-reload / restart window (Uvicorn WatchFiles reload after any backend edit). Old TanStack Query default was `retry: 1` which retried immediately (before backend had come back), then surfaced the error. 404 is not retried by default because it's a client error — but for a *hot-reload* it's actually transient.

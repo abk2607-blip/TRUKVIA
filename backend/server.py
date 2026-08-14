@@ -935,34 +935,79 @@ async def startup_event():
     except Exception as e:
         logger.warning(f"Auth index ensure failed: {e}")
 
-    # Iter70 — Purge orphaned pytest fixture customers/trips/invoices on
-    # startup. Real customers are protected (they always have attached rows).
-    # Runs quietly in the background so backend boot isn't delayed.
+    # Iter70/72 — Purge orphaned pytest fixture rows on startup. Real user
+    # data is protected — only rows whose IDs have no attached activity are
+    # deleted. Runs quietly in the background so backend boot isn't delayed.
     async def _purge_fixture_orphans():
         try:
             from routers.customers import FIXTURE_NAME_REGEX
             uid = "user_demo_men_2026"
+            # --- Customers ---
             candidates = []
             async for c in db.customers.find(
                 {"user_id": uid, "name": {"$regex": FIXTURE_NAME_REGEX}},
                 {"_id": 0, "id": 1},
             ):
                 candidates.append(c["id"])
-            if not candidates:
-                return
-            trip_attached = set()
-            async for t in db.trips.find({"user_id": uid, "customer_id": {"$in": candidates}}, {"_id": 0, "customer_id": 1}):
-                trip_attached.add(t["customer_id"])
-            inv_attached = set()
-            async for i in db.invoices.find({"user_id": uid, "customer_id": {"$in": candidates}}, {"_id": 0, "customer_id": 1}):
-                inv_attached.add(i["customer_id"])
-            safe = [c for c in candidates if c not in trip_attached and c not in inv_attached]
-            if safe:
-                r = await db.customers.delete_many({"user_id": uid, "id": {"$in": safe}})
-                if r.deleted_count:
-                    logger.info(f"Iter70 fixture-purge: removed {r.deleted_count} orphan fixture customers")
+            if candidates:
+                trip_attached = set()
+                async for t in db.trips.find({"user_id": uid, "customer_id": {"$in": candidates}}, {"_id": 0, "customer_id": 1}):
+                    trip_attached.add(t["customer_id"])
+                inv_attached = set()
+                async for i in db.invoices.find({"user_id": uid, "customer_id": {"$in": candidates}}, {"_id": 0, "customer_id": 1}):
+                    inv_attached.add(i["customer_id"])
+                safe = [c for c in candidates if c not in trip_attached and c not in inv_attached]
+                if safe:
+                    r = await db.customers.delete_many({"user_id": uid, "id": {"$in": safe}})
+                    if r.deleted_count:
+                        logger.info(f"Iter70 fixture-purge: removed {r.deleted_count} orphan fixture customers")
+
+            # --- Iter72: Suppliers ---
+            # Suppliers named like fixtures (IT\d+_, TEST_, AAA_iter*, UI\d+_, etc.)
+            SUP_REGEX = r"^(IT\d+|TEST[_-]|AAA_|UI\d+|IsoCoB|Iso_|BULK_|Bulk_|Sup_[a-f0-9]{6}|IT72)"
+            sup_ids = []
+            async for s in db.suppliers.find(
+                {"user_id": uid, "name": {"$regex": SUP_REGEX}},
+                {"_id": 0, "id": 1},
+            ):
+                sup_ids.append(s["id"])
+            if sup_ids:
+                # Which suppliers are attached to vehicles or trips?
+                sup_on_veh = set()
+                async for v in db.vehicles.find({"user_id": uid, "supplier_id": {"$in": sup_ids}}, {"_id": 0, "supplier_id": 1}):
+                    if v.get("supplier_id"):
+                        sup_on_veh.add(v["supplier_id"])
+                sup_on_trip = set()
+                async for t in db.trips.find({"user_id": uid, "supplier_id": {"$in": sup_ids}}, {"_id": 0, "supplier_id": 1}):
+                    if t.get("supplier_id"):
+                        sup_on_trip.add(t["supplier_id"])
+                safe_sup = [x for x in sup_ids if x not in sup_on_veh and x not in sup_on_trip]
+                if safe_sup:
+                    r = await db.suppliers.delete_many({"user_id": uid, "id": {"$in": safe_sup}})
+                    if r.deleted_count:
+                        logger.info(f"Iter72 fixture-purge: removed {r.deleted_count} orphan fixture suppliers")
+
+            # --- Iter72: Vehicles ---
+            VEH_REGEX = r"^(AA\d|AP16UI|AP16US|IT\d+_?VEH|IT72|UI\d+|AAA_)"
+            veh_ids = []
+            async for v in db.vehicles.find(
+                {"user_id": uid, "vehicle_number": {"$regex": VEH_REGEX}},
+                {"_id": 0, "id": 1},
+            ):
+                veh_ids.append(v["id"])
+            if veh_ids:
+                # Which vehicles are used in trips?
+                veh_on_trip = set()
+                async for t in db.trips.find({"user_id": uid, "vehicle_id": {"$in": veh_ids}}, {"_id": 0, "vehicle_id": 1}):
+                    if t.get("vehicle_id"):
+                        veh_on_trip.add(t["vehicle_id"])
+                safe_veh = [x for x in veh_ids if x not in veh_on_trip]
+                if safe_veh:
+                    r = await db.vehicles.delete_many({"user_id": uid, "id": {"$in": safe_veh}})
+                    if r.deleted_count:
+                        logger.info(f"Iter72 fixture-purge: removed {r.deleted_count} orphan fixture vehicles")
         except Exception as e:
-            logger.warning(f"Iter70 fixture-purge failed: {e}")
+            logger.warning(f"Iter70/72 fixture-purge failed: {e}")
 
     _asyncio.create_task(_purge_fixture_orphans())
 

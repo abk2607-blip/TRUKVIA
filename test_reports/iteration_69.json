@@ -1,0 +1,45 @@
+{
+  "summary": "Iter72 quick-add sync — verified end-to-end. Backend 7/7 iter72 pytests PASS. Frontend flows: (A2) Ship-To QuickAdd from Trip Form → site auto-populates picker AND auto-selects — PASS. (B) Vehicle QuickAdd from Trip Form → new vehicle appears in trip picker AND on /vehicles master without refresh — PASS. (C) Supplier-vehicle QuickAdd → SupplierSection renders with correct supplier pre-selected — PASS when the supplier name fits in the top-2000 of /api/suppliers list. Discovered pre-existing backend list-cap bug in /api/suppliers (`to_list(2000)`) that, combined with 13.4k accumulated test suppliers in the demo tenant, silently drops newly-created suppliers whose name sorts alphabetically after position 2000, breaking Test C label lookup in the SearchableSelect (though form.supplier_id is set correctly). Also flagged a pre-existing test-bug in test_iter63 now exposed by iter72 dedup.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/suppliers", "issue": "Hard cap `to_list(2000)` in routers/suppliers.py line 61. Sorted by name asc — newly-created suppliers alphabetically past top-2000 are missing from response. Real users rarely hit this, but combined with 13,488 accumulated test suppliers in the demo tenant it prevents the freshly-quick-added supplier from showing up in the Trip Form Supplier picker (label lookup fails; picker falls back to placeholder even though form.supplier_id is populated). Recommend either (a) raise cap to 20000 (parity with /api/vehicles + /api/customers), or (b) switch to paginated + server-side search."},
+      {"endpoint": "backend/tests/test_iter63_supplier_vehicle_master.py::test_supplier_id_link_preserved", "issue": "Test uses `UNIQUE[:5]` which is the constant string 'IT63_'. Vehicle numbers therefore collide across runs. Iter72's new dedup returns the pre-existing vehicle (with the earlier run's supplier_id) — assertion fails. Fix: use full UNIQUE (or a fresh uuid) in vehicle_number. Not a functional regression, just test-data bleed exposed by iter72 dedup semantics."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "Trip Form → QuickAdd Supplier Vehicle → Supplier auto-populate", "issue": "Backend correctly hydrates vehicle.supplier_id + supplier_name; frontend correctly sets form.supplier_id + supplier_name; SupplierSection renders correctly. However, the SupplierSection SearchableSelect looks up the label in the parent's `suppliers` array (from useQuery(['suppliers']) → /api/suppliers). When the new supplier isn't returned in that list (see backend minor issue above), the picker silently shows the placeholder 'Select supplier…' instead of the supplier name. form.supplier_id is still set — the 'Supplier is mandatory' warning is hidden — but the visual is misleading. Reproduced deterministically by creating a supplier whose name sorts after top-2000 in the demo tenant.", "affected_selectors": ["trip-supplier-picker", "qa-veh-supplier-picker"]}
+    ],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter72_quickadd_sync.py",
+    "/app/test_reports/pytest/iter72.xml"
+  ],
+  "action_items": [
+    "Backend: bump /api/suppliers list cap from 2000 → 20000 (parity with /api/vehicles + /api/customers) OR switch to paginated + server-side search. Without this, freshly-quick-added suppliers can disappear from Trip Form dropdown when the tenant has >2000 suppliers.",
+    "Test hygiene (optional): fix test_iter63 test_supplier_id_link_preserved to use full UNIQUE (or fresh uuid) in vehicle_number so it doesn't collide with prior runs after iter72's idempotent-vehicle dedup.",
+    "Env hygiene: consider a periodic cleanup script for the demo tenant (13,488 supplier rows accumulated); not blocking but slows every /suppliers list call and masks the above cap."
+  ],
+  "critical_code_review_comments": [
+    "routers/suppliers.py line 61 — inconsistent list cap (2000) vs vehicles/customers (20000). Fixed limit + implicit alphabetical sort silently drops rows.",
+    "QuickAddVehicle modal also uses `useQuery(['suppliers'])` inside the modal — hits the same 2000 cap when picking supplier from picker. New '+ New' Supplier button bypasses it, but the pre-existing list is truncated.",
+    "iter72 backend logic (dedup, supplier hydration, cross-tenant guard, own-vehicle supplier-field strip) is well-covered by 7 tests and behaves correctly."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100% (7/7 iter72)", "frontend": "3/3 flows PASS (Test C flakes only on suppliers-list-cap edge case in demo tenant)"},
+  "test_credentials": "Bearer test_session_bitumen_2026 (demo user); active company TEST LR Co (co_c2ac839cf8bf4ff4)",
+  "seed_data_creation": "Created ~5 UI72_/AAA_iter72_ suppliers, ~5 AP16UI/AP16US/AA16S vehicles, and 1 IT72UI Customer during Playwright runs. All prefixed for easy cleanup. Nothing seeded server-side beyond test artefacts.",
+  "retest_needed": true,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter72 core functionality is correct on both backend and frontend. The only reproducible frontend regression is the SupplierSection picker showing 'Select supplier…' after Quick-Adding a supplier whose name sorts past top-2000 in /api/suppliers — this is caused by the 2000-cap in routers/suppliers.py line 61. If main agent bumps that cap to 20000, re-test Test C with a name like 'ZzUnique_iter72_<ts>' and confirm the picker shows the pre-selected label. Tests A2 and B are solid — no retest needed unless suppliers cap is changed and warrants regression sweep.",
+  "rca of the issue": {
+    "test_C_failure_when_supplier_name_sorts_late": {
+      "reproduction": "1) Log in as demo. 2) Trip Form → Vehicle picker → + Add New Vehicle. 3) Type='Supplier'. 4) Click '+ New' supplier, name it 'ZzUnique_<ts>'. Save. 5) Save vehicle. 6) Observe SupplierSection: picker shows 'Select supplier…' instead of 'ZzUnique_<ts>'.",
+      "root_cause": "GET /api/suppliers returns `.sort('name', 1).to_list(2000)`. Demo tenant has 13,488 supplier docs (accumulated test data). New supplier is created in DB (POST /api/suppliers returns 200 with id), but /api/suppliers refetch afterwards still returns only the first 2000 alphabetically — the 'Zz*' entry never appears in the frontend's suppliers cache. SupplierSection's SearchableSelect can't find the label for form.supplier_id → falls back to placeholder. form.supplier_id itself is set correctly (validated by absence of mandatory-supplier warning).",
+      "mitigation": "Change `to_list(2000)` → `to_list(20000)` in /app/backend/routers/suppliers.py line 61 to match /api/vehicles (20000) and /api/customers (20000). Longer-term: add pagination + server-side name search for scalability."
+    }
+  }
+}
