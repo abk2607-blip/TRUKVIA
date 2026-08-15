@@ -1,8 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, X, Truck, AlertTriangle, CheckCircle2, Users, Upload, Download } from "lucide-react";
+import { Plus, Pencil, Trash2, X, Truck, AlertTriangle, CheckCircle2, Users, Upload, Download, Search } from "lucide-react";
 import FileAttachments from "@/components/FileAttachments";
 import { StateSelect } from "@/lib/states";
 import SearchableSelect from "@/components/SearchableSelect";
@@ -35,11 +35,21 @@ export default function Vehicles() {
   const [statusDialog, setStatusDialog] = useState(null); // { mode: 'deactivate'|'reactivate', reason, effective_date }
   const [showAudit, setShowAudit] = useState(null); // vehicle object or null
   const [bulkImport, setBulkImport] = useState(null); // {file, preview, busy}
+  const [q, setQ] = useState(""); // Iter80 — restore master search
 
   const { data: vehicles = [] } = useQuery({
     queryKey: ["vehicles"],
     queryFn: async () => (await api.get("/vehicles")).data,
   });
+  const filteredVehicles = useMemo(() => {
+    const query = q.trim().toLowerCase();
+    if (!query) return vehicles;
+    return vehicles.filter((v) =>
+      [v.vehicle_number, v.owner_name, v.owner_phone, v.supplier_name, v.supplier_mobile, v.make_model]
+        .filter(Boolean)
+        .some((s) => String(s).toLowerCase().includes(query))
+    );
+  }, [vehicles, q]);
   const { data: suppliers = [] } = useQuery({
     queryKey: ["suppliers"],
     queryFn: async () => (await api.get("/suppliers")).data,
@@ -109,6 +119,33 @@ export default function Vehicles() {
         </div>
       </header>
 
+      {/* Iter80 — master search bar */}
+      <div className="flex items-center gap-3">
+        <div className="relative flex-1 max-w-md">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+          <input
+            data-testid="vehicle-search-input"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search vehicle number, owner, supplier, make/model…"
+            className="w-full border border-zinc-300 pl-9 pr-9 py-2 rounded-sm text-sm focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none bg-white"
+          />
+          {q && (
+            <button
+              type="button"
+              data-testid="vehicle-search-clear"
+              onClick={() => setQ("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-rose-600"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+        <div className="text-xs text-zinc-500" data-testid="vehicle-search-count">
+          {q ? `${filteredVehicles.length} match${filteredVehicles.length === 1 ? "" : "es"}` : `${vehicles.length} vehicles`}
+        </div>
+      </div>
+
       <div className="border border-zinc-200 bg-white rounded-sm overflow-x-auto">
         <table className="w-full text-sm" data-testid="vehicles-table">
           <thead className="bg-zinc-50 text-[10px] uppercase tracking-wider text-zinc-500">
@@ -126,7 +163,7 @@ export default function Vehicles() {
             </tr>
           </thead>
           <tbody>
-            {vehicles.map((v) => (
+            {filteredVehicles.map((v) => (
               <tr key={v.id} data-testid={`vehicle-row-${v.id}`} className="border-t border-zinc-100">
                 <td className="px-3 py-3 font-mono font-bold flex items-center gap-2"><Truck size={14} className="text-zinc-400" /> {v.vehicle_number}</td>
                 <td className="px-3 py-3 text-xs">
@@ -168,8 +205,8 @@ export default function Vehicles() {
                 </td>
               </tr>
             ))}
-            {vehicles.length === 0 && (
-              <tr><td colSpan={13} className="px-4 py-12 text-center text-zinc-400">No vehicles registered.</td></tr>
+            {filteredVehicles.length === 0 && (
+              <tr><td colSpan={13} className="px-4 py-12 text-center text-zinc-400">{q ? `No vehicles match “${q}”.` : "No vehicles registered."}</td></tr>
             )}
           </tbody>
         </table>

@@ -1,8 +1,8 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, fmtCurrency } from "@/api";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, X, Truck, Wallet } from "lucide-react";
+import { Plus, Pencil, Trash2, X, Truck, Wallet, Search } from "lucide-react";
 import { Link } from "react-router-dom";
 
 const EMPTY = { name: "", phone: "", license_number: "", notes: "" };
@@ -12,11 +12,22 @@ export default function Drivers() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY);
+  const [q, setQ] = useState(""); // Iter80 — restore master search
 
   const { data: drivers = [] } = useQuery({
     queryKey: ["drivers"],
     queryFn: async () => (await api.get("/drivers")).data,
   });
+
+  const filteredDrivers = useMemo(() => {
+    const query = q.trim().toLowerCase();
+    if (!query) return drivers;
+    return drivers.filter((d) =>
+      [d.name, d.phone, d.license_number]
+        .filter(Boolean)
+        .some((s) => String(s).toLowerCase().includes(query))
+    );
+  }, [drivers, q]);
 
   const save = useMutation({
     mutationFn: async () =>
@@ -54,6 +65,33 @@ export default function Drivers() {
         </button>
       </header>
 
+      {/* Iter80 — master search bar */}
+      <div className="flex items-center gap-3">
+        <div className="relative flex-1 max-w-md">
+          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" />
+          <input
+            data-testid="driver-search-input"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search name, phone or license…"
+            className="w-full border border-zinc-300 pl-9 pr-9 py-2 rounded-sm text-sm focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none bg-white"
+          />
+          {q && (
+            <button
+              type="button"
+              data-testid="driver-search-clear"
+              onClick={() => setQ("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-400 hover:text-rose-600"
+            >
+              <X size={14} />
+            </button>
+          )}
+        </div>
+        <div className="text-xs text-zinc-500" data-testid="driver-search-count">
+          {q ? `${filteredDrivers.length} match${filteredDrivers.length === 1 ? "" : "es"}` : `${drivers.length} drivers`}
+        </div>
+      </div>
+
       <div className="border border-zinc-200 bg-white rounded-sm overflow-hidden">
         <table className="w-full text-sm" data-testid="drivers-table">
           <thead className="bg-zinc-50 text-[10px] uppercase tracking-wider text-zinc-500">
@@ -68,7 +106,7 @@ export default function Drivers() {
             </tr>
           </thead>
           <tbody>
-            {drivers.map((d) => (
+            {filteredDrivers.map((d) => (
               <tr key={d.id} data-testid={`driver-row-${d.id}`} className="border-t border-zinc-100">
                 <td className="px-4 py-3 font-semibold flex items-center gap-2">
                   <Truck size={14} className="text-zinc-400" /> {d.name}
@@ -94,8 +132,8 @@ export default function Drivers() {
                 </td>
               </tr>
             ))}
-            {drivers.length === 0 && (
-              <tr><td colSpan={7} className="px-4 py-12 text-center text-zinc-400">No drivers yet. Add drivers to pick them from trip dropdowns.</td></tr>
+            {filteredDrivers.length === 0 && (
+              <tr><td colSpan={7} className="px-4 py-12 text-center text-zinc-400">{q ? `No drivers match “${q}”.` : "No drivers yet. Add drivers to pick them from trip dropdowns."}</td></tr>
             )}
           </tbody>
         </table>

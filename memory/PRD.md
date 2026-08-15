@@ -20,6 +20,13 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter80 — Master module search bars missing (Vehicles, Drivers)** (Feb 2026)
+  - **User bug**: After the mobile-first UI overhaul (Iter75), the search inputs were missing from the master modules. Investigation showed Customers and Suppliers/list already had working search bars, but **Vehicles.jsx and Drivers.jsx had never received a search input** at all.
+  - **Fix**:
+    1. **`/app/frontend/src/pages/Vehicles.jsx`** — added `Search` icon import, `useMemo` import, local `q` state, `filteredVehicles` memo (filters on `vehicle_number`, `owner_name`, `owner_phone`, `supplier_name`, `supplier_mobile`, `make_model`), and a search bar block (`data-testid="vehicle-search-input"`, `vehicle-search-clear`, `vehicle-search-count`) rendered under the header. Table maps over `filteredVehicles`.
+    2. **`/app/frontend/src/pages/Drivers.jsx`** — same pattern (`data-testid="driver-search-input"`, `driver-search-clear`, `driver-search-count`). Filters on `name`, `phone`, `license_number`.
+  - **Verified**: Testing agent 100% pass on iter80 (`/app/test_reports/iteration_80.json`). All 4 masters (Customers, Suppliers/list, Vehicles, Drivers) render search input, filter live, update count text, clear button resets to full list. Mobile 375px bbox verified — no header overlap. Regression Guard 233+ pytests all pass.
+
 - [x] **Iter79 — Invoice View: missing trip rows + missing SHIP TO block** (Feb 2026)
   - **User bug (screenshot)**: On `/invoices/{id}` the Trip Details table showed just the header (no data rows) and the SHIP TO block wasn't rendered opposite BILL TO — only BILL TO on the left, BANK DETAILS on the right.
   - **Root causes**:
