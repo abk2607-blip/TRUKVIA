@@ -58,6 +58,7 @@ CRITICAL_TESTS=(
   "tests/test_iter72_quickadd_sync.py"                    # Iter72 · Ship-To / Vehicle / Supplier quick-add sync + dedup
   "tests/test_iter73_supplier_freight_lr_perf.py"         # Iter73 · Supplier Freight auto-calc, LR Consignee, suppliers-dashboard perf
   "tests/test_iter74_supplier_shortage_integration.py"    # Iter74 · Trip shortage → Supplier ledger/settlement auto-flow
+  "tests/test_iter81_customer_search_fixture_bypass.py"   # Iter81 · Customer search bypasses fixture-hide when q is provided
 )
 
 # Explicit venv PATH so this runs cleanly from asyncio subprocess (which

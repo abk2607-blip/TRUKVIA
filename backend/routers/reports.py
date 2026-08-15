@@ -1023,7 +1023,7 @@ async def halting_verify(request: Request, user=Depends(get_current_user),
         if date_to: rng["$lte"] = date_to
         q["date"] = rng
     trips = await (db.trips.find(q, {"_id": 0, "user_id": 0})
-                   .sort("date", -1)
+                   .sort([("date", -1), ("created_at", -1)])
                    .to_list(min(max(50, limit), 1000)))
     # Bulk-load invoices referenced by these trips
     invoice_ids = list({t.get("invoice_id") for t in trips if t.get("invoice_id")})

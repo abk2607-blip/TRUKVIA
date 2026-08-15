@@ -20,6 +20,18 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter81 — Customer search / Supplier Statement picker · dropdown fixes** (Feb 2026)
+  - **User bug (screenshot)**: On Invoice Create, typing an existing customer name `CUST_IT56_dfbacb` returned "No matches" even though that customer was clearly attached to a real trip (visible in Trip View). User could not invoice their own trip. Additionally, the Suppliers Statement / Payments / Vehicles / Outstanding / P&L pages used a plain `<select>` supplier picker, making it impossible to find a specific supplier among thousands of rows.
+  - **Root causes**:
+    1. **`routers/customers.py::list_customers`** applied `FIXTURE_NAME_REGEX` (which matches `CUST_IT\d+…`) unconditionally in the paginated / search path. Real user-attached customers whose names happened to match the pattern were preserved by the purge (because trips referenced them) but still filtered out of every search response.
+    2. **`SupplierPicker` in `Suppliers.jsx`** was a plain HTML `<select>` — no type-to-search.
+    3. **`reports.py::halting-verify`** sorted only by `date` desc, so with 200+ same-date halting trips the newest one was randomly dropped from the 200-row response → flaky pytest `test_iter65_halting_verify.py`.
+  - **Fixes**:
+    1. **Backend `routers/customers.py`** — when `q` (search query) is provided, TRUST it and skip the fixture-hide filter. Browse mode (no `q`) still hides fixtures. New pytest suite `test_iter81_customer_search_fixture_bypass.py` (3 tests) locks the behavior — added to the strict Regression Guard.
+    2. **Frontend `Suppliers.jsx::SupplierPicker`** — swapped `<select>` for the existing `SearchableSelect` component (type-to-search, allow-clear). Fixes 5 tabs at once (Statement, Payments, Vehicles, Outstanding, P&L).
+    3. **Backend `reports.py::halting-verify`** — added secondary sort `("created_at", -1)` so newest-created trips always appear first, unblocking iter65 pytest suite that flakes when the tenant has heavy same-date fixture pollution.
+  - **Verified**: `curl` shows `q=CUST_IT56_dfbacb` returns the customer; browse still hides fixtures; Suppliers Statement dropdown now filters live to "ABC" → 6 matches. Regression Guard PASS with the new suite added. Testing agent 100% pass earlier on iter80 remains green.
+
 - [x] **Iter80 — Master module search bars missing (Vehicles, Drivers)** (Feb 2026)
   - **User bug**: After the mobile-first UI overhaul (Iter75), the search inputs were missing from the master modules. Investigation showed Customers and Suppliers/list already had working search bars, but **Vehicles.jsx and Drivers.jsx had never received a search input** at all.
   - **Fix**:

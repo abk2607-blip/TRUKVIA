@@ -95,8 +95,16 @@ async def list_customers(
         page_limit = max(1, min(int(limit or 50), 200))
         page_skip = max(0, int(skip or 0))
 
-        # Default paginated search filter — apply fixture hide unless opted-in
-        search_filter = dict(base_filter if include_fixtures else hide_fixtures_filter)
+        # Default paginated search filter — apply fixture hide unless opted-in.
+        # Iter81 — When the user is actively typing a query (`q`), TRUST it and
+        # skip the fixture-hide filter. Real trips can reference customers whose
+        # names happen to match the fixture regex (e.g. imported with prefixes
+        # like `CUST_IT56_…`); the purge keeps them alive because trips are
+        # attached, so search must be able to find them or the user can't invoice.
+        if include_fixtures or (q and q.strip()):
+            search_filter = dict(base_filter)
+        else:
+            search_filter = dict(hide_fixtures_filter)
         id_list: list = []
         if ids:
             id_list = [s.strip() for s in ids.split(",") if s.strip()]

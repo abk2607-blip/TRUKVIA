@@ -4,6 +4,7 @@ import { NavLink, Routes, Route, Navigate, useParams, useNavigate, Link } from "
 import { api, fmtCurrency } from "@/api";
 import { toast } from "sonner";
 import { Handshake, Plus, Users, Truck, Wallet, FileText, AlertCircle, TrendingUp, Download, Printer, MessageCircle, Trash2, X, Edit3, Search } from "lucide-react";
+import SearchableSelect from "@/components/SearchableSelect";
 
 const inputCls = "w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none bg-white";
 const labelCls = "text-[10px] uppercase font-bold text-zinc-500 tracking-wider mb-1 block";
@@ -309,13 +310,20 @@ function SupplierForm() {
 /* ================= Supplier Selector (shared) ================= */
 function SupplierPicker({ value, onChange, testid = "sup-picker" }) {
   const { data: suppliers = [] } = useSuppliers();
+  const options = suppliers.map(s => ({
+    value: s.id,
+    label: s.name,
+    meta: s.mobile || "",
+  }));
   return (
-    <select data-testid={testid} value={value} onChange={(e) => onChange(e.target.value)} className={inputCls}>
-      <option value="">— Select supplier —</option>
-      {suppliers.map(s => (
-        <option key={s.id} value={s.id}>{s.name}{s.mobile ? ` (${s.mobile})` : ""}</option>
-      ))}
-    </select>
+    <SearchableSelect
+      dataTestId={testid}
+      options={options}
+      value={value}
+      onChange={(v) => onChange(v)}
+      placeholder="— Select supplier —"
+      allowClear
+    />
   );
 }
 
