@@ -1,0 +1,22 @@
+{
+  "summary": "Iter77 P0 fix verification: React Query retry bumped to 6 attempts / ~20s exponential backoff to hide backend hot-reload from the Dashboard. Backend: 8/8 pytest passed including live supervisor restart recovery test. Frontend: Playwright verified demo-login -> /dashboard, shell renders immediately (iter69 preserved), and monitored the DOM for 22s while backend was restarted via `sudo supervisorctl restart backend` -- the rose 'DASHBOARD DATA COULDN'T LOAD' banner (data-testid=dashboard-error-banner) never appeared. Spot-checked /api/customers, /api/suppliers, /api/invoices, /api/auth/me all 200. /api/dashboard, /api/reports/gst-summary, /api/invoices/overdue?days=30 all 200 in <2s.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter77_dashboard_reload.py",
+    "/app/test_reports/pytest/iter77.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "index.js retry policy is clean and correct: 6 attempts, exponential 750ms->5s cap (~20s window), skips 400/401/403/422. Note that 404 is intentionally retried -- if a resource genuinely 404s on a detail page it will wait ~20s before failing; acceptable trade-off for the reload window per iter71 design.",
+    "Live restart test showed the backend was responsive again in well under 20s, so the retry window comfortably absorbs a routine uvicorn hot-reload."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Bearer test_session_bitumen_2026 (via POST /api/auth/demo-login)",
+  "seed_data_creation": "None -- demo-login auto-provisions.",
+  "retest_needed": false,
+  "should_main_agent_self_test": false,
+  "context_for_next_testing_agent": "Iter77 dashboard hot-reload banner suppression verified end-to-end. Backend restart via supervisorctl reliably recovers <20s in this env, well within the retry window. If user reports recurrence again, capture browser Network tab timing since actual retry attempts and delays would be visible there. Test file /app/backend/tests/test_iter77_dashboard_reload.py includes a live restart test -- rerun for future regressions.",
+  "rca of the issue": "Iter71 retry window (3 attempts, 500ms->2s ~= <5s) was shorter than the real hot-reload compile+startup time (~10-15s), so users saw the transient error banner. Iter77 raises to 6 attempts with exponential 750ms/1.5s/3s/5s/5s/5s (~20s total) which comfortably covers reload. Verified via live supervisorctl restart: dashboard error banner did not appear at any point during 22s of monitoring, and backend was responsive again well before retries were exhausted."
+}

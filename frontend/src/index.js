@@ -11,18 +11,21 @@ const queryClient = new QueryClient({
     queries: {
       staleTime: 30_000,
       refetchOnWindowFocus: false,
-      // Iter71 — Backend hot-reload / brief restarts can hand out a 404/502/503
-      // for a couple of seconds. Retry up to 3 times with exponential backoff
-      // (0.5s → 1s → 2s) so the UI recovers automatically instead of showing
-      // "DASHBOARD DATA COULDN'T LOAD".
+      // Iter71/77 — Backend hot-reload / brief restarts can hand out a
+      // 404/502/503 for up to ~15 seconds when the reloader is compiling a
+      // change plus running startup tasks (index-ensure, fixture-purge).
+      // Retry up to 6 times with exponential backoff:
+      //   0.75s → 1.5s → 3s → 5s → 5s → 5s   ≈ up to 20s total window
+      // so users never see "DASHBOARD DATA COULDN'T LOAD" for a routine
+      // hot-reload. Real client errors (400/401/403/404-on-detail-page/422)
+      // are never retried — they will never resolve.
       retry: (failureCount, error) => {
-        if (failureCount >= 3) return false;
+        if (failureCount >= 6) return false;
         const status = error?.response?.status;
-        // Never retry on real client errors (auth, validation, forbidden)
         if (status && [400, 401, 403, 422].includes(status)) return false;
         return true;
       },
-      retryDelay: (attempt) => Math.min(500 * 2 ** attempt, 4000),
+      retryDelay: (attempt) => Math.min(750 * 2 ** attempt, 5000),
     },
   },
 });

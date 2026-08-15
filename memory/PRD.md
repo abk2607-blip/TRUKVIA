@@ -20,6 +20,13 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter77 — Dashboard "Backend is restarting" banner (P0 recurrence)** (Feb 2026)
+  - **User complaint (screenshot)**: Rose "DASHBOARD DATA COULDN'T LOAD · Backend is restarting…" banner appeared on Dashboard. Follow-up to iter71, where the initial fix used a 3-retry ~3.5s backoff.
+  - **Root cause**: The old retry window was shorter than a real Uvicorn hot-reload cycle. When any backend file changes, WatchFiles restarts the app (~5-10 s), then startup tasks run (index-ensure + fixture-purge + demo seed) which can push the total unavailable window to ~10-15 s. iter71's 3-retry / 3.5 s cap gave up too early and surfaced the error banner.
+  - **Fix (`index.js`)**: `retry` bumped to **6 attempts** with exponential backoff `750 ms → 1.5 s → 3 s → 5 s → 5 s → 5 s` capped at 5 s per attempt — **~20 s total retry window**. Real client errors (400/401/403/422) are still never retried. Verified by the testing agent via live `supervisorctl restart backend` while monitoring the DOM for 22 s — the error banner never appeared.
+  - **Verified**: Testing agent 100% pass — 8/8 new pytests including a live supervisor-restart recovery test. Regression spot-checked: /api/customers, /api/suppliers, /api/invoices, /api/dashboard, /api/reports/gst-summary, /api/invoices/overdue all 200 in <2 s.
+
+
 - [x] **Iter76 — Invoice list tap-to-open on mobile** (Feb 2026)
   - **User complaint (screenshot)**: On the mobile Invoices list, tapping a row did nothing. The only entry point was the tiny "View" button — which sat in the last (9th) table column, permanently scrolled off-screen behind the horizontal overflow. Whole-row tap felt broken.
   - **Fix (`Invoices.jsx`)**:
