@@ -597,6 +597,7 @@ export default function Trips() {
                 </th>
                 <th className="text-left px-4 py-3 font-bold">Date · Time</th>
                 <th className="text-left px-4 py-3 font-bold">LR Number</th>
+                <th className="text-left px-4 py-3 font-bold" data-testid="trips-th-cust-ref">Cust Ref</th>
                 <th className="text-left px-4 py-3 font-bold">Customer</th>
                 <th className="text-left px-4 py-3 font-bold">Vehicle</th>
                 <th className="text-left px-4 py-3 font-bold">Route · Load</th>
@@ -645,6 +646,19 @@ export default function Trips() {
                     {t.lr_number ? (
                       <span className="inline-block font-mono text-[11px] font-bold px-2 py-1 bg-indigo-50 text-indigo-800 border border-indigo-200 rounded-sm">
                         {t.lr_number}
+                      </span>
+                    ) : (
+                      <span className="text-zinc-300 text-xs">—</span>
+                    )}
+                  </td>
+                  <td
+                    className="px-4 py-3 whitespace-nowrap"
+                    data-testid={`trip-cust-ref-${t.id}`}
+                  >
+                    {/* Iter83 — Reuse existing per-trip customer_reference_number (never inherited). */}
+                    {(t.customer_reference_number || t.customer_invoice_no || t.waybill_no) ? (
+                      <span className="inline-block font-mono text-[11px] font-bold px-2 py-1 bg-amber-50 text-amber-800 border border-amber-200 rounded-sm">
+                        {t.customer_reference_number || t.customer_invoice_no || t.waybill_no}
                       </span>
                     ) : (
                       <span className="text-zinc-300 text-xs">—</span>
@@ -748,7 +762,7 @@ export default function Trips() {
               })}
               {!isLoading && total === 0 && (
                 <tr>
-                  <td colSpan={13} className="px-4 py-16 text-center text-zinc-400" data-testid="trips-empty-state">
+                  <td colSpan={14} className="px-4 py-16 text-center text-zinc-400" data-testid="trips-empty-state">
                     {activeFilterCount > 0 ? (
                       <>
                         No trips match your filters.

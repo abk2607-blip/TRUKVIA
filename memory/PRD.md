@@ -20,6 +20,12 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter83 — Cust Ref column in main Trips list** (Feb 2026)
+  - **User request**: After Iter82 restored the Cust Ref column on the Invoice, the user wanted it visible in the main **Trips list** too — so before invoicing they can instantly spot which trips still need a Customer Reference. Explicit instruction: reuse the existing per-trip `customer_reference_number`, do NOT create a duplicate field.
+  - **Fix (frontend only)**:
+    1. **`/app/frontend/src/pages/Trips.jsx`** — added a "Cust Ref" `<th>` between "LR Number" and "Customer" (`data-testid="trips-th-cust-ref"`). Each row cell (`data-testid="trip-cust-ref-{id}"`) reads `t.customer_reference_number || t.customer_invoice_no || t.waybill_no` (legacy fallback, blank stays blank as "—"). Cell rendered as an amber pill so it's visually distinct from the indigo LR pill next to it. Empty-state `colSpan` bumped 13 → 14.
+  - **Verified**: Screenshot of `/trips` shows the new column populated end-to-end; playwright confirms `100` cells with test-ids. New pytest `test_iter83_trips_list_cust_ref.py` (2 tests) locks that `/api/trips` returns `customer_reference_number` and never inherits it across trips — added to strict Regression Guard, **all tests PASS**.
+
 - [x] **Iter82 — Per-trip Customer Ref Number column in Invoice PDF + on-screen view** (Feb 2026)
   - **User complaint (screenshot)**: The Customer Invoice/Reference Number entered on each Trip was NOT visible as its own column in the generated Invoice. The PDF only tucked it inline in the Route cell (as a small grey subtitle) and the on-screen HTML invoice view had no such field at all. User wanted: dedicated column, per-trip value, blank stays blank (no inheritance), Invoice No and Cust Ref clearly separated.
   - **What was already correct**:
