@@ -20,6 +20,16 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter76 — Invoice list tap-to-open on mobile** (Feb 2026)
+  - **User complaint (screenshot)**: On the mobile Invoices list, tapping a row did nothing. The only entry point was the tiny "View" button — which sat in the last (9th) table column, permanently scrolled off-screen behind the horizontal overflow. Whole-row tap felt broken.
+  - **Fix (`Invoices.jsx`)**:
+    - Below `md` → renders a card list. Each card is a full-width `<button>` with the invoice #, date, customer, Total / Paid / Balance in a 3-column mini-grid, plus RCM/FWD + GST + trip-count chips, and a chevron right-hand affordance. Tapping the card navigates to `/invoices/{id}` via `useNavigate` — active/hover states use `active:bg-zinc-50` for immediate feedback on touch.
+    - `md` and above → keeps the existing 9-column table but adds `cursor-pointer hover:bg-zinc-50` on the `<tr>` and an `onClick` handler that also navigates. The inner "View" link `stopPropagation`s so it still works as an alternate entry point without double-navigating.
+    - "New Invoice" button bumped to `min-h-[44px]` for consistent tap-target.
+  - **Verified** via Playwright at 390×844: 2,000 invoice cards render as tap-optimised cards; tapping opens Invoice View with PDF/WhatsApp/Gmail/Print/Delete actions available.
+  - **UNCHANGED**: Trips list already had clickable rows (no change needed). Suppliers page has its own drawer pattern (also unchanged). Desktop layouts are visually identical.
+
+
 - [x] **Iter74 — Supplier Shortage Integration (Trip → Supplier Ledger auto-flow)** (Feb 2026)
   - **User complaint**: trip-level shortage was recorded but never reduced Supplier Freight payable. Users had to manually retype the shortage into `supplier_shortage_deduction` — usually forgotten → supplier balances overstated.
   - **Root cause**: `supplier_shortage_deduction` was a purely manual scalar field on the trip; nothing linked it to the trip's own computed `shortage_amount` (which uses the existing shortage-policy rate). The ledger + settlement code already had the correct plumbing (`trip_shortage` entry in `_build_ledger`), but the field feeding them was always 0.
