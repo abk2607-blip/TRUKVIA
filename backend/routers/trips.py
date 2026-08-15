@@ -155,6 +155,7 @@ async def list_trips(
     date_to: Optional[str] = None,
     q: Optional[str] = None,
     halting_only: bool = False,
+    ids: Optional[str] = None,
     limit: int = Query(2000, ge=1, le=2000),
     offset: int = Query(0, ge=0),
 ):
@@ -165,9 +166,23 @@ async def list_trips(
     sorted by (date desc, created_at desc). Total match count is exposed via
     the `X-Total-Count` header so the client can render pagination controls
     without a second round-trip.
+
+    Iter79 — `ids` (comma-separated) fetches specific trips directly; used by
+    InvoiceView which knows the trip_ids on the invoice and must not depend on
+    the 2000-row cap.
     """
     cid = await _active_company_id(request, user)
     await _backfill_to_default(user["user_id"])
+    if ids:
+        id_list = [s.strip() for s in ids.split(",") if s.strip()]
+        if not id_list:
+            return []
+        docs = await db.trips.find(
+            {"user_id": user["user_id"], "company_id": cid, "id": {"$in": id_list}},
+            {"_id": 0, "user_id": 0},
+        ).to_list(len(id_list))
+        return docs
+
     mongo_q = await _build_trip_filter_query(
         user, cid,
         customer_id=customer_id, vehicle_id=vehicle_id, supplier_id=supplier_id,

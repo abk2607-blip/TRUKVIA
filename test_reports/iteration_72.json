@@ -1,0 +1,21 @@
+{
+  "summary": "Iter78 regression retest — fixture-hide fix on paginated /api/customers verified. Backend: 20/20 iter68+iter72 pytests pass. Live API on production URL confirms first page of GET /api/customers?limit=50 returns 0 fixture-named customers (6/6 items are real names). q=IT68&include_fixtures=true returns 23 fixture matches (tests still work); q=IT68 without include_fixtures returns 0 (real users protected). Legacy GET /api/customers (no params) still returns full array of 5517 customers (backwards compat preserved for older tests/pages). FIXTURE_NAME_REGEX at customers.py:36 correctly matches CUST_IT\\d+ and Cust_[a-f0-9]{6} patterns flagged in prior iteration.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter68_customer_search.py",
+    "/app/backend/tests/test_iter72_quickadd_sync.py"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "FIXTURE_NAME_REGEX at customers.py:36 contains a duplicate alternation (CUST_[a-f0-9]{6} appears twice, once as Cust_[a-f0-9]{6} and once as CUST_[a-f0-9]{6} — case-insensitive would be cleaner). Harmless but could be simplified with re.IGNORECASE flag on the $regex query.",
+    "customers.py is 964 lines — approaching size threshold; consider splitting invoice/payment logic into their own routers in a future iteration."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "100%", "frontend": "100% (spot-verified via API contract — picker calls /customers?limit=50 with fixture-hide default)"},
+  "test_credentials": "Authorization: Bearer test_session_bitumen_2026",
+  "seed_data_creation": "None",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter78 closed. Fixture-hide on paginated browse (GET /api/customers with any of q/limit/skip/ids) is working correctly on live URL. Legacy no-param call still returns all customers (needed by iter42+). If future fixtures use new naming, extend FIXTURE_NAME_REGEX at /app/backend/routers/customers.py:36."
+}

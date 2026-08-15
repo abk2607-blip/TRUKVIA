@@ -33,7 +33,7 @@ router = APIRouter(prefix="/api")
 # they pollute the demo tenant. We hide them from paginated browse mode so
 # real users see only their real customers. Q-searches still return matches
 # (so tests can find their own fixtures).
-FIXTURE_NAME_REGEX = r"^(IT\d+|TEST[_-]|IsoCoB|Iso_|BULK_|Bulk_|Cust_[a-f0-9]{6})"
+FIXTURE_NAME_REGEX = r"^(IT\d+|TEST[_-]|IsoCoB|Iso_|BULK_|Bulk_|CUST_IT\d+|Cust_[a-f0-9]{6}|CUST_[a-f0-9]{6})"
 
 # ==================== Customers ====================
 

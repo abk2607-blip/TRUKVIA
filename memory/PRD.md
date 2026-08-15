@@ -20,6 +20,18 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter79 — Invoice View: missing trip rows + missing SHIP TO block** (Feb 2026)
+  - **User bug (screenshot)**: On `/invoices/{id}` the Trip Details table showed just the header (no data rows) and the SHIP TO block wasn't rendered opposite BILL TO — only BILL TO on the left, BANK DETAILS on the right.
+  - **Root causes**:
+    1. `InvoiceView.jsx` was fetching `/api/trips` (paginated, capped at 2000, sorted date desc). Any invoice that referenced trips older than the newest 2000 lost all its rows.
+    2. The SHIP TO block was never wired into InvoiceView — the iter67 PDF builder had it, but the on-screen HTML view didn't.
+  - **Fixes**:
+    1. **Backend** `routers/trips.py::list_trips` — new `ids: Optional[str]` param. When set, returns exactly those trips (tenant-scoped, cap-free). Empty → `[]`. Bogus IDs silently dropped.
+    2. **Frontend** `InvoiceView.jsx` — `allTrips` query switched to `queryKey: ["invoice-trips", id]` with `?ids=<invoice.trip_ids>`. Trip rows now always render on real invoices.
+    3. **SHIP TO block restored** — new three-column grid (BILL TO | SHIP TO | BANK DETAILS) with a resolver: (a) all trips share one ship_site → show site_name + address + gstin + state + contact; (b) all trips share one to_location → show customer + to_location; (c) mixed → "Mixed destinations — see trip rows below". Mobile <md stacks vertically.
+  - **Testing agent 100/100 pass** on both backend + frontend. New pytest `test_iter79_invoice_view.py` (6 tests) locks the ids-lookup semantics + tenant isolation. Verified with 3 real invoices covering all three SHIP TO resolver branches.
+
+
 - [x] **Iter77 — Dashboard "Backend is restarting" banner (P0 recurrence)** (Feb 2026)
   - **User complaint (screenshot)**: Rose "DASHBOARD DATA COULDN'T LOAD · Backend is restarting…" banner appeared on Dashboard. Follow-up to iter71, where the initial fix used a 3-retry ~3.5s backoff.
   - **Root cause**: The old retry window was shorter than a real Uvicorn hot-reload cycle. When any backend file changes, WatchFiles restarts the app (~5-10 s), then startup tasks run (index-ensure + fixture-purge + demo seed) which can push the total unavailable window to ~10-15 s. iter71's 3-retry / 3.5 s cap gave up too early and surfaced the error banner.

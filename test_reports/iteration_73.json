@@ -1,0 +1,26 @@
+{
+  "summary": "Iter79 P0 verification — both bugs are FIXED. Backend `GET /api/trips?ids=<csv>` correctly returns tenant-scoped trips by id (bypasses the 2000-row cap, filters bogus/unknown ids, empty-array on all-blank). Frontend InvoiceView now (a) fetches trips via ids-lookup so trip rows always render on real invoices, and (b) renders three side-by-side blocks BILL TO | SHIP TO | BANK DETAILS on desktop (three columns, same Y) and stacked vertically on mobile <md. SHIP TO resolver validated for all three branches: single ship_site → site details, mixed ship_sites w/ shared to_location → customer+to_location, no shared value → 'Mixed destinations — see trip rows below'. Iter67 PDF endpoint still returns application/pdf. All 6 pytest backend cases pass. Invoice actions (PDF/WhatsApp/Gmail/Print/Delete) buttons all present.",
+  "backend_issues": {"critical": [], "minor": []},
+  "frontend_issues": {"ui_bugs": [], "integration_issues": [], "design_issues": []},
+  "test_report_links": [
+    "/app/backend/tests/test_iter79_invoice_view.py",
+    "/app/test_reports/pytest/iter79_results.xml"
+  ],
+  "action_items": [],
+  "critical_code_review_comments": [
+    "InvoiceView.jsx line 80 filters allTrips via invoice.trip_ids.includes(t.id) — this is now redundant since the API already returns only requested ids; not a bug but dead work.",
+    "SHIP TO resolver treats missing ship_site (fallback via ship_sites.find returning undefined) by falling through to the to_location branch — desired behaviour, good.",
+    "Orphan/fixture invoice `inv_b26f37e91b6f47d3` (BULK_A_IT58_bfaf3c customer) references trip_ids that don't exist in DB → renders 0 trip rows. This is a legacy seed-data hygiene issue, NOT a regression of the iter79 fix. Consider a cleanup script or a warning banner when invoice.trip_ids length > returned trips length.",
+    "backend/routers/trips.py:176 — `if ids:` treats `?ids=` (empty string) as falsy so it silently falls through to the paginated list (returns 2000 trips). Consider distinguishing `ids is None` vs empty string to avoid surprise responses; low priority."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter79_invoice_view.py (new)"
+  ],
+  "success_rate": {"backend": "100%", "frontend": "100%"},
+  "test_credentials": "Bearer test_session_bitumen_2026 (demo)",
+  "seed_data_creation": "None. Used existing invoices: inv_dc7f45ee0ef04d95 (single ship_site), inv_c05e1e92b4db4da0 (multi ship_site same to_location), inv_c9ca94791e4140c9 (mixed).",
+  "retest_needed": false,
+  "main_agent_can_self_test": true,
+  "context_for_next_testing_agent": "Iter79 verified end-to-end on demo tenant. Real invoices with resolvable trip_ids render trip rows + 3-block header. Fixture/orphan invoices (BULK_* customer names, total=0) still render 0 rows because their trip_ids point to deleted trips — treat those as noise, not regressions.",
+  "rca of the issue": "User's screenshot P0: (1) InvoiceView pulled trips from paginated `/api/trips` capped at 2000 sorted by date desc — invoices referencing older trips lost their rows. FIX: new `?ids=` param bypasses cap and directly fetches requested trips. (2) SHIP TO block was previously removed from InvoiceView (only left in the PDF builder), leaving BILL TO next to BANK DETAILS. FIX: three-column grid restored with resolver logic (ship_site → to_location → mixed)."
+}

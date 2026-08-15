@@ -1,10 +1,11 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api, fmtCurrency, fmtDate } from "@/api";
 import { toast } from "sonner";
 import { ArrowLeft } from "lucide-react";
 import VoiceButton from "@/components/VoiceButton";
+import AsyncSearchableSelect from "@/components/AsyncSearchableSelect";
 
 export default function InvoiceCreate() {
   const nav = useNavigate();
@@ -24,7 +25,40 @@ export default function InvoiceCreate() {
     enabled: Boolean(customerId),
   });
 
-  const selectedCustomer = customers.find((c) => c.id === customerId);
+  // Iter78 — Fetch the currently-selected customer via ids-lookup so the picker
+  // button always shows its name (even if the customer is outside the paginated
+  // search window). Same pattern as Trip Form.
+  const { data: selCustResp } = useQuery({
+    queryKey: ["customer-detail", customerId],
+    queryFn: async () => (await api.get("/customers", { params: { ids: customerId } })).data,
+    enabled: Boolean(customerId),
+    staleTime: 60000,
+  });
+  const selectedCustomer =
+    selCustResp?.items?.find?.((c) => c.id === customerId) ||
+    customers.find((c) => c.id === customerId) ||
+    null;
+  const selectedCustomerOption = selectedCustomer
+    ? {
+        value: selectedCustomer.id,
+        label: selectedCustomer.name,
+        meta: [selectedCustomer.gstin, selectedCustomer.state, selectedCustomer.phone].filter(Boolean).join(" · "),
+      }
+    : null;
+
+  // Iter78 — Server-side customer search for the Invoice picker (hides pytest
+  // fixture customers by default; the same 300 ms-debounced picker used in Trip Form).
+  const fetchCustomers = useCallback(async (q) => {
+    const params = { limit: 50 };
+    if (q) params.q = q;
+    if (customerId) params.ids = customerId;
+    const { data } = await api.get("/customers", { params });
+    return (data?.items || []).map((c) => ({
+      value: c.id,
+      label: c.name,
+      meta: [c.gstin, c.state, c.phone].filter(Boolean).join(" · "),
+    }));
+  }, [customerId]);
   // Auto GST determination: same state → CGST+SGST; different / missing → IGST
   const gstType = useMemo(() => {
     const home = (company?.state || "").trim().toLowerCase();
@@ -102,10 +136,16 @@ export default function InvoiceCreate() {
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           <div>
             <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Customer · కస్టమర్ *</label>
-            <select data-testid="invoice-customer" value={customerId} onChange={(e) => { setCustomerId(e.target.value); setSelected({}); }} className={inputCls}>
-              <option value="">-- Select Customer --</option>
-              {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
+            <div className="mt-1">
+              <AsyncSearchableSelect
+                dataTestId="invoice-customer"
+                value={customerId}
+                selectedOption={selectedCustomerOption}
+                fetchOptions={fetchCustomers}
+                onChange={(v) => { setCustomerId(v); setSelected({}); }}
+                placeholder="Search customer name, phone, GSTIN…"
+              />
+            </div>
           </div>
           <div>
             <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Invoice Date · తేదీ</label>

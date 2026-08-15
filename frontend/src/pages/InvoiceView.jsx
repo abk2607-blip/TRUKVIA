@@ -17,7 +17,15 @@ export default function InvoiceView() {
   });
   const { data: customers = [] } = useQuery({ queryKey: ["customers"], queryFn: async () => (await api.get("/customers")).data });
   const { data: company = {} } = useQuery({ queryKey: ["company"], queryFn: async () => (await api.get("/company")).data });
-  const { data: allTrips = [] } = useQuery({ queryKey: ["trips"], queryFn: async () => (await api.get("/trips")).data });
+  const { data: allTrips = [] } = useQuery({
+    queryKey: ["invoice-trips", id],
+    queryFn: async () => {
+      const ids = (invoice?.trip_ids || []).join(",");
+      if (!ids) return [];
+      return (await api.get("/trips", { params: { ids } })).data;
+    },
+    enabled: Boolean(invoice?.trip_ids?.length),
+  });
 
   const [showPay, setShowPay] = useState(false);
   const [pay, setPay] = useState({ amount: "", date: new Date().toISOString().slice(0, 10), mode: "Cash", note: "" });
@@ -164,16 +172,58 @@ export default function InvoiceView() {
           </div>
         </div>
 
-        {/* Bill To */}
-        <div className="grid grid-cols-2 gap-6 border-b border-zinc-300 py-4">
-          <div>
+        {/* Bill To  |  Ship To  |  Bank Details — Iter79 restore SHIP TO opposite BILL TO */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 md:gap-6 border-b border-zinc-300 py-4">
+          <div data-testid="invoice-bill-to">
             <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Bill To</div>
-            <div className="mt-1 text-lg font-bold">{customer.name}</div>
+            <div className="mt-1 text-base sm:text-lg font-bold">{customer.name}</div>
             <div className="text-xs whitespace-pre-line mt-1 text-zinc-700">{customer.address}</div>
             <div className="text-xs font-mono mt-1"><span className="font-bold">GSTIN:</span> {customer.gstin || "—"}</div>
             <div className="text-xs font-mono">PAN: {customer.pan || "—"} · State: {customer.state || "—"}</div>
           </div>
-          <div className="text-right">
+          <div data-testid="invoice-ship-to">
+            <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Ship To</div>
+            {(() => {
+              // Iter79 — Resolve consignee from the invoice's trips.
+              //   1) If ALL trips share the same ship_site_id → show that site
+              //   2) Else if all trips share the same to_location → show that
+              //   3) Else "Mixed — see trip rows below"
+              const sites = (customer.ship_sites || []);
+              const ids = Array.from(new Set(trips.map((t) => t.ship_site_id).filter(Boolean)));
+              const tos = Array.from(new Set(trips.map((t) => t.to_location).filter(Boolean)));
+              if (ids.length === 1) {
+                const s = sites.find((x) => x.id === ids[0]);
+                if (s) {
+                  return (
+                    <>
+                      <div className="mt-1 text-base sm:text-lg font-bold">{s.site_name || customer.name}</div>
+                      <div className="text-xs whitespace-pre-line mt-1 text-zinc-700">{s.address || "—"}</div>
+                      {s.gstin && <div className="text-xs font-mono mt-1"><span className="font-bold">GSTIN:</span> {s.gstin}</div>}
+                      <div className="text-xs font-mono">State: {s.state || customer.state || "—"} {s.pincode ? `· ${s.pincode}` : ""}</div>
+                      {(s.contact_person || s.phone) && (
+                        <div className="text-xs text-zinc-600 mt-1">
+                          {s.contact_person || ""}{s.contact_person && s.phone ? " · " : ""}{s.phone || ""}
+                        </div>
+                      )}
+                    </>
+                  );
+                }
+              }
+              if (tos.length === 1) {
+                return (
+                  <>
+                    <div className="mt-1 text-base sm:text-lg font-bold">{customer.name}</div>
+                    <div className="text-xs mt-1 text-zinc-700">{tos[0]}</div>
+                    <div className="text-xs font-mono">State: {customer.state || "—"}</div>
+                  </>
+                );
+              }
+              return (
+                <div className="mt-1 text-xs text-zinc-600 italic">Mixed destinations — see trip rows below</div>
+              );
+            })()}
+          </div>
+          <div className="md:text-right" data-testid="invoice-bank">
             <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Bank Details</div>
             <div className="mt-1 text-xs font-mono">
               <div>{company.bank_name || "—"}</div>
