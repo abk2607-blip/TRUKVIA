@@ -20,6 +20,27 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter74 — Supplier Shortage Integration (Trip → Supplier Ledger auto-flow)** (Feb 2026)
+  - **User complaint**: trip-level shortage was recorded but never reduced Supplier Freight payable. Users had to manually retype the shortage into `supplier_shortage_deduction` — usually forgotten → supplier balances overstated.
+  - **Root cause**: `supplier_shortage_deduction` was a purely manual scalar field on the trip; nothing linked it to the trip's own computed `shortage_amount` (which uses the existing shortage-policy rate). The ledger + settlement code already had the correct plumbing (`trip_shortage` entry in `_build_ledger`), but the field feeding them was always 0.
+  - **Fix (services.py `_compute_trip`)**: For supplier vehicles, mirror `t.shortage_amount → t.supplier_shortage_deduction` UNLESS `supplier_shortage_deduction_override=True`. New Pydantic field `supplier_shortage_deduction_override: bool` in `Vehicle` — flipped to True only when the user explicitly types a different value in the UI. This preserves the existing shortage-policy calculation (no hard-coded rates), auto-flows into supplier ledger + settlement + statement + outstanding, and never creates duplicates on edit (single upsert-style entry per trip).
+  - **Frontend**: `SupplierSection.jsx` shortage input now shows "· auto from trip shortage" label + a "Reset auto" button when overridden. `TripForm.jsx` has a live-mirror effect matching the backend. `tripFormDefaults.js` exports the new override flag with default `false`.
+  - **New pytest** `test_iter74_supplier_shortage_integration.py` (7 tests) — covers all 5 cases the user demanded: no shortage → no entry; shortage within limit → auto-flows; above limit → policy respected; edit → updates in place (no duplicates); multi-trip cumulative balance correct. Plus manual override persists + case4b (correction removes ledger entry) + zero-clean.
+  - **Test hygiene fix**: `test_iter64_supplier_chip_vehicle_audit_bulk_import.py` — added `supplier_shortage_deduction_override: True` to the one test that set a manual shortage; without it the new auto-mirror would revert to 0.
+  - **Verified**: 30/30 test files GREEN. `/api/auth/health` = ok.
+
+- [x] **Iter75 — Mobile-First UI (5 daily-driver pages)** (Feb 2026)
+  - **User complaints (verbatim)**: "sidebar covers the screen", "buttons too small on my phone", "Trip Form scrolling is painful".
+  - **Fixes**:
+    1. **New mobile drawer** — hamburger button in a sticky top bar opens a slide-in drawer (`w-[85%] max-w-320px`) with backdrop-tap-to-close, company switcher, full nav list, and profile/logout. Zero regression on desktop — sidebar `hidden md:flex` unchanged.
+    2. **Mobile bottom-nav bar** — always-visible on `<md`: Home / Trips / Invoices / Suppliers / More (5-cell grid, 56px min-h, active-state underline). "More" opens the drawer. Uses `env(safe-area-inset-bottom)` for iOS notch.
+    3. **Tap-target boost** — sidebar nav rows, drawer close, logout, buttons, and Trip Form inputs (`inputCls`) all now min-h ≥ 40-44px per WCAG 2.5.5. Trip Form inputs use `text-base` on mobile (prevents iOS zoom-on-focus).
+    4. **Trip Form sections collapsible on mobile** — `FormPrimitives.Section` now renders a clickable header with a chevron on `<md`; on desktop the header stays static (no visual change). Sections default open; users can collapse the ones they don't need for that trip.
+    5. **Sticky Save-bar clears bottom nav** — bumped from `bottom-0` to `bottom-[64px] md:bottom-0` so the SAVE TRIP action isn't hidden behind the bottom-nav.
+    6. **Sticky top bar** — `sticky top-0` on the mobile header with `backdrop-blur` so the app title + company chip stay visible while scrolling; page content gets `pb-24 md:pb-8` to clear the fixed bottom nav.
+  - **Verified via Playwright screenshots** (390×844 iPhone + 1440×900 desktop): drawer opens smoothly, bottom nav highlights active tab, Trip Form sections collapse/expand, Dashboard/Trips/Suppliers render clean on both breakpoints, desktop sidebar intact.
+
+
 - [x] **Iter73 — Supplier Freight auto-calc · LR Consignee auto-fill · Suppliers page 260× speed-up** (Feb 2026)
   - **User-reported P0 bugs**: (1) Supplier Freight not auto-calculating even with rate + tonnage entered → user thought calc was broken. (2) Suppliers page took 60+ seconds to open. (3) LR Consignee Site Location was blank — should default from Trip "TO" (or Ship-To if selected).
   - **Root causes found**:

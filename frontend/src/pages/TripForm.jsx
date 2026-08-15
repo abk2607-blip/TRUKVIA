@@ -249,6 +249,21 @@ export default function TripForm() {
     form.tons,
   ]);
 
+  // Iter74 — Auto-mirror trip.shortage_amount → supplier_shortage_deduction
+  // for supplier vehicles UNLESS user has explicitly overridden. Matches the
+  // backend `_compute_trip` mirror so the live "Net Payable" tile stays
+  // consistent with what the server will compute on save.
+  useEffect(() => {
+    if (form.vehicle_type !== "supplier") return;
+    if (form.supplier_shortage_deduction_override) return;
+    const target = Number(Number(form.shortage_amount || 0).toFixed(2));
+    const current = Number(Number(form.supplier_shortage_deduction || 0).toFixed(2));
+    if (target !== current) {
+      setForm((f) => ({ ...f, supplier_shortage_deduction: target }));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.vehicle_type, form.shortage_amount, form.supplier_shortage_deduction_override]);
+
   useEffect(() => {
     if (!form.halting_amount_override) {
       setForm((f) => ({ ...f, total_halting_days: totalHaltingDaysLive, chargeable_halting_days: autoChargeableDays, halting_amount: haltingAmountLive }));
@@ -411,7 +426,7 @@ export default function TripForm() {
         </Section>
 
         {/* Iter63 · Priority Q3 — Sticky Save/Cancel bar (visible on every scroll position) */}
-        <div className="sticky bottom-0 -mx-4 md:mx-0 z-40 bg-white/95 backdrop-blur border-t border-zinc-200 px-4 py-3 flex items-center justify-between gap-3 shadow-[0_-6px_16px_-8px_rgba(15,23,42,0.15)]" data-testid="trip-form-sticky-bar">
+        <div className="sticky bottom-[64px] md:bottom-0 -mx-4 md:mx-0 z-40 bg-white/95 backdrop-blur border-t border-zinc-200 px-4 py-3 flex items-center justify-between gap-3 shadow-[0_-6px_16px_-8px_rgba(15,23,42,0.15)]" data-testid="trip-form-sticky-bar">
           <div className="text-xs text-zinc-600 tabular-nums hidden md:block">
             <span className="font-semibold">Freight:</span> ₹{Number(freight || 0).toLocaleString("en-IN")}
             <span className="mx-3 text-zinc-300">·</span>

@@ -202,6 +202,7 @@ class Trip(BaseModel):
     supplier_advance: float = 0.0
     supplier_diesel: float = 0.0                     # Diesel funded by us to supplier — deducted from payable
     supplier_shortage_deduction: float = 0.0         # Shortage deducted from supplier freight
+    supplier_shortage_deduction_override: bool = False  # Iter74 — True when user manually edited; blocks auto-mirror from trip.shortage_amount
     supplier_other_recoveries: float = 0.0
     supplier_other_income: float = 0.0               # Bonus/other add-ons to supplier
     supplier_net_payable: float = 0.0

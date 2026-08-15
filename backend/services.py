@@ -117,6 +117,16 @@ def _compute_trip(t: Trip) -> Trip:
             elif t.supplier_fixed_amount > 0:
                 t.supplier_freight = round(t.supplier_fixed_amount, 2)
         # else keep manually entered supplier_freight
+
+        # Iter74 — Auto-mirror trip.shortage_amount → supplier_shortage_deduction
+        # for supplier vehicles UNLESS the user has explicitly overridden. This
+        # ensures the Trip's shortage automatically flows into the Supplier
+        # ledger/statement/settlement, sourced from the existing shortage
+        # policy (never a hard-coded value). Manual overrides are respected
+        # via supplier_shortage_deduction_override=True.
+        if not t.supplier_shortage_deduction_override:
+            t.supplier_shortage_deduction = round(float(t.shortage_amount or 0), 2)
+
         # Net payable = freight − advance − diesel(supplier-side) − customer_diesel(recovered against supplier trip)
         #              − shortage − other_recoveries + other_income
         t.supplier_net_payable = round(

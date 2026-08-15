@@ -94,8 +94,26 @@ export default function SupplierSection({
         <Field label="Supplier Diesel (₹)">
           <input data-testid="trip-supplier-diesel" type="number" step="0.01" min="0" value={form.supplier_diesel} onChange={(e) => setForm({ ...form, supplier_diesel: e.target.value })} className={inputCls} placeholder="Diesel we paid on behalf" />
         </Field>
-        <Field label="Shortage Deduction (₹)">
-          <input data-testid="trip-supplier-shortage" type="number" step="0.01" min="0" value={form.supplier_shortage_deduction} onChange={(e) => setForm({ ...form, supplier_shortage_deduction: e.target.value })} className={inputCls} placeholder="Deducted from supplier" />
+        <Field label={`Shortage Deduction (₹)${form.supplier_shortage_deduction_override ? "" : "  · auto from trip shortage"}`}>
+          <div className="flex items-center gap-2">
+            <input
+              data-testid="trip-supplier-shortage"
+              type="number" step="0.01" min="0"
+              value={form.supplier_shortage_deduction}
+              onChange={(e) => setForm({ ...form, supplier_shortage_deduction: e.target.value, supplier_shortage_deduction_override: true })}
+              className={inputCls}
+              placeholder="Auto from trip shortage"
+            />
+            {form.supplier_shortage_deduction_override && (
+              <button
+                type="button"
+                data-testid="trip-supplier-shortage-reset"
+                onClick={() => setForm({ ...form, supplier_shortage_deduction_override: false })}
+                className="text-[10px] uppercase font-bold text-blue-700 hover:underline whitespace-nowrap"
+                title="Restore auto-computed value from trip shortage"
+              >Reset&nbsp;auto</button>
+            )}
+          </div>
         </Field>
         <Field label="Other Recoveries (₹)">
           <input data-testid="trip-supplier-recovery" type="number" step="0.01" min="0" value={form.supplier_other_recoveries} onChange={(e) => setForm({ ...form, supplier_other_recoveries: e.target.value })} className={inputCls} placeholder="Damages, penalties etc." />

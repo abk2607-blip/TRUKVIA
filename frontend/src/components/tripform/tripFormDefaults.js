@@ -24,6 +24,7 @@ export const EMPTY = {
   supplier_advance: 0,
   supplier_diesel: 0,
   supplier_shortage_deduction: 0,
+  supplier_shortage_deduction_override: false,
   supplier_other_recoveries: 0,
   supplier_other_income: 0,
   supplier_net_payable: 0,
@@ -97,4 +98,6 @@ export const EMPTY = {
   customer_receipts: [],
 };
 
-export const inputCls = "w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none bg-white";
+// Iter75 — bumped mobile tap targets: py-2.5 → min-h ~40px inputs. text-base
+// on mobile prevents iOS zoom-on-focus.
+export const inputCls = "w-full border border-zinc-300 px-3 py-2.5 rounded-sm text-base sm:text-sm min-h-[40px] focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none bg-white";

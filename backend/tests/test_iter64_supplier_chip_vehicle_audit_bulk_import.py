@@ -57,6 +57,7 @@ def test_supplier_trip_chip_figures_match_server(env):
         "supplier_diesel": 2000,
         "customer_diesel_received": 1000,   # against supplier trip
         "supplier_shortage_deduction": 500,
+        "supplier_shortage_deduction_override": True,   # Iter74: persist manual value against auto-mirror
         "supplier_other_recoveries": 300,
         "supplier_other_income": 700,
         "from_location": "K", "to_location": "V",
