@@ -61,6 +61,7 @@ CRITICAL_TESTS=(
   "tests/test_iter81_customer_search_fixture_bypass.py"   # Iter81 · Customer search bypasses fixture-hide when q is provided
   "tests/test_iter82_invoice_cust_ref_column.py"          # Iter82 · Per-trip Customer Ref column in Invoice PDF + view
   "tests/test_iter83_trips_list_cust_ref.py"              # Iter83 · Cust Ref column in main Trips list
+  "tests/test_iter84_missing_cust_ref_filter.py"          # Iter84 · Server-side "Missing Cust Ref" trips filter
 )
 
 # Explicit venv PATH so this runs cleanly from asyncio subprocess (which

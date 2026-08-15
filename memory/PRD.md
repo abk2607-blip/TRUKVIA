@@ -20,6 +20,13 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter84 — "Missing Cust Ref" server-side filter on Trips list** (Feb 2026)
+  - **User request**: After Iter83, add a quick filter on the Trips list to show only trips whose Customer Reference/Invoice Number is still blank. Explicit: reuse the existing per-trip `customer_reference_number`, no duplicate field.
+  - **Fix**:
+    1. **Backend `routers/trips.py::_build_trip_filter_query`** — accepts new `missing_cust_ref: bool` param and translates it into a Mongo `$and` block that requires ALL THREE aliases (`customer_reference_number`, `customer_invoice_no`, `waybill_no`) to be blank/absent. Both `GET /trips` and `GET /trips/export` expose the query param.
+    2. **Frontend `pages/Trips.jsx`** — added `showMissingCustRef` state + a red "Missing Cust Ref" chip (`data-testid="missing-cust-ref-toggle"`) next to the amber "Halting Only" chip. Uses the `FileWarning` icon; wired into the query key, page-reset, selection-reset, active-filter counter, and CSV/XLSX export params so the filter travels everywhere the user takes it.
+  - **Verified**: Screenshot on `/trips` shows filter chip toggling correctly — after activation, all 100 visible Cust Ref cells render as "—" (blank), and the filter counter increments to 1. New pytest `test_iter84_missing_cust_ref_filter.py` (3 tests) locks: (a) filter excludes trips WITH a ref, (b) filter off returns both, (c) CSV export respects the filter (checked via unique LR numbers). Added to strict Regression Guard — **all 243+ tests PASS**.
+
 - [x] **Iter83 — Cust Ref column in main Trips list** (Feb 2026)
   - **User request**: After Iter82 restored the Cust Ref column on the Invoice, the user wanted it visible in the main **Trips list** too — so before invoicing they can instantly spot which trips still need a Customer Reference. Explicit instruction: reuse the existing per-trip `customer_reference_number`, do NOT create a duplicate field.
   - **Fix (frontend only)**:

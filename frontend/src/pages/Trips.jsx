@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tansta
 import { api, API, fmtCurrency, fmtDate } from "@/api";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Plus, CheckCircle2, Clock, Download, FileText, Trash2, Eye, Pencil, Copy, Share2, Search, X, ChevronLeft, ChevronRight, Bookmark, BookmarkPlus } from "lucide-react";
+import { Plus, CheckCircle2, Clock, Download, FileText, Trash2, Eye, Pencil, Copy, Share2, Search, X, ChevronLeft, ChevronRight, Bookmark, BookmarkPlus, FileWarning } from "lucide-react";
 import SearchableSelect from "@/components/SearchableSelect";
 
 const downloadEwayBill = async (tripId) => {
@@ -35,6 +35,7 @@ export default function Trips() {
   const [filters, setFilters] = React.useState(EMPTY_FILTERS);
   const [qDraft, setQDraft] = React.useState(""); // uncommitted free-text
   const [showHaltingOnly, setShowHaltingOnly] = React.useState(false);
+  const [showMissingCustRef, setShowMissingCustRef] = React.useState(false); // Iter84
   const [sortHalting, setSortHalting] = React.useState(null); // null | "desc" | "asc"
   const [page, setPage] = React.useState(0);
 
@@ -56,8 +57,9 @@ export default function Trips() {
     if (filters.date_to) n++;
     if (filters.q?.trim()) n++;
     if (showHaltingOnly) n++;
+    if (showMissingCustRef) n++;
     return n;
-  }, [filters, showHaltingOnly]);
+  }, [filters, showHaltingOnly, showMissingCustRef]);
 
   // Lookup master data for the searchable selects (small, cache-friendly).
   const { data: customers = [] } = useQuery({ queryKey: ["customers"], queryFn: async () => (await api.get("/customers")).data });
@@ -90,6 +92,7 @@ export default function Trips() {
     });
     setQDraft(s.q || "");
     setShowHaltingOnly(!!s.halting_only);
+    setShowMissingCustRef(!!s.missing_cust_ref);
     setPage(0);
   };
 
@@ -102,13 +105,13 @@ export default function Trips() {
     if (!name || !name.trim()) return;
     saveView.mutate({
       name: name.trim(),
-      filter_state: { ...filters, halting_only: showHaltingOnly },
+      filter_state: { ...filters, halting_only: showHaltingOnly, missing_cust_ref: showMissingCustRef },
     });
   };
 
   // Server-side trips query — key includes every filter + page so results are cached per combo.
   const tripsQ = useQuery({
-    queryKey: ["trips", "search", filters, showHaltingOnly, page],
+    queryKey: ["trips", "search", filters, showHaltingOnly, showMissingCustRef, page],
     placeholderData: keepPreviousData,
     queryFn: async () => {
       const params = { limit: PAGE_SIZE, offset: page * PAGE_SIZE };
@@ -119,6 +122,7 @@ export default function Trips() {
       if (filters.date_to) params.date_to = filters.date_to;
       if (filters.q?.trim()) params.q = filters.q.trim();
       if (showHaltingOnly) params.halting_only = true;
+      if (showMissingCustRef) params.missing_cust_ref = true;
       const res = await api.get("/trips", { params });
       const total = Number(res.headers?.["x-total-count"] ?? res.data?.length ?? 0);
       const hasMore = (res.headers?.["x-has-more"] ?? "").toString() === "true";
@@ -174,7 +178,7 @@ export default function Trips() {
   // ─── Iter58 P1 — Multi-select bulk actions ──────────────────────────────
   const [selected, setSelected] = React.useState(() => new Set());
   const nav = useNavigate();
-  React.useEffect(() => { setSelected(new Set()); }, [filters, page, showHaltingOnly]);
+  React.useEffect(() => { setSelected(new Set()); }, [filters, page, showHaltingOnly, showMissingCustRef]);
   const pageIds = React.useMemo(() => displayedTrips.map((t) => t.id), [displayedTrips]);
   const allOnPageSelected = pageIds.length > 0 && pageIds.every((id) => selected.has(id));
   const toggleAllOnPage = () => {
@@ -322,6 +326,15 @@ export default function Trips() {
           >
             <Clock size={14} /> Halting Only · <span className="font-mono font-bold">{pageHaltingCount}</span>
           </button>
+          <button
+            data-testid="missing-cust-ref-toggle"
+            onClick={() => { setShowMissingCustRef((v) => !v); setPage(0); }}
+            className={`px-3 py-2 text-xs uppercase tracking-wider font-semibold rounded-sm inline-flex items-center gap-2 border transition-colors
+              ${showMissingCustRef ? "bg-rose-600 text-white border-rose-700 hover:bg-rose-700" : "bg-white text-rose-800 border-rose-400 hover:bg-rose-50"}`}
+            title={showMissingCustRef ? "Show all trips" : "Show only trips missing a Customer Ref / Invoice No."}
+          >
+            <FileWarning size={14} /> Missing Cust Ref
+          </button>
           <Link to="/trips/import" data-testid="import-trips-btn" className="px-3 py-2 text-xs uppercase tracking-wider font-semibold border border-zinc-950 text-zinc-950 rounded-sm hover:bg-zinc-950 hover:text-white inline-flex items-center gap-2">
             <Plus size={14} /> Import Excel
           </Link>
@@ -446,6 +459,7 @@ export default function Trips() {
               <ExportMenu
                 filters={filters}
                 showHaltingOnly={showHaltingOnly}
+                showMissingCustRef={showMissingCustRef}
                 total={total}
               />
             </div>
@@ -838,7 +852,7 @@ function HaltingAgeChip({ trip }) {
 
 
 // Iter57 P1 — Export Filtered Trips (CSV / XLSX)
-function ExportMenu({ filters, showHaltingOnly, total }) {
+function ExportMenu({ filters, showHaltingOnly, showMissingCustRef, total }) {
   const [open, setOpen] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
   const rootRef = React.useRef(null);
@@ -860,6 +874,7 @@ function ExportMenu({ filters, showHaltingOnly, total }) {
       if (filters.date_to) params.set("date_to", filters.date_to);
       if (filters.q?.trim()) params.set("q", filters.q.trim());
       if (showHaltingOnly) params.set("halting_only", "true");
+      if (showMissingCustRef) params.set("missing_cust_ref", "true");
       const res = await api.get(`/trips/export?${params.toString()}`, { responseType: "blob" });
       const cd = res.headers?.["content-disposition"] || "";
       const m = /filename="([^"]+)"/.exec(cd);

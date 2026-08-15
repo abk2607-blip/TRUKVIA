@@ -88,9 +88,16 @@ async def _build_trip_filter_query(
     user, cid: str,
     customer_id=None, vehicle_id=None, supplier_id=None, status=None,
     date=None, date_from=None, date_to=None, q=None, halting_only=False,
+    missing_cust_ref=False,
 ) -> dict:
     """Iter57 — Shared filter-builder used by GET /trips and GET /trips/export
-    so both endpoints apply *exactly* the same AND-filter semantics."""
+    so both endpoints apply *exactly* the same AND-filter semantics.
+
+    Iter84 — `missing_cust_ref=True` narrows the result to trips that don't yet
+    have a Customer Reference / Customer Invoice Number stored (all three
+    aliases blank/missing). No new field is created — we reuse the existing
+    per-trip `customer_reference_number` (with legacy fallbacks).
+    """
     mongo_q: dict = {"user_id": user["user_id"], "company_id": cid}
     if customer_id:
         mongo_q["customer_id"] = customer_id
@@ -102,6 +109,14 @@ async def _build_trip_filter_query(
         mongo_q["status"] = status
     if halting_only:
         mongo_q["halting_amount"] = {"$gt": 0}
+    if missing_cust_ref:
+        # A ref is "missing" when every alias is blank/absent.
+        blank = {"$in": [None, ""]}
+        mongo_q["$and"] = mongo_q.get("$and", []) + [
+            {"$or": [{"customer_reference_number": blank}, {"customer_reference_number": {"$exists": False}}]},
+            {"$or": [{"customer_invoice_no": blank}, {"customer_invoice_no": {"$exists": False}}]},
+            {"$or": [{"waybill_no": blank}, {"waybill_no": {"$exists": False}}]},
+        ]
     if date:
         mongo_q["date"] = date
     else:
@@ -155,6 +170,7 @@ async def list_trips(
     date_to: Optional[str] = None,
     q: Optional[str] = None,
     halting_only: bool = False,
+    missing_cust_ref: bool = False,
     ids: Optional[str] = None,
     limit: int = Query(2000, ge=1, le=2000),
     offset: int = Query(0, ge=0),
@@ -187,7 +203,7 @@ async def list_trips(
         user, cid,
         customer_id=customer_id, vehicle_id=vehicle_id, supplier_id=supplier_id,
         status=status, date=date, date_from=date_from, date_to=date_to,
-        q=q, halting_only=halting_only,
+        q=q, halting_only=halting_only, missing_cust_ref=missing_cust_ref,
     )
 
     total = await db.trips.count_documents(mongo_q)
@@ -217,6 +233,7 @@ async def export_trips(
     date_to: Optional[str] = None,
     q: Optional[str] = None,
     halting_only: bool = False,
+    missing_cust_ref: bool = False,
     trip_ids: Optional[str] = None,   # Iter58 — comma-separated IDs for bulk "Export Selected"
 ):
     """Iter57 P1 — Export currently-filtered trips as CSV or XLSX.
@@ -235,7 +252,7 @@ async def export_trips(
         user, cid,
         customer_id=customer_id, vehicle_id=vehicle_id, supplier_id=supplier_id,
         status=status, date=date, date_from=date_from, date_to=date_to,
-        q=q, halting_only=halting_only,
+        q=q, halting_only=halting_only, missing_cust_ref=missing_cust_ref,
     )
     if trip_ids:
         ids = [tid.strip() for tid in trip_ids.split(",") if tid.strip()]
