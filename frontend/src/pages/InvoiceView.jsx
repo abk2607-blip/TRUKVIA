@@ -242,6 +242,7 @@ export default function InvoiceView() {
                 <th className="border border-zinc-300 px-2 py-2 text-left">#</th>
                 <th className="border border-zinc-300 px-2 py-2 text-left">Date</th>
                 <th className="border border-zinc-300 px-2 py-2 text-left">Vehicle</th>
+                <th className="border border-zinc-300 px-2 py-2 text-left" data-testid="invoice-th-cust-ref">Cust Ref</th>
                 <th className="border border-zinc-300 px-2 py-2 text-left">Load</th>
                 <th className="border border-zinc-300 px-2 py-2 text-left">Route</th>
                 <th className="border border-zinc-300 px-2 py-2 text-right">Tons</th>
@@ -261,6 +262,13 @@ export default function InvoiceView() {
                       <td className="border border-zinc-300 px-2 py-1.5">{idx + 1}</td>
                       <td className="border border-zinc-300 px-2 py-1.5">{fmtDate(t.date)}</td>
                       <td className="border border-zinc-300 px-2 py-1.5">{t.vehicle_number}</td>
+                      <td
+                        className="border border-zinc-300 px-2 py-1.5"
+                        data-testid={`invoice-trip-cust-ref-${t.id}`}
+                      >
+                        {/* Iter82 — Customer Ref shown per-trip, NEVER inherited. Blank stays blank. */}
+                        {t.customer_reference_number || t.customer_invoice_no || t.waybill_no || "—"}
+                      </td>
                       <td className="border border-zinc-300 px-2 py-1.5">{t.load_details}</td>
                       <td className="border border-zinc-300 px-2 py-1.5">{t.from_location} → {t.to_location}</td>
                       <td className="border border-zinc-300 px-2 py-1.5 text-right">{Number(t.tons).toFixed(2)}</td>
@@ -277,7 +285,7 @@ export default function InvoiceView() {
                     {haltAmt > 0 && (
                       <tr className="bg-zinc-50 text-zinc-600">
                         <td className="border border-zinc-300 px-2 py-1"></td>
-                        <td className="border border-zinc-300 px-2 py-1" colSpan={7}>↳ Halting Charges — {t.chargeable_halting_days || 0} day(s) × ₹ {Number(t.halting_rate_per_day || 0).toFixed(2)} / day</td>
+                        <td className="border border-zinc-300 px-2 py-1" colSpan={8}>↳ Halting Charges — {t.chargeable_halting_days || 0} day(s) × ₹ {Number(t.halting_rate_per_day || 0).toFixed(2)} / day</td>
                         <td className="border border-zinc-300 px-2 py-1 text-right">{fmtCurrency(haltAmt)}</td>
                       </tr>
                     )}
@@ -289,7 +297,7 @@ export default function InvoiceView() {
                       return (
                         <tr className="bg-zinc-50 text-rose-700">
                           <td className="border border-zinc-300 px-2 py-1"></td>
-                          <td className="border border-zinc-300 px-2 py-1" colSpan={7}>↳ Less: Diesel from Customer{dq > 0 && dr > 0 ? ` — ${dq.toFixed(2)} L × ₹ ${dr.toFixed(2)} / L` : ""}</td>
+                          <td className="border border-zinc-300 px-2 py-1" colSpan={8}>↳ Less: Diesel from Customer{dq > 0 && dr > 0 ? ` — ${dq.toFixed(2)} L × ₹ ${dr.toFixed(2)} / L` : ""}</td>
                           <td className="border border-zinc-300 px-2 py-1 text-right">({fmtCurrency(d)})</td>
                         </tr>
                       );
@@ -300,7 +308,7 @@ export default function InvoiceView() {
                       return (
                         <tr className="bg-zinc-50 text-rose-700">
                           <td className="border border-zinc-300 px-2 py-1"></td>
-                          <td className="border border-zinc-300 px-2 py-1" colSpan={7}>↳ Less: Customer Advance Received</td>
+                          <td className="border border-zinc-300 px-2 py-1" colSpan={8}>↳ Less: Customer Advance Received</td>
                           <td className="border border-zinc-300 px-2 py-1 text-right">({fmtCurrency(a)})</td>
                         </tr>
                       );
@@ -308,7 +316,7 @@ export default function InvoiceView() {
                     {shortAmt > 0 && (
                       <tr className="bg-zinc-50 text-rose-700">
                         <td className="border border-zinc-300 px-2 py-1"></td>
-                        <td className="border border-zinc-300 px-2 py-1" colSpan={7}>
+                        <td className="border border-zinc-300 px-2 py-1" colSpan={8}>
                           ↳ Less: Shortage
                           {t.shortage_qty > 0 && ` — ${Number(t.shortage_qty).toFixed(3)} MT`}
                           {t.product_rate_per_mt > 0 && ` × ₹ ${Number(t.product_rate_per_mt).toFixed(2)} / MT`}
@@ -319,7 +327,7 @@ export default function InvoiceView() {
                     {excessAmt > 0 && (
                       <tr className="bg-zinc-50 text-emerald-700">
                         <td className="border border-zinc-300 px-2 py-1"></td>
-                        <td className="border border-zinc-300 px-2 py-1" colSpan={7}>
+                        <td className="border border-zinc-300 px-2 py-1" colSpan={8}>
                           ↳ Add: Excess Qty
                           {t.excess_qty > 0 && ` — ${Number(t.excess_qty).toFixed(3)} MT`}
                           {t.product_rate_per_mt > 0 && ` × ₹ ${Number(t.product_rate_per_mt).toFixed(2)} / MT`}

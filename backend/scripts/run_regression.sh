@@ -59,6 +59,7 @@ CRITICAL_TESTS=(
   "tests/test_iter73_supplier_freight_lr_perf.py"         # Iter73 · Supplier Freight auto-calc, LR Consignee, suppliers-dashboard perf
   "tests/test_iter74_supplier_shortage_integration.py"    # Iter74 · Trip shortage → Supplier ledger/settlement auto-flow
   "tests/test_iter81_customer_search_fixture_bypass.py"   # Iter81 · Customer search bypasses fixture-hide when q is provided
+  "tests/test_iter82_invoice_cust_ref_column.py"          # Iter82 · Per-trip Customer Ref column in Invoice PDF + view
 )
 
 # Explicit venv PATH so this runs cleanly from asyncio subprocess (which

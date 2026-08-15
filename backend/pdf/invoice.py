@@ -259,21 +259,12 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
     story.append(party_tbl)
     story.append(Spacer(1, 10))
 
-    # ================== TRIP LINE ITEMS (8-col) ==================
-    # Columns:  #  ·  Date  ·  Vehicle  ·  Load  ·  Route  ·  Tons  ·  Rate  ·  Amount
-    hdr = [
-        Paragraph("<b>#</b>", styles["Body"]),
-        Paragraph("<b>Date</b>", styles["Body"]),
-        Paragraph("<b>Vehicle No</b>", styles["Body"]),
-        Paragraph("<b>Load / Product</b>", styles["Body"]),
-        Paragraph("<b>Route</b>", styles["Body"]),
-        Paragraph("<b>Tons</b>", styles["BodyMut"]),  # right aligned via style
-        Paragraph("<b>Rate</b>", styles["Body"]),
-        Paragraph("<b>Amount (₹)</b>", styles["BodyMut"]),
-    ]
-    # override header colors by wrapping in styled Paragraphs
+    # ================== TRIP LINE ITEMS (9-col with per-trip Customer Ref) ==================
+    # Columns:  #  ·  Date  ·  Vehicle  ·  Cust Ref  ·  Load  ·  Route  ·  Tons  ·  Rate  ·  Amount
+    # Iter82 — Cust Ref is a dedicated column so it's clearly visible per-trip.
+    # Blank stays blank; never inherited across trips.
     hdr = [Paragraph(f"<font color='#FFFFFF'><b>{txt}</b></font>", styles["Body"]) for txt in
-           ["#", "Date", "Vehicle No", "Load", "Route", "Tons", "Rate", "Amount (₹)"]]
+           ["#", "Date", "Vehicle No", "Cust Ref", "Load", "Route", "Tons", "Rate", "Amount (₹)"]]
 
     rows = [hdr]
     sub_row_indices = []  # 0-based indexes of sub rows (for style spans)
@@ -295,8 +286,6 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
             if _st["address"]:
                 _site_str = f"{_site_str} · {_st['address']}"
             route_html_parts.append(f"<font size='6.5' color='#64748B'><b>Ship-To:</b> {_site_str}</font>")
-        if cust_ref:
-            route_html_parts.append(f"<font size='6.5' color='#64748B'><b>Cust Ref:</b> {cust_ref}</font>")
         route_html = "<br/>".join(route_html_parts)
 
         if t.get("freight_mode") == "per_ton":
@@ -313,6 +302,7 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
             Paragraph(str(idx), styles["RowNum"]),
             Paragraph(t.get("date", ""), styles["RowNum"]),
             Paragraph(t.get("vehicle_number", "") or "—", styles["RowTxtB"]),
+            Paragraph(cust_ref or "—", styles["RowTxt"]),
             Paragraph(t.get("load_details", "") or "—", styles["RowTxt"]),
             Paragraph(route_html, styles["RowTxt"]),
             Paragraph(_fmt(t.get("tons", 0)), styles["RowNum"]),
@@ -334,7 +324,7 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
             rows.append([
                 "",
                 label_para,
-                "", "", "", "", "",
+                "", "", "", "", "", "",
                 Paragraph(amt_str, styles["AmtSub"]),
             ])
             sub_row_indices.append(len(rows) - 1)
@@ -412,10 +402,8 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
                 lbl = "Add: Excess"
             _add_sub(lbl, f"₹ {_fmt(excess_amt)}", remark=t.get("excess_remarks", "") or "")
 
-    # Column widths (total 186mm ≈ A4 - 24mm margins) — sized so YYYY-MM-DD
-    # (~10 chars in 8pt) fits Date, "999.99" fits Tons, and typical product
-    # names ("BITUMEN VG 30") sit on one line in Load.
-    col_widths = [6*mm, 22*mm, 26*mm, 27*mm, 31*mm, 15*mm, 27*mm, 32*mm]
+    # Column widths (total 186mm ≈ A4 - 24mm margins) — Iter82: 9 cols with Cust Ref.
+    col_widths = [5*mm, 19*mm, 20*mm, 26*mm, 22*mm, 24*mm, 12*mm, 25*mm, 33*mm]
     items_tbl = Table(rows, colWidths=col_widths, repeatRows=1)
     _style = [
         # Header band
@@ -433,11 +421,11 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
         ("LINEBELOW", (0, 0), (-1, -1), 0.4, C_LINE),
         ("LINEABOVE", (0, 0), (-1, 0),  0.4, C_LINE),
         ("BOX",       (0, 0), (-1, -1), 0.6, C_LINE_D),
-        # Column alignment: #, Date, Tons are centred; Amount right-aligned
+        # Column alignment (0=#, 1=Date, 2=Vehicle, 3=Cust Ref, 4=Load, 5=Route, 6=Tons, 7=Rate, 8=Amount)
         ("ALIGN", (0, 1), (0, -1), "CENTER"),
         ("ALIGN", (1, 1), (1, -1), "CENTER"),
-        ("ALIGN", (5, 1), (5, -1), "CENTER"),
-        ("ALIGN", (7, 1), (7, -1), "RIGHT"),
+        ("ALIGN", (6, 1), (6, -1), "CENTER"),
+        ("ALIGN", (8, 1), (8, -1), "RIGHT"),
     ]
     # Zebra shading on main (non-sub) rows
     for r in range(1, len(rows)):
@@ -445,9 +433,9 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
             continue
         if (r % 2) == 0:
             _style.append(("BACKGROUND", (0, r), (-1, r), C_ROW_B))
-    # Sub row styling — span the description across cols 1..6 with soft background
+    # Sub row styling — span the description across cols 1..7 with soft background
     for r in sub_row_indices:
-        _style.append(("SPAN", (1, r), (6, r)))
+        _style.append(("SPAN", (1, r), (7, r)))
         _style.append(("BACKGROUND", (0, r), (-1, r), C_SUB_BG))
         _style.append(("TEXTCOLOR", (0, r), (-1, r), C_SUB_TX))
         _style.append(("TOPPADDING", (0, r), (-1, r), 4))

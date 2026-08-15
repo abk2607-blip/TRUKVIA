@@ -20,6 +20,19 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter82 — Per-trip Customer Ref Number column in Invoice PDF + on-screen view** (Feb 2026)
+  - **User complaint (screenshot)**: The Customer Invoice/Reference Number entered on each Trip was NOT visible as its own column in the generated Invoice. The PDF only tucked it inline in the Route cell (as a small grey subtitle) and the on-screen HTML invoice view had no such field at all. User wanted: dedicated column, per-trip value, blank stays blank (no inheritance), Invoice No and Cust Ref clearly separated.
+  - **What was already correct**:
+    - Trip stores `customer_reference_number` per-trip (models.py line 220, iter66) with legacy fallback to `customer_invoice_no` / `waybill_no`.
+    - The PDF `pdf/invoice.py` already read the per-trip value with the "no inheritance" contract.
+  - **What was broken**:
+    - PDF rendered the value inline in the Route column (easy to miss).
+    - `InvoiceView.jsx` on-screen invoice had **no Cust Ref column at all** — the field simply wasn't shown in the DOM.
+  - **Fixes**:
+    1. **Backend `pdf/invoice.py`** — trip details table expanded from 8 → 9 columns: `# · Date · Vehicle · Cust Ref · Load · Route · Tons · Rate · Amount`. Cust Ref column width = 26mm (fits 15-char refs like `CINV-2024-08-101` without wrapping). Sub-row SPAN + ALIGN styles + col_widths all updated for the new layout. Inline `Cust Ref:` subtitle removed from Route.
+    2. **Frontend `InvoiceView.jsx`** — added a dedicated "Cust Ref" `<th>` between Vehicle and Load; per-trip cell reads `t.customer_reference_number || t.customer_invoice_no || t.waybill_no || "—"` (blank stays blank). All sub-row `colSpan` bumped 7 → 8.
+  - **Verified**: New pytest `test_iter82_invoice_cust_ref_column.py` (3 tests) creates an invoice with 4 trips (3 with different CINV-refs + 1 blank), asserts each ref appears exactly once in the PDF text, and confirms blank never inherits. Frontend screenshot on `INV/26-27/2797` shows all 4 trip rows with Cust Ref = CINV-101 / CINV-102 / CINV-103 / — respectively. Added to strict Regression Guard — all 239+ tests PASS.
+
 - [x] **Iter81 — Customer search / Supplier Statement picker · dropdown fixes** (Feb 2026)
   - **User bug (screenshot)**: On Invoice Create, typing an existing customer name `CUST_IT56_dfbacb` returned "No matches" even though that customer was clearly attached to a real trip (visible in Trip View). User could not invoice their own trip. Additionally, the Suppliers Statement / Payments / Vehicles / Outstanding / P&L pages used a plain `<select>` supplier picker, making it impossible to find a specific supplier among thousands of rows.
   - **Root causes**:
