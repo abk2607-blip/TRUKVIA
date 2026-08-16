@@ -94,6 +94,12 @@ async def create_invoice(payload: InvoiceCreateRequest, request: Request, user=D
     for t in trips:
         if t.get("status") == "invoiced":
             raise HTTPException(status_code=400, detail=f"Trip {t['id']} already invoiced")
+        # Iter86 — Historical trips can never be selected for a new live invoice.
+        if t.get("is_historical") or t.get("status") == "archived_historical":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Trip {t['id']} is a historical import and cannot be added to a live invoice",
+            )
 
     subtotal = round(sum(_trip_billable(t) for t in trips), 2)
     freight_total = round(sum(t.get("freight_amount", 0.0) for t in trips), 2)

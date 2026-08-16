@@ -26,7 +26,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from db import db
-from models import ChatSession, ChatMessage, now_utc
+from models import ChatSession, ChatMessage, now_utc, LIVE_ONLY_FILTER
 from auth import get_current_user
 from company import _active_company_id
 

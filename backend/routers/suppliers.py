@@ -28,7 +28,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException, Request, Depends, Query
 
 from db import db
-from models import Supplier, SupplierPayment, now_utc, new_id
+from models import Supplier, SupplierPayment, now_utc, new_id, LIVE_ONLY_FILTER
 from auth import get_current_user
 from company import _active_company_id
 from audit import _log_audit, _diff_dict
@@ -283,8 +283,9 @@ async def _build_ledger(uid: str, cid: str, sid: str, start: Optional[str], end:
     })
 
     # 2) Supplier trips (vehicle_type='supplier' and supplier_id match, or legacy name match)
+    # Iter86 — supplier ledger excludes historical/imported trips
     trip_q = {
-        "user_id": uid, "company_id": cid, "vehicle_type": "supplier",
+        "user_id": uid, "company_id": cid, "vehicle_type": "supplier", **LIVE_ONLY_FILTER,
         "$or": [
             {"supplier_id": sid},
             {"supplier_name": {"$regex": f"^{sup['name']}$", "$options": "i"}},
@@ -393,9 +394,9 @@ async def _build_ledger(uid: str, cid: str, sid: str, start: Optional[str], end:
                 "remarks": "", "debit": round(inc, 2), "credit": 0.0,
             })
 
-    # 3) Explicit payments
+    # 3) Explicit payments — Iter86: exclude historical
     pays = await db.supplier_payments.find(
-        {"user_id": uid, "company_id": cid, "supplier_id": sid, "is_deleted": {"$ne": True}},
+        {"user_id": uid, "company_id": cid, "supplier_id": sid, "is_deleted": {"$ne": True}, **LIVE_ONLY_FILTER},
         {"_id": 0, "user_id": 0},
     ).to_list(10000)
     for p in pays:
@@ -520,8 +521,9 @@ async def suppliers_dashboard(request: Request, user=Depends(get_current_user)):
     })
 
     # 3) All supplier trips in this company (single query, projected fields only)
+    # Iter86 — settlement summary excludes historical
     trip_docs = await db.trips.find(
-        {"user_id": uid, "company_id": cid, "vehicle_type": "supplier"},
+        {"user_id": uid, "company_id": cid, "vehicle_type": "supplier", **LIVE_ONLY_FILTER},
         {
             "_id": 0, "supplier_id": 1, "supplier_name": 1, "date": 1,
             "supplier_freight": 1, "supplier_advance": 1, "supplier_diesel": 1,
@@ -530,9 +532,9 @@ async def suppliers_dashboard(request: Request, user=Depends(get_current_user)):
         },
     ).to_list(200000)
 
-    # 4) All supplier payments (single query, projected fields only)
+    # 4) All supplier payments (single query, projected fields only) — Iter86: exclude historical
     pay_docs = await db.supplier_payments.find(
-        {"user_id": uid, "company_id": cid, "is_deleted": {"$ne": True}},
+        {"user_id": uid, "company_id": cid, "is_deleted": {"$ne": True}, **LIVE_ONLY_FILTER},
         {"_id": 0, "supplier_id": 1, "amount": 1, "type": 1},
     ).to_list(200000)
 

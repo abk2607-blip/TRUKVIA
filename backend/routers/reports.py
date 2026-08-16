@@ -9,7 +9,7 @@ from models import (
     Company, Customer, Expenses, Driver, Trip, Product, Party, Vehicle,
     MaintenanceLog, Fuel, Payment, Invoice, TeamMember, ROLE_PERMISSIONS,
     InvoiceCreateRequest, InvoiceUpdateRequest, PaymentAdd, FileRef, AuditLog,
-    now_utc, new_id,
+    now_utc, new_id, LIVE_ONLY_FILTER,
 )
 from auth import get_current_user, _has_perm, require_perm
 from company import (
@@ -129,7 +129,7 @@ async def report_profit_loss(
 ):
     uid = user["user_id"]
     cid = await _active_company_id(request, user)
-    trips = await db.trips.find({"user_id": uid, "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(5000)
+    trips = await db.trips.find({"user_id": uid, "company_id": cid, **LIVE_ONLY_FILTER}, {"_id": 0, "user_id": 0}).to_list(5000)
     trips = [t for t in trips if _in_range(t.get("date", ""), start, end)]
 
     freight_revenue = round(sum(t.get("freight_amount", 0) for t in trips), 2)
@@ -193,8 +193,8 @@ async def report_balance_sheet(
     uid = user["user_id"]
     cid = await _active_company_id(request, user)
     as_of = as_of or now_utc().date().isoformat()
-    trips = await db.trips.find({"user_id": uid, "company_id": cid}, {"_id": 0}).to_list(5000)
-    invoices = await db.invoices.find({"user_id": uid, "company_id": cid}, {"_id": 0}).to_list(2000)
+    trips = await db.trips.find({"user_id": uid, "company_id": cid, **LIVE_ONLY_FILTER}, {"_id": 0}).to_list(5000)
+    invoices = await db.invoices.find({"user_id": uid, "company_id": cid, **LIVE_ONLY_FILTER}, {"_id": 0}).to_list(2000)
 
     # Cumulative net profit up to as_of (from trips dated <= as_of)
     trips_todate = [t for t in trips if t.get("date", "") <= as_of]
@@ -244,7 +244,7 @@ async def report_balance_sheet(
 async def report_supplier_pl(request: Request, start: Optional[str] = None, end: Optional[str] = None, user=Depends(get_current_user)):
     uid = user["user_id"]
     cid = await _active_company_id(request, user)
-    trips = await db.trips.find({"user_id": uid, "company_id": cid, "vehicle_type": "supplier"}, {"_id": 0, "user_id": 0}).to_list(5000)
+    trips = await db.trips.find({"user_id": uid, "company_id": cid, "vehicle_type": "supplier", **LIVE_ONLY_FILTER}, {"_id": 0, "user_id": 0}).to_list(5000)
     trips = [t for t in trips if _in_range(t.get("date", ""), start, end)]
     by = {}
     for t in trips:
@@ -292,7 +292,7 @@ async def report_halting(request: Request, start: Optional[str] = None, end: Opt
     """
     uid = user["user_id"]
     cid = await _active_company_id(request, user)
-    trips = await db.trips.find({"user_id": uid, "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(10000)
+    trips = await db.trips.find({"user_id": uid, "company_id": cid, **LIVE_ONLY_FILTER}, {"_id": 0, "user_id": 0}).to_list(10000)
     trips = [t for t in trips if _in_range(t.get("date", ""), start, end)]
     customers = await db.customers.find({"user_id": uid, "company_id": cid}, {"_id": 0}).to_list(2000)
     cmap = {c["id"]: c.get("name", "Unknown") for c in customers}
@@ -425,7 +425,7 @@ async def _supplier_statement_data(request: Request, supplier_name: str, start, 
     cid = await _active_company_id(request, user)
     company = await db.companies.find_one({"id": cid, "user_id": uid}, {"_id": 0}) or {}
     trips = await db.trips.find(
-        {"user_id": uid, "company_id": cid, "vehicle_type": "supplier"},
+        {"user_id": uid, "company_id": cid, "vehicle_type": "supplier", **LIVE_ONLY_FILTER},
         {"_id": 0, "user_id": 0},
     ).to_list(10000)
     sn_lc = (supplier_name or "").strip().lower()
@@ -642,7 +642,7 @@ async def _supplier_ledger_closing(uid: str, cid: str, sid: str, upto_date: str)
 
     # Trips
     trip_q = {
-        "user_id": uid, "company_id": cid, "vehicle_type": "supplier",
+        "user_id": uid, "company_id": cid, "vehicle_type": "supplier", **LIVE_ONLY_FILTER,
         "$or": [
             {"supplier_id": sid},
             {"supplier_name": {"$regex": f"^{sup['name']}$", "$options": "i"}},
@@ -1015,7 +1015,7 @@ async def halting_verify(request: Request, user=Depends(get_current_user),
     happens here so any mismatch reveals a real data-integrity issue.
     """
     cid = await _active_company_id(request, user)
-    q = {"user_id": user["user_id"], "company_id": cid,
+    q = {"user_id": user["user_id"], "company_id": cid, **LIVE_ONLY_FILTER,
          "$or": [{"total_halting_days": {"$gt": 0}}, {"halting_amount": {"$gt": 0}}]}
     if date_from or date_to:
         rng = {}

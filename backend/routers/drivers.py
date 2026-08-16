@@ -9,7 +9,7 @@ from models import (
     Company, Customer, Expenses, Driver, Trip, Product, Party, Vehicle,
     MaintenanceLog, Fuel, Payment, Invoice, TeamMember, ROLE_PERMISSIONS,
     InvoiceCreateRequest, InvoiceUpdateRequest, PaymentAdd, FileRef, AuditLog,
-    now_utc, new_id,
+    now_utc, new_id, LIVE_ONLY_FILTER,
 )
 from auth import get_current_user, _has_perm, require_perm
 from company import (
@@ -31,8 +31,8 @@ async def list_drivers(request: Request, user=Depends(get_current_user)):
     cid = await _active_company_id(request, user)
     await _backfill_to_default(user["user_id"])
     drivers = await db.drivers.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(1000)
-    # Attach stats (trips scoped to same company)
-    trips = await db.trips.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0}).to_list(5000)
+    # Attach stats (trips scoped to same company) — Iter86: exclude historical from live stats
+    trips = await db.trips.find({"user_id": user["user_id"], "company_id": cid, **LIVE_ONLY_FILTER}, {"_id": 0}).to_list(5000)
     stats = {}
     for t in trips:
         did = t.get("driver_id")
@@ -99,7 +99,8 @@ async def driver_trip_history(
     )
     if not drv:
         raise HTTPException(status_code=404, detail="Driver not found")
-    q = {"user_id": user["user_id"], "company_id": cid, "driver_id": did}
+    # Iter86 — exclude historical trips from driver ledger totals
+    q = {"user_id": user["user_id"], "company_id": cid, "driver_id": did, **LIVE_ONLY_FILTER}
     if date_from or date_to:
         rng = {}
         if date_from: rng["$gte"] = date_from

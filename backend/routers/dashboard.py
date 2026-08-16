@@ -9,7 +9,7 @@ from models import (
     Company, Customer, Expenses, Driver, Trip, Product, Party, Vehicle,
     MaintenanceLog, Fuel, Payment, Invoice, TeamMember, ROLE_PERMISSIONS,
     InvoiceCreateRequest, InvoiceUpdateRequest, PaymentAdd, FileRef, AuditLog,
-    now_utc, new_id,
+    now_utc, new_id, LIVE_ONLY_FILTER,
 )
 from auth import get_current_user, _has_perm, require_perm
 from company import (
@@ -30,8 +30,9 @@ router = APIRouter(prefix="/api")
 async def dashboard(request: Request, user=Depends(get_current_user)):
     uid = user["user_id"]
     cid = await _active_company_id(request, user)
-    trips = await db.trips.find({"user_id": uid, "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(5000)
-    invoices = await db.invoices.find({"user_id": uid, "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(2000)
+    # Iter86 — LIVE_ONLY_FILTER excludes historical/imported records from KPIs.
+    trips = await db.trips.find({"user_id": uid, "company_id": cid, **LIVE_ONLY_FILTER}, {"_id": 0, "user_id": 0}).to_list(5000)
+    invoices = await db.invoices.find({"user_id": uid, "company_id": cid, **LIVE_ONLY_FILTER}, {"_id": 0, "user_id": 0}).to_list(2000)
     customers = await db.customers.find({"user_id": uid, "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(2000)
 
     total_revenue = round(sum(t.get("freight_amount", 0.0) for t in trips), 2)
@@ -133,7 +134,7 @@ async def dashboard_expenditure_breakdown(
     """
     uid = user["user_id"]
     cid = await _active_company_id(request, user)
-    trips = await db.trips.find({"user_id": uid, "company_id": cid}, {"_id": 0, "date": 1, "other_expenditures": 1}).to_list(20000)
+    trips = await db.trips.find({"user_id": uid, "company_id": cid, **LIVE_ONLY_FILTER}, {"_id": 0, "date": 1, "other_expenditures": 1}).to_list(20000)
     trips = [t for t in trips if _in_range(t.get("date", ""), start, end)]
     by_type: dict = {}
     trip_ids_with = 0
@@ -191,7 +192,7 @@ async def dashboard_expenditure_detail(
         raise HTTPException(status_code=400, detail="type is required")
     # Iter69 — Push the date filter down into the mongo query so tenants with
     # >20k trips (formerly capped in-memory) don't silently drop rows.
-    q: dict = {"user_id": uid, "company_id": cid}
+    q: dict = {"user_id": uid, "company_id": cid, **LIVE_ONLY_FILTER}
     if start or end:
         drange: dict = {}
         if start:

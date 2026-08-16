@@ -101,7 +101,18 @@ export default function Invoices() {
                 onClick={() => open(inv.id)}
                 className="border-t border-zinc-100 cursor-pointer hover:bg-zinc-50 transition-colors"
               >
-                <td className="px-4 py-3 font-mono text-xs font-semibold">{inv.invoice_number}</td>
+                <td className="px-4 py-3 font-mono text-xs font-semibold">
+                  {inv.invoice_number}
+                  {inv.is_historical && (
+                    <span
+                      data-testid={`invoice-historical-badge-${inv.id}`}
+                      title={`Imported from ${inv.imported_from || "legacy system"}`}
+                      className="ml-2 inline-block font-mono text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-slate-100 text-slate-600 border border-slate-300 rounded-sm"
+                    >
+                      📎 Historical
+                    </span>
+                  )}
+                </td>
                 <td className="px-4 py-3 font-mono text-xs">{fmtDate(inv.invoice_date)}</td>
                 <td className="px-4 py-3">{custMap[inv.customer_id] || "—"}</td>
                 <td className="px-4 py-3 text-right font-mono">{inv.trip_ids.length}</td>

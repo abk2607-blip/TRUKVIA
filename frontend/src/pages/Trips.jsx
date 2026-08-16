@@ -655,6 +655,15 @@ export default function Trips() {
                   <td className="px-4 py-3 whitespace-nowrap">
                     <div className="text-sm font-semibold text-zinc-900 font-mono">{fmtDate(t.date)}</div>
                     {timeStr && <div className="text-[10px] text-zinc-400 font-mono mt-0.5">🕒 {timeStr}</div>}
+                    {t.is_historical && (
+                      <span
+                        data-testid={`trip-historical-badge-${t.id}`}
+                        title={`Imported from ${t.imported_from || "legacy system"}${t.imported_ref ? ` · ID ${t.imported_ref}` : ""}`}
+                        className="inline-block mt-1 font-mono text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 bg-slate-100 text-slate-600 border border-slate-300 rounded-sm"
+                      >
+                        📎 Historical
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 whitespace-nowrap">
                     {t.lr_number ? (

@@ -1,0 +1,22 @@
+QORVENA Backup Manifest
+=======================
+Batch Tag:      tb_test_backup
+Created At:     2026-08-16T14:56:37Z
+MONGO_URL:      mongodb://localhost:27017
+DB_NAME:        test_database
+Backup Method:  mongodump --gzip
+Collections:    65 files
+
+Restore command (full DB):
+  mongorestore --uri="mongodb://localhost:27017" --db="test_database" --drop --gzip "/app/backups/pre-migration/tb_test_backup/test_database"
+
+Rollback command (delete ONLY this migration batch — safer):
+  mongo "mongodb://localhost:27017" --eval '
+    db.trips.deleteMany({"imported_batch": "tb_test_backup"});
+    db.customers.deleteMany({"imported_batch": "tb_test_backup"});
+    db.suppliers.deleteMany({"imported_batch": "tb_test_backup"});
+    db.vehicles.deleteMany({"imported_batch": "tb_test_backup"});
+    db.drivers.deleteMany({"imported_batch": "tb_test_backup"});
+    db.invoices.deleteMany({"imported_batch": "tb_test_backup"});
+    db.supplier_payments.deleteMany({"imported_batch": "tb_test_backup"});
+  '

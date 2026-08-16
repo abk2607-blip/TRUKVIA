@@ -46,6 +46,23 @@ def _coerce_none_to_default(cls, data: Any) -> Any:
     return data
 
 
+# ============================================================================
+# Iter86 · Phase A — Historical Isolation Layer
+# ----------------------------------------------------------------------------
+# Every entity that can be imported from a legacy system (Transport Book etc.)
+# carries these four columns. Backward-compatible defaults keep every existing
+# record behaving exactly as before (`is_historical=False` implicitly).
+#
+# The `LIVE_ONLY_FILTER` constant MUST be spread into every Mongo query that
+# computes a *live* financial aggregate (dashboard KPIs, ledgers, outstanding
+# balances, driver salary, invoice-picker for new invoices, etc.). Search /
+# view / list endpoints keep returning ALL records so historical data is still
+# fully browseable.
+# ============================================================================
+LIVE_ONLY_FILTER: dict = {"is_historical": {"$ne": True}}
+
+
+
 class Company(BaseModel):
     model_config = ConfigDict(extra="ignore")
     id: str = Field(default_factory=lambda: new_id("co_"))
@@ -103,6 +120,11 @@ class Customer(BaseModel):
     reminder_enabled: bool = True
     ship_sites: List[ShipSite] = Field(default_factory=list)   # Iter66 · Phase A — multi Ship-To
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+    # Iter86 · Historical Isolation Layer — legacy import flags (defaults keep existing behavior)
+    imported_from: str = ""     # e.g. "transport_book"
+    imported_ref: str = ""       # original ID in source system
+    imported_batch: str = ""     # batch tag for grouped rollback
+    is_historical: bool = False  # true = read-only archive; excluded from live aggregations
 
 class Expenses(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -150,6 +172,11 @@ class Driver(BaseModel):
     license_number: str = ""
     notes: str = ""
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+    # Iter86 · Historical Isolation Layer
+    imported_from: str = ""
+    imported_ref: str = ""
+    imported_batch: str = ""
+    is_historical: bool = False
 
 class Trip(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -248,7 +275,7 @@ class Trip(BaseModel):
     lr_driver_name: str = ""     # LR-side override; falls back to driver_name
     lr_driver_mobile: str = ""   # LR-side override; falls back to driver_mobile
     invoice_id: Optional[str] = None
-    status: Literal["pending", "invoiced"] = "pending"
+    status: Literal["pending", "invoiced", "archived_historical"] = "pending"
     notes: str = ""
     # LR / invoice reference fields
     lr_number: str = ""
@@ -266,6 +293,11 @@ class Trip(BaseModel):
     tare_weight: float = 0.0
     seal_numbers: str = ""
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+    # Iter86 · Historical Isolation Layer
+    imported_from: str = ""
+    imported_ref: str = ""
+    imported_batch: str = ""
+    is_historical: bool = False
 
 class Product(BaseModel):
     id: str = Field(default_factory=lambda: new_id("prd_"))
@@ -318,6 +350,11 @@ class Vehicle(BaseModel):
     remarks: str = ""
     notes: str = ""
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+    # Iter86 · Historical Isolation Layer
+    imported_from: str = ""
+    imported_ref: str = ""
+    imported_batch: str = ""
+    is_historical: bool = False
 
 class MaintenanceLog(BaseModel):
     id: str = Field(default_factory=lambda: new_id("mnt_"))
@@ -385,6 +422,11 @@ class Invoice(BaseModel):
     share_token: Optional[str] = None
     notes: str = ""
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+    # Iter86 · Historical Isolation Layer
+    imported_from: str = ""
+    imported_ref: str = ""
+    imported_batch: str = ""
+    is_historical: bool = False
 
 # Simple RBAC: role -> permissions
 ROLE_PERMISSIONS = {
@@ -523,6 +565,11 @@ class Supplier(BaseModel):
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
     modified_by: str = ""
     modified_at: str = ""
+    # Iter86 · Historical Isolation Layer
+    imported_from: str = ""
+    imported_ref: str = ""
+    imported_batch: str = ""
+    is_historical: bool = False
 
 
 class SupplierPayment(BaseModel):
@@ -552,6 +599,11 @@ class SupplierPayment(BaseModel):
     deleted_by: str = ""
     deleted_at: str = ""
     deletion_reason: str = ""
+    # Iter86 · Historical Isolation Layer
+    imported_from: str = ""
+    imported_ref: str = ""
+    imported_batch: str = ""
+    is_historical: bool = False
 
 
 class ChatMessage(BaseModel):

@@ -12,7 +12,7 @@ from models import (
     Company, Customer, Expenses, Driver, Trip, Product, Party, Vehicle,
     MaintenanceLog, Fuel, Payment, Invoice, TeamMember, ROLE_PERMISSIONS,
     InvoiceCreateRequest, InvoiceUpdateRequest, PaymentAdd, FileRef, AuditLog,
-    now_utc, new_id,
+    now_utc, new_id, LIVE_ONLY_FILTER,
 )
 from auth import get_current_user, _has_perm, require_perm
 from company import (
@@ -161,7 +161,8 @@ async def list_customers(
         docs = unique_docs
 
     if with_balance:
-        invs = await db.invoices.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "customer_id": 1, "balance_due": 1, "total_amount": 1, "gross_total": 1, "amount_paid": 1}).to_list(5000)
+        # Iter86 — Exclude historical invoices from live balance
+        invs = await db.invoices.find({"user_id": user["user_id"], "company_id": cid, **LIVE_ONLY_FILTER}, {"_id": 0, "customer_id": 1, "balance_due": 1, "total_amount": 1, "gross_total": 1, "amount_paid": 1}).to_list(5000)
         bal_map: dict = {}
         for i in invs:
             k = i.get("customer_id")
@@ -711,8 +712,9 @@ async def bulk_reminder_previews(request: Request, user=Depends(get_current_user
     company = await db.companies.find_one({"id": cid, "user_id": user["user_id"]}, {"_id": 0}) or {}
 
     # Build a customer_id -> {balance, oldest_days} map from unpaid invoices
+    # Iter86 — historical invoices don't create live outstanding
     invs = await db.invoices.find(
-        {"user_id": user["user_id"], "company_id": cid, "balance_due": {"$gt": 0}},
+        {"user_id": user["user_id"], "company_id": cid, "balance_due": {"$gt": 0}, **LIVE_ONLY_FILTER},
         {"_id": 0}
     ).to_list(5000)
     today = datetime.now(timezone.utc).date()
@@ -781,8 +783,9 @@ async def bulk_reminder_previews(request: Request, user=Depends(get_current_user
 async def monthly_balances(cid: str, request: Request, user=Depends(get_current_user)):
     """Aggregate customer transactions by YYYY-MM for the Monthly Balances tab."""
     company_id = await _active_company_id(request, user)
-    trips = await db.trips.find({"user_id": user["user_id"], "company_id": company_id, "customer_id": cid}, {"_id": 0, "date": 1, "freight_amount": 1, "tons": 1, "status": 1}).to_list(5000)
-    invoices = await db.invoices.find({"user_id": user["user_id"], "company_id": company_id, "customer_id": cid}, {"_id": 0, "date": 1, "total_amount": 1, "gross_total": 1, "amount_paid": 1, "balance_due": 1, "payments": 1}).to_list(5000)
+    # Iter86 — monthly balances reflect only live trips + invoices
+    trips = await db.trips.find({"user_id": user["user_id"], "company_id": company_id, "customer_id": cid, **LIVE_ONLY_FILTER}, {"_id": 0, "date": 1, "freight_amount": 1, "tons": 1, "status": 1}).to_list(5000)
+    invoices = await db.invoices.find({"user_id": user["user_id"], "company_id": company_id, "customer_id": cid, **LIVE_ONLY_FILTER}, {"_id": 0, "date": 1, "total_amount": 1, "gross_total": 1, "amount_paid": 1, "balance_due": 1, "payments": 1}).to_list(5000)
 
     months: dict = {}
 
@@ -860,8 +863,9 @@ async def add_customer_payment(cid: str, payload: AddPaymentRequest, request: Re
             logger.warning(f"payment photo upload failed: {e}")
 
     # Get all invoices with balance, oldest first
+    # Iter86 — payment allocation targets only LIVE invoices
     invs = await db.invoices.find(
-        {"user_id": user["user_id"], "company_id": company_id, "customer_id": cid, "balance_due": {"$gt": 0}},
+        {"user_id": user["user_id"], "company_id": company_id, "customer_id": cid, "balance_due": {"$gt": 0}, **LIVE_ONLY_FILTER},
         {"_id": 0}
     ).sort("date", 1).to_list(2000)
 

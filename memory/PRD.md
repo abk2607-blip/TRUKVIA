@@ -22,6 +22,30 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter86 · Phase A — Historical Isolation Layer** (Feb 2026)
+  - **User request**: Before importing any Transport Book historical data, add plumbing so imported records CANNOT leak into live financial calculations (Dashboard KPIs, Customer Outstanding, Supplier Ledger/Settlement, Driver Salary, Reports, Invoice Totals). Approved Option A "Historical Archive · Read-Only".
+  - **Backend changes**:
+    1. **`models.py`** — added `imported_from`, `imported_ref`, `imported_batch`, `is_historical` to Customer, Supplier, Vehicle, Driver, Trip, Invoice, SupplierPayment. Trip.status extended with `"archived_historical"`. New shared constant `LIVE_ONLY_FILTER = {"is_historical": {"$ne": True}}`.
+    2. **`routers/dashboard.py`** — dashboard KPIs, other-expenditure summary, expenditure-drilldown all filtered.
+    3. **`routers/reports.py`** — P&L, balance-sheet, supplier P&L, customer halting, supplier statement, supplier ledger, halting-verify all filtered.
+    4. **`routers/customers.py`** — outstanding-balance list, reminder list, monthly-balances, payment allocation targets — all exclude historical.
+    5. **`routers/suppliers.py`** — supplier ledger + settlement summary + supplier payments — all exclude historical.
+    6. **`routers/drivers.py`** — driver stats + driver ledger totals — filtered.
+    7. **`routers/invoices.py`** — creating a live invoice with a historical trip returns HTTP 400 "cannot be added to a live invoice".
+  - **Frontend changes**: added "📎 Historical" slate pill on Trip row (`data-testid="trip-historical-badge-{id}"`) and Invoice row (`data-testid="invoice-historical-badge-{id}"`) so imported records are visually distinct.
+  - **Ops toolkit**: `scripts/backup_before_migration.sh` (mongodump --gzip + MANIFEST.txt), `scripts/rollback_migration.sh` (batch-scoped delete with `--dry-run`). Both verified working.
+  - **Guarantees**: 9-test pytest suite locks isolation:
+    1. Dashboard excludes historical
+    2. Customer outstanding excludes historical
+    3. Supplier ledger excludes historical
+    4. Historical trip → invoice = 400 error
+    5. Historical trip IS still searchable
+    6. Historical invoice IS still viewable
+    7. Batch rollback deletes only the batch, live untouched
+    8. New records default to `is_historical=False` (backward compat)
+    9. P&L reports exclude historical
+  - **Status**: Phase A complete. No data touched. Ready for Phase B (sample export from user → field mapping → dry-run report). **All 258+ tests PASS in strict Regression Guard.**
+
 - [x] **Iter85 — One-Click Cust Ref Fill (inline editor in Missing Cust Ref view)** (Feb 2026)
   - **User request**: In the Missing Cust Ref filtered list, allow inline paste/type of the Customer Ref directly in the row — no need to open the full trip form. After saving, the trip should immediately drop out of the missing list, and the value must reflect in the Trip View and the Invoice PDF.
   - **Fix**:
