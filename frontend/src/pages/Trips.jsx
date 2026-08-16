@@ -668,9 +668,18 @@ export default function Trips() {
                   <td
                     className="px-4 py-3 whitespace-nowrap"
                     data-testid={`trip-cust-ref-${t.id}`}
+                    onClick={(e) => { if (showMissingCustRef) e.stopPropagation(); }}
                   >
-                    {/* Iter83 — Reuse existing per-trip customer_reference_number (never inherited). */}
-                    {(t.customer_reference_number || t.customer_invoice_no || t.waybill_no) ? (
+                    {/* Iter83 — Reuse existing per-trip customer_reference_number (never inherited).
+                        Iter85 — In the Missing Cust Ref view, render an inline editor. */}
+                    {showMissingCustRef ? (
+                      <InlineCustRefEditor
+                        trip={t}
+                        onSaved={() => {
+                          qc.invalidateQueries({ queryKey: ["trips"] });
+                        }}
+                      />
+                    ) : (t.customer_reference_number || t.customer_invoice_no || t.waybill_no) ? (
                       <span className="inline-block font-mono text-[11px] font-bold px-2 py-1 bg-amber-50 text-amber-800 border border-amber-200 rounded-sm">
                         {t.customer_reference_number || t.customer_invoice_no || t.waybill_no}
                       </span>
@@ -928,3 +937,57 @@ function ExportMenu({ filters, showHaltingOnly, showMissingCustRef, total }) {
     </div>
   );
 }
+
+/* ================= Iter85 — Inline Customer Ref editor ================= */
+function InlineCustRefEditor({ trip, onSaved }) {
+  const initial = trip.customer_reference_number || trip.customer_invoice_no || trip.waybill_no || "";
+  const [value, setValue] = React.useState(initial);
+  const [saving, setSaving] = React.useState(false);
+  const [savedFlash, setSavedFlash] = React.useState(false);
+  const inputRef = React.useRef(null);
+
+  React.useEffect(() => { setValue(initial); }, [initial]);
+
+  const commit = async () => {
+    const next = value.trim();
+    if (next === initial.trim()) return;                 // no-op
+    setSaving(true);
+    try {
+      await api.patch(`/trips/${trip.id}/customer-ref`, { customer_reference_number: next });
+      setSavedFlash(true);
+      setTimeout(() => setSavedFlash(false), 1200);
+      onSaved?.();
+      if (next) toast.success(`Cust Ref saved for ${trip.vehicle_number}`);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "Failed to save Cust Ref");
+      setValue(initial);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="relative">
+      <input
+        ref={inputRef}
+        type="text"
+        value={value}
+        onChange={(e) => setValue(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") { e.preventDefault(); inputRef.current?.blur(); }
+          if (e.key === "Escape") { setValue(initial); inputRef.current?.blur(); }
+        }}
+        placeholder="Type Cust Ref…"
+        data-testid={`trip-cust-ref-input-${trip.id}`}
+        disabled={saving}
+        className={`w-32 font-mono text-[11px] font-bold px-2 py-1 rounded-sm border outline-none focus:ring-2 focus:ring-emerald-400 focus:border-emerald-500 disabled:opacity-60
+          ${savedFlash ? "bg-emerald-50 border-emerald-400 text-emerald-800" : "bg-white border-rose-300 text-rose-900 placeholder-rose-300"}`}
+      />
+      {saving && (
+        <span className="absolute right-1 top-1/2 -translate-y-1/2 text-[9px] text-zinc-400">…</span>
+      )}
+    </div>
+  );
+}
+

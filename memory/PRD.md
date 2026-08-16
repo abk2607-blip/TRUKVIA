@@ -20,6 +20,19 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter85 — One-Click Cust Ref Fill (inline editor in Missing Cust Ref view)** (Feb 2026)
+  - **User request**: In the Missing Cust Ref filtered list, allow inline paste/type of the Customer Ref directly in the row — no need to open the full trip form. After saving, the trip should immediately drop out of the missing list, and the value must reflect in the Trip View and the Invoice PDF.
+  - **Fix**:
+    1. **Backend `routers/trips.py`** — new endpoint `PATCH /api/trips/{tid}/customer-ref` that updates ONLY the per-trip `customer_reference_number` field. Never touches freight/halting/expenses/invoice linkage. Blank input clears the ref (symmetric — brings the row back into the missing list). Audit-logged via `_log_audit("trip", "customer_ref_inline_update")`.
+    2. **Frontend `pages/Trips.jsx`** — new `InlineCustRefEditor` component (rendered only when `showMissingCustRef` is on) with a rose-outlined `<input>` that:
+       - Commits on blur or Enter, resets on Escape
+       - Calls `api.patch('/trips/:id/customer-ref', {...})`
+       - Invalidates the `["trips"]` query so the row drops out of the filtered list without a manual refresh
+       - Flashes emerald-green on success + toast "Cust Ref saved for {vehicle}"
+       - Stops row-click propagation so typing doesn't navigate away
+       - Reuses the existing `customer_reference_number` field (no duplicate)
+  - **Verified**: 6-test pytest suite `test_iter85_inline_cust_ref_fill.py` locks (a) PATCH writes only the ref, (b) trip disappears from `missing_cust_ref=true`, (c) other trip fields untouched, (d) blank clears the ref, (e) Invoice PDF reflects the newly-set ref (checked via pypdf text extraction), (f) 404 on unknown trip. UI screenshot confirms toast + immediate row removal on Enter. Added to strict Regression Guard — **all 249+ tests PASS**.
+
 - [x] **Iter84 — "Missing Cust Ref" server-side filter on Trips list** (Feb 2026)
   - **User request**: After Iter83, add a quick filter on the Trips list to show only trips whose Customer Reference/Invoice Number is still blank. Explicit: reuse the existing per-trip `customer_reference_number`, no duplicate field.
   - **Fix**:

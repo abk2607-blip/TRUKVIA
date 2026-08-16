@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Request, Response, Depends, UploadFile, File, Query
+from fastapi import APIRouter, HTTPException, Request, Response, Depends, UploadFile, File, Query, Body
 from fastapi.responses import StreamingResponse
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
@@ -398,6 +398,41 @@ async def create_trip(payload: Trip, request: Request, user=Depends(get_current_
     doc.pop("_id", None)
     await _log_audit(user, "trip", "create", entity_id=doc["id"], entity_ref=doc.get("vehicle_number", ""))
     return doc
+
+@router.patch("/trips/{tid}/customer-ref")
+async def update_trip_customer_ref(
+    tid: str,
+    payload: dict = Body(...),
+    request: Request = None,
+    user=Depends(get_current_user),
+):
+    """Iter85 — Inline "One-Click Cust Ref Fill" from the Missing Cust Ref view.
+
+    Only updates the per-trip `customer_reference_number` field. Never touches
+    any other trip data (freight, halting, expenses, invoice link, etc.).
+    Blank input clears the ref (moves the trip BACK into the missing list),
+    matching the user's expectation that saving a real value pulls it out of
+    the filtered list.
+    """
+    cid = await _active_company_id(request, user)
+    ref = str(payload.get("customer_reference_number") or "").strip()
+    existing = await db.trips.find_one(
+        {"id": tid, "user_id": user["user_id"], "company_id": cid},
+        {"_id": 0, "id": 1, "customer_reference_number": 1},
+    )
+    if not existing:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    await db.trips.update_one(
+        {"id": tid, "user_id": user["user_id"], "company_id": cid},
+        {"$set": {"customer_reference_number": ref}},
+    )
+    await _log_audit(
+        user, "trip", "customer_ref_inline_update",
+        entity_id=tid,
+        entity_ref=f"{existing.get('customer_reference_number', '') or '∅'} → {ref or '∅'}",
+    )
+    return {"id": tid, "customer_reference_number": ref}
+
 
 @router.put("/trips/{tid}")
 async def update_trip(tid: str, payload: Trip, request: Request, user=Depends(get_current_user)):
