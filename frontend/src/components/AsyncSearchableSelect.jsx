@@ -37,6 +37,7 @@ export default function AsyncSearchableSelect({
   const [q, setQ] = useState("");
   const [options, setOptions] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [fetchError, setFetchError] = useState(false); // Iter87 — surface backend blip clearly
   const rootRef = useRef(null);
   const inputRef = useRef(null);
   const reqIdRef = useRef(0);
@@ -58,19 +59,35 @@ export default function AsyncSearchableSelect({
     if (open) setTimeout(() => inputRef.current?.focus(), 50);
   }, [open]);
 
-  // Debounced fetch on q change (or open)
+  // Debounced fetch on q change (or open) — Iter87: single silent retry on failure
+  // so a transient backend hot-reload during typing doesn't produce a confusing
+  // "Type to search" empty state.
   useEffect(() => {
     if (!open) return;
     const reqId = ++reqIdRef.current;
     setLoading(true);
+    setFetchError(false);
     const timer = setTimeout(async () => {
+      const attempt = async () => {
+        return await fetchOptions?.(q.trim());
+      };
       try {
-        const res = await fetchOptions?.(q.trim());
+        let res;
+        try {
+          res = await attempt();
+        } catch (_) {
+          // Silent retry once after 900ms — covers hot-reload / cold-start blips
+          await new Promise((r) => setTimeout(r, 900));
+          res = await attempt();
+        }
         if (reqId === reqIdRef.current) {
           setOptions(Array.isArray(res) ? res : []);
         }
       } catch {
-        if (reqId === reqIdRef.current) setOptions([]);
+        if (reqId === reqIdRef.current) {
+          setOptions([]);
+          setFetchError(true);
+        }
       } finally {
         if (reqId === reqIdRef.current) setLoading(false);
       }
@@ -160,6 +177,10 @@ export default function AsyncSearchableSelect({
           <div className="overflow-y-auto flex-1">
             {loading && options.length === 0 ? (
               <div className="px-3 py-6 text-center text-xs text-zinc-400">Searching…</div>
+            ) : fetchError ? (
+              <div className="px-3 py-6 text-center text-xs text-rose-700 bg-rose-50 border-b border-rose-200">
+                Couldn't reach server. Retrying…
+              </div>
             ) : options.length === 0 ? (
               <div className="px-3 py-6 text-center text-xs text-zinc-400">
                 {q ? "No matches" : "Type to search"}
