@@ -424,10 +424,10 @@ async def _supplier_statement_data(request: Request, supplier_name: str, start, 
     uid = user["user_id"]
     cid = await _active_company_id(request, user)
     company = await db.companies.find_one({"id": cid, "user_id": uid}, {"_id": 0}) or {}
-    trips = await db.trips.find(
+    trips = await (db.trips.find(
         {"user_id": uid, "company_id": cid, "vehicle_type": "supplier", **LIVE_ONLY_FILTER},
         {"_id": 0, "user_id": 0},
-    ).to_list(10000)
+    ).sort([("date", -1), ("created_at", -1)]).to_list(50000))
     sn_lc = (supplier_name or "").strip().lower()
     trips = [t for t in trips if (t.get("supplier_name") or "").strip().lower() == sn_lc]
     trips = [t for t in trips if _in_range(t.get("date", ""), start, end)]

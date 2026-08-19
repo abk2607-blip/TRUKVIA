@@ -139,8 +139,11 @@ def test_alert_fires_when_threshold_crossed():
             break
     r = httpx.get(f"{BASE}/api/admin/save-health/alerts", params={"limit": 5}, timeout=10)
     alerts = r.json().get("alerts", [])
-    assert alerts, "No alert fired"
-    a = alerts[0]
+    # Iter87 — filter to save_failure alerts; auth_ip_burst alerts (added in Iter58)
+    # can leak from real dev traffic and don't have window_hours field.
+    sf_alerts = [a for a in alerts if a.get("kind") != "auth_ip_burst"]
+    assert sf_alerts, f"No save-failure alert fired (got {len(alerts)} alerts, all auth_ip_burst)"
+    a = sf_alerts[0]
     for k in ("fired_at", "threshold", "window_hours", "total_failures", "top_offenders", "recent_errors"):
         assert k in a, f"missing {k} in alert"
     assert a["threshold"] == 2
