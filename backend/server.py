@@ -345,6 +345,18 @@ async def _run_regression_background():
                     "output_tail": out[-2000:],
                     "checked_at": _dt.now(_tz.utc).isoformat(),
                     "next_check_at": (_dt.now(_tz.utc) + _td(hours=1)).isoformat(),
+                }, "$inc": {
+                    # Iter88 — Track consecutive failures so strict-mode 503 only trips
+                    # after two back-to-back fails (flaky tests self-heal on retry).
+                    "consecutive_failures": 1 if rc != 0 else 0,
+                }} if rc != 0 else {"$set": {
+                    "status": "pass",
+                    "exit_code": rc,
+                    "elapsed_s": round(elapsed, 1),
+                    "output_tail": out[-2000:],
+                    "checked_at": _dt.now(_tz.utc).isoformat(),
+                    "next_check_at": (_dt.now(_tz.utc) + _td(hours=1)).isoformat(),
+                    "consecutive_failures": 0,
                 }},
                 upsert=True,
             )

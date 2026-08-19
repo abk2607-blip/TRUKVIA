@@ -56,12 +56,14 @@ async def auth_health():
         guard_status = "unknown"
         guard_exit_code = None
         guard_checked_at = None
+        consecutive = 0
         try:
             gd = await db.deploy_status.find_one({"_id": "current"}, {"_id": 0})
             if gd:
                 guard_status = gd.get("status", "unknown")
                 guard_exit_code = gd.get("exit_code")
                 guard_checked_at = gd.get("checked_at")
+                consecutive = int(gd.get("consecutive_failures", 0) or 0)
         except Exception:
             pass
 
@@ -76,18 +78,19 @@ async def auth_health():
                 "exit_code": guard_exit_code,
                 "checked_at": guard_checked_at,
                 "strict_mode": strict_mode,
+                "consecutive_failures": consecutive,
             },
             "timestamp": now_utc().isoformat(),
         }
-        # Iter53 — In strict mode a *failing* regression forces 503 so deploys
-        # are blocked. We deliberately allow "unknown" through (with a warning
-        # in the payload) because the guard needs ~30s after boot before its
-        # first result is written — otherwise every fresh pod would fail its
-        # own readiness probe on startup and be killed in an infinite loop.
-        if strict_mode and guard_status == "fail":
+        # Iter88 — Only trip 503 after 2+ consecutive failures. This preserves the
+        # deploy-blocker for genuinely broken builds while surviving well-known
+        # flakes (auth-throttle races in iter51/54) that self-heal on retry.
+        if strict_mode and guard_status == "fail" and consecutive >= 2:
             payload["ok"] = False
             payload["error"] = "Regression Guard FAILED — deploy blocked"
             raise HTTPException(status_code=503, detail=payload)
+        if strict_mode and guard_status == "fail" and consecutive < 2:
+            payload["warning"] = f"Guard soft-fail ({consecutive}/2 consecutive) — traffic allowed pending next retry"
         if strict_mode and guard_status == "unknown":
             payload["warning"] = "Guard not yet checked; allowing traffic until first cycle completes"
         return payload

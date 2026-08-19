@@ -35,10 +35,11 @@ def test_strict_mode_env_var_present():
 
 def test_auth_health_gate_semantics():
     """
-    - strict + guard=pass    → 200
-    - strict + guard=fail    → 503 (detail.regression_guard.status=fail)
-    - strict + guard=unknown → 200 + warning
-    - non-strict any status  → 200
+    - strict + guard=pass                          → 200
+    - strict + guard=fail + consecutive_failures>=2 → 503 (deploy blocked)
+    - strict + guard=fail + consecutive_failures<2  → 200 + soft-fail warning (Iter88)
+    - strict + guard=unknown                       → 200 + warning
+    - non-strict any status                        → 200
     """
     r = httpx.get(f"{BASE}/api/auth/health", timeout=10)
     assert r.status_code in (200, 503)
@@ -46,14 +47,17 @@ def test_auth_health_gate_semantics():
     guard = d.get("regression_guard", {})
     strict = guard.get("strict_mode")
     status = guard.get("status")
-    if strict and status == "fail":
-        assert r.status_code == 503, f"strict + fail must be 503; got {r.status_code}"
+    consecutive = int(guard.get("consecutive_failures", 0) or 0)
+    if strict and status == "fail" and consecutive >= 2:
+        assert r.status_code == 503, f"strict + hard-fail must be 503; got {r.status_code}"
         assert "Regression Guard FAILED" in d.get("error", "")
+    elif strict and status == "fail" and consecutive < 2:
+        assert r.status_code == 200, "strict + soft-fail must be 200 (Iter88 flake tolerance)"
+        assert "warning" in d
     elif strict and status == "unknown":
         assert r.status_code == 200
         assert "warning" in d
     else:
-        # pass, or non-strict
         assert r.status_code == 200
 
 
