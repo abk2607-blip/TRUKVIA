@@ -19,6 +19,7 @@ import {
 
 import { EMPTY, inputCls } from "@/components/tripform/tripFormDefaults";
 import { Section } from "@/components/tripform/FormPrimitives";
+import OverrideReasonDialog from "@/components/OverrideReasonDialog";
 import TripDetailsSection from "@/components/tripform/TripDetailsSection";
 import FreightSection from "@/components/tripform/FreightSection";
 import UnloadingSection from "@/components/tripform/UnloadingSection";
@@ -49,6 +50,10 @@ export default function TripForm() {
   const { data: suppliers = [] } = useQuery({ queryKey: ["suppliers"], queryFn: async () => (await api.get("/suppliers")).data });
   const [selectedTemplate, setSelectedTemplate] = useState("");
   const [qaOpen, setQaOpen] = useState(null); // 'customer' | 'vehicle' | 'driver' | 'product' | null
+  // Iter100 — Override Reason Dialog state. `capturedReasons` persists reasons
+  // across dialog re-opens so users don't have to retype if they cancel & retry.
+  const [overrideDialog, setOverrideDialog] = useState({ open: false, list: [] });
+  const [capturedReasons, setCapturedReasons] = useState({}); // { field: reason }
 
   const { data: trip } = useQuery({
     queryKey: ["trip", id],
@@ -147,13 +152,38 @@ export default function TripForm() {
           [k, (k === "other_desc" || k === "other_remarks") ? (v || "") : Number(v || 0)]
         )),
       };
-      if (isEdit) return (await api.put(`/trips/${id}`, payload)).data;
-      return (await api.post("/trips", payload)).data;
+      const saved = isEdit
+        ? (await api.put(`/trips/${id}`, payload)).data
+        : (await api.post("/trips", payload)).data;
+      // Iter100 — After the trip persists, log each captured override reason
+      // to the audit trail. Failures here are non-blocking (trip save is the
+      // primary contract) but surfaced via toast.
+      const tid = saved?.id || id;
+      const pending = overrideDialog.list || [];
+      if (tid && pending.length) {
+        for (const o of pending) {
+          const reason = (capturedReasons[o.field] || "").trim();
+          if (!reason) continue;
+          try {
+            await api.post(`/trips/${tid}/field-override`, {
+              field: o.field,
+              system_value: o.system_value,
+              final_value: o.final_value,
+              reason,
+            });
+          } catch (err) {
+            toast.error(`Override log failed for ${o.label}: ${err?.response?.data?.detail || err.message}`);
+          }
+        }
+      }
+      return saved;
     },
     onSuccess: () => {
       toast.success(isEdit ? "Trip updated" : "Trip created");
       qc.invalidateQueries({ queryKey: ["trips"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });
+      setCapturedReasons({});
+      setOverrideDialog({ open: false, list: [] });
       nav("/trips");
     },
     onError: (e) => toast.error(e?.response?.data?.detail || "Failed"),
@@ -207,12 +237,16 @@ export default function TripForm() {
   const shortageQtyLive = (loadedQ > 0 || unloadedQ > 0) && qtyDiff > 0 ? qtyDiff : 0;
   const excessQtyLive = (loadedQ > 0 || unloadedQ > 0) && qtyDiff < 0 ? Math.abs(qtyDiff) : 0;
   const productRate = Number(form.product_rate_per_mt || 0);
+  // Iter100 — Pure system-computed values (INDEPENDENT of override flags).
+  // Used for override detection to compare against the user's final value.
+  const shortageAmountSystem = Number((productRate * shortageQtyLive).toFixed(2));
+  const excessAmountSystem = Number((productRate * excessQtyLive).toFixed(2));
   const shortageAmountLive = form.shortage_amount_override
     ? Number(form.shortage_amount || 0)
-    : Number((productRate * shortageQtyLive).toFixed(2));
+    : shortageAmountSystem;
   const excessAmountLive = form.excess_amount_override
     ? Number(form.excess_amount || 0)
-    : Number((productRate * excessQtyLive).toFixed(2));
+    : excessAmountSystem;
 
   // Halting auto-calc — Iter46: honour manually-typed Total Days when no dates provided.
   let totalHaltingDaysLive = 0;
@@ -233,6 +267,8 @@ export default function TripForm() {
     ? Number(form.chargeable_halting_days || 0)
     : autoChargeableDays;
   const haltingRateLive = Number(form.halting_rate_per_day || 0);
+  // Iter100 — Pure system-computed halting (INDEPENDENT of override flag).
+  const haltingAmountSystem = Number((autoChargeableDays * haltingRateLive).toFixed(2));
   const haltingAmountLive = form.halting_amount_override
     ? Number(form.halting_amount || 0)
     : Number((chargeableDaysLive * haltingRateLive).toFixed(2));
@@ -314,6 +350,88 @@ export default function TripForm() {
 
   const setExp = (k, v) => setForm({ ...form, expenses: { ...form.expenses, [k]: v } });
 
+  // Iter100 — Detect every financial field whose final value differs from
+  // the system-computed value. Each entry becomes a row in the mandatory
+  // Override Reason Dialog. Rounded to 2dp to ignore floating-point noise.
+  const _eq2 = (a, b) => Math.abs(Number(a || 0) - Number(b || 0)) < 0.005;
+  const detectOverrides = () => {
+    const list = [];
+    // Customer-side (compare against PURE system value, not override-aware Live)
+    if (form.shortage_amount_override && !_eq2(form.shortage_amount, shortageAmountSystem)) {
+      list.push({ field: "shortage_amount", label: "Customer Shortage Amount",
+        system_value: shortageAmountSystem,
+        final_value: Number(Number(form.shortage_amount || 0).toFixed(2)) });
+    }
+    if (form.excess_amount_override && !_eq2(form.excess_amount, excessAmountSystem)) {
+      list.push({ field: "excess_amount", label: "Customer Excess Amount",
+        system_value: excessAmountSystem,
+        final_value: Number(Number(form.excess_amount || 0).toFixed(2)) });
+    }
+    if (form.halting_amount_override && !_eq2(form.halting_amount, haltingAmountSystem)) {
+      list.push({ field: "halting_amount", label: "Customer Halting Amount",
+        system_value: haltingAmountSystem,
+        final_value: Number(Number(form.halting_amount || 0).toFixed(2)) });
+    }
+    // Supplier-side (only for supplier vehicles)
+    if (form.vehicle_type === "supplier") {
+      if (!_eq2(form.supplier_freight, supplierFreightLive)) {
+        list.push({ field: "supplier_freight", label: "Supplier Freight",
+          system_value: Number(supplierFreightLive.toFixed(2)),
+          final_value: Number(Number(form.supplier_freight || 0).toFixed(2)) });
+      }
+      if (form.supplier_shortage_deduction_override) {
+        const sysShort = Number(Number(form.shortage_amount || 0).toFixed(2));
+        if (!_eq2(form.supplier_shortage_deduction, sysShort)) {
+          list.push({ field: "supplier_shortage_deduction", label: "Supplier Shortage Deduction",
+            system_value: sysShort,
+            final_value: Number(Number(form.supplier_shortage_deduction || 0).toFixed(2)) });
+        }
+      }
+      // Supplier Halting is always manual — any non-zero value is an override.
+      if (Number(form.supplier_halting_amount || 0) > 0) {
+        const autoHalting = Number(form.supplier_halting_days || 0) * Number(form.supplier_halting_rate_per_day || 0);
+        if (!_eq2(form.supplier_halting_amount, autoHalting)) {
+          list.push({ field: "supplier_halting_amount", label: "Supplier Halting Amount",
+            system_value: Number(autoHalting.toFixed(2)),
+            final_value: Number(Number(form.supplier_halting_amount || 0).toFixed(2)) });
+        }
+      }
+      // Advance / Diesel — if flat field differs from sum of entries (when entries exist)
+      const _dieselSum = _activeDiesel.reduce((s, e) => s + Number(e.amount || 0), 0);
+      if (_activeDiesel.length && !_eq2(form.supplier_diesel, _dieselSum)) {
+        list.push({ field: "supplier_diesel", label: "Supplier Diesel (Total)",
+          system_value: Number(_dieselSum.toFixed(2)),
+          final_value: Number(Number(form.supplier_diesel || 0).toFixed(2)) });
+      }
+      const _advSum = _activeAdvance.reduce((s, e) => s + Number(e.amount || 0), 0);
+      if (_activeAdvance.length && !_eq2(form.supplier_advance, _advSum)) {
+        list.push({ field: "supplier_advance", label: "Supplier Advance (Total)",
+          system_value: Number(_advSum.toFixed(2)),
+          final_value: Number(Number(form.supplier_advance || 0).toFixed(2)) });
+      }
+    }
+    // Attach any previously captured reason so the dialog pre-fills on re-open.
+    return list.map((o) => ({ ...o, reason: capturedReasons[o.field] || "" }));
+  };
+
+  const handleFormSubmit = (e) => {
+    e.preventDefault();
+    // Iter47 Phase 3: Strict supplier enforcement on supplier vehicles
+    if (form.vehicle_type === "supplier" && !form.supplier_id) {
+      toast.error("Please select a Supplier for this supplier vehicle (mandatory)");
+      return;
+    }
+    const overrides = detectOverrides();
+    // Every override needs a reason captured before save proceeds.
+    const missing = overrides.filter((o) => !(capturedReasons[o.field] || "").trim());
+    if (missing.length > 0) {
+      setOverrideDialog({ open: true, list: overrides });
+      return;
+    }
+    setOverrideDialog({ open: false, list: overrides });
+    save.mutate();
+  };
+
   return (
     <div className="space-y-6" data-testid="trip-form-page">
       <header className="flex items-center gap-3 border-b border-zinc-200 pb-4">
@@ -338,15 +456,7 @@ export default function TripForm() {
         )}
       </header>
 
-      <form onSubmit={(e) => {
-        e.preventDefault();
-        // Iter47 Phase 3: Strict supplier enforcement on supplier vehicles
-        if (form.vehicle_type === "supplier" && !form.supplier_id) {
-          toast.error("Please select a Supplier for this supplier vehicle (mandatory)");
-          return;
-        }
-        save.mutate();
-      }} className="space-y-6">
+      <form onSubmit={handleFormSubmit} className="space-y-6">
         {!isEdit && templates.length > 0 && (
           <div data-testid="template-picker" className="border border-emerald-300 bg-emerald-50 rounded-sm p-4 flex flex-col sm:flex-row sm:items-center gap-3">
             <div className="text-sm text-emerald-900 flex-1">
@@ -537,6 +647,23 @@ export default function TripForm() {
           onClose={() => setQaOpen(null)}
         />
       )}
+
+      <OverrideReasonDialog
+        open={overrideDialog.open}
+        overrides={overrideDialog.list}
+        onCancel={() => setOverrideDialog({ open: false, list: [] })}
+        onConfirm={(reasons) => {
+          setCapturedReasons((prev) => ({ ...prev, ...reasons }));
+          // Re-arm dialog list with the freshly captured reasons so the save
+          // mutation can pick them up when POSTing to /field-override.
+          const withReasons = overrideDialog.list.map((o) => ({
+            ...o, reason: (reasons[o.field] || "").trim(),
+          }));
+          setOverrideDialog({ open: false, list: withReasons });
+          // Kick off save now that every override has a justification.
+          save.mutate();
+        }}
+      />
     </div>
   );
 }

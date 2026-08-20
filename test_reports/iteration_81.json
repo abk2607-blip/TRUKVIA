@@ -1,0 +1,49 @@
+{
+  "summary": "Iter100 review: (A) Backend — new suite test_iter100_override_dialog_and_landscape_invoice.py (9/9 PASS) covering POST /api/trips/{tid}/field-override validation+persistence and the Phase-5 landscape invoice PDF (landscape A4 confirmed 841.89x595.28pt, all required labels, Basis column labels, 3-trip consolidation, financial parity with invoice JSON). (B) Regression — iter44/92/97/98/99 (9/9 PASS), iter67/79/82 PASS; iter22/iter23 FAIL (3 tests) due to new landscape layout paging + Basis label logic; iter41 expenditure-breakdown FAIL (pre-existing truncation bug). (C) Frontend — Override Reason Dialog works end-to-end for supplier-side fields (dialog opens on Save, Confirm gated until reason typed, POST /field-override fired with correct payload, OverrideBadge + hover tooltip verified on /trips/{id}/view). CRITICAL: customer-side overrides (Shortage / Excess / Customer Halting) NEVER trigger the dialog — trip saves silently with the manual value and an empty field_overrides array.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {"endpoint": "GET /api/invoices/{iid}/pdf", "issue": "Basis column shows 'Per Ton (Loading)' for trips whose freight_mode='fixed' but whose applied_freight_method snapshot defaulted to per_ton_loading (customer default). _resolve_freight_basis() trusts the snapshot even when it contradicts freight_mode, which _compute_trip() actually ignores for fixed trips. Breaks test_iter22::test_03_fixed_mode_renders ('Fixed' label missing) and is financially misleading on a tax invoice."},
+      {"endpoint": "GET /api/invoices/{iid}/pdf", "issue": "Layout paging regression: even a SINGLE-trip invoice with sub-rows spills to 2 pages — totals card / AMOUNT IN WORDS / BANK DETAILS / T&C / signature are pushed to page 2 (landscape A4 gives only 190mm height). 4 trips -> 3 pages, 8 trips -> 4 pages, and the 'TERMS & CONDITIONS' heading gets orphaned from its body. Breaks iter23::test_bug_e_row_count_matches_expected and iter23::test_regression_iter22_labels (both read page 0)."},
+      {"endpoint": "GET /api/dashboard/expenditure-breakdown", "issue": "PRE-EXISTING (not iter100): returns total=0 / trip_count=0 for a freshly created trip. Root cause: db.trips.find(...).to_list(20000) truncates while the demo DB now holds 49,436 trips; the date filter is applied in Python after the truncated fetch. /api/dashboard (to_list(5000)) and several routers/reports.py aggregates have the same pattern, so KPI figures are silently wrong at scale. Causes iter41::test_expenditure_breakdown_aggregates_by_type to fail 2/2 runs."}
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [
+      {"flow": "TripForm -> Override Reason Dialog (customer-side fields)", "issue": "CRITICAL: Toggling 'manual' on Shortage Amount and entering 12345 (system value 20000) then clicking Save saved the trip immediately with NO dialog; DB shows shortage_amount=12345, shortage_amount_override=true, field_overrides=[] — the mandatory-reason control is fully bypassed. RCA: detectOverrides() compares form.shortage_amount against shortageAmountLive, but shortageAmountLive (TripForm.jsx:240) is itself defined as `form.shortage_amount_override ? Number(form.shortage_amount) : computed` — i.e. it compares the value with itself, so _eq2() is always true. Identical self-referential defect for excessAmountLive (line 243) and haltingAmountLive (line 267) => Customer Shortage, Customer Excess and Customer Halting overrides can never be detected. Fix: derive pure system values independent of the override flag (productRate*shortageQtyLive, productRate*excessQtyLive, autoChargeableDays*haltingRateLive) and compare against those.", "affected_selectors": ["[data-testid=\"trip-shortage-amount-toggle\"]", "[data-testid=\"trip-shortage-amount\"]", "[data-testid=\"save-trip-btn\"]", "[data-testid=\"override-reason-dialog\"]"]}
+    ],
+    "design_issues": [
+      {"screen": "OverrideReasonDialog", "issues": ["Renders correctly (System / Final / Δ Difference + required reason textarea, footer hint text, disabled Confirm) — no contrast or spacing problems observed", "Minor: for always-manual fields such as Supplier Halting the System column shows ₹0.00, which reads as a real system calculation rather than 'not computed' — consider labelling it 'No system value'"]}
+    ]
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter100_override_dialog_and_landscape_invoice.py",
+    "/app/backend/tests/_iter100_layout_probe.py"
+  ],
+  "action_items": [
+    "FIX (P0): TripForm.jsx detectOverrides() — compare against pure system values, not the override-aware *Live values, so Customer Shortage / Excess / Halting overrides open the dialog and get logged to /field-override.",
+    "FIX (P1): pdf/invoice.py _resolve_freight_basis() — honour freight_mode='fixed' (and round-trip km) over a contradicting applied_freight_method snapshot; restores 'Fixed' label (iter22).",
+    "FIX (P1): pdf/invoice.py layout — a single-trip invoice must fit one landscape page (reduce header/party card padding, totals row padding, trim the 24pt pre-signature spacer, KeepTogether the T&C block). Then re-run iter22/iter23.",
+    "FIX (P2, pre-existing): dashboard/reports aggregates — push the date range into the Mongo query instead of .to_list(N) + Python filtering (expenditure-breakdown returns 0 with 49k trips).",
+    "HOUSEKEEPING: 49,436 trips / 2,000 customers of accumulated test data in the preview DB — consider a TEST_* cleanup job; it is already masking real aggregate bugs."
+  ],
+  "critical_code_review_comments": [
+    "TripForm.jsx:240-268 — *Live values double as both 'system value' and 'current value'; any future override detection built on them will be a no-op. Introduce explicit `systemX` constants.",
+    "TripForm.jsx:411-427 — handleFormSubmit only blocks when a reason is missing; once capturedReasons holds a stale reason for a field the user later changes again, save proceeds with the old justification. Consider keying captured reasons by field+final_value.",
+    "pdf/invoice.py totals fallbacks use `invoice.get(k) or computed` — a legitimately stored 0.0 falls through to the recomputed sum. Harmless today but use explicit `is None` checks.",
+    "pdf/invoice.py is 602 lines with layout, palette and business-label mapping mixed; extract _resolve_freight_basis + totals assembly to keep it testable."
+  ],
+  "updated_files": [
+    "/app/backend/tests/test_iter100_override_dialog_and_landscape_invoice.py",
+    "/app/backend/tests/_iter100_layout_probe.py",
+    "/app/frontend/src/components/tripform/UnloadingSection.jsx (added data-testid trip-shortage-amount-toggle / trip-excess-amount-toggle only)"
+  ],
+  "success_rate": {"backend": "89% (iter100 9/9 pass; 4 regression failures across iter22/iter23/iter41 out of 36 executed)", "frontend": "50% (supplier-side override flow + OverrideBadge pass; customer-side override dialog never fires)"},
+  "seed_data_creation": "TEST_IT100_*, TEST_UI100_*, TEST_SUP100_* customers/vehicles/suppliers/trips/invoices via API; trip AP100UI0001 (unaudited 12345 shortage) and trip_311920aa3e934f91 (supplier halting override, field_overrides populated) kept as evidence.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "POST /api/auth/demo-login then Bearer test_session_bitumen_2026; frontend: localStorage.setItem('session_token','test_session_bitumen_2026')",
+  "context_for_next_testing_agent": "Run `pytest tests/test_iter100_override_dialog_and_landscape_invoice.py tests/test_iter22_invoice_pdf_redesign.py tests/test_iter23_invoice_column_alignment.py` after the PDF fixes — iter22/23 read only PDF page 0, so they double as single-page-layout guards. Use tests/_iter100_layout_probe.py (offline, no HTTP) to check page counts for 1/2/4/8 trips. For the frontend, the customer-side flow is: /trips/new -> trip-customer picker -> trip-vehicle free-text -> trip-tons/trip-rate-per-ton -> trip-unloaded-qty + trip-product-rate -> click trip-shortage-amount-toggle -> fill trip-shortage-amount -> save-trip-btn; expect override-reason-dialog. Supplier flow (sup-halting-amount) already works. iter41 expenditure-breakdown failure is pre-existing and unrelated to iter100.",
+  "rca_of_the_issue": "Customer-side override dialog never opens because shortageAmountLive/excessAmountLive/haltingAmountLive are defined as `override ? form.<field> : computed`; detectOverrides() then compares form.<field> to that same value, so the difference is always 0 and no override row is produced — the trip is saved with the manual figure and an empty field_overrides array (verified in Mongo: shortage_amount=12345, field_overrides=[]). PDF regressions stem from (a) trusting applied_freight_method over freight_mode for the Basis label and (b) the landscape A4 190mm content height being insufficient for header + party cards + table + totals + T&C + signature, pushing totals to page 2 even for one trip."
+}

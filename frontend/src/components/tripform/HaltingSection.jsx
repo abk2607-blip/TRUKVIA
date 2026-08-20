@@ -30,7 +30,7 @@ export default function HaltingSection({
           <input data-testid="trip-grace-days" type="number" min="0" step="1" value={form.grace_days} onChange={(e) => setForm({ ...form, grace_days: e.target.value, halting_amount_override: false })} className={inputCls} />
         </Field>
         <Field label={
-          <span>Chargeable Days <button type="button" onClick={() => setForm({ ...form, halting_amount_override: !form.halting_amount_override })} className={`ml-1 text-[9px] uppercase tracking-wider ${form.halting_amount_override ? "text-amber-700" : "text-zinc-400"}`}>{form.halting_amount_override ? "manual" : "auto"}</button></span>
+          <span>Chargeable Days <button type="button" data-testid="trip-halting-amount-toggle" onClick={() => setForm({ ...form, halting_amount_override: !form.halting_amount_override })} className={`ml-1 text-[9px] uppercase tracking-wider ${form.halting_amount_override ? "text-amber-700" : "text-zinc-400"}`}>{form.halting_amount_override ? "manual" : "auto"}</button></span>
         }>
           <input data-testid="trip-chargeable-days" type="number" min="0" step="1" value={form.halting_amount_override ? form.chargeable_halting_days : autoChargeableDays} disabled={!form.halting_amount_override} onChange={(e) => setForm({ ...form, chargeable_halting_days: e.target.value })} className={`${inputCls} disabled:bg-zinc-50 disabled:text-zinc-600`} />
         </Field>

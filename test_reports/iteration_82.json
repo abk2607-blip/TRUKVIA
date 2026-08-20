@@ -1,0 +1,49 @@
+{
+  "summary": "Iter100 RE-TEST of the 3 flagged fixes. P0 (frontend override dialog for customer-side fields) VERIFIED: Shortage, Excess and Halting manual overrides each open OverrideReasonDialog with the correct pure system value, Confirm is disabled until a reason is typed, and after Confirm the POST /api/trips/{id}/field-override audit entry persists (verified via GET /api/trips/{id}). P1 (PDF Basis='Fixed' when freight_mode=fixed even with a per_ton_loading snapshot) VERIFIED. P1 (single-trip invoice fits ONE landscape A4 page) VERIFIED with PyMuPDF page_count==1 plus all footer sections present on page 1. Regression: supplier-side override flow (supplier_freight + supplier_halting_amount) still opens the dialog and writes the audit trail; backend suites iter22 (7), iter23 (6), iter44 (4), iter82 (3), iter99 (1) = 23/23 PASS, plus iter100 suite 9/9 PASS and new iter100b suite 2/2 PASS. iter41 expenditure-breakdown skipped per instructions.",
+  "backend_issues": {
+    "critical": [],
+    "minor": [
+      {
+        "endpoint": "PUT /api/trips/{id} (services.py:184-191)",
+        "issue": "Manual supplier_freight override is silently discarded: when supplier_freight_mode='per_ton', _compute always recomputes supplier_freight = qty * rate. UI override of 16000 -> 15000 produced an audit entry (final_value=15000) but the stored supplier_freight stayed 16000, so the audit trail contradicts the persisted value. Pre-existing (not introduced by iter100) but it makes the new override audit misleading for supplier freight."
+      },
+      {
+        "endpoint": "Frontend TripForm detectOverrides()",
+        "issue": "Cosmetic/UX: re-editing a trip that already has a persisted customer-side override re-prompts for a reason on every subsequent save (the pre-existing override row reappears in the dialog, and when shortage qty becomes 0 the row shows System=Rs 0.00 vs Final=old manual value). Consider skipping fields whose captured reason already exists in field_overrides."
+      }
+    ]
+  },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": []
+  },
+  "test_report_links": [
+    "/app/backend/tests/test_iter100_override_dialog_and_landscape_invoice.py",
+    "/app/backend/tests/test_iter100b_fixes_verify.py",
+    "/app/backend/tests/_iter100_seed_fe_trip.py",
+    "/app/backend/tests/_iter100_seed_supplier_trip.py"
+  ],
+  "action_items": [
+    "Optional: honour a manual supplier_freight override in services.py (e.g. supplier_freight_override flag) so the stored value matches the audit entry.",
+    "Optional UX: do not re-prompt for a reason on fields that already carry a persisted field_overrides entry with the same final_value."
+  ],
+  "critical_code_review_comments": [
+    "TripForm.detectOverrides() now correctly compares against pure system values (shortageAmountSystem / excessAmountSystem / haltingAmountSystem) - RCA from iteration_81 is resolved.",
+    "pdf/invoice.py _resolve_freight_basis() correctly prioritises freight_mode='fixed' over the applied_freight_method snapshot; compact layout keeps single-trip invoices on one landscape A4 page.",
+    "HaltingSection.jsx chargeable-days/halting manual toggle had no data-testid - added data-testid='trip-halting-amount-toggle' (test-only change)."
+  ],
+  "updated_files": [
+    "/app/frontend/src/components/tripform/HaltingSection.jsx",
+    "/app/backend/tests/test_iter100b_fixes_verify.py",
+    "/app/backend/tests/_iter100_seed_fe_trip.py",
+    "/app/backend/tests/_iter100_seed_supplier_trip.py"
+  ],
+  "success_rate": {"backend": "100% (34/34 across iter100, iter100b, iter22, iter23, iter44, iter82, iter99)", "frontend": "100% (4/4 override flows: shortage, excess, halting, supplier)"},
+  "seed_data_creation": "Trips trip_35f6b82bf43148e7 (shortage), trip_ffb6bf7ac78a48fe (excess), trip_7697efeb3dd34030 (halting), trip_c2ab1177399d43ba (supplier) with TEST_IT100* customers/vehicles/suppliers; TEST_IT100B* invoices for PDF checks.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "POST /api/auth/demo-login; Bearer test_session_bitumen_2026; localStorage session_token=test_session_bitumen_2026",
+  "context_for_next_testing_agent": "Iter100 is complete. Override dialog verification is easiest by seeding a trip via API (see /app/backend/tests/_iter100_seed_fe_trip.py) then opening /trips/{id}/edit, toggling the manual button (trip-shortage-amount-toggle / trip-excess-amount-toggle / trip-halting-amount-toggle) and clicking save-trip-btn. Note the dialog re-prompts for pre-existing overrides, so use a FRESH trip per field. Note also that manual supplier_freight is recomputed server-side (services.py:184). iter41 expenditure-breakdown truncation bug remains open and out of scope.",
+  "rca_of_the_issue": "Previous defects are fixed: (1) detectOverrides() compared override-aware *Live values with themselves -> now compares pure system values, so customer-side dialogs fire; (2) _resolve_freight_basis() trusted the applied_freight_method snapshot over freight_mode -> now freight_mode='fixed' wins, Basis shows 'Fixed'; (3) invoice layout padding pushed the footer to page 2 -> compact spacing + KeepTogether keeps single-trip invoices at page_count==1."
+}
