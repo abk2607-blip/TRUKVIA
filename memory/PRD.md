@@ -22,6 +22,11 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter96 · Dashboard hot-reload banner — widened retry window** (Feb 2026)
+  - **User feedback**: The `DASHBOARD DATA COULDN'T LOAD — Backend is restarting` banner reappeared after the Iter95 code change triggered a backend hot-reload. Iter88 (2-consecutive-fail deploy guard) fixed the *Deploy Regression* tile, but the dashboard's own load-retry window was only ~20 s and startup tasks (fixture-purge, backfill, scheduler init) sometimes take 25-35 s.
+  - **Fix** (`frontend/src/index.js`): raised React Query retry count 6 → 10 and max backoff 5 s → 8 s. New window covers ~65 s worst-case reload — long enough for any hot-reload + startup work. Client errors (400/401/403/422) still never retry.
+  - **Verified**: `/api/dashboard` returns 200 in 0.75 s; live dashboard renders without the crash banner.
+
 - [x] **Iter95 · Trip-wise Settlement Table — Alignment & Field-mapping Fix** (Feb 2026)
   - **User feedback**: Amount cells like `₹31,60 5` were splitting across lines, LR/Vehicle numbers bled into adjacent rows, headers were right-aligned instead of centered, TOTAL cells drifted out of alignment.
   - **Column widths retuned** (Halting 15 mm, Ded/Rec 17 mm, Advance 17 mm, Diesel 16 mm, Sup.Freight 20 mm, Net Payable 21 mm) so 5-digit ₹ amounts fit in a single line. LR/Vehicle bumped to 22 mm for the stacked two-line cell.
