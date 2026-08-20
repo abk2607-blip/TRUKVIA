@@ -22,15 +22,17 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
-- [x] **Iter94 · Supplier Statement — Strip Customer-Side Financials** (Feb 2026)
-  - **User rule**: The Supplier Statement must answer only "how much is finally payable to the supplier?" — it must NOT surface customer freight, customer revenue, trip profit, or customer diesel as customer-side figures.
-  - **Removed from the PDF**: `Customer Freight` KPI, `Cust. Diesel Adj` KPI, `Trip Profit` KPI (+ margin %), Trip-wise `Cust.Dsl` column, Movements-block `Cust. Diesel Adjustment` line.
-  - **Kept business logic unchanged**: customer diesel that reduces supplier payable is folded into the supplier-side `Other Recoveries` line in the Movements block, the `Other Recoveries` KPI, and the `Ded/Rec` column in the trip-wise table.
-  - **Trip Summary KPI grid**: clean 6-col × 2-row grid of 12 supplier-only metrics with Net Payable in the last cell in red.
-  - **Trip-wise table**: 16 columns (was 17). Tightened doc margins to 10mm and column widths so nothing wraps mid-value and Net Payable never cuts off.
-  - **Formula footer** reworded to state "customer-side freight, revenue and trip profit are excluded by design".
-  - **Regression Guard**: iter41 / iter44 / iter47 / iter89 / iter90 / iter91 / iter92 pass together (21 tests in 26s). `test_iter44` headers list updated to drop `Cust.Dsl`.
+- [x] **Iter95 · Trip-wise Settlement Table — Alignment & Field-mapping Fix** (Feb 2026)
+  - **User feedback**: Amount cells like `₹31,60 5` were splitting across lines, LR/Vehicle numbers bled into adjacent rows, headers were right-aligned instead of centered, TOTAL cells drifted out of alignment.
+  - **Column widths retuned** (Halting 15 mm, Ded/Rec 17 mm, Advance 17 mm, Diesel 16 mm, Sup.Freight 20 mm, Net Payable 21 mm) so 5-digit ₹ amounts fit in a single line. LR/Vehicle bumped to 22 mm for the stacked two-line cell.
+  - **Row padding** raised 4→5 pt top/bottom so LR/Vehicle two-liner no longer overflows into the next row; **cell L/R padding** raised 2→3 pt so ₹ symbols & digits have breathing room.
+  - **Header alignment**: every header now `CENTER` (per user rule). Data cells: text left-aligned, quantities & ₹ right-aligned, Date center-aligned.
+  - **LR/Vehicle cell** uses a dedicated `ParagraphStyle(leading=9)` for a visually clean two-line stack.
+  - **Field mapping audited & preserved**: Supplier Freight ← `supplier_freight`; Advance ← `supplier_advance`; Diesel ← `supplier_diesel`; Ded/Rec ← `supplier_shortage_deduction + supplier_other_recoveries + customer_diesel`; Halting ← `supplier_halting_amount`; Net Payable ← `supplier_net_payable`. **Calculations unchanged.**
+  - **Regression Guard**: iter41/44/47/91/92 PDF+supplier suites pass (13 tests in 15s). Visually verified end-to-end on the rendered PDF at 170 DPI.
 
+- [x] **Iter94 · Supplier Statement — Strip Customer-Side Financials** (Feb 2026)
+  - Removed Customer Freight / Cust. Diesel Adj / Trip Profit KPIs, Cust.Dsl column, and Cust. Diesel Adjustment line from the Supplier Statement. Customer diesel that reduces supplier payable is folded into supplier-side Other Recoveries. Calc logic unchanged. iter41/44/47/89/90/91/92 pass (21 tests in 26s).
 
 - [x] **Iter93 · Supplier Settlement Statement PDF — Modern Redesign** (Feb 2026)
 

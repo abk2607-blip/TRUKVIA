@@ -879,13 +879,18 @@ async def supplier_statement_pdf(
                              fontName=_UNI_FONT, textColor=PALETTE["ink"])
     body_c = ParagraphStyle("bodyc", parent=body_st, alignment=TA_CENTER)
     body_r = ParagraphStyle("bodyr", parent=body_st, alignment=TA_RIGHT)
-    # Iter93 — tighter Paragraph style for wide trip-wise table cells so the
-    # amount + currency symbol never breaks mid-value.
+    # Iter95 — Cell paragraph styles: left-align for text, right-align for
+    # amounts (per user rule). Wider amount columns + more row padding stop
+    # ₹ amounts from breaking mid-value.
     tw_cell = ParagraphStyle("twc", parent=body_st, fontSize=7, leading=8.5, wordWrap=None)
     tw_cell_r = ParagraphStyle("twcr", parent=tw_cell, alignment=TA_RIGHT)
+    tw_cell_c = ParagraphStyle("twcc", parent=tw_cell, alignment=TA_CENTER)
+    # Iter95 — All headers CENTER aligned per user rule; row cells use their
+    # own alignment (text = left, amounts = right).
     tw_head_st = ParagraphStyle("twh", parent=styles["Normal"], fontSize=7, leading=8.5,
-                                fontName=_UNI_FONT_BOLD, textColor=colors.white)
-    tw_head_r_st = ParagraphStyle("twhr", parent=tw_head_st, alignment=TA_RIGHT)
+                                fontName=_UNI_FONT_BOLD, textColor=colors.white,
+                                alignment=TA_CENTER)
+    tw_head_r_st = ParagraphStyle("twhr", parent=tw_head_st, alignment=TA_CENTER)
     sub_st = ParagraphStyle("sub", parent=styles["Normal"], fontSize=7, leading=8.5,
                             fontName=_UNI_FONT, textColor=PALETTE["muted"])
     section_st = ParagraphStyle("sec", parent=styles["Heading3"], fontSize=10, leading=12,
@@ -1103,14 +1108,17 @@ async def supplier_statement_pdf(
             se = f"+{r['excess_qty']:.3f}"
         else:
             se = "—"
+        # Iter95 — LR/Vehicle stacked in one cell with clear leading so the
+        # vehicle line does not bleed into the next row.
         veh_cell = Paragraph(
             f"<b>{r['lr_number'] or '—'}</b><br/>"
             f"<font color='#64748b' size='6.5'>{r['vehicle_number'] or '—'}</font>",
-            body_st,
+            ParagraphStyle("veh", parent=body_st, fontSize=7, leading=9, alignment=TA_LEFT),
         )
         route = Paragraph(
             f"{r['from_location'] or '?'}<br/>"
-            f"<font color='#64748b'>→ {r['to_location'] or '?'}</font>", body_st,
+            f"<font color='#64748b'>→ {r['to_location'] or '?'}</font>",
+            ParagraphStyle("rt", parent=body_st, fontSize=7, leading=9, alignment=TA_LEFT),
         )
         ded_rec = r["supplier_shortage_deduction"] + r["supplier_other_recoveries"]
         tw_rows.append([
@@ -1156,12 +1164,14 @@ async def supplier_statement_pdf(
         Paragraph(f"<b>{_rupee0(tot['halting'])}</b>", tw_cell_r),
         Paragraph(f"<b>{_rupee0(tot['net_payable'])}</b>", tw_cell_r),
     ])
-    # Landscape A4 usable width ≈ 277 mm (297 − 2×10mm margins). 16 columns.
+    # Iter95 — Landscape A4 usable width ≈ 277 mm (297 − 2×10mm margins).
+    # Widened amount columns (Halting 15, Ded/Rec 17, Advance 17, Diesel 16,
+    # Sup.Freight 20, Net Payable 21) so 5-digit ₹ amounts never wrap.
     col_widths_mm = [
         14,   # Date
-        20,   # LR / Vehicle
-        26,   # Customer
-        28,   # Route
+        22,   # LR / Vehicle    ← wider for two-line stacking
+        22,   # Customer
+        24,   # Route
         14,   # Product
         12,   # Load
         12,   # Unload
@@ -1169,11 +1179,11 @@ async def supplier_statement_pdf(
         10,   # KM
         15,   # Sup.Rate
         20,   # Sup.Freight
-        18,   # Advance
-        15,   # Diesel
-        15,   # Ded/Rec
-        12,   # Halting
-        20,   # Net Payable   ← total = 262 mm (comfortable margin inside 277mm)
+        17,   # Advance
+        16,   # Diesel
+        17,   # Ded/Rec
+        15,   # Halting
+        21,   # Net Payable    ← total = 264 mm (comfortable inside 277mm)
     ]
     tt = Table(tw_rows, hAlign="LEFT", repeatRows=1,
                colWidths=[w * mm for w in col_widths_mm])
@@ -1190,10 +1200,11 @@ async def supplier_statement_pdf(
         ("GRID", (0, 0), (-1, -1), 0.25, PALETTE["line_soft"]),
         ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, PALETTE["zebra"]]),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-        ("LEFTPADDING",  (0, 0), (-1, -1), 2),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 2),
-        ("TOPPADDING",   (0, 1), (-1, -1), 4),
-        ("BOTTOMPADDING",(0, 1), (-1, -1), 4),
+        ("ALIGN", (0, 0), (-1, 0), "CENTER"),   # Iter95 — every header centred
+        ("LEFTPADDING",  (0, 0), (-1, -1), 3),   # Iter95 — a hair more so cells breathe
+        ("RIGHTPADDING", (0, 0), (-1, -1), 3),
+        ("TOPPADDING",   (0, 1), (-1, -1), 5),   # taller rows so LR/Vehicle two-liner never bleeds
+        ("BOTTOMPADDING",(0, 1), (-1, -1), 5),
         # Total row
         ("BACKGROUND", (0, -1), (-1, -1), PALETTE["gold"]),
         ("FONTNAME",   (0, -1), (-1, -1), _UNI_FONT_BOLD),
