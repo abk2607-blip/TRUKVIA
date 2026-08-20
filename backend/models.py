@@ -570,6 +570,19 @@ class ChatSession(BaseModel):
 # Iter45 — Supplier Master + Supplier Payments (dedicated Suppliers module)
 # ============================================================================
 
+class SupplierProductShortageLimit(BaseModel):
+    """Iter90 — Per-product shortage KG threshold for a supplier.
+
+    Example: Bitumen → 100 KG, Emulsion → 100 KG, CRMB → 150 KG.
+    Rule (unchanged from Iter89): if trip shortage ≤ limit → 0 deduction;
+    if trip shortage > limit → FULL actual shortage is deductible.
+    """
+    product_id: str
+    product_name: str = ""      # denormalised for display; product_id is source of truth
+    limit_kg: float = 0.0
+
+
+
 class Supplier(BaseModel):
     """Supplier / hired-vehicle owner master. Company-scoped."""
     id: str = Field(default_factory=lambda: new_id("sup_"))
@@ -595,7 +608,12 @@ class Supplier(BaseModel):
     # Iter89 · Phase 1 — Supplier-specific fixed-KG shortage threshold.
     # Rule: shortage ≤ limit → 0 deduction. shortage > limit → FULL actual shortage.
     # (Deliberately different from Customer shortage config.)
+    # Iter90 — Product-wise limits. `product_shortage_limits` is the source of
+    # truth; `shortage_limit_kg` is retained as a legacy default fallback for
+    # any product NOT listed in `product_shortage_limits`. Existing trips keep
+    # their frozen `applied_supplier_shortage_limit_kg` snapshot (no impact).
     shortage_limit_kg: float = 0.0
+    product_shortage_limits: List[SupplierProductShortageLimit] = Field(default_factory=list)
     # Audit
     created_by: str = ""
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())

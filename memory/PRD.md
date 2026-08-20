@@ -22,6 +22,23 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter90 · Product-wise Supplier Shortage KG limits** (Feb 2026)
+  - **User need**: One supplier can supply multiple products (Bitumen 100 kg, Emulsion 100 kg, CRMB 150 kg, PMB 150 kg…) each with its own exemption threshold. The flat single `shortage_limit_kg` from Iter89 could not express this.
+  - **Model changes**:
+    - New sub-model `SupplierProductShortageLimit { product_id, product_name, limit_kg }`
+    - New field `Supplier.product_shortage_limits: List[SupplierProductShortageLimit]` (source of truth)
+    - Legacy `Supplier.shortage_limit_kg` retained as fallback for products NOT in the list (0 = no exemption)
+  - **Trip snapshot** (`routers/trips.py`): on trip create, look up the row matching `trip.product_id` in `supplier.product_shortage_limits`. If found → freeze its `limit_kg` into `trip.applied_supplier_shortage_limit_kg`. Else → fallback to legacy `supplier.shortage_limit_kg`. **Existing trips never mutate** (historical protection unchanged).
+  - **Frontend** (`pages/Suppliers.jsx`): replaced single "Supplier Shortage Limit (KG)" field with a repeater table — **+ Add Product** button, per-row `Product dropdown` + `Limit (KG)`, remove `×`. Legacy field renamed to "Default Limit for Unlisted Products (KG)". Products list fetched via `/api/products`.
+  - **Also fixed in this iter**: Customer & Product modals now scroll properly (`max-h-[90vh] flex flex-col` + `overflow-y-auto flex-1`) — Save button reachable on small screens without zoom.
+  - **Regression Guard**: `test_iter90_product_wise_supplier_shortage.py` (1 test, 3 assertions):
+    1. Trip with Bitumen product → `applied_supplier_shortage_limit_kg = 100` ✓
+    2. Trip with CRMB product → `applied_supplier_shortage_limit_kg = 150` ✓
+    3. Trip with unlisted product → `applied_supplier_shortage_limit_kg = 50` (legacy fallback) ✓
+    4. Historical protection: bumping supplier's Bitumen limit to 999 does NOT change the existing trip snapshot ✓
+  - **All Iter89 tests still pass** (7/7).
+
+
 - [x] **Iter89 · Phase 1 — Policy Snapshot Layer (Customer freight method + Product/Customer/Supplier shortage)** (Feb 2026)
   - **Scope**: Master-data additions + Trip-level policy snapshot so future master edits NEVER touch history. Foundation for the 5-phase Customer/Supplier commercial-terms redesign (spec §1-22).
   - **Model additions**:

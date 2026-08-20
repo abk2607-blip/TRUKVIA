@@ -196,9 +196,11 @@ const EMPTY_SUP = {
   bank_name: "", account_number: "", ifsc: "", branch: "",
   payment_terms: "", opening_balance: 0, opening_balance_type: "payable",
   remarks: "", is_active: true,
-  // Iter89 Phase 1.5 — fixed-KG threshold (separate from Customer shortage config)
+  // Iter89 Phase 1.5 — legacy flat fallback (kept for products not listed below)
   shortage_limit_kg: 0,
-};
+  // Iter90 — per-product KG limits (source of truth for supplier shortage exemption)
+  product_shortage_limits: [],
+};;
 
 function SupplierForm() {
   const { sid } = useParams();
@@ -209,11 +211,27 @@ function SupplierForm() {
     queryKey: ["supplier", sid], enabled: !!sid,
     queryFn: async () => (await api.get(`/suppliers/${sid}`)).data,
   });
+  // Iter90 — Products list for per-product shortage limit rows
+  const { data: products = [] } = useQuery({
+    queryKey: ["products"],
+    queryFn: async () => (await api.get("/products")).data,
+  });
   React.useEffect(() => { if (data) setForm({ ...EMPTY_SUP, ...data }); }, [data]);
 
   const save = useMutation({
     mutationFn: async () => {
-      const payload = { ...form, opening_balance: Number(form.opening_balance || 0), shortage_limit_kg: Number(form.shortage_limit_kg || 0) };
+      const payload = {
+        ...form,
+        opening_balance: Number(form.opening_balance || 0),
+        shortage_limit_kg: Number(form.shortage_limit_kg || 0),
+        product_shortage_limits: (form.product_shortage_limits || [])
+          .filter((r) => r && r.product_id)
+          .map((r) => ({
+            product_id: r.product_id,
+            product_name: r.product_name || "",
+            limit_kg: Number(r.limit_kg || 0),
+          })),
+      };
       if (sid) return (await api.put(`/suppliers/${sid}`, payload)).data;
       return (await api.post("/suppliers", payload)).data;
     },
@@ -300,20 +318,95 @@ function SupplierForm() {
       </div>
 
       <div className="border border-zinc-200 bg-white rounded-sm p-4">
-        <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 mb-3">Supplier Shortage Rule (fixed KG)</div>
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          <div>
-            <label className={labelCls}>Supplier Shortage Limit (KG)</label>
-            <input
-              data-testid="sup-field-shortage_limit_kg"
-              type="number" step="0.01" min="0"
-              value={form.shortage_limit_kg ?? 0}
-              onChange={(e) => setForm({ ...form, shortage_limit_kg: e.target.value })}
-              className={inputCls}
-              placeholder="e.g. 100"
-            />
-            <div className="text-[10px] text-zinc-500 mt-1">Rule: shortage ≤ limit → no deduction. Shortage &gt; limit → FULL actual shortage is deductible. Separate from Customer shortage.</div>
+        <div className="flex items-center justify-between mb-3">
+          <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-500">Supplier Shortage Rule — Product-wise (fixed KG)</div>
+          <button
+            type="button"
+            data-testid="sup-add-product-shortage-row"
+            onClick={() => setForm({
+              ...form,
+              product_shortage_limits: [...(form.product_shortage_limits || []), { product_id: "", product_name: "", limit_kg: 0 }],
+            })}
+            className="px-3 py-1 text-[10px] uppercase tracking-wider font-bold border border-zinc-300 rounded-sm hover:bg-zinc-100"
+          >
+            + Add Product
+          </button>
+        </div>
+        <div className="text-[10px] text-zinc-500 mb-3">
+          Rule: shortage ≤ limit → no deduction. Shortage &gt; limit → FULL actual shortage is deductible.
+          Historical protection: existing Trips keep their frozen snapshot.
+        </div>
+
+        {(form.product_shortage_limits || []).length === 0 && (
+          <div className="text-xs text-zinc-500 italic py-2" data-testid="sup-product-shortage-empty">
+            No product-wise limits yet. Click "+ Add Product" to define per-product exemption (e.g. Bitumen 100 kg, Emulsion 100 kg, CRMB 150 kg, PMB 150 kg).
           </div>
+        )}
+
+        {(form.product_shortage_limits || []).map((row, idx) => (
+          <div key={idx} className="grid grid-cols-12 gap-3 mb-2 items-end" data-testid={`sup-product-shortage-row-${idx}`}>
+            <div className="col-span-7">
+              {idx === 0 && <label className={labelCls}>Product</label>}
+              <select
+                data-testid={`sup-product-shortage-product-${idx}`}
+                value={row.product_id || ""}
+                onChange={(e) => {
+                  const p = products.find((x) => x.id === e.target.value);
+                  const next = [...form.product_shortage_limits];
+                  next[idx] = { ...next[idx], product_id: e.target.value, product_name: p?.name || "" };
+                  setForm({ ...form, product_shortage_limits: next });
+                }}
+                className={inputCls}
+              >
+                <option value="">— Select Product —</option>
+                {products.map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+            </div>
+            <div className="col-span-4">
+              {idx === 0 && <label className={labelCls}>Limit (KG)</label>}
+              <input
+                data-testid={`sup-product-shortage-limit-${idx}`}
+                type="number" step="0.01" min="0"
+                value={row.limit_kg ?? 0}
+                onChange={(e) => {
+                  const next = [...form.product_shortage_limits];
+                  next[idx] = { ...next[idx], limit_kg: e.target.value };
+                  setForm({ ...form, product_shortage_limits: next });
+                }}
+                className={inputCls}
+                placeholder="e.g. 100"
+              />
+            </div>
+            <div className="col-span-1">
+              <button
+                type="button"
+                data-testid={`sup-product-shortage-remove-${idx}`}
+                onClick={() => {
+                  const next = form.product_shortage_limits.filter((_, i) => i !== idx);
+                  setForm({ ...form, product_shortage_limits: next });
+                }}
+                className="w-full py-2 border border-zinc-300 rounded-sm text-red-600 hover:bg-red-50 text-sm"
+                title="Remove"
+              >
+                ×
+              </button>
+            </div>
+          </div>
+        ))}
+
+        <div className="mt-4 pt-3 border-t border-zinc-200">
+          <label className={labelCls}>Default Limit for Unlisted Products (KG)</label>
+          <input
+            data-testid="sup-field-shortage_limit_kg"
+            type="number" step="0.01" min="0"
+            value={form.shortage_limit_kg ?? 0}
+            onChange={(e) => setForm({ ...form, shortage_limit_kg: e.target.value })}
+            className={`${inputCls} max-w-xs`}
+            placeholder="0 (no exemption)"
+          />
+          <div className="text-[10px] text-zinc-500 mt-1">Applied only to trips whose product is NOT listed above. Leave 0 to enforce no exemption for unlisted products.</div>
         </div>
       </div>
 

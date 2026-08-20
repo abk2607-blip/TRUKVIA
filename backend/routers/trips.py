@@ -401,9 +401,22 @@ async def create_trip(payload: Trip, request: Request, user=Depends(get_current_
             if doc.get("vehicle_type") == "supplier" and doc.get("supplier_id"):
                 sup = await db.suppliers.find_one(
                     {"id": doc["supplier_id"], "user_id": user["user_id"], "company_id": cid},
-                    {"_id": 0, "shortage_limit_kg": 1},
+                    {"_id": 0, "shortage_limit_kg": 1, "product_shortage_limits": 1},
                 ) or {}
-                doc["applied_supplier_shortage_limit_kg"] = float(sup.get("shortage_limit_kg", 0) or 0)
+                # Iter90 — Prefer per-product KG limit; fall back to legacy flat
+                # `shortage_limit_kg` when the trip's product isn't listed.
+                psl_kg = None
+                pid = doc.get("product_id")
+                for row in (sup.get("product_shortage_limits") or []):
+                    if row.get("product_id") == pid:
+                        try:
+                            psl_kg = float(row.get("limit_kg", 0) or 0)
+                        except (TypeError, ValueError):
+                            psl_kg = 0.0
+                        break
+                if psl_kg is None:
+                    psl_kg = float(sup.get("shortage_limit_kg", 0) or 0)
+                doc["applied_supplier_shortage_limit_kg"] = psl_kg
             doc["policy_snapshot_at"] = snap_now
         except Exception as _e:
             import logging; logging.getLogger(__name__).warning(f"policy snapshot failed: {_e}")
