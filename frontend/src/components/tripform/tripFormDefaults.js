@@ -66,6 +66,11 @@ export const EMPTY = {
   halting_rate_per_day: 0,
   halting_amount: 0,
   halting_amount_override: false,
+  // Iter92 — Supplier Halting (independent from customer halting; manual)
+  supplier_halting_days: 0,
+  supplier_halting_rate_per_day: 0,
+  supplier_halting_amount: 0,
+  supplier_halting_remarks: "",
   expenses: {
     diesel: 0, toll: 0, batta: 0, repair: 0, other: 0,
     firewood: 0, other_desc: "",

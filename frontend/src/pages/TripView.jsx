@@ -233,6 +233,7 @@ export default function TripView() {
               </>
             )}
             <Row k="Supplier Freight" v={fmtCurrency(supFreight)} mono strong />
+            <Row k="Add: Supplier Halting" v={fmtCurrency(trip.supplier_halting_amount)} mono />
             <Row k="Less: Advance Paid" v={fmtCurrency(supAdvance)} mono />
             <Row k="Less: Diesel Funded" v={fmtCurrency(trip.supplier_diesel)} mono />
             <Row k="Less: Shortage Deduction" v={fmtCurrency(trip.supplier_shortage_deduction)} mono />
@@ -249,7 +250,7 @@ export default function TripView() {
             <div className="border border-rose-200 bg-rose-50 p-3 rounded-sm">
               <div className="text-[10px] uppercase tracking-wider text-zinc-600 font-bold">Net Amount Payable to Supplier</div>
               <div className="font-mono text-2xl font-bold text-rose-800">{fmtCurrency(netPayable)}</div>
-              <div className="text-[10px] text-zinc-500 mt-1">Freight − Advance − Diesel − Shortage − Recoveries + Income</div>
+              <div className="text-[10px] text-zinc-500 mt-1">Freight + Halting − Advance − Diesel − Shortage − Recoveries + Income</div>
             </div>
             <div className={`border p-3 rounded-sm ${supplierProfit >= 0 ? "border-emerald-300 bg-emerald-50" : "border-rose-300 bg-rose-50"}`}>
               <div className="text-[10px] uppercase tracking-wider text-zinc-600 font-bold">Trip Profit</div>

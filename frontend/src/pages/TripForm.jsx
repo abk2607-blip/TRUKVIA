@@ -85,6 +85,11 @@ export default function TripForm() {
         supplier_quantity: Number(form.supplier_quantity || 0),
         supplier_advance: Number(form.supplier_advance || 0),
         supplier_diesel: Number(form.supplier_diesel || 0),
+        // Iter92 — Supplier Halting (independent, manual)
+        supplier_halting_days: Number(form.supplier_halting_days || 0),
+        supplier_halting_rate_per_day: Number(form.supplier_halting_rate_per_day || 0),
+        supplier_halting_amount: Number(form.supplier_halting_amount || 0),
+        supplier_halting_remarks: form.supplier_halting_remarks || "",
         // Iter91 — Multi-row Diesel / Advance transaction logs. Server totals
         // are recomputed from these entries; the flat fields above are only
         // fallbacks when the entries list is empty.
@@ -187,6 +192,7 @@ export default function TripForm() {
     : Number(form.supplier_advance || 0);
   const supplierNetPayable =
     supplierFreightLive
+    + Number(form.supplier_halting_amount || 0)   // Iter92 — Supplier Halting adds to payable
     - supplierAdvanceLive
     - supplierDieselLive
     - Number(form.supplier_shortage_deduction || 0)

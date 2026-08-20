@@ -323,6 +323,26 @@ async def _build_ledger(uid: str, cid: str, sid: str, start: Optional[str], end:
                 "trip_id": t.get("id"), "ref_no": "",
                 "remarks": "", "debit": round(sf, 2), "credit": 0.0,
             })
+        # Iter92 — Supplier Halting (INDEPENDENT of customer halting_amount) —
+        # DEBIT to supplier when manually entered. Never auto-copied from
+        # customer halting; office user enters it as an independent commercial
+        # decision.
+        sup_halt = _num(t.get("supplier_halting_amount"))
+        if sup_halt > 0:
+            days = _num(t.get("supplier_halting_days"))
+            rate = _num(t.get("supplier_halting_rate_per_day"))
+            desc = f"Supplier Halting — {cust or 'Trip'}"
+            if days > 0 and rate > 0:
+                desc += f" · {days:g}d @ ₹{rate:g}"
+            entries.append({
+                "date": d, "type": "trip_halting",
+                "particulars": desc,
+                "lr_number": lr, "vehicle_number": veh,
+                "trip_id": t.get("id"), "ref_no": "",
+                "remarks": t.get("supplier_halting_remarks") or "",
+                "debit": round(sup_halt, 2), "credit": 0.0,
+            })
+
         # Halting on trip — DEBIT (extra owed to supplier if we pass it through)
         # Note: halting is billed to customer AND paid to supplier per business rule.
         # We include it in supplier ledger for transparency (owed to supplier).
@@ -570,6 +590,7 @@ async def suppliers_dashboard(request: Request, user=Depends(get_current_user)):
             "supplier_advance_entries": 1, "supplier_diesel_entries": 1,
             "supplier_shortage_deduction": 1, "supplier_other_recoveries": 1,
             "supplier_other_income": 1, "customer_receipts": 1,
+            "supplier_halting_amount": 1,  # Iter92
         },
     ).to_list(200000)
 
@@ -602,13 +623,14 @@ async def suppliers_dashboard(request: Request, user=Depends(get_current_user)):
         shr = _num(t.get("supplier_shortage_deduction"))
         rec = _num(t.get("supplier_other_recoveries"))
         inc = _num(t.get("supplier_other_income"))
+        halt = _num(t.get("supplier_halting_amount"))  # Iter92
         cust_dsl = sum(
             _num(r.get("amount")) for r in (t.get("customer_receipts") or [])
             if (r.get("type") or "").lower() == "diesel"
         )
         slot["freight"] += sf
         slot["advances"] += adv
-        slot["debit"] += sf + inc
+        slot["debit"] += sf + inc + halt
         slot["credit"] += adv + dsl + cust_dsl + shr + rec
 
     for p in pay_docs:

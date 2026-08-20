@@ -147,10 +147,11 @@ def _compute_trip(t: Trip) -> Trip:
         if not t.supplier_shortage_deduction_override:
             t.supplier_shortage_deduction = round(float(t.shortage_amount or 0), 2)
 
-        # Net payable = freight − advance − diesel(supplier-side) − customer_diesel(recovered against supplier trip)
+        # Net payable = freight + supplier_halting − advance − diesel(supplier-side) − customer_diesel(recovered against supplier trip)
         #              − shortage − other_recoveries + other_income
         t.supplier_net_payable = round(
             t.supplier_freight
+            + (t.supplier_halting_amount or 0)  # Iter92 — Supplier Halting adds to payable
             - t.supplier_advance
             - t.supplier_diesel
             - t.customer_diesel_received      # Iter39: customer diesel against supplier trip is a supplier recovery

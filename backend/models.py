@@ -293,6 +293,14 @@ class Trip(BaseModel):
     supplier_quantity: float = 0.0
     supplier_advance: float = 0.0
     supplier_diesel: float = 0.0                     # Diesel funded by us to supplier — deducted from payable
+    # Iter92 — Supplier Halting Charges (independent from Customer Halting).
+    # Manual only: NEVER auto-copied from customer halting_amount. Increases
+    # supplier_net_payable when > 0. Original/revised values captured by the
+    # standard trip audit-log diff (see routers.trips._log_audit).
+    supplier_halting_days: float = 0.0
+    supplier_halting_rate_per_day: float = 0.0
+    supplier_halting_amount: float = 0.0             # user-entered; not auto-computed
+    supplier_halting_remarks: str = ""
     # Iter91 — Multi-row diesel / advance transaction logs. When these lists
     # contain any non-deleted rows, `supplier_diesel` / `supplier_advance` are
     # OVERRIDDEN by the sum of their `amount` fields (see services._compute_trip).

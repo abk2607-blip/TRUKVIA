@@ -196,6 +196,54 @@ export default function SupplierSection({
         </Field>
       </div>
 
+      {/* Iter92 — Supplier Halting (independent of customer halting; manual only) */}
+      <div className="mt-5 border border-zinc-200 bg-zinc-50 rounded-sm p-3" data-testid="sup-halting-block">
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-[11px] uppercase tracking-wider font-bold text-zinc-700">
+            Supplier Halting Charges <span className="ml-1 text-[10px] font-normal text-zinc-500 normal-case">(independent from Customer Halting; manual only)</span>
+          </div>
+        </div>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
+          <Field label="Halting Days">
+            <input data-testid="sup-halting-days" type="number" step="0.5" min="0"
+              value={form.supplier_halting_days || ""}
+              onChange={(e) => {
+                const days = e.target.value;
+                const rate = Number(form.supplier_halting_rate_per_day || 0);
+                const nextAmt = (Number(days || 0) > 0 && rate > 0) ? Number(days) * rate : form.supplier_halting_amount;
+                setForm({ ...form, supplier_halting_days: days, supplier_halting_amount: nextAmt });
+              }}
+              className={inputCls} placeholder="e.g. 2" />
+          </Field>
+          <Field label="Rate / Day (₹)">
+            <input data-testid="sup-halting-rate" type="number" step="0.01" min="0"
+              value={form.supplier_halting_rate_per_day || ""}
+              onChange={(e) => {
+                const rate = e.target.value;
+                const days = Number(form.supplier_halting_days || 0);
+                const nextAmt = (days > 0 && Number(rate || 0) > 0) ? days * Number(rate) : form.supplier_halting_amount;
+                setForm({ ...form, supplier_halting_rate_per_day: rate, supplier_halting_amount: nextAmt });
+              }}
+              className={inputCls} placeholder="e.g. 1500" />
+          </Field>
+          <Field label="Halting Amount (₹)">
+            <input data-testid="sup-halting-amount" type="number" step="0.01" min="0"
+              value={form.supplier_halting_amount || ""}
+              onChange={(e) => setForm({ ...form, supplier_halting_amount: e.target.value })}
+              className={`${inputCls} font-bold`} placeholder="Auto = Days × Rate (editable)" />
+          </Field>
+          <Field label="Remarks">
+            <input data-testid="sup-halting-remarks"
+              value={form.supplier_halting_remarks || ""}
+              onChange={(e) => setForm({ ...form, supplier_halting_remarks: e.target.value })}
+              className={inputCls} placeholder="Detention reason (optional)" />
+          </Field>
+        </div>
+        <div className="text-[10px] text-zinc-500 mt-2">
+          Leave blank / 0 if the supplier is NOT receiving halting. Values here are <b>never auto-copied</b> from customer halting charges.
+        </div>
+      </div>
+
       {/* Iter91 — Multi-row Diesel + Advance entries */}
       <div className="mt-5 space-y-4">
         <SupplierEntriesTable

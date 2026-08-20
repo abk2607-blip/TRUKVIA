@@ -22,6 +22,18 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter92 · Supplier Halting Charges (independent, manual)** (Feb 2026)
+  - **User need**: Supplier Halting must be completely independent from Customer Halting — never auto-copied. Office user manually enters days / rate / amount / remarks when the supplier is to receive detention charges.
+  - **Model** (`Trip`): new fields `supplier_halting_days`, `supplier_halting_rate_per_day`, `supplier_halting_amount`, `supplier_halting_remarks`. Default 0 / blank.
+  - **Compute** (`services._compute_trip`): `supplier_net_payable = supplier_freight + supplier_halting_amount − advance − diesel − customer_diesel − shortage − recoveries + income`. Customer `halting_amount` is never read here.
+  - **Ledger** (`_build_ledger`): new `trip_halting` DEBIT row when `supplier_halting_amount > 0`, carrying "Supplier Halting — <Customer> · <days>d @ ₹<rate>" and remarks.
+  - **Settlement summary**: `supplier_halting_amount` rolls into the debit side alongside freight and bonus.
+  - **Frontend**: new Halting block inside `SupplierSection` (Days · Rate · Amount · Remarks) with auto-compute when both days & rate > 0, all fields editable, "🔒 independent from Customer Halting" hint. `TripForm` payload sends the new fields; live compute adds them to Net Payable. `TripView` shows "Add: Supplier Halting" row above deductions.
+  - **Audit trail**: existing `PUT /trips` diff-based audit captures Original → Revised for all 4 fields including reason (via the existing modification remarks / trip audit logs).
+  - **Regression Guard**: `test_iter92_supplier_halting.py` — customer halting stays untouched when supplier halting is set; changing customer halting rate leaves supplier halting alone; ledger emits exactly one `trip_halting` DEBIT row; clearing supplier halting removes the row and restores original payable.
+  - All Iter45/47/89/90/91 tests still pass together (37 tests in 25s).
+
+
 - [x] **Iter91 · Supplier Diesel / Advance multi-row transaction logs + Trip Auto-Fetch** (Feb 2026)
   - **User need**: A supplier can receive fuel or cash multiple times per trip (different dates, modes, references). One flat amount can't express this. Also, Supplier section should NOT duplicate Trip Details (From/To/Material/Qty) — Trip Details are the single source of truth.
   - **Model additions**:
