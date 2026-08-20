@@ -869,7 +869,7 @@ async def supplier_statement_pdf(
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=landscape(A4),
-        leftMargin=12 * mm, rightMargin=12 * mm,
+        leftMargin=10 * mm, rightMargin=10 * mm,  # Iter94 — tightened for wider trip-wise table
         topMargin=42 * mm,    # room for the header band drawn by the callback
         bottomMargin=14 * mm, # room for the footer band
         title=f"Supplier Settlement Statement — {supplier_name}",
@@ -937,15 +937,16 @@ async def supplier_statement_pdf(
          _cell_lbl("Freight (Trips)"),          _cell_amt(_rupee(tot['supplier_freight'])),
          _cell_lbl("Advance"),                  _cell_amt(_rupee(tot['supplier_advance']))],
         ["", "",
-         _cell_lbl("Bonus / Other Income"),     _cell_amt(_rupee(tot['supplier_income'])),
+         _cell_lbl("Halting"),                  _cell_amt(_rupee(tot['halting'])),
          _cell_lbl("Diesel Funded by Us"),      _cell_amt(_rupee(tot['supplier_diesel']))],
         ["", "",
-         _cell_lbl("Receipts from Supplier"),   _cell_amt(_rupee(deep['payments_in_total'])),
-         _cell_lbl("Cust. Diesel Adjustment"),  _cell_amt(_rupee(tot['customer_diesel']))],
-        ["", "", "", "",
+         _cell_lbl("Bonus / Other Income"),     _cell_amt(_rupee(tot['supplier_income'])),
          _cell_lbl("Shortage Deducted"),        _cell_amt(_rupee(tot['supplier_shortage']))],
-        ["", "", "", "",
-         _cell_lbl("Other Recoveries"),         _cell_amt(_rupee(tot['supplier_recovery']))],
+        ["", "",
+         _cell_lbl("Receipts from Supplier"),   _cell_amt(_rupee(deep['payments_in_total'])),
+         # Iter94 — Customer Diesel that reduces supplier payable is shown here
+         # as a supplier-side recovery, not as separate customer info.
+         _cell_lbl("Other Recoveries"),         _cell_amt(_rupee(tot['supplier_recovery'] + tot['customer_diesel']))],
         ["", "", "", "",
          _cell_lbl("Payments Made (Bank/Cash)"), _cell_amt(_rupee(deep['payments_out_total']))],
         [Paragraph("<b><font color='#78350f'>CLOSING BALANCE</font></b>", body_st),
@@ -994,28 +995,24 @@ async def supplier_statement_pdf(
         return Paragraph(
             f"<font size='6.5' color='#64748b'>{label.upper()}</font><br/>"
             f"<font size='9' color='#0f172a'><b>{value}</b></font>", body_st)
+    # Iter94 — Removed Customer Freight / Cust. Diesel Adj / Trip Profit KPIs
+    # (customer-side financials do NOT belong in a Supplier Statement). Twelve
+    # supplier-only KPIs remain in a clean 6-col × 2-row grid.
     kpi_rows = [[
         _kpi("Trips", f"{tot['trips']}"),
         _kpi("Distance (KM)", f"{tot['distance']:,.2f}"),
         _kpi("Loading (MT)", f"{tot['load_tons']:,.3f}"),
         _kpi("Unloading (MT)", f"{tot['unload_tons']:,.3f}"),
-        _kpi("Customer Freight", _rupee(tot['customer_freight'])),
         _kpi("Supplier Freight", _rupee(tot['supplier_freight'])),
+        _kpi("Halting", _rupee(tot['halting'])),
     ], [
         _kpi("Advance", _rupee(tot['supplier_advance'])),
         _kpi("Diesel Funded", _rupee(tot['supplier_diesel'])),
-        _kpi("Cust. Diesel Adj", _rupee(tot['customer_diesel'])),
         _kpi("Shortage Ded", _rupee(tot['supplier_shortage'])),
-        _kpi("Other Recoveries", _rupee(tot['supplier_recovery'])),
+        _kpi("Other Recoveries", _rupee(tot['supplier_recovery'] + tot['customer_diesel'])),
         _kpi("Bonus / Income", _rupee(tot['supplier_income'])),
-    ], [
-        _kpi("Halting", _rupee(tot['halting'])),
         Paragraph(f"<font size='6.5' color='#64748b'>NET PAYABLE</font><br/>"
                   f"<font size='11' color='#b91c1c'><b>{_rupee(tot['net_payable'])}</b></font>", body_st),
-        Paragraph(f"<font size='6.5' color='#64748b'>TRIP PROFIT</font><br/>"
-                  f"<font size='11' color='#166534'><b>{_rupee(tot['profit'])}</b>"
-                  f" <font size='7' color='#64748b'>({tot['margin_pct']}%)</font></font>", body_st),
-        "", "", "",
     ]]
     ks = Table(kpi_rows, hAlign="LEFT", colWidths=[45 * mm] * 6)
     ks.setStyle(TableStyle([
@@ -1023,8 +1020,7 @@ async def supplier_statement_pdf(
         ("BOX",      (0, 0), (-1, -1), 0.5, PALETTE["line"]),
         ("INNERGRID", (0, 0), (-1, -1), 0.3, PALETTE["line_soft"]),
         ("BACKGROUND", (0, 0), (-1, -1), colors.white),
-        ("BACKGROUND", (1, 2), (2, 2), PALETTE["band"]),
-        ("SPAN", (2, 2), (5, 2)),  # collapse trailing empty cells so Trip Profit sits alone
+        ("BACKGROUND", (5, 1), (5, 1), PALETTE["band"]),
         ("TOPPADDING",    (0, 0), (-1, -1), 6),
         ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
         ("LEFTPADDING",   (0, 0), (-1, -1), 8),
@@ -1076,6 +1072,9 @@ async def supplier_statement_pdf(
 
     # ── Trip-wise Settlement — the redesigned wide table ─────────────
     story.append(Paragraph("Trip-wise Settlement", section_st))
+    # Iter94 — Trip-wise table: dropped "Cust.Dsl" column. Customer diesel
+    # adjustment that reduces supplier payable is folded into Ded/Rec, so the
+    # statement never displays customer-side revenue or profit.
     tw_head = [
         Paragraph("Date", tw_head_st),
         Paragraph("LR / Vehicle", tw_head_st),
@@ -1090,7 +1089,6 @@ async def supplier_statement_pdf(
         Paragraph("Sup.Freight", tw_head_r_st),
         Paragraph("Advance", tw_head_r_st),
         Paragraph("Diesel", tw_head_r_st),
-        Paragraph("Cust.Dsl", tw_head_r_st),
         Paragraph("Ded/Rec", tw_head_r_st),
         Paragraph("Halting", tw_head_r_st),
         Paragraph("Net Payable", tw_head_r_st),
@@ -1154,30 +1152,28 @@ async def supplier_statement_pdf(
         Paragraph(f"<b>{_rupee0(tot['supplier_freight'])}</b>", tw_cell_r),
         Paragraph(f"<b>{_rupee0(tot['supplier_advance'])}</b>", tw_cell_r),
         Paragraph(f"<b>{_rupee0(tot['supplier_diesel'])}</b>", tw_cell_r),
-        Paragraph(f"<b>{_rupee0(tot['customer_diesel'])}</b>", tw_cell_r),
-        Paragraph(f"<b>{_rupee0(tot['supplier_shortage']+tot['supplier_recovery'])}</b>", tw_cell_r),
+        Paragraph(f"<b>{_rupee0(tot['supplier_shortage']+tot['supplier_recovery']+tot['customer_diesel'])}</b>", tw_cell_r),
         Paragraph(f"<b>{_rupee0(tot['halting'])}</b>", tw_cell_r),
         Paragraph(f"<b>{_rupee0(tot['net_payable'])}</b>", tw_cell_r),
     ])
-    # Landscape A4 usable width ≈ 273 mm (297 − 2×12mm margins). Sum must fit.
+    # Landscape A4 usable width ≈ 277 mm (297 − 2×10mm margins). 16 columns.
     col_widths_mm = [
-        15,   # Date
+        14,   # Date
         20,   # LR / Vehicle
-        24,   # Customer
-        25,   # Route
-        13,   # Product
+        26,   # Customer
+        28,   # Route
+        14,   # Product
         12,   # Load
-        13,   # Unload
+        12,   # Unload
         13,   # Shr/Exc
         10,   # KM
-        15,   # Sup.Rate   ← +2 so header stays on one line
-        18,   # Sup.Freight
-        16,   # Advance
-        14,   # Diesel
-        13,   # Cust.Dsl
-        13,   # Ded/Rec
-        12,   # Halting    ← +1 so "Halting" stays on one line
-        19,   # Net Payable  ← total = 265 mm (fits within 273mm)
+        15,   # Sup.Rate
+        20,   # Sup.Freight
+        18,   # Advance
+        15,   # Diesel
+        15,   # Ded/Rec
+        12,   # Halting
+        20,   # Net Payable   ← total = 262 mm (comfortable margin inside 277mm)
     ]
     tt = Table(tw_rows, hAlign="LEFT", repeatRows=1,
                colWidths=[w * mm for w in col_widths_mm])
@@ -1206,9 +1202,9 @@ async def supplier_statement_pdf(
         ("BOTTOMPADDING", (0, -1), (-1, -1), 5),
         ("LINEABOVE",  (0, -1), (-1, -1), 1.0, PALETTE["accent"]),
     ]
-    # Remarks-row styling (spans across the data cols)
+    # Remarks-row styling (spans across the data cols; 16 columns total)
     for r_idx in remarks_row_indexes:
-        tw_style.append(("SPAN", (2, r_idx), (16, r_idx)))
+        tw_style.append(("SPAN", (2, r_idx), (15, r_idx)))
         tw_style.append(("BACKGROUND", (0, r_idx), (-1, r_idx), colors.HexColor("#fff7ed")))
     tt.setStyle(TableStyle(tw_style))
     story.append(tt)
@@ -1216,9 +1212,10 @@ async def supplier_statement_pdf(
     story.append(Spacer(1, 8))
     story.append(Paragraph(
         "<font size='7' color='#64748b'>"
-        "Formula &nbsp;·&nbsp; <b>Net Payable</b> = Supplier Freight + Halting + Bonus "
-        "− Advance − Diesel Funded − Cust. Diesel Adj − Shortage Ded − Other Recoveries. "
-        "All figures are exclusive of GST unless a separate line specifies otherwise."
+        "Formula &nbsp;·&nbsp; <b>Net Payable</b> = Supplier Freight + Halting + Bonus/Income "
+        "− Advance − Diesel Funded − Shortage Ded − Other Recoveries. "
+        "This statement reflects only the Company↔Supplier relationship — "
+        "customer-side freight, revenue and trip profit are excluded by design."
         "</font>",
         body_st,
     ))

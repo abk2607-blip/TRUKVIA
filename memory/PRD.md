@@ -22,7 +22,19 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter94 · Supplier Statement — Strip Customer-Side Financials** (Feb 2026)
+  - **User rule**: The Supplier Statement must answer only "how much is finally payable to the supplier?" — it must NOT surface customer freight, customer revenue, trip profit, or customer diesel as customer-side figures.
+  - **Removed from the PDF**: `Customer Freight` KPI, `Cust. Diesel Adj` KPI, `Trip Profit` KPI (+ margin %), Trip-wise `Cust.Dsl` column, Movements-block `Cust. Diesel Adjustment` line.
+  - **Kept business logic unchanged**: customer diesel that reduces supplier payable is folded into the supplier-side `Other Recoveries` line in the Movements block, the `Other Recoveries` KPI, and the `Ded/Rec` column in the trip-wise table.
+  - **Trip Summary KPI grid**: clean 6-col × 2-row grid of 12 supplier-only metrics with Net Payable in the last cell in red.
+  - **Trip-wise table**: 16 columns (was 17). Tightened doc margins to 10mm and column widths so nothing wraps mid-value and Net Payable never cuts off.
+  - **Formula footer** reworded to state "customer-side freight, revenue and trip profit are excluded by design".
+  - **Regression Guard**: iter41 / iter44 / iter47 / iter89 / iter90 / iter91 / iter92 pass together (21 tests in 26s). `test_iter44` headers list updated to drop `Cust.Dsl`.
+
+
 - [x] **Iter93 · Supplier Settlement Statement PDF — Modern Redesign** (Feb 2026)
+
+
   - **User need**: Trip-wise table was too compressed (Customer/Route wrapping mid-word, ₹ amounts breaking across lines), header hard-coded to name+GSTIN. Wanted an ERP-grade layout that pulls full company info from the master and keeps calculations untouched.
   - **Header (canvas callback, repeats on every page)**: Company logo (base64 from Company master, aspect-ratio preserved), company name in caps, tagline "Bitumen Transport Contractors", full address, Phone / Email, GSTIN + PAN. Right-side: "SUPPLIER SETTLEMENT STATEMENT" + period. Divider line. Never hard-coded.
   - **Supplier identity card**: 4-column band showing Supplier · Mobile · Period · Opening source (master vs previous-period carry-forward).

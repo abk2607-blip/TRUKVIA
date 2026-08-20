@@ -122,9 +122,9 @@ def test_supplier_statement_pdf_landscape_and_fields():
     # Iter93 — normalise whitespace so headers that render across a soft line
     # break (e.g. Sup.Rate) still satisfy substring assertions.
     flat = " ".join(text.split())
-    # All essential column headers
+    # All essential column headers (Iter94 — dropped Cust.Dsl)
     for h in ["Date", "LR", "Customer", "Route", "Product", "Load", "Unload",
-              "Sup.Rate", "Freight", "Adv", "Diesel", "Cust.Dsl", "Ded/Rec", "Halt", "Net Pay"]:
+              "Sup.Rate", "Freight", "Adv", "Diesel", "Ded/Rec", "Halt", "Net Pay"]:
         assert h in flat, f"Missing header {h}"
     # Iter93 — the ITER44 supplier token may not appear in text extraction
     # because pymupdf's default flow occasionally misses paragraph-styled
