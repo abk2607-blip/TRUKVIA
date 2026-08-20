@@ -196,6 +196,8 @@ const EMPTY_SUP = {
   bank_name: "", account_number: "", ifsc: "", branch: "",
   payment_terms: "", opening_balance: 0, opening_balance_type: "payable",
   remarks: "", is_active: true,
+  // Iter89 Phase 1.5 — fixed-KG threshold (separate from Customer shortage config)
+  shortage_limit_kg: 0,
 };
 
 function SupplierForm() {
@@ -211,7 +213,7 @@ function SupplierForm() {
 
   const save = useMutation({
     mutationFn: async () => {
-      const payload = { ...form, opening_balance: Number(form.opening_balance || 0) };
+      const payload = { ...form, opening_balance: Number(form.opening_balance || 0), shortage_limit_kg: Number(form.shortage_limit_kg || 0) };
       if (sid) return (await api.put(`/suppliers/${sid}`, payload)).data;
       return (await api.post("/suppliers", payload)).data;
     },
@@ -294,6 +296,24 @@ function SupplierForm() {
         <div className="mt-3">
           <label className={labelCls}>Remarks</label>
           <textarea data-testid="sup-field-remarks" value={form.remarks} onChange={(e) => setForm({ ...form, remarks: e.target.value })} className={inputCls} rows={2} />
+        </div>
+      </div>
+
+      <div className="border border-zinc-200 bg-white rounded-sm p-4">
+        <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 mb-3">Supplier Shortage Rule (fixed KG)</div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+          <div>
+            <label className={labelCls}>Supplier Shortage Limit (KG)</label>
+            <input
+              data-testid="sup-field-shortage_limit_kg"
+              type="number" step="0.01" min="0"
+              value={form.shortage_limit_kg ?? 0}
+              onChange={(e) => setForm({ ...form, shortage_limit_kg: e.target.value })}
+              className={inputCls}
+              placeholder="e.g. 100"
+            />
+            <div className="text-[10px] text-zinc-500 mt-1">Rule: shortage ≤ limit → no deduction. Shortage &gt; limit → FULL actual shortage is deductible. Separate from Customer shortage.</div>
+          </div>
         </div>
       </div>
 

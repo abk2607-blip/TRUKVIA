@@ -7,7 +7,13 @@ import { Plus, Pencil, Trash2, X, FileText, MapPin, Search, Loader2 } from "luci
 import { StateSelect } from "@/lib/states";
 import ShipSitesModal from "@/components/ShipSitesModal";
 
-const EMPTY = { name: "", address: "", phone: "", gstin: "", pan: "", state: "" };
+const EMPTY = {
+  name: "", address: "", phone: "", gstin: "", pan: "", state: "",
+  // Iter89 Phase 1.5 — Freight + Shortage master defaults
+  default_freight_method: "per_ton_loading",
+  shortage_config: { limit: 0, limit_type: "pct", method: "net_shortage",
+                     effective_from: "", active: true, remarks: "" },
+};
 const PAGE_SIZE = 50;
 
 export default function Customers() {
@@ -252,6 +258,97 @@ export default function Customers() {
                   onChange={(e) => setForm({ ...form, address: e.target.value })}
                   className="mt-1 w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none"
                 />
+              </div>
+
+              {/* Iter89 Phase 1.5 — Freight Configuration */}
+              <div className="border-t border-zinc-200 pt-3 mt-3">
+                <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 mb-2">Freight Configuration</div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Default Freight Calculation Method</label>
+                <select
+                  data-testid="customer-input-freight-method"
+                  value={form.default_freight_method || "per_ton_loading"}
+                  onChange={(e) => setForm({ ...form, default_freight_method: e.target.value })}
+                  className="mt-1 w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none bg-white"
+                >
+                  <option value="per_ton_loading">Loading Qty Basis</option>
+                  <option value="per_ton_unloading">Unloading Qty Basis</option>
+                  <option value="per_ton_higher_of">Higher of Loading / Unloading Qty</option>
+                  <option value="fixed">Fixed Freight</option>
+                </select>
+                <div className="text-[10px] text-zinc-500 mt-1">Default only. Editable at Trip level.</div>
+              </div>
+
+              {/* Iter89 Phase 1.5 — Shortage Configuration */}
+              <div className="border-t border-zinc-200 pt-3 mt-3">
+                <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 mb-2">Customer Shortage Rule</div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Shortage Limit</label>
+                    <input
+                      data-testid="customer-input-shortage-limit"
+                      type="number" step="0.01" min="0"
+                      value={form.shortage_config?.limit ?? 0}
+                      onChange={(e) => setForm({ ...form, shortage_config: { ...(form.shortage_config || {}), limit: Number(e.target.value) } })}
+                      className="mt-1 w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Limit Type</label>
+                    <select
+                      data-testid="customer-input-shortage-limit-type"
+                      value={form.shortage_config?.limit_type || "pct"}
+                      onChange={(e) => setForm({ ...form, shortage_config: { ...(form.shortage_config || {}), limit_type: e.target.value } })}
+                      className="mt-1 w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm bg-white outline-none focus:border-zinc-950"
+                    >
+                      <option value="pct">% of Loaded Qty</option>
+                      <option value="kg">Fixed KG</option>
+                    </select>
+                  </div>
+                  <div className="col-span-2">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Deduction Method</label>
+                    <select
+                      data-testid="customer-input-shortage-method"
+                      value={form.shortage_config?.method || "net_shortage"}
+                      onChange={(e) => setForm({ ...form, shortage_config: { ...(form.shortage_config || {}), method: e.target.value } })}
+                      className="mt-1 w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm bg-white outline-none focus:border-zinc-950"
+                    >
+                      <option value="net_shortage">Net Shortage (deduct excess above limit)</option>
+                      <option value="full_after_limit">Full Shortage After Limit Exceeded</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Effective From</label>
+                    <input
+                      data-testid="customer-input-shortage-effective-from"
+                      type="date"
+                      value={form.shortage_config?.effective_from || ""}
+                      onChange={(e) => setForm({ ...form, shortage_config: { ...(form.shortage_config || {}), effective_from: e.target.value } })}
+                      className="mt-1 w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm outline-none focus:border-zinc-950"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Status</label>
+                    <select
+                      data-testid="customer-input-shortage-active"
+                      value={form.shortage_config?.active === false ? "0" : "1"}
+                      onChange={(e) => setForm({ ...form, shortage_config: { ...(form.shortage_config || {}), active: e.target.value === "1" } })}
+                      className="mt-1 w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm bg-white outline-none focus:border-zinc-950"
+                    >
+                      <option value="1">Active</option>
+                      <option value="0">Inactive</option>
+                    </select>
+                  </div>
+                  <div className="col-span-2">
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Remarks</label>
+                    <input
+                      data-testid="customer-input-shortage-remarks"
+                      value={form.shortage_config?.remarks || ""}
+                      onChange={(e) => setForm({ ...form, shortage_config: { ...(form.shortage_config || {}), remarks: e.target.value } })}
+                      className="mt-1 w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm outline-none focus:border-zinc-950"
+                    />
+                  </div>
+                </div>
+                <div className="text-[10px] text-zinc-500 mt-2">Historical protection: existing Trips retain their original snapshot. This rule applies only to future Trips.</div>
               </div>
               <div className="flex gap-2 justify-end pt-2">
                 <button type="button" onClick={() => setOpen(false)} className="px-4 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm">Cancel</button>

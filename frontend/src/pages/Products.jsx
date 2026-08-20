@@ -4,7 +4,7 @@ import { api, fmtCurrency } from "@/api";
 import { toast } from "sonner";
 import { Plus, Pencil, Trash2, X, Package } from "lucide-react";
 
-const EMPTY = { name: "", hsn_sac: "996791", default_rate: 0, unit: "MT", notes: "" };
+const EMPTY = { name: "", hsn_sac: "996791", default_rate: 0, unit: "MT", notes: "", default_shortage_allowance_pct: 0 };
 
 export default function Products() {
   const qc = useQueryClient();
@@ -19,7 +19,7 @@ export default function Products() {
 
   const save = useMutation({
     mutationFn: async () => {
-      const payload = { ...form, default_rate: Number(form.default_rate) };
+      const payload = { ...form, default_rate: Number(form.default_rate), default_shortage_allowance_pct: Number(form.default_shortage_allowance_pct || 0) };
       return editing
         ? (await api.put(`/products/${editing.id}`, { ...editing, ...payload })).data
         : (await api.post("/products", payload)).data;
@@ -104,6 +104,7 @@ export default function Products() {
               <F label="HSN/SAC"><input data-testid="product-hsn" value={form.hsn_sac} onChange={(e) => setForm({ ...form, hsn_sac: e.target.value })} className={ic} /></F>
               <F label="Unit"><input data-testid="product-unit" value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} className={ic} /></F>
               <F label="Default Rate (per unit)"><input data-testid="product-rate" type="number" step="0.01" min="0" value={form.default_rate} onChange={(e) => setForm({ ...form, default_rate: e.target.value })} className={ic} /></F>
+              <F label="Default Shortage Allowance (%)"><input data-testid="product-shortage-pct" type="number" step="0.01" min="0" value={form.default_shortage_allowance_pct ?? 0} onChange={(e) => setForm({ ...form, default_shortage_allowance_pct: e.target.value })} className={ic} placeholder="e.g. 0.5 for Bitumen" /></F>
               <F label="Notes"><textarea rows={2} data-testid="product-notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={ic} /></F>
               <div className="flex justify-end gap-2 pt-2">
                 <button type="button" onClick={() => setOpen(false)} className="px-4 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm">Cancel</button>
