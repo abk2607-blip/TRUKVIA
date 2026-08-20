@@ -192,12 +192,12 @@ export default function Customers() {
 
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4" data-testid="customer-modal">
-          <div className="bg-white w-full max-w-lg border border-zinc-950 rounded-sm">
-            <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-200">
+          <div className="bg-white w-full max-w-lg border border-zinc-950 rounded-sm flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-200 shrink-0">
               <h3 className="font-bold">{editing ? "Edit Customer" : "New Customer"}</h3>
               <button onClick={() => setOpen(false)} data-testid="close-customer-modal"><X size={18} /></button>
             </div>
-            <form onSubmit={(e) => { e.preventDefault(); save.mutate(); }} className="p-5 space-y-3">
+            <form onSubmit={(e) => { e.preventDefault(); save.mutate(); }} className="p-5 space-y-3 overflow-y-auto flex-1">
               <div>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Name / పేరు *</label>
                 <input data-testid="customer-input-name" required value={form.name || ""} onChange={(e) => setForm({ ...form, name: e.target.value })}

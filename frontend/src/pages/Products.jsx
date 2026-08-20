@@ -94,12 +94,12 @@ export default function Products() {
 
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4" data-testid="product-modal">
-          <div className="bg-white w-full max-w-md border border-zinc-950 rounded-sm">
-            <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-200">
+          <div className="bg-white w-full max-w-md border border-zinc-950 rounded-sm flex flex-col max-h-[90vh]">
+            <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-200 shrink-0">
               <h3 className="font-bold">{editing ? "Edit Product" : "New Product"}</h3>
               <button onClick={() => setOpen(false)}><X size={18} /></button>
             </div>
-            <form onSubmit={(e) => { e.preventDefault(); save.mutate(); }} className="p-5 space-y-3">
+            <form onSubmit={(e) => { e.preventDefault(); save.mutate(); }} className="p-5 space-y-3 overflow-y-auto flex-1">
               <F label="Name · పేరు *"><input data-testid="product-name" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={ic} placeholder="Bitumen VG 40" /></F>
               <F label="HSN/SAC"><input data-testid="product-hsn" value={form.hsn_sac} onChange={(e) => setForm({ ...form, hsn_sac: e.target.value })} className={ic} /></F>
               <F label="Unit"><input data-testid="product-unit" value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} className={ic} /></F>
