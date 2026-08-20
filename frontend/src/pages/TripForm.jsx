@@ -237,9 +237,55 @@ export default function TripForm() {
   const shortageQtyLive = (loadedQ > 0 || unloadedQ > 0) && qtyDiff > 0 ? qtyDiff : 0;
   const excessQtyLive = (loadedQ > 0 || unloadedQ > 0) && qtyDiff < 0 ? Math.abs(qtyDiff) : 0;
   const productRate = Number(form.product_rate_per_mt || 0);
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Iter100 UI · Shortage Policy Snapshot (visible for UAT).
+  // Must be computed BEFORE shortageAmountSystem so the auto Shortage
+  // Amount respects the frozen limit / method just like the backend.
+  // ═══════════════════════════════════════════════════════════════════
+  const custShortageLimit = Number(form.applied_customer_shortage_limit || 0);
+  const custShortageLimitType = (form.applied_customer_shortage_limit_type || "").toLowerCase();
+  const custShortageMethod = (form.applied_customer_shortage_method || "").toLowerCase();
+  const hasCustShortagePolicy = custShortageLimitType === "kg" || custShortageLimitType === "pct";
+  const custShortageLimitDisplay =
+    !hasCustShortagePolicy || custShortageLimit === 0
+      ? "—"
+      : custShortageLimitType === "kg"
+      ? `${custShortageLimit} KG (fixed)`
+      : `${custShortageLimit} % of Loading Qty`;
+  const custShortageMethodLabel =
+    custShortageMethod === "full_after_limit"
+      ? "Full Shortage After Limit Exceeded"
+      : custShortageMethod === "net_shortage"
+      ? "Net Shortage (only above limit)"
+      : "—";
+  const custAllowedMT =
+    custShortageLimitType === "kg"
+      ? custShortageLimit / 1000
+      : custShortageLimitType === "pct"
+      ? (loadedQ * custShortageLimit) / 100
+      : 0;
+  const actualShortageMT = shortageQtyLive;
+  const limitExceeded = custAllowedMT > 0 && actualShortageMT > custAllowedMT;
+  // Deductible MT depends on the applied deduction method (mirrors services._compute_trip).
+  const custDeductibleMT = !hasCustShortagePolicy
+    ? actualShortageMT                                       // no policy: legacy full × rate
+    : custShortageMethod === "full_after_limit"
+      ? (limitExceeded ? actualShortageMT : 0)                // full only when limit exceeded
+      : Math.max(actualShortageMT - custAllowedMT, 0);        // net (default)
+  const netShortageMT = custDeductibleMT;                    // alias for chain display
+
+  // Supplier shortage (independent · fixed KG only)
+  const supplierShortageLimitKg = Number(form.applied_supplier_shortage_limit_kg || 0);
+  const supplierShortageAllowedMT = supplierShortageLimitKg / 1000;
+  const supplierActualKg = actualShortageMT * 1000;
+  const supplierLimitExceeded = supplierShortageLimitKg > 0 && supplierActualKg > supplierShortageLimitKg;
+  const supplierNetShortageMT = supplierLimitExceeded ? actualShortageMT : 0;
+
   // Iter100 — Pure system-computed values (INDEPENDENT of override flags).
-  // Used for override detection to compare against the user's final value.
-  const shortageAmountSystem = Number((productRate * shortageQtyLive).toFixed(2));
+  // Shortage amount respects the frozen policy so the auto value matches
+  // the backend and the Net Shortage chain on-screen (₹ = rate × net MT).
+  const shortageAmountSystem = Number((productRate * custDeductibleMT).toFixed(2));
   const excessAmountSystem = Number((productRate * excessQtyLive).toFixed(2));
   const shortageAmountLive = form.shortage_amount_override
     ? Number(form.shortage_amount || 0)
@@ -263,6 +309,36 @@ export default function TripForm() {
   }
   const graceDaysLive = Math.max(Number(form.grace_days || 0), 0);
   const autoChargeableDays = Math.max(totalHaltingDaysLive - graceDaysLive, 0);
+
+  // ═══════════════════════════════════════════════════════════════════
+  // Iter100 UI · Freight Policy Snapshot (Phase 2 UAT surfacing).
+  // Shortage policy snapshot lives earlier (feeds shortageAmountSystem).
+  // ═══════════════════════════════════════════════════════════════════
+  const _FM_LABELS = {
+    per_ton_loading: "Per Ton (Loading Qty)",
+    per_ton_unloading: "Per Ton (Unloading Qty)",
+    per_ton_higher_of: "Per Ton (Higher of Loading/Unloading)",
+    fixed: "Fixed / Round Trip",
+  };
+  const freightMethodSnap = (form.applied_freight_method || (form.freight_mode === "fixed" ? "fixed" : "per_ton_loading")).toLowerCase();
+  const freightMethodLabel = _FM_LABELS[freightMethodSnap] || freightMethodSnap;
+  const freightQtyUsedLive =
+    form.freight_mode === "fixed"
+      ? 0
+      : freightMethodSnap === "per_ton_unloading"
+      ? unloadedQ
+      : freightMethodSnap === "per_ton_higher_of"
+      ? Math.max(loadedQ, unloadedQ)
+      : loadedQ; // per_ton_loading default
+  const freightQtyBasisLabel =
+    form.freight_mode === "fixed"
+      ? "N/A · Lump Sum"
+      : freightMethodSnap === "per_ton_unloading"
+      ? "Unloading Qty"
+      : freightMethodSnap === "per_ton_higher_of"
+      ? "Higher of Loading / Unloading"
+      : "Loading Qty";
+
   const chargeableDaysLive = form.halting_amount_override
     ? Number(form.chargeable_halting_days || 0)
     : autoChargeableDays;
@@ -514,12 +590,34 @@ export default function TripForm() {
           />
         )}
 
-        <FreightSection form={form} setForm={setForm} freight={freight} />
+        <FreightSection
+          form={form}
+          setForm={setForm}
+          freight={freight}
+          freightMethodLabel={freightMethodLabel}
+          freightQtyBasisLabel={freightQtyBasisLabel}
+          freightQtyUsedLive={freightQtyUsedLive}
+          loadedQ={loadedQ}
+          unloadedQ={unloadedQ}
+        />
 
         <UnloadingSection
           form={form} setForm={setForm}
           shortageQtyLive={shortageQtyLive} excessQtyLive={excessQtyLive}
           shortageAmountLive={shortageAmountLive} excessAmountLive={excessAmountLive}
+          custShortageLimitDisplay={custShortageLimitDisplay}
+          custShortageLimitType={custShortageLimitType}
+          custShortageMethod={custShortageMethod}
+          custShortageMethodLabel={custShortageMethodLabel}
+          custAllowedMT={custAllowedMT}
+          netShortageMT={netShortageMT}
+          limitExceeded={limitExceeded}
+          supplierShortageLimitKg={supplierShortageLimitKg}
+          supplierShortageAllowedMT={supplierShortageAllowedMT}
+          supplierNetShortageMT={supplierNetShortageMT}
+          supplierLimitExceeded={supplierLimitExceeded}
+          loadedQ={loadedQ}
+          unloadedQ={unloadedQ}
         />
 
         <HaltingSection

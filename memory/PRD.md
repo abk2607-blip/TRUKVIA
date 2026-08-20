@@ -22,6 +22,15 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter100 UI · Phase 2 & 3 Visibility (UAT surfacing)** (Feb 2026)
+  - **Frozen policy snapshot exposed on the Trip Form itself** so users can UAT which rule is being applied to THIS trip without inspecting backend logs.
+  - **`FreightSection`** — new "Freight Calculation Policy" panel (Method label, Qty Basis label, Loading Qty, Unloading Qty) + "Freight Breakdown · Verification" chain (Loading · Unloading · Qty Used highlighted · Rate · Calculated Freight). Reads from `applied_freight_method` snapshot.
+  - **`UnloadingSection`** — new "Shortage Eligibility · Applied Policy Snapshot" band (Customer Applied Limit, Customer Deduction Method, Customer Allowed, Supplier Fixed KG Limit) + explicit "Net Shortage Calculation" chain: Loading → Unloading → Actual Shortage → Allowed → Net Shortage → Shortage Amount. Contextual notices: "Limit exceeded — only above allowance", "Full Actual Shortage deductible", or "Within allowed limit — no deduction".
+  - **Independent Supplier chain** below Customer (KG basis) — Actual KG · Supplier Allowed KG · Supplier Net KG · Rule Applied.
+  - **Auto Shortage Amount fix**: `shortageAmountSystem` now honours the frozen `applied_customer_shortage_method` + limit and equals `productRate × custDeductibleMT` — matches backend `_compute_trip` exactly (previously it always used raw `productRate × shortageQty`, showing ₹15,600 when backend stored ₹8,320).
+  - **Verified end-to-end** with a live UAT trip: Customer 0.5% + Net Shortage / Supplier 100 KG fixed / freight `per_ton_higher_of` → all panels display correct values (Allowed 0.140 MT, Net 0.160 MT, ₹8,320; Supplier: Full Actual exceeded → 300 KG deduction; Freight 28 MT × ₹2,500 = ₹70,000).
+  - **All values remain editable** with the Override Reason Dialog + audit trail wired in the earlier iter100 block.
+
 - [x] **Iter100 · Phase 5 — Modern Landscape Invoice PDF + Override Reason Dialog** (Feb 2026)
   - **Override Reason Dialog** (`components/OverrideReasonDialog.jsx`) — Full-screen modal that blocks Save until every manually-overridden financial field carries a non-empty justification. Shows System / Final / Δ per row + required reason textarea; Confirm button disabled until every row is filled. Reasons persist in local state (`capturedReasons`) so cancelling doesn't lose progress.
   - **TripForm.jsx** — `detectOverrides()` now compares against PURE system values (`shortageAmountSystem`, `excessAmountSystem`, `haltingAmountSystem`) — fixed the P0 defect where override-aware `*Live` values compared against themselves and always returned no diff. Wires 8 fields: customer shortage/excess/halting, supplier freight/halting/advance/diesel/shortage_deduction.
