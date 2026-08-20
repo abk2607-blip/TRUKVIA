@@ -1563,3 +1563,74 @@ async def delete_supplier_advance_entry(tid: str, eid: str, request: Request,
                      reason=reason.strip(),
                      changes={"entry_id": eid, "amount": entries[idx].get("amount")})
     return doc
+
+
+
+# ---------------------------------------------------------------------------
+# Iter99 · Phase 4 — Per-Field Override Audit Trail
+# ---------------------------------------------------------------------------
+
+_OVERRIDE_LABELS = {
+    "freight_amount": "Freight",
+    "freight_qty_used": "Freight Basis Qty",
+    "shortage_amount": "Customer Shortage",
+    "excess_amount": "Customer Excess",
+    "supplier_shortage_deduction": "Supplier Shortage",
+    "supplier_halting_amount": "Supplier Halting",
+    "halting_amount": "Customer Halting",
+    "supplier_freight": "Supplier Freight",
+    "supplier_advance": "Supplier Advance",
+    "supplier_diesel": "Supplier Diesel",
+}
+
+
+@router.post("/trips/{tid}/field-override")
+async def log_field_override(tid: str, payload: dict, request: Request,
+                             user=Depends(get_current_user)):
+    """Record one per-field override event on a Trip.
+
+    Body: { field, system_value, final_value, reason }
+    Never mutates the underlying value — only appends to `field_overrides` so
+    Accounts / Audit can reconcile.
+    """
+    uid = user["user_id"]
+    cid = await _active_company_id(request, user)
+    field = str(payload.get("field") or "").strip()
+    if not field:
+        raise HTTPException(status_code=400, detail="field is required")
+    reason = str(payload.get("reason") or "").strip()
+    if not reason:
+        raise HTTPException(status_code=400, detail="reason is required")
+    try:
+        sys_v = float(payload.get("system_value") or 0)
+        fin_v = float(payload.get("final_value") or 0)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="system_value / final_value must be numbers")
+
+    doc = await db.trips.find_one({"id": tid, "user_id": uid, "company_id": cid},
+                                  {"_id": 0, "user_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Trip not found")
+
+    entry = {
+        "id": new_id("fov_"),
+        "field": field,
+        "label": _OVERRIDE_LABELS.get(field, field.replace("_", " ").title()),
+        "system_value": round(sys_v, 2),
+        "final_value": round(fin_v, 2),
+        "reason": reason,
+        "modified_by": uid,
+        "modified_at": now_utc().isoformat(),
+        "trip_id": tid,
+    }
+    entries = list(doc.get("field_overrides") or [])
+    entries.append(entry)
+    await db.trips.update_one(
+        {"id": tid, "user_id": uid, "company_id": cid},
+        {"$set": {"field_overrides": entries}},
+    )
+    await _log_audit(user, "trip", "field_override_logged",
+                     entity_id=tid, entity_ref=doc.get("vehicle_number", ""),
+                     reason=reason, changes={"field": field, "system": sys_v, "final": fin_v})
+    doc["field_overrides"] = entries
+    return doc

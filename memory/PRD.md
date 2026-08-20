@@ -22,6 +22,14 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter99 · Phase 4 — Per-Field Override Audit Trail** (Feb 2026)
+  - **Model**: new `FieldOverride { id, field, label, system_value, final_value, reason, modified_by, modified_at, trip_id }` sub-model + `Trip.field_overrides: List[FieldOverride]` (default `[]`).
+  - **Endpoint**: `POST /api/trips/{tid}/field-override` — accepts `{ field, system_value, final_value, reason }`. Appends an entry; requires reason and field; company/user isolated; logged via `_log_audit`.
+  - **Auditable fields** (labels resolved automatically): `freight_amount` → *Freight*, `shortage_amount` → *Customer Shortage*, `supplier_shortage_deduction` → *Supplier Shortage*, `supplier_halting_amount` → *Supplier Halting*, `halting_amount` → *Customer Halting*, plus supplier freight/advance/diesel & freight qty basis.
+  - **Frontend `OverrideBadge`** (`components/OverrideBadge.jsx`) — compact amber "✎ Overridden" pill placed next to overridden amounts in `TripView`. Hover/click reveals System vs Final, reason, modified-by, modified-at (per your Telugu spec). Wired next to Freight KPI, Supplier Freight, Supplier Halting, Shortage Deduction rows.
+  - **Calculation logic UNCHANGED**: the endpoint only appends the audit entry — no field is mutated on the trip document. Existing `*_override` flags continue to drive computation.
+  - **Regression Guard**: `test_iter99_phase4_override_audit.py` — freight + supplier-shortage overrides logged with label auto-resolution, calc unchanged after override, missing-reason/missing-field → 400, entries persist across GETs. iter41/42/44/45/47/74/89/90/91/92/97/98/99 all pass together.
+
 - [x] **Iter98 · Phase 3 — Central Customer / Supplier Shortage Engine** (Feb 2026)
   - **Customer shortage** (`services._compute_trip`): uses frozen `applied_customer_shortage_limit` + `_limit_type` + `_method` snapshot.
     - `pct` → `allowed_mt = tons × pct / 100`; `kg` → `allowed_mt = limit_kg / 1000`

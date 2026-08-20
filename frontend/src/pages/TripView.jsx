@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api, API, fmtCurrency, fmtDate } from "@/api";
 import { ArrowLeft, Pencil, FileText, ExternalLink } from "lucide-react";
 import FileAttachments from "@/components/FileAttachments";
+import OverrideBadge from "@/components/OverrideBadge";
 
 export default function TripView() {
   const { id } = useParams();
@@ -74,7 +75,7 @@ export default function TripView() {
       <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
         <Stat label="Date" value={fmtDate(trip.date)} />
         <Stat label="Status" value={trip.status === "invoiced" ? "Invoiced" : "Pending"} accent={trip.status === "invoiced" ? "emerald" : "amber"} />
-        <Stat label="Freight" value={fmtCurrency(trip.freight_amount)} />
+        <Stat label={<>Freight <OverrideBadge trip={trip} field="freight_amount" /></>} value={fmtCurrency(trip.freight_amount)} />
         <Stat label={isSupplier ? "Net Payable" : "Total Expense"} value={fmtCurrency(trip.total_expense)} accent="rose" />
         <Stat label="Profit" value={fmtCurrency(trip.profit)} accent={trip.profit >= 0 ? "emerald" : "rose"} />
       </div>
@@ -232,11 +233,11 @@ export default function TripView() {
                 <Row k="Fixed Amount" v={`₹ ${Number(trip.supplier_fixed_amount || 0).toFixed(2)}`} mono />
               </>
             )}
-            <Row k="Supplier Freight" v={fmtCurrency(supFreight)} mono strong />
-            <Row k="Add: Supplier Halting" v={fmtCurrency(trip.supplier_halting_amount)} mono />
+            <Row k={<>Supplier Freight <OverrideBadge trip={trip} field="supplier_freight" /></>} v={fmtCurrency(supFreight)} mono strong />
+            <Row k={<>Add: Supplier Halting <OverrideBadge trip={trip} field="supplier_halting_amount" /></>} v={fmtCurrency(trip.supplier_halting_amount)} mono />
             <Row k="Less: Advance Paid" v={fmtCurrency(supAdvance)} mono />
             <Row k="Less: Diesel Funded" v={fmtCurrency(trip.supplier_diesel)} mono />
-            <Row k="Less: Shortage Deduction" v={fmtCurrency(trip.supplier_shortage_deduction)} mono />
+            <Row k={<>Less: Shortage Deduction <OverrideBadge trip={trip} field="supplier_shortage_deduction" /></>} v={fmtCurrency(trip.supplier_shortage_deduction)} mono />
             <Row k="Less: Other Recoveries" v={fmtCurrency(supOther)} mono />
             <Row k="Add: Other Income / Bonus" v={fmtCurrency(trip.supplier_other_income)} mono />
           </Grid2>

@@ -197,6 +197,20 @@ class Driver(BaseModel):
     imported_batch: str = ""
     is_historical: bool = False
 
+class FieldOverride(BaseModel):
+    """Iter99 · Phase 4 — One entry in a Trip's per-field override audit log."""
+    id: str = Field(default_factory=lambda: new_id("fov_"))
+    field: str                       # e.g. freight_amount, shortage_amount, supplier_shortage_deduction
+    label: str = ""                  # human label for the UI badge ("Freight" etc.)
+    system_value: float = 0.0
+    final_value: float = 0.0
+    reason: str = ""
+    modified_by: str = ""
+    modified_at: str = Field(default_factory=lambda: now_utc().isoformat())
+    trip_id: str = ""
+
+
+
 class SupplierDieselEntry(BaseModel):
     """Iter91 — One entry in the Supplier Diesel funding log for a Trip.
 
@@ -377,6 +391,9 @@ class Trip(BaseModel):
     # These fields are the source-of-truth for THIS trip's freight/shortage math.
     # Future edits to Customer/Product/Supplier masters MUST NOT change these.
     applied_freight_method: str = ""             # per_ton_loading | per_ton_unloading | per_ton_higher_of | fixed
+    # Iter99 · Phase 4 — Per-Field Override Audit Trail. Each entry captures
+    # the system-computed value vs the final approved value + who/when/why.
+    field_overrides: List["FieldOverride"] = Field(default_factory=list)
     # Iter97 · Phase 2 — Trip-level freight override (authorised users only).
     # When > 0, wins over the method-derived calc. Audit captured by PUT /trips.
     freight_amount_override: float = 0.0
