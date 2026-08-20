@@ -84,26 +84,37 @@ export default function Dashboard() {
           Loading your dashboard data…
         </div>
       )}
-      {isError && !isLoading && (
-        <div data-testid="dashboard-error-banner" className="border border-rose-300 bg-rose-50 rounded-sm px-4 py-3 text-xs text-rose-800 flex items-center justify-between gap-3">
-          <div>
-            <div className="font-bold uppercase tracking-wider mb-0.5">Dashboard data couldn't load</div>
-            <div>
-              {(() => {
-                const s = error?.response?.status;
-                if (s === 404 || s === 502 || s === 503)
-                  return "Backend is restarting. This usually clears in a few seconds — click retry, or wait.";
-                return error?.response?.data?.detail || error?.message || "Please retry — the rest of the app is available in the sidebar.";
-              })()}
+      {isError && !isLoading && (() => {
+        // Iter100 · Silent-restart routing.
+        // Backend-restart-class errors (404 / 5xx / network) never surface as a
+        // red banner — they flow through the top-right "Refreshing…" pill and
+        // the TanStack Query retry policy (10 retries · ~65s). Only genuine
+        // client / server errors show the red banner so users can retry.
+        const s = error?.response?.status;
+        const isNetwork = !s || error?.code === "ERR_NETWORK" || error?.message === "Network Error";
+        const isRestart = isNetwork || [404, 502, 503, 504].includes(s);
+        if (isRestart) {
+          return (
+            <div data-testid="dashboard-loading-banner" className="border border-zinc-200 bg-zinc-50 rounded-sm px-4 py-2 text-xs text-zinc-600 flex items-center gap-2">
+              <Loader2 size={12} className="animate-spin" />
+              Waiting for backend… retrying automatically.
             </div>
+          );
+        }
+        return (
+          <div data-testid="dashboard-error-banner" className="border border-rose-300 bg-rose-50 rounded-sm px-4 py-3 text-xs text-rose-800 flex items-center justify-between gap-3">
+            <div>
+              <div className="font-bold uppercase tracking-wider mb-0.5">Dashboard data couldn't load</div>
+              <div>{error?.response?.data?.detail || error?.message || "Please retry — the rest of the app is available in the sidebar."}</div>
+            </div>
+            <button
+              data-testid="dashboard-retry-btn"
+              onClick={() => refetch()}
+              className="px-3 py-1.5 text-[11px] uppercase tracking-wider font-semibold bg-rose-600 text-white rounded-sm hover:bg-rose-700"
+            >Retry</button>
           </div>
-          <button
-            data-testid="dashboard-retry-btn"
-            onClick={() => refetch()}
-            className="px-3 py-1.5 text-[11px] uppercase tracking-wider font-semibold bg-rose-600 text-white rounded-sm hover:bg-rose-700"
-          >Retry</button>
-        </div>
-      )}
+        );
+      })()}
 
       {/* AI Smart Insights */}
       <InsightsCard />

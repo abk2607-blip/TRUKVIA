@@ -22,6 +22,12 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter100 · Dashboard "Backend is restarting" banner — RCA + Real Fix** (Feb 2026)
+  - **RCA**: The iter96 QueryClient retry policy (10 attempts · ~65s) was working, but pytest activity was creating/updating files inside `/app/backend/tests/` which uvicorn's `--reload` picked up as source changes → the backend restarted ~20 times back-to-back during test runs, and any single restart cycle longer than 65s (or two overlapping restarts) exhausted the retry window and surfaced the red "DASHBOARD DATA COULDN'T LOAD" banner.
+  - **Fix 1 (root cause)** — `/etc/supervisor/conf.d/supervisord.conf` now runs uvicorn with `--reload-exclude tests/* --reload-exclude __pycache__/* --reload-exclude scripts/* --reload-exclude *.log --reload-exclude *.pdf --reload-exclude *.pyc`. Test files, pytest cache, backfill scripts, PDF artifacts, and log rotations no longer touch production backend. Verified: touching `tests/*.py` no longer triggers a reload.
+  - **Fix 2 (defence in depth)** — Dashboard.jsx routes backend-restart-class errors (404 / 502 / 503 / 504 / network) through a soft grey "Waiting for backend… retrying automatically." banner instead of the red one. The red banner now only appears for genuine 5xx server errors, so users never see the alarming "couldn't load" text during a routine hot reload.
+  - **Combined effect**: routine backend hot reloads are silent (grey banner + Refreshing pill fade in and out); only real failures show the actionable red banner.
+
 - [x] **Iter100 UI · Phase 2 & 3 Visibility (UAT surfacing)** (Feb 2026)
   - **Frozen policy snapshot exposed on the Trip Form itself** so users can UAT which rule is being applied to THIS trip without inspecting backend logs.
   - **`FreightSection`** — new "Freight Calculation Policy" panel (Method label, Qty Basis label, Loading Qty, Unloading Qty) + "Freight Breakdown · Verification" chain (Loading · Unloading · Qty Used highlighted · Rate · Calculated Freight). Reads from `applied_freight_method` snapshot.
