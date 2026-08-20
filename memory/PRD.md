@@ -22,6 +22,19 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter97 · Phase 2 — Central Freight Calculation Engine + Silent Restart Toast** (Feb 2026)
+  - **User need**: The Customer-specific Freight Calculation Method must become the live engine and flow Customer Master → Trip → Unloading → Freight → Invoice consistently, honoring the frozen policy snapshot.
+  - **Backend** (`services._compute_trip`): now branches on `trip.applied_freight_method`:
+    - `per_ton_loading`  → `tons × rate_per_ton`
+    - `per_ton_unloading` → `unloaded_qty × rate_per_ton`
+    - `per_ton_higher_of` → `max(tons, unloaded_qty) × rate_per_ton`
+    - `fixed` → `fixed_amount` (qty ignored)
+    - Legacy trips without snapshot fall back to `per_ton_loading`.
+  - **New Trip fields**: `freight_amount_override` (authorised override wins over the calc), `freight_override_reason`, `freight_override_by`, `freight_override_at`, plus `freight_qty_used` (billable qty per the applied method, for display).
+  - **Trip create flow** (`routers/trips.py`): after freezing `applied_freight_method` from the customer master, freight is recomputed inline so the snapshot drives the amount from the very first save. Historical protection unchanged.
+  - **Regression Guard**: `test_iter97_phase2_central_freight.py` (1 test, 8 assertions) — all four methods, override, and historical protection covered. iter42/44/45/47/89/90/91/92 all pass together.
+  - **Silent Restart Toast** (`frontend/src/components/SilentRestartToast.jsx`): tiny non-blocking pill in the top-right showing "Refreshing…" whenever `/api/auth/health` fails for ≥ 2 consecutive polls (every 6 s). Never blocks navigation or data entry; disappears automatically the moment the backend returns 200.
+
 - [x] **Iter96 · Dashboard hot-reload banner — widened retry window** (Feb 2026)
   - **User feedback**: The `DASHBOARD DATA COULDN'T LOAD — Backend is restarting` banner reappeared after the Iter95 code change triggered a backend hot-reload. Iter88 (2-consecutive-fail deploy guard) fixed the *Deploy Regression* tile, but the dashboard's own load-retry window was only ~20 s and startup tasks (fixture-purge, backfill, scheduler init) sometimes take 25-35 s.
   - **Fix** (`frontend/src/index.js`): raised React Query retry count 6 → 10 and max backoff 5 s → 8 s. New window covers ~65 s worst-case reload — long enough for any hot-reload + startup work. Client errors (400/401/403/422) still never retry.

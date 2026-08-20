@@ -17,12 +17,37 @@ from models import Trip, Invoice, now_utc
 
 
 def _compute_trip(t: Trip) -> Trip:
-    if t.freight_mode == "per_ton":
-        t.freight_amount = round(t.tons * t.rate_per_ton, 2)
-    else:
-        if t.round_trip_kms > 0 and t.rate_per_km_per_ton > 0:
-            t.freight_amount = round(t.tons * t.round_trip_kms * t.rate_per_km_per_ton, 2)
+    # Iter97 · Phase 2 — Central Freight Calculation Engine.
+    # Freight is derived from the frozen `applied_freight_method` snapshot
+    # (set at trip-create time from Customer.default_freight_method). Legacy
+    # trips without a snapshot fall back to `per_ton_loading`.
+    # Trip-level `freight_amount_override` (set by an authorised user) wins
+    # over the calc — audit trail is captured by the standard PUT /trips diff.
+    method = (t.applied_freight_method or "per_ton_loading").lower()
+    loaded_qty_snap = float(t.tons) if (t.tons or 0) > 0 else float(t.loaded_qty or 0)
+    unloaded_qty_snap = float(t.unloaded_qty or 0)
+
+    if float(t.freight_amount_override or 0) > 0:
+        t.freight_amount = round(float(t.freight_amount_override), 2)
+        t.freight_qty_used = loaded_qty_snap
+    elif method == "fixed":
+        t.freight_amount = round(t.fixed_amount, 2) if (t.fixed_amount or 0) > 0 else round(t.freight_amount, 2)
+        t.freight_qty_used = 0.0
+    elif t.freight_mode == "per_ton":
+        if method == "per_ton_unloading":
+            qty = unloaded_qty_snap
+        elif method == "per_ton_higher_of":
+            qty = max(loaded_qty_snap, unloaded_qty_snap)
         else:
+            qty = loaded_qty_snap
+        t.freight_qty_used = qty
+        t.freight_amount = round(qty * (t.rate_per_ton or 0), 2)
+    else:
+        if (t.round_trip_kms or 0) > 0 and (t.rate_per_km_per_ton or 0) > 0:
+            t.freight_qty_used = loaded_qty_snap
+            t.freight_amount = round(loaded_qty_snap * t.round_trip_kms * t.rate_per_km_per_ton, 2)
+        else:
+            t.freight_qty_used = 0.0
             t.freight_amount = round(t.fixed_amount, 2)
     # ---- Loading / Unloading auto-diff ----
     # Iter42: `tons` is the OFFICIAL "Loading Qty (in Tons)". loaded_qty is a

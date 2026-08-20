@@ -5,6 +5,7 @@ import { BrowserRouter } from "react-router-dom";
 import { Toaster } from "sonner";
 import "@/index.css";
 import App from "@/App";
+import SilentRestartToast from "@/components/SilentRestartToast";
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -35,6 +36,7 @@ root.render(
   <QueryClientProvider client={queryClient}>
     <BrowserRouter>
       <App />
+      <SilentRestartToast />
       <Toaster richColors position="top-right" />
     </BrowserRouter>
   </QueryClientProvider>

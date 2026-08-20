@@ -377,6 +377,13 @@ class Trip(BaseModel):
     # These fields are the source-of-truth for THIS trip's freight/shortage math.
     # Future edits to Customer/Product/Supplier masters MUST NOT change these.
     applied_freight_method: str = ""             # per_ton_loading | per_ton_unloading | per_ton_higher_of | fixed
+    # Iter97 · Phase 2 — Trip-level freight override (authorised users only).
+    # When > 0, wins over the method-derived calc. Audit captured by PUT /trips.
+    freight_amount_override: float = 0.0
+    freight_override_reason: str = ""
+    freight_override_by: str = ""
+    freight_override_at: str = ""
+    freight_qty_used: float = 0.0                 # billable qty derived per method (for display)
     applied_product_shortage_pct: float = 0.0    # from product.default_shortage_allowance_pct
     applied_customer_shortage_limit: float = 0.0
     applied_customer_shortage_limit_type: str = ""   # pct | kg

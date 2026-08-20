@@ -511,6 +511,21 @@ async def create_trip(payload: Trip, request: Request, user=Depends(get_current_
                     psl_kg = float(sup.get("shortage_limit_kg", 0) or 0)
                 doc["applied_supplier_shortage_limit_kg"] = psl_kg
             doc["policy_snapshot_at"] = snap_now
+            # Iter97 · Phase 2 — Now that the freight method snapshot is set,
+            # recompute freight_amount so the correct method (unloading /
+            # higher-of / fixed) is applied. Compute originally ran with an
+            # empty applied_freight_method (default per_ton_loading).
+            try:
+                _t = Trip(**{k: v for k, v in doc.items() if k in Trip.model_fields})
+                _t = _compute_trip(_t)
+                _c = _t.model_dump()
+                for k in ("freight_amount", "freight_qty_used", "shortage_qty",
+                          "excess_qty", "shortage_amount", "excess_amount",
+                          "supplier_freight", "supplier_net_payable"):
+                    if k in _c:
+                        doc[k] = _c[k]
+            except Exception as _e:
+                import logging; logging.getLogger(__name__).warning(f"phase2 recompute failed: {_e}")
         except Exception as _e:
             import logging; logging.getLogger(__name__).warning(f"policy snapshot failed: {_e}")
     # Iter59 · Phase A — Snapshot the applicable Driver Shortage Policy onto
