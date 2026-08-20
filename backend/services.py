@@ -68,8 +68,35 @@ def _compute_trip(t: Trip) -> Trip:
             t.excess_qty = 0.0
     # Product-rate valuation for shortage / excess (editable via override flags)
     rate = t.product_rate_per_mt or 0
+    # Iter98 · Phase 3 — Central Customer Shortage Calc.
+    # Uses the frozen policy snapshot (applied_customer_shortage_limit +
+    # _limit_type + _method). Historical trips keep their snapshot.
+    #  • pct limit  → allowed_qty_mt = tons × pct / 100
+    #  • kg  limit  → allowed_qty_mt = limit_kg / 1000
+    # If shortage_qty ≤ allowed → NO customer deduction.
+    # Above limit:
+    #   net_shortage       → (shortage − allowed) × rate
+    #   full_after_limit   → shortage × rate  (full actual)
+    _cust_limit = float(t.applied_customer_shortage_limit or 0)
+    _cust_type = (t.applied_customer_shortage_limit_type or "pct").lower()
+    _cust_method = (t.applied_customer_shortage_method or "net_shortage").lower()
+    if _cust_type == "kg":
+        _cust_allowed_mt = _cust_limit / 1000.0
+    else:
+        _cust_allowed_mt = float(t.tons or 0) * _cust_limit / 100.0
     if not t.shortage_amount_override:
-        t.shortage_amount = round(rate * t.shortage_qty, 2)
+        if t.shortage_qty <= _cust_allowed_mt or _cust_limit <= 0 and _cust_type == "pct" and t.applied_customer_shortage_limit_type == "":
+            # Legacy trip without a snapshot AND no limit configured → full deduction (old behaviour)
+            if not t.applied_customer_shortage_limit_type:
+                t.shortage_amount = round(rate * t.shortage_qty, 2)
+            else:
+                t.shortage_amount = 0.0
+        elif t.shortage_qty <= _cust_allowed_mt:
+            t.shortage_amount = 0.0
+        elif _cust_method == "full_after_limit":
+            t.shortage_amount = round(rate * t.shortage_qty, 2)
+        else:  # net_shortage
+            t.shortage_amount = round(rate * max(t.shortage_qty - _cust_allowed_mt, 0), 2)
     if not t.excess_amount_override:
         t.excess_amount = round(rate * t.excess_qty, 2)
     # ---- Halting / Waiting Charges auto-calc ----
@@ -163,14 +190,21 @@ def _compute_trip(t: Trip) -> Trip:
                 t.supplier_freight = round(t.supplier_fixed_amount, 2)
         # else keep manually entered supplier_freight
 
-        # Iter74 — Auto-mirror trip.shortage_amount → supplier_shortage_deduction
-        # for supplier vehicles UNLESS the user has explicitly overridden. This
-        # ensures the Trip's shortage automatically flows into the Supplier
-        # ledger/statement/settlement, sourced from the existing shortage
-        # policy (never a hard-coded value). Manual overrides are respected
-        # via supplier_shortage_deduction_override=True.
+        # Iter98 · Phase 3 — Central Supplier Shortage Calc (INDEPENDENT of
+        # customer). Uses applied_supplier_shortage_limit_kg (fixed KG only).
+        #   shortage_kg ≤ limit → 0 deduction.
+        #   shortage_kg  > limit → FULL actual shortage × product_rate.
+        # Manual overrides respected via supplier_shortage_deduction_override.
         if not t.supplier_shortage_deduction_override:
-            t.supplier_shortage_deduction = round(float(t.shortage_amount or 0), 2)
+            _sup_limit_kg = float(t.applied_supplier_shortage_limit_kg or 0)
+            _short_kg = float(t.shortage_qty or 0) * 1000.0
+            if _sup_limit_kg <= 0:
+                # No supplier limit configured → mirror trip.shortage_amount (legacy behaviour, keeps historical trips whole)
+                t.supplier_shortage_deduction = round(float(t.shortage_amount or 0), 2)
+            elif _short_kg <= _sup_limit_kg:
+                t.supplier_shortage_deduction = 0.0
+            else:
+                t.supplier_shortage_deduction = round((t.product_rate_per_mt or 0) * t.shortage_qty, 2)
 
         # Net payable = freight + supplier_halting − advance − diesel(supplier-side) − customer_diesel(recovered against supplier trip)
         #              − shortage − other_recoveries + other_income

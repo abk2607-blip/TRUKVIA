@@ -22,6 +22,21 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter98 · Phase 3 — Central Customer / Supplier Shortage Engine** (Feb 2026)
+  - **Customer shortage** (`services._compute_trip`): uses frozen `applied_customer_shortage_limit` + `_limit_type` + `_method` snapshot.
+    - `pct` → `allowed_mt = tons × pct / 100`; `kg` → `allowed_mt = limit_kg / 1000`
+    - `shortage_qty ≤ allowed` → **no deduction**
+    - Above limit, `net_shortage` → `(shortage − allowed) × product_rate`
+    - Above limit, `full_after_limit` → `shortage × product_rate` (full actual)
+    - Manual override respected via `shortage_amount_override`
+  - **Supplier shortage** (INDEPENDENT): uses frozen `applied_supplier_shortage_limit_kg` (fixed KG only).
+    - `shortage_kg ≤ limit` → **no deduction**
+    - `shortage_kg > limit` → **full** actual shortage × product_rate
+    - Manual override respected via `supplier_shortage_deduction_override`
+    - No cross-influence from customer method.
+  - **Historical protection**: verified — flipping `customer.shortage_config` or `supplier.shortage_limit_kg` after trip creation never changes the frozen snapshot or the computed deductions on that trip.
+  - **Regression Guard**: `test_iter98_phase3_shortage_engine.py` covers 5 cases (within/above for both `net_shortage` & `full_after_limit`, mixed customer-within/supplier-above, historical protection). iter41/42/44/45/47/74/89/90/91/92/97/98 pass together.
+
 - [x] **Iter97 · Phase 2 — Central Freight Calculation Engine + Silent Restart Toast** (Feb 2026)
   - **User need**: The Customer-specific Freight Calculation Method must become the live engine and flow Customer Master → Trip → Unloading → Freight → Invoice consistently, honoring the frozen policy snapshot.
   - **Backend** (`services._compute_trip`): now branches on `trip.applied_freight_method`:

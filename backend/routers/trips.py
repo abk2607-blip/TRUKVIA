@@ -521,7 +521,8 @@ async def create_trip(payload: Trip, request: Request, user=Depends(get_current_
                 _c = _t.model_dump()
                 for k in ("freight_amount", "freight_qty_used", "shortage_qty",
                           "excess_qty", "shortage_amount", "excess_amount",
-                          "supplier_freight", "supplier_net_payable"):
+                          "supplier_freight", "supplier_net_payable",
+                          "supplier_shortage_deduction"):
                     if k in _c:
                         doc[k] = _c[k]
             except Exception as _e:
