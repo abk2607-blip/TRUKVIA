@@ -22,6 +22,37 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter91 · Supplier Diesel / Advance multi-row transaction logs + Trip Auto-Fetch** (Feb 2026)
+  - **User need**: A supplier can receive fuel or cash multiple times per trip (different dates, modes, references). One flat amount can't express this. Also, Supplier section should NOT duplicate Trip Details (From/To/Material/Qty) — Trip Details are the single source of truth.
+  - **Model additions**:
+    - `SupplierDieselEntry { id, date, quantity, rate, amount, mode, reference, remarks, deleted, deleted_reason, deleted_at, deleted_by, created_at/by, modified_at/by }`
+    - `SupplierAdvanceEntry { id, date, amount, mode, reference, remarks, + same audit fields }`
+    - `Trip.supplier_diesel_entries: List[SupplierDieselEntry]`
+    - `Trip.supplier_advance_entries: List[SupplierAdvanceEntry]`
+  - **Backend endpoints** (all `/api`, company-scoped, audit-logged):
+    - `POST/PUT/DELETE /trips/{tid}/supplier-diesel[/{eid}]`
+    - `POST/PUT/DELETE /trips/{tid}/supplier-advance[/{eid}]`
+    - Delete requires `?reason=…` (else 400). Soft-delete: `deleted=true, deleted_reason, deleted_at, deleted_by` — excluded from totals & ledger but visible in audit.
+  - **Compute (`services._compute_trip`)**: when entries lists have active rows, they OVERRIDE the flat `supplier_diesel` / `supplier_advance` fields. Loading/Unloading/Material/Quantity fall back to Trip Details (`from_location`, `to_location`, `load_details`, `tons`) when the supplier-specific field is empty.
+  - **Lazy migration** (`routers/trips.get_trip`): on first GET of a legacy trip with a flat supplier_diesel > 0 and no entries, convert it to a single migrated entry with `remarks="Migrated from single field"` and persist. Idempotent on subsequent GETs.
+  - **Supplier ledger integration** (`routers/suppliers._build_ledger`, settlement summary): emits one row per active diesel/advance entry — carrying date, mode, reference, remarks. Falls back to flat field for legacy trips. Multi-company isolation preserved (existing user_id + company_id filter).
+  - **Frontend**:
+    - New `SupplierEntriesTable` component (reused for Diesel + Advance) — inline table + modal for full detail (Date, Qty/Rate/Amount for diesel, Mode, Reference, Remarks). Add/Edit/Delete work in both "local" mode (new trip, entries persist with POST /trips) and "persisted" mode (existing trip, uses the new endpoints and refreshes form state from the response).
+    - `SupplierSection.jsx` rewrite — Loading/Unloading/Material/Quantity inputs auto-fill from Trip Details with a "🔗 Auto from Trip Details" hint; typing dirties the field and shows a "Reset to Trip" chip (existing pattern for other override fields).
+    - `TripView.jsx` — new `SupplierEntriesReadOnly` table shows all active entries with a Total row.
+    - `TripForm.jsx` save payload — includes `supplier_diesel_entries` / `supplier_advance_entries`; live compute prefers per-entry totals.
+  - **Regression Guard**: `test_iter91_supplier_entries.py` (2 tests, ~15 assertions):
+    1. Add 3 diesel + 3 advance → totals correct ✓
+    2. Edit an advance → total updates ✓
+    3. Soft-delete diesel with reason → deducted from total, entry retained with audit ✓
+    4. Delete without reason → 400 ✓
+    5. Supplier ledger emits per-entry rows with mode+ref ✓
+    6. Legacy trip with flat supplier_diesel → migrated to a single "Migrated from single field" entry on first GET ✓
+    7. Second GET is idempotent (no duplicate migration) ✓
+    8. Trip Auto-Fetch — supplier_loading_point mirrors from_location, supplier_quantity mirrors tons ✓
+  - **All Iter89/90 tests still pass**.
+
+
 - [x] **Iter90 · Product-wise Supplier Shortage KG limits** (Feb 2026)
   - **User need**: One supplier can supply multiple products (Bitumen 100 kg, Emulsion 100 kg, CRMB 150 kg, PMB 150 kg…) each with its own exemption threshold. The flat single `shortage_limit_kg` from Iter89 could not express this.
   - **Model changes**:

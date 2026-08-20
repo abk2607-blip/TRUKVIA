@@ -197,6 +197,52 @@ class Driver(BaseModel):
     imported_batch: str = ""
     is_historical: bool = False
 
+class SupplierDieselEntry(BaseModel):
+    """Iter91 — One entry in the Supplier Diesel funding log for a Trip.
+
+    Diesel = us funding fuel for the supplier. `amount` is the source of truth
+    (auto-computed as `quantity × rate` if not overridden).
+    Soft-delete pattern: `deleted=true` excludes from totals & ledger; audit
+    (reason/by/when) preserved.
+    """
+    id: str = Field(default_factory=lambda: new_id("sde_"))
+    date: str = ""                  # ISO YYYY-MM-DD; defaults to trip.date on add
+    quantity: float = 0.0           # litres
+    rate: float = 0.0               # ₹ per litre
+    amount: float = 0.0             # ₹; = quantity × rate unless overridden
+    mode: str = ""                  # Cash / Bank / UPI / IMPS / NEFT / Other
+    reference: str = ""             # transaction / voucher no.
+    remarks: str = ""
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+    created_by: str = ""
+    modified_at: str = ""
+    modified_by: str = ""
+    deleted: bool = False
+    deleted_reason: str = ""
+    deleted_at: str = ""
+    deleted_by: str = ""
+
+
+class SupplierAdvanceEntry(BaseModel):
+    """Iter91 — One entry in the Supplier Advance log for a Trip. Same
+    audit / soft-delete pattern as SupplierDieselEntry."""
+    id: str = Field(default_factory=lambda: new_id("sae_"))
+    date: str = ""
+    amount: float = 0.0
+    mode: str = ""                  # Cash / Bank / UPI / IMPS / NEFT / Other
+    reference: str = ""
+    remarks: str = ""
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+    created_by: str = ""
+    modified_at: str = ""
+    modified_by: str = ""
+    deleted: bool = False
+    deleted_reason: str = ""
+    deleted_at: str = ""
+    deleted_by: str = ""
+
+
+
 class Trip(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -247,6 +293,13 @@ class Trip(BaseModel):
     supplier_quantity: float = 0.0
     supplier_advance: float = 0.0
     supplier_diesel: float = 0.0                     # Diesel funded by us to supplier — deducted from payable
+    # Iter91 — Multi-row diesel / advance transaction logs. When these lists
+    # contain any non-deleted rows, `supplier_diesel` / `supplier_advance` are
+    # OVERRIDDEN by the sum of their `amount` fields (see services._compute_trip).
+    # Legacy trips without entries continue to use the flat fields (lazy
+    # migration happens on the first read via routers/trips.get_trip).
+    supplier_diesel_entries: List[SupplierDieselEntry] = Field(default_factory=list)
+    supplier_advance_entries: List[SupplierAdvanceEntry] = Field(default_factory=list)
     supplier_shortage_deduction: float = 0.0         # Shortage deducted from supplier freight
     supplier_shortage_deduction_override: bool = False  # Iter74 — True when user manually edited; blocks auto-mirror from trip.shortage_amount
     supplier_other_recoveries: float = 0.0

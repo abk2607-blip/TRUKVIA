@@ -107,6 +107,26 @@ def _compute_trip(t: Trip) -> Trip:
         t.customer_diesel_received = round(cust_diesel_total, 2)
         t.customer_advance_received = round(cust_advance_total, 2)
     if t.vehicle_type == "supplier":
+        # Iter91 — Multi-row diesel/advance overrides the flat fields.
+        active_diesel = [e for e in (t.supplier_diesel_entries or []) if not getattr(e, "deleted", False)]
+        if active_diesel:
+            t.supplier_diesel = round(sum(float(getattr(e, "amount", 0) or 0) for e in active_diesel), 2)
+        active_advance = [e for e in (t.supplier_advance_entries or []) if not getattr(e, "deleted", False)]
+        if active_advance:
+            t.supplier_advance = round(sum(float(getattr(e, "amount", 0) or 0) for e in active_advance), 2)
+
+        # Iter91 — Loading/Unloading/Material/Qty fall back to Trip Details
+        # when the supplier-specific field is empty. Trip Details are the
+        # single source of truth; supplier fields act as optional overrides.
+        if not (t.supplier_loading_point or "").strip():
+            t.supplier_loading_point = t.from_location or ""
+        if not (t.supplier_unloading_point or "").strip():
+            t.supplier_unloading_point = t.to_location or ""
+        if not (t.supplier_material or "").strip():
+            t.supplier_material = t.load_details or ""
+        if not (t.supplier_quantity or 0) > 0:
+            t.supplier_quantity = float(t.tons or 0)
+
         # Auto-compute supplier freight from detailed inputs when available
         sup_qty = t.supplier_quantity if t.supplier_quantity > 0 else t.tons
         if t.supplier_freight_mode == "per_ton" and t.supplier_rate_per_ton > 0:

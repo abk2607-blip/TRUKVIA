@@ -23,6 +23,9 @@ export const EMPTY = {
   supplier_quantity: 0,
   supplier_advance: 0,
   supplier_diesel: 0,
+  // Iter91 — Multi-row diesel / advance transaction logs.
+  supplier_diesel_entries: [],
+  supplier_advance_entries: [],
   supplier_shortage_deduction: 0,
   supplier_shortage_deduction_override: false,
   supplier_other_recoveries: 0,

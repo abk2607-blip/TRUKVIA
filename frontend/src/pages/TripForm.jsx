@@ -85,6 +85,19 @@ export default function TripForm() {
         supplier_quantity: Number(form.supplier_quantity || 0),
         supplier_advance: Number(form.supplier_advance || 0),
         supplier_diesel: Number(form.supplier_diesel || 0),
+        // Iter91 — Multi-row Diesel / Advance transaction logs. Server totals
+        // are recomputed from these entries; the flat fields above are only
+        // fallbacks when the entries list is empty.
+        supplier_diesel_entries: (form.supplier_diesel_entries || []).map((e) => ({
+          ...e,
+          quantity: Number(e.quantity || 0),
+          rate: Number(e.rate || 0),
+          amount: Number(e.amount || 0),
+        })),
+        supplier_advance_entries: (form.supplier_advance_entries || []).map((e) => ({
+          ...e,
+          amount: Number(e.amount || 0),
+        })),
         supplier_shortage_deduction: Number(form.supplier_shortage_deduction || 0),
         supplier_other_recoveries: Number(form.supplier_other_recoveries || 0),
         supplier_other_income: Number(form.supplier_other_income || 0),
@@ -163,10 +176,19 @@ export default function TripForm() {
       supplierFreightLive = Number(form.supplier_fixed_amount);
     }
   }
+  // Iter91 — Prefer per-entry totals over the legacy flat fields.
+  const _activeDiesel = (form.supplier_diesel_entries || []).filter((e) => !e.deleted);
+  const _activeAdvance = (form.supplier_advance_entries || []).filter((e) => !e.deleted);
+  const supplierDieselLive = _activeDiesel.length
+    ? _activeDiesel.reduce((s, e) => s + Number(e.amount || 0), 0)
+    : Number(form.supplier_diesel || 0);
+  const supplierAdvanceLive = _activeAdvance.length
+    ? _activeAdvance.reduce((s, e) => s + Number(e.amount || 0), 0)
+    : Number(form.supplier_advance || 0);
   const supplierNetPayable =
     supplierFreightLive
-    - Number(form.supplier_advance || 0)
-    - Number(form.supplier_diesel || 0)
+    - supplierAdvanceLive
+    - supplierDieselLive
     - Number(form.supplier_shortage_deduction || 0)
     - Number(form.supplier_other_recoveries || 0)
     + Number(form.supplier_other_income || 0);
@@ -368,6 +390,7 @@ export default function TripForm() {
         {form.vehicle_type === "supplier" && (
           <SupplierSection
             form={form} setForm={setForm} suppliers={suppliers}
+            tripId={isEdit ? id : null}
             supplierFreightLive={supplierFreightLive}
             supplierNetPayable={supplierNetPayable}
             supplierProfit={supplierProfit}

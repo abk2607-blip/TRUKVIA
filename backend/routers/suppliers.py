@@ -331,25 +331,65 @@ async def _build_ledger(uid: str, cid: str, sid: str, start: Optional[str], end:
         # Currently: halting is NOT included in supplier_net_payable formula; skip.
 
         # Advance paid at trip time — CREDIT
-        adv = _num(t.get("supplier_advance"))
-        if adv > 0:
-            entries.append({
-                "date": d, "type": "trip_advance",
-                "particulars": "Trip-time Advance to Supplier",
-                "lr_number": lr, "vehicle_number": veh,
-                "trip_id": t.get("id"), "ref_no": "",
-                "remarks": "", "debit": 0.0, "credit": round(adv, 2),
-            })
-        # Diesel provided by us — CREDIT
-        dsl = _num(t.get("supplier_diesel"))
-        if dsl > 0:
-            entries.append({
-                "date": d, "type": "trip_diesel",
-                "particulars": "Diesel Funded by Us",
-                "lr_number": lr, "vehicle_number": veh,
-                "trip_id": t.get("id"), "ref_no": "",
-                "remarks": "", "debit": 0.0, "credit": round(dsl, 2),
-            })
+        # Iter91 — Prefer per-entry rows so each Advance shows as its own
+        # ledger row with mode / reference / remarks. Falls back to the flat
+        # `supplier_advance` for legacy trips that haven't been migrated yet.
+        adv_entries = [e for e in (t.get("supplier_advance_entries") or []) if not e.get("deleted")]
+        if adv_entries:
+            for e in adv_entries:
+                amt = _num(e.get("amount"))
+                if amt <= 0:
+                    continue
+                entries.append({
+                    "date": e.get("date") or d, "type": "trip_advance",
+                    "particulars": f"Advance to Supplier{(' · ' + e.get('mode')) if e.get('mode') else ''}",
+                    "lr_number": lr, "vehicle_number": veh,
+                    "trip_id": t.get("id"), "ref_no": e.get("reference") or "",
+                    "remarks": e.get("remarks") or "",
+                    "debit": 0.0, "credit": round(amt, 2),
+                })
+        else:
+            adv = _num(t.get("supplier_advance"))
+            if adv > 0:
+                entries.append({
+                    "date": d, "type": "trip_advance",
+                    "particulars": "Trip-time Advance to Supplier",
+                    "lr_number": lr, "vehicle_number": veh,
+                    "trip_id": t.get("id"), "ref_no": "",
+                    "remarks": "", "debit": 0.0, "credit": round(adv, 2),
+                })
+        # Diesel provided by us — CREDIT (per-entry rows, else fallback)
+        dsl_entries = [e for e in (t.get("supplier_diesel_entries") or []) if not e.get("deleted")]
+        if dsl_entries:
+            for e in dsl_entries:
+                amt = _num(e.get("amount"))
+                if amt <= 0:
+                    continue
+                qty = _num(e.get("quantity"))
+                rate = _num(e.get("rate"))
+                part = "Diesel Funded by Us"
+                if qty > 0 and rate > 0:
+                    part += f" · {qty:g}L @ ₹{rate:g}"
+                elif e.get("mode"):
+                    part += f" · {e.get('mode')}"
+                entries.append({
+                    "date": e.get("date") or d, "type": "trip_diesel",
+                    "particulars": part,
+                    "lr_number": lr, "vehicle_number": veh,
+                    "trip_id": t.get("id"), "ref_no": e.get("reference") or "",
+                    "remarks": e.get("remarks") or "",
+                    "debit": 0.0, "credit": round(amt, 2),
+                })
+        else:
+            dsl = _num(t.get("supplier_diesel"))
+            if dsl > 0:
+                entries.append({
+                    "date": d, "type": "trip_diesel",
+                    "particulars": "Diesel Funded by Us",
+                    "lr_number": lr, "vehicle_number": veh,
+                    "trip_id": t.get("id"), "ref_no": "",
+                    "remarks": "", "debit": 0.0, "credit": round(dsl, 2),
+                })
         # Customer Diesel Adjustment — CREDIT (customer funded fuel used on this supplier's trip)
         cust_dsl = round(sum(
             _num(r.get("amount")) for r in (t.get("customer_receipts") or [])
@@ -527,6 +567,7 @@ async def suppliers_dashboard(request: Request, user=Depends(get_current_user)):
         {
             "_id": 0, "supplier_id": 1, "supplier_name": 1, "date": 1,
             "supplier_freight": 1, "supplier_advance": 1, "supplier_diesel": 1,
+            "supplier_advance_entries": 1, "supplier_diesel_entries": 1,
             "supplier_shortage_deduction": 1, "supplier_other_recoveries": 1,
             "supplier_other_income": 1, "customer_receipts": 1,
         },
@@ -553,8 +594,11 @@ async def suppliers_dashboard(request: Request, user=Depends(get_current_user)):
             continue
         slot = _slot(sid)
         sf = _num(t.get("supplier_freight"))
-        adv = _num(t.get("supplier_advance"))
-        dsl = _num(t.get("supplier_diesel"))
+        # Iter91 — prefer entries; fallback to flat
+        _adv_entries = [e for e in (t.get("supplier_advance_entries") or []) if not e.get("deleted")]
+        _dsl_entries = [e for e in (t.get("supplier_diesel_entries") or []) if not e.get("deleted")]
+        adv = round(sum(_num(e.get("amount")) for e in _adv_entries), 2) if _adv_entries else _num(t.get("supplier_advance"))
+        dsl = round(sum(_num(e.get("amount")) for e in _dsl_entries), 2) if _dsl_entries else _num(t.get("supplier_diesel"))
         shr = _num(t.get("supplier_shortage_deduction"))
         rec = _num(t.get("supplier_other_recoveries"))
         inc = _num(t.get("supplier_other_income"))

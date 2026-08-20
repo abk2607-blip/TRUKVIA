@@ -28,6 +28,99 @@ from services import (
 
 router = APIRouter(prefix="/api")
 
+# ---------------------------------------------------------------------------
+# Iter91 — Supplier Diesel / Advance transaction-log helpers
+# ---------------------------------------------------------------------------
+
+def _sup_entry_active(entries):
+    return [e for e in (entries or []) if not e.get("deleted")]
+
+def _sup_entries_total(entries) -> float:
+    return round(sum(float(e.get("amount", 0) or 0) for e in _sup_entry_active(entries)), 2)
+
+def _lazy_migrate_supplier_entries(doc: dict, uid: str) -> tuple[dict, bool]:
+    """One-time migration: if a legacy trip has a flat supplier_diesel or
+    supplier_advance value but no entry list, convert each to a single
+    "Migrated" entry so the transaction log becomes the source of truth.
+
+    Returns (doc, changed). Only supplier trips are migrated.
+    """
+    if doc.get("vehicle_type") != "supplier":
+        return doc, False
+    changed = False
+    d_amt = float(doc.get("supplier_diesel") or 0)
+    if d_amt > 0 and not (doc.get("supplier_diesel_entries") or []):
+        doc["supplier_diesel_entries"] = [{
+            "id": new_id("sde_"),
+            "date": doc.get("date") or "",
+            "quantity": 0.0, "rate": 0.0, "amount": d_amt,
+            "mode": "", "reference": "",
+            "remarks": "Migrated from single field",
+            "created_at": now_utc().isoformat(), "created_by": uid,
+            "modified_at": "", "modified_by": "",
+            "deleted": False, "deleted_reason": "", "deleted_at": "", "deleted_by": "",
+        }]
+        changed = True
+    a_amt = float(doc.get("supplier_advance") or 0)
+    if a_amt > 0 and not (doc.get("supplier_advance_entries") or []):
+        doc["supplier_advance_entries"] = [{
+            "id": new_id("sae_"),
+            "date": doc.get("date") or "",
+            "amount": a_amt,
+            "mode": "", "reference": "",
+            "remarks": "Migrated from single field",
+            "created_at": now_utc().isoformat(), "created_by": uid,
+            "modified_at": "", "modified_by": "",
+            "deleted": False, "deleted_reason": "", "deleted_at": "", "deleted_by": "",
+        }]
+        changed = True
+    return doc, changed
+
+
+async def _load_supplier_trip(tid: str, uid: str, cid: str) -> dict:
+    doc = await db.trips.find_one(
+        {"id": tid, "user_id": uid, "company_id": cid}, {"_id": 0, "user_id": 0},
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    if doc.get("vehicle_type") != "supplier":
+        raise HTTPException(status_code=400, detail="Trip is not a supplier vehicle trip")
+    return doc
+
+
+async def _persist_supplier_entries(tid: str, uid: str, cid: str, doc: dict) -> dict:
+    """Recompute supplier_diesel / supplier_advance from entries, run
+    _compute_trip to keep net_payable / profit consistent, then write back
+    the mutated document."""
+    if doc.get("supplier_diesel_entries") is not None:
+        doc["supplier_diesel"] = _sup_entries_total(doc["supplier_diesel_entries"])
+    if doc.get("supplier_advance_entries") is not None:
+        doc["supplier_advance"] = _sup_entries_total(doc["supplier_advance_entries"])
+    try:
+        trip = Trip(**{k: v for k, v in doc.items() if k in Trip.model_fields})
+        trip = _compute_trip(trip)
+        computed = trip.model_dump()
+        # keep the entry lists exactly as passed (Trip → model_dump may reserialise
+        # nested BaseModel; ensure we don't lose per-row audit metadata that
+        # already lives on `doc`).
+        computed["supplier_diesel_entries"] = doc.get("supplier_diesel_entries") or []
+        computed["supplier_advance_entries"] = doc.get("supplier_advance_entries") or []
+        doc = computed
+    except Exception as _e:  # never block the entry CRUD on compute glitches
+        logger.warning(f"_persist_supplier_entries compute failed: {_e}")
+    await db.trips.update_one(
+        {"id": tid, "user_id": uid, "company_id": cid},
+        {"$set": doc},
+    )
+    if doc.get("invoice_id"):
+        try:
+            await _recompute_invoice(doc["invoice_id"], {"user_id": uid})
+        except Exception as _e:
+            logger.warning(f"invoice recompute after entry change failed: {_e}")
+    return doc
+
+
+
 TRIP_IMPORT_COLUMNS = [
     "date", "customer_name", "vehicle_number", "driver_name",
     "load_details", "tons", "from_location", "to_location",
@@ -1229,5 +1322,228 @@ async def get_trip(tid: str, request: Request, user=Depends(get_current_user)):
     )
     if not doc:
         raise HTTPException(status_code=404, detail="Trip not found")
+    # Iter91 — lazy migration of legacy flat supplier_diesel / supplier_advance
+    # into transaction-log entries on first view. Idempotent; only touches
+    # supplier trips.
+    doc, changed = _lazy_migrate_supplier_entries(doc, user["user_id"])
+    if changed:
+        try:
+            await db.trips.update_one(
+                {"id": tid, "user_id": user["user_id"], "company_id": cid},
+                {"$set": {
+                    "supplier_diesel_entries": doc.get("supplier_diesel_entries") or [],
+                    "supplier_advance_entries": doc.get("supplier_advance_entries") or [],
+                }},
+            )
+        except Exception as _e:
+            logger.warning(f"lazy migrate persist failed: {_e}")
     return doc
 
+
+
+
+# ---------------------------------------------------------------------------
+# Iter91 — Supplier Diesel entries (multi-row)
+# ---------------------------------------------------------------------------
+
+@router.post("/trips/{tid}/supplier-diesel")
+async def add_supplier_diesel_entry(tid: str, payload: dict, request: Request,
+                                    user=Depends(get_current_user)):
+    """Append a new Supplier Diesel entry to a supplier trip. Payload accepts
+    `date, quantity, rate, amount, mode, reference, remarks`. If `amount` is
+    0 but quantity & rate > 0, it auto-computes `qty × rate`."""
+    uid = user["user_id"]
+    cid = await _active_company_id(request, user)
+    doc = await _load_supplier_trip(tid, uid, cid)
+    doc, _ = _lazy_migrate_supplier_entries(doc, uid)
+    qty = float(payload.get("quantity", 0) or 0)
+    rate = float(payload.get("rate", 0) or 0)
+    amt = float(payload.get("amount", 0) or 0)
+    if amt <= 0 and qty > 0 and rate > 0:
+        amt = round(qty * rate, 2)
+    entry = {
+        "id": new_id("sde_"),
+        "date": (payload.get("date") or doc.get("date") or "")[:10],
+        "quantity": qty, "rate": rate, "amount": round(amt, 2),
+        "mode": str(payload.get("mode") or "").strip(),
+        "reference": str(payload.get("reference") or "").strip(),
+        "remarks": str(payload.get("remarks") or "").strip(),
+        "created_at": now_utc().isoformat(), "created_by": uid,
+        "modified_at": "", "modified_by": "",
+        "deleted": False, "deleted_reason": "", "deleted_at": "", "deleted_by": "",
+    }
+    entries = list(doc.get("supplier_diesel_entries") or [])
+    entries.append(entry)
+    doc["supplier_diesel_entries"] = entries
+    doc = await _persist_supplier_entries(tid, uid, cid, doc)
+    await _log_audit(user, "trip", "supplier_diesel_add",
+                     entity_id=tid, entity_ref=doc.get("vehicle_number", ""),
+                     changes={"entry_id": entry["id"], "amount": entry["amount"]})
+    return doc
+
+
+@router.put("/trips/{tid}/supplier-diesel/{eid}")
+async def edit_supplier_diesel_entry(tid: str, eid: str, payload: dict,
+                                     request: Request, user=Depends(get_current_user)):
+    uid = user["user_id"]
+    cid = await _active_company_id(request, user)
+    doc = await _load_supplier_trip(tid, uid, cid)
+    doc, _ = _lazy_migrate_supplier_entries(doc, uid)
+    entries = list(doc.get("supplier_diesel_entries") or [])
+    idx = next((i for i, e in enumerate(entries) if e.get("id") == eid), -1)
+    if idx < 0:
+        raise HTTPException(status_code=404, detail="Diesel entry not found")
+    old = entries[idx]
+    if old.get("deleted"):
+        raise HTTPException(status_code=400, detail="Cannot edit a deleted entry")
+    qty = float(payload.get("quantity", old.get("quantity", 0)) or 0)
+    rate = float(payload.get("rate", old.get("rate", 0)) or 0)
+    if "amount" in payload:
+        amt = float(payload.get("amount") or 0)
+    else:
+        amt = round(qty * rate, 2) if (qty > 0 and rate > 0) else float(old.get("amount", 0) or 0)
+    entries[idx] = {
+        **old,
+        "date": (payload.get("date") or old.get("date") or "")[:10],
+        "quantity": qty, "rate": rate, "amount": round(amt, 2),
+        "mode": str(payload.get("mode") if payload.get("mode") is not None else old.get("mode") or "").strip(),
+        "reference": str(payload.get("reference") if payload.get("reference") is not None else old.get("reference") or "").strip(),
+        "remarks": str(payload.get("remarks") if payload.get("remarks") is not None else old.get("remarks") or "").strip(),
+        "modified_at": now_utc().isoformat(), "modified_by": uid,
+    }
+    doc["supplier_diesel_entries"] = entries
+    doc = await _persist_supplier_entries(tid, uid, cid, doc)
+    await _log_audit(user, "trip", "supplier_diesel_edit",
+                     entity_id=tid, entity_ref=doc.get("vehicle_number", ""),
+                     changes={"entry_id": eid, "before": {k: old.get(k) for k in ("amount","quantity","rate","mode","reference")},
+                              "after": {k: entries[idx].get(k) for k in ("amount","quantity","rate","mode","reference")}})
+    return doc
+
+
+@router.delete("/trips/{tid}/supplier-diesel/{eid}")
+async def delete_supplier_diesel_entry(tid: str, eid: str, request: Request,
+                                       reason: str = Query(""),
+                                       user=Depends(get_current_user)):
+    if not (reason or "").strip():
+        raise HTTPException(status_code=400, detail="Reason for deletion is required")
+    uid = user["user_id"]
+    cid = await _active_company_id(request, user)
+    doc = await _load_supplier_trip(tid, uid, cid)
+    doc, _ = _lazy_migrate_supplier_entries(doc, uid)
+    entries = list(doc.get("supplier_diesel_entries") or [])
+    idx = next((i for i, e in enumerate(entries) if e.get("id") == eid), -1)
+    if idx < 0:
+        raise HTTPException(status_code=404, detail="Diesel entry not found")
+    if entries[idx].get("deleted"):
+        raise HTTPException(status_code=400, detail="Entry already deleted")
+    entries[idx] = {
+        **entries[idx],
+        "deleted": True,
+        "deleted_reason": reason.strip(),
+        "deleted_at": now_utc().isoformat(),
+        "deleted_by": uid,
+    }
+    doc["supplier_diesel_entries"] = entries
+    doc = await _persist_supplier_entries(tid, uid, cid, doc)
+    await _log_audit(user, "trip", "supplier_diesel_delete",
+                     entity_id=tid, entity_ref=doc.get("vehicle_number", ""),
+                     reason=reason.strip(),
+                     changes={"entry_id": eid, "amount": entries[idx].get("amount")})
+    return doc
+
+
+# ---------------------------------------------------------------------------
+# Iter91 — Supplier Advance entries (multi-row)
+# ---------------------------------------------------------------------------
+
+@router.post("/trips/{tid}/supplier-advance")
+async def add_supplier_advance_entry(tid: str, payload: dict, request: Request,
+                                     user=Depends(get_current_user)):
+    uid = user["user_id"]
+    cid = await _active_company_id(request, user)
+    doc = await _load_supplier_trip(tid, uid, cid)
+    doc, _ = _lazy_migrate_supplier_entries(doc, uid)
+    entry = {
+        "id": new_id("sae_"),
+        "date": (payload.get("date") or doc.get("date") or "")[:10],
+        "amount": round(float(payload.get("amount", 0) or 0), 2),
+        "mode": str(payload.get("mode") or "").strip(),
+        "reference": str(payload.get("reference") or "").strip(),
+        "remarks": str(payload.get("remarks") or "").strip(),
+        "created_at": now_utc().isoformat(), "created_by": uid,
+        "modified_at": "", "modified_by": "",
+        "deleted": False, "deleted_reason": "", "deleted_at": "", "deleted_by": "",
+    }
+    entries = list(doc.get("supplier_advance_entries") or [])
+    entries.append(entry)
+    doc["supplier_advance_entries"] = entries
+    doc = await _persist_supplier_entries(tid, uid, cid, doc)
+    await _log_audit(user, "trip", "supplier_advance_add",
+                     entity_id=tid, entity_ref=doc.get("vehicle_number", ""),
+                     changes={"entry_id": entry["id"], "amount": entry["amount"]})
+    return doc
+
+
+@router.put("/trips/{tid}/supplier-advance/{eid}")
+async def edit_supplier_advance_entry(tid: str, eid: str, payload: dict,
+                                      request: Request, user=Depends(get_current_user)):
+    uid = user["user_id"]
+    cid = await _active_company_id(request, user)
+    doc = await _load_supplier_trip(tid, uid, cid)
+    doc, _ = _lazy_migrate_supplier_entries(doc, uid)
+    entries = list(doc.get("supplier_advance_entries") or [])
+    idx = next((i for i, e in enumerate(entries) if e.get("id") == eid), -1)
+    if idx < 0:
+        raise HTTPException(status_code=404, detail="Advance entry not found")
+    old = entries[idx]
+    if old.get("deleted"):
+        raise HTTPException(status_code=400, detail="Cannot edit a deleted entry")
+    entries[idx] = {
+        **old,
+        "date": (payload.get("date") or old.get("date") or "")[:10],
+        "amount": round(float(payload.get("amount", old.get("amount", 0)) or 0), 2),
+        "mode": str(payload.get("mode") if payload.get("mode") is not None else old.get("mode") or "").strip(),
+        "reference": str(payload.get("reference") if payload.get("reference") is not None else old.get("reference") or "").strip(),
+        "remarks": str(payload.get("remarks") if payload.get("remarks") is not None else old.get("remarks") or "").strip(),
+        "modified_at": now_utc().isoformat(), "modified_by": uid,
+    }
+    doc["supplier_advance_entries"] = entries
+    doc = await _persist_supplier_entries(tid, uid, cid, doc)
+    await _log_audit(user, "trip", "supplier_advance_edit",
+                     entity_id=tid, entity_ref=doc.get("vehicle_number", ""),
+                     changes={"entry_id": eid,
+                              "before": {k: old.get(k) for k in ("amount","mode","reference")},
+                              "after": {k: entries[idx].get(k) for k in ("amount","mode","reference")}})
+    return doc
+
+
+@router.delete("/trips/{tid}/supplier-advance/{eid}")
+async def delete_supplier_advance_entry(tid: str, eid: str, request: Request,
+                                        reason: str = Query(""),
+                                        user=Depends(get_current_user)):
+    if not (reason or "").strip():
+        raise HTTPException(status_code=400, detail="Reason for deletion is required")
+    uid = user["user_id"]
+    cid = await _active_company_id(request, user)
+    doc = await _load_supplier_trip(tid, uid, cid)
+    doc, _ = _lazy_migrate_supplier_entries(doc, uid)
+    entries = list(doc.get("supplier_advance_entries") or [])
+    idx = next((i for i, e in enumerate(entries) if e.get("id") == eid), -1)
+    if idx < 0:
+        raise HTTPException(status_code=404, detail="Advance entry not found")
+    if entries[idx].get("deleted"):
+        raise HTTPException(status_code=400, detail="Entry already deleted")
+    entries[idx] = {
+        **entries[idx],
+        "deleted": True,
+        "deleted_reason": reason.strip(),
+        "deleted_at": now_utc().isoformat(),
+        "deleted_by": uid,
+    }
+    doc["supplier_advance_entries"] = entries
+    doc = await _persist_supplier_entries(tid, uid, cid, doc)
+    await _log_audit(user, "trip", "supplier_advance_delete",
+                     entity_id=tid, entity_ref=doc.get("vehicle_number", ""),
+                     reason=reason.strip(),
+                     changes={"entry_id": eid, "amount": entries[idx].get("amount")})
+    return doc

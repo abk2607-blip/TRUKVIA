@@ -239,6 +239,12 @@ export default function TripView() {
             <Row k="Less: Other Recoveries" v={fmtCurrency(supOther)} mono />
             <Row k="Add: Other Income / Bonus" v={fmtCurrency(trip.supplier_other_income)} mono />
           </Grid2>
+
+          {/* Iter91 — Multi-row Diesel + Advance breakdown */}
+          <SupplierEntriesReadOnly title="Diesel Entries" kind="diesel"
+            entries={(trip.supplier_diesel_entries || []).filter((e) => !e.deleted)} />
+          <SupplierEntriesReadOnly title="Advance Entries" kind="advance"
+            entries={(trip.supplier_advance_entries || []).filter((e) => !e.deleted)} />
           <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">
             <div className="border border-rose-200 bg-rose-50 p-3 rounded-sm">
               <div className="text-[10px] uppercase tracking-wider text-zinc-600 font-bold">Net Amount Payable to Supplier</div>
@@ -373,6 +379,54 @@ function ChipRow({ tid, label, value, kind }) {
     <div className="flex justify-between items-baseline gap-2" data-testid={tid}>
       <span className="text-[10px] uppercase tracking-wider text-zinc-600 truncate">{label}</span>
       <span className={`font-mono tabular-nums ${cls}`}>{fmtCurrency(value)}</span>
+    </div>
+  );
+}
+
+
+// Iter91 — Read-only Diesel / Advance entries table for the Supplier section.
+function SupplierEntriesReadOnly({ title, kind, entries }) {
+  if (!entries || entries.length === 0) return null;
+  const isDiesel = kind === "diesel";
+  const total = entries.reduce((s, e) => s + Number(e.amount || 0), 0);
+  return (
+    <div className="mt-4 border border-zinc-200 rounded-sm" data-testid={`tv-sup-${kind}-block`}>
+      <div className="px-3 py-2 border-b border-zinc-200 text-[10px] uppercase tracking-wider font-bold text-zinc-600 bg-zinc-50">
+        {title} · {entries.length} row{entries.length > 1 ? "s" : ""}
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-xs">
+          <thead className="text-[10px] uppercase text-zinc-500">
+            <tr className="border-b border-zinc-200">
+              <th className="text-left py-1.5 px-3">Date</th>
+              {isDiesel && <th className="text-right py-1.5 px-3">Qty (L)</th>}
+              {isDiesel && <th className="text-right py-1.5 px-3">Rate</th>}
+              <th className="text-right py-1.5 px-3">Amount</th>
+              <th className="text-left py-1.5 px-3">Mode</th>
+              <th className="text-left py-1.5 px-3">Reference</th>
+              <th className="text-left py-1.5 px-3">Remarks</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.map((e) => (
+              <tr key={e.id} className="border-b border-zinc-100">
+                <td className="py-1.5 px-3 font-mono">{e.date || "—"}</td>
+                {isDiesel && <td className="py-1.5 px-3 text-right font-mono">{Number(e.quantity || 0) || "—"}</td>}
+                {isDiesel && <td className="py-1.5 px-3 text-right font-mono">{Number(e.rate || 0) || "—"}</td>}
+                <td className="py-1.5 px-3 text-right font-mono font-bold">{`₹ ${Number(e.amount || 0).toFixed(2)}`}</td>
+                <td className="py-1.5 px-3">{e.mode || "—"}</td>
+                <td className="py-1.5 px-3">{e.reference || "—"}</td>
+                <td className="py-1.5 px-3">{e.remarks || "—"}</td>
+              </tr>
+            ))}
+            <tr className="bg-zinc-50 font-bold">
+              <td colSpan={isDiesel ? 3 : 1} className="py-2 px-3 text-right uppercase text-[10px] tracking-wider">Total</td>
+              <td className="py-2 px-3 text-right font-mono">{`₹ ${total.toFixed(2)}`}</td>
+              <td colSpan={3}></td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
