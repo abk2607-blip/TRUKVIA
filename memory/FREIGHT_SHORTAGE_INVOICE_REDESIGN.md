@@ -4,6 +4,13 @@ Status: 🟡 Review only · No code changes yet · Awaiting user approval
 ## Executive Summary
 Approve this spec — it's the right direction. Estimate: **~1000-1500 credits, 6-8 iterations, ~10 days build**. Do it in 5 phases (below) so each phase is user-verifiable before the next. Not a rewrite — extends the existing single-source-of-truth Trip model.
 
+## Phase Status
+- **Phase 1 · Master Data + Policy Snapshot** — ✅ **COMPLETE** (Iter89, Feb 2026). All 7 pytest locks pass. Live curl end-to-end verified. Awaiting user UI approval before Phase 2.
+- **Phase 2 · Central Freight Calc Service** — ⏳ Blocked on Phase 1 user approval.
+- **Phase 3 · Central Shortage Calc (Customer + Supplier independent)** — ⏳ Blocked.
+- **Phase 4 · Per-field Override Audit Trail** — ⏳ Blocked.
+- **Phase 5 · Modern Invoice PDF Redesign** — ⏳ Blocked.
+
 ## What Already Exists (Good Foundation)
 1. **Trip is already the single source of truth**. Freight, halting, shortage, expenses all persist on Trip. Invoice reads live from trip_ids at render time.
 2. **Override fields already exist**: `shortage_amount_override`, `excess_amount_override`, `halting_amount_override`, `supplier_shortage_deduction_override`. Pattern is proven.

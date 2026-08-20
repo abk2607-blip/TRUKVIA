@@ -376,6 +376,37 @@ async def create_trip(payload: Trip, request: Request, user=Depends(get_current_
     payload = _compute_trip(payload)
     doc = payload.model_dump()
     doc["user_id"] = user["user_id"]
+    # Iter89 · Phase 1 — POLICY SNAPSHOT.
+    # Freeze Customer freight method + shortage config + Product default shortage
+    # + Supplier KG limit onto the trip at create time. Later master edits will
+    # NEVER change these values on this trip.
+    if not doc.get("policy_snapshot_at"):
+        try:
+            snap_now = now_utc().isoformat()
+            cust = await db.customers.find_one(
+                {"id": doc.get("customer_id"), "user_id": user["user_id"], "company_id": cid},
+                {"_id": 0, "default_freight_method": 1, "shortage_config": 1},
+            ) or {}
+            doc["applied_freight_method"] = doc.get("applied_freight_method") or cust.get("default_freight_method") or "per_ton_loading"
+            sc = cust.get("shortage_config") or {}
+            doc["applied_customer_shortage_limit"] = float(sc.get("limit", 0) or 0)
+            doc["applied_customer_shortage_limit_type"] = sc.get("limit_type") or "pct"
+            doc["applied_customer_shortage_method"] = sc.get("method") or "net_shortage"
+            if doc.get("product_id"):
+                prod = await db.products.find_one(
+                    {"id": doc["product_id"], "user_id": user["user_id"], "company_id": cid},
+                    {"_id": 0, "default_shortage_allowance_pct": 1},
+                ) or {}
+                doc["applied_product_shortage_pct"] = float(prod.get("default_shortage_allowance_pct", 0) or 0)
+            if doc.get("vehicle_type") == "supplier" and doc.get("supplier_id"):
+                sup = await db.suppliers.find_one(
+                    {"id": doc["supplier_id"], "user_id": user["user_id"], "company_id": cid},
+                    {"_id": 0, "shortage_limit_kg": 1},
+                ) or {}
+                doc["applied_supplier_shortage_limit_kg"] = float(sup.get("shortage_limit_kg", 0) or 0)
+            doc["policy_snapshot_at"] = snap_now
+        except Exception as _e:
+            import logging; logging.getLogger(__name__).warning(f"policy snapshot failed: {_e}")
     # Iter59 · Phase A — Snapshot the applicable Driver Shortage Policy onto
     # the Trip at CREATE time. Future policy edits will NEVER change this
     # snapshot.

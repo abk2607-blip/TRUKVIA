@@ -64,6 +64,7 @@ CRITICAL_TESTS=(
   "tests/test_iter84_missing_cust_ref_filter.py"          # Iter84 · Server-side "Missing Cust Ref" trips filter
   "tests/test_iter85_inline_cust_ref_fill.py"             # Iter85 · One-click inline Cust Ref fill (PATCH endpoint)
   "tests/test_iter86_historical_isolation.py"             # Iter86 · Historical Isolation Layer — imports don't leak into live aggregations
+  "tests/test_iter89_phase1_policy_snapshot.py"           # Iter89 Phase 1 · Customer/Product/Supplier policy snapshot on Trip create
 )
 
 # Explicit venv PATH so this runs cleanly from asyncio subprocess (which

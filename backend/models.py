@@ -103,6 +103,19 @@ class ShipSite(BaseModel):
     is_active: bool = True
 
 
+class ShortageConfig(BaseModel):
+    """Iter89 · Phase 1 — Per-customer shortage configuration.
+    limit: percentage-of-loaded (0..100) OR fixed KG, chosen via limit_type.
+    method: `net_shortage` (deduct only excess above limit) OR `full_after_limit`
+    (deduct FULL actual shortage once the limit is exceeded)."""
+    limit: float = 0.0
+    limit_type: Literal["pct", "kg"] = "pct"
+    method: Literal["net_shortage", "full_after_limit"] = "net_shortage"
+    effective_from: str = ""    # ISO date; blank = always
+    active: bool = True
+    remarks: str = ""
+
+
 class Customer(BaseModel):
     id: str = Field(default_factory=lambda: new_id("cust_"))
     name: str
@@ -119,6 +132,12 @@ class Customer(BaseModel):
     notes: str = ""
     reminder_enabled: bool = True
     ship_sites: List[ShipSite] = Field(default_factory=list)   # Iter66 · Phase A — multi Ship-To
+    # Iter89 · Phase 1 — Customer-specific commercial defaults.
+    # Trip snapshots freeze these at CREATE time so master edits never touch history.
+    default_freight_method: Literal[
+        "per_ton_loading", "per_ton_unloading", "per_ton_higher_of", "fixed"
+    ] = "per_ton_loading"
+    shortage_config: ShortageConfig = Field(default_factory=ShortageConfig)
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
     # Iter86 · Historical Isolation Layer — legacy import flags (defaults keep existing behavior)
     imported_from: str = ""     # e.g. "transport_book"
@@ -293,6 +312,16 @@ class Trip(BaseModel):
     tare_weight: float = 0.0
     seal_numbers: str = ""
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+    # Iter89 · Phase 1 — POLICY SNAPSHOT (frozen at trip create time).
+    # These fields are the source-of-truth for THIS trip's freight/shortage math.
+    # Future edits to Customer/Product/Supplier masters MUST NOT change these.
+    applied_freight_method: str = ""             # per_ton_loading | per_ton_unloading | per_ton_higher_of | fixed
+    applied_product_shortage_pct: float = 0.0    # from product.default_shortage_allowance_pct
+    applied_customer_shortage_limit: float = 0.0
+    applied_customer_shortage_limit_type: str = ""   # pct | kg
+    applied_customer_shortage_method: str = ""       # net_shortage | full_after_limit
+    applied_supplier_shortage_limit_kg: float = 0.0
+    policy_snapshot_at: str = ""                 # ISO ts when snapshot was taken
     # Iter86 · Historical Isolation Layer
     imported_from: str = ""
     imported_ref: str = ""
@@ -305,6 +334,9 @@ class Product(BaseModel):
     hsn_sac: str = "996791"
     default_rate: float = 0.0
     unit: str = "MT"
+    # Iter89 · Phase 1 — default shortage allowance % per product (0-100).
+    # Frozen onto trip.applied_product_shortage_pct at CREATE time.
+    default_shortage_allowance_pct: float = 0.0
     notes: str = ""
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
 
@@ -560,6 +592,10 @@ class Supplier(BaseModel):
     opening_balance_type: Literal["payable", "advance"] = "payable"
     remarks: str = ""
     is_active: bool = True
+    # Iter89 · Phase 1 — Supplier-specific fixed-KG shortage threshold.
+    # Rule: shortage ≤ limit → 0 deduction. shortage > limit → FULL actual shortage.
+    # (Deliberately different from Customer shortage config.)
+    shortage_limit_kg: float = 0.0
     # Audit
     created_by: str = ""
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())

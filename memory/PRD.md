@@ -22,6 +22,31 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter89 · Phase 1 — Policy Snapshot Layer (Customer freight method + Product/Customer/Supplier shortage)** (Feb 2026)
+  - **Scope**: Master-data additions + Trip-level policy snapshot so future master edits NEVER touch history. Foundation for the 5-phase Customer/Supplier commercial-terms redesign (spec §1-22).
+  - **Model additions**:
+    - `Customer.default_freight_method: Literal["per_ton_loading","per_ton_unloading","per_ton_higher_of","fixed"]`
+    - `Customer.shortage_config: ShortageConfig` (limit, limit_type, method, effective_from, active, remarks)
+    - `Product.default_shortage_allowance_pct: float`
+    - `Supplier.shortage_limit_kg: float` (fixed-KG rule — distinct from Customer)
+    - `Trip.applied_freight_method`, `applied_product_shortage_pct`, `applied_customer_shortage_limit`, `applied_customer_shortage_limit_type`, `applied_customer_shortage_method`, `applied_supplier_shortage_limit_kg`, `policy_snapshot_at`
+  - **Trip create logic** (`routers/trips.py`): after `_compute_trip`, look up Customer/Product/Supplier masters and freeze their current values onto `trip.applied_*` fields; snapshot failure logged as warning, never blocks trip create.
+  - **Backward compatible**: all new fields have safe defaults (empty string / 0.0 / False), so existing trips render exactly as before.
+  - **Regression Guard**: `test_iter89_phase1_policy_snapshot.py` added to strict suite. **All 7 tests PASS**:
+    1. Customer master persists freight method + shortage_config ✓
+    2. Product master persists shortage allowance ✓
+    3. Supplier master persists shortage_limit_kg ✓
+    4. Trip create snapshots all three masters onto `trip.applied_*` ✓
+    5. Master edit after trip create → old trip snapshot UNCHANGED ✓
+    6. New trip AFTER master edit picks up NEW values ✓
+    7. Backward-compat defaults for minimal trips ✓
+  - **Live end-to-end verified** via curl on preview URL:
+    - Customer `UI_TEST_C1` created with `default_freight_method="per_ton_higher_of"` + `shortage_config={limit:100, limit_type:"kg", method:"full_after_limit"}`
+    - Product `UI_TEST_P1` created with `default_shortage_allowance_pct=0.75`
+    - Supplier `UI_TEST_S1` created with `shortage_limit_kg=150`
+    - Trip created against all three → `applied_*` fields returned exactly matching master values, `policy_snapshot_at` timestamp set
+  - **Status**: Phase 1 backend complete. **Awaiting user UI verification before Phase 2** (central freight calc service). Frontend form fields for the new master values will be added as part of Phase 1.5 mini-task once user approves visual approach.
+
 - [x] **Iter87 · User-Reported Blocker — Dashboard "Data Couldn't Load" + Supplier Statement Empty** (Feb 2026)
   - **Symptoms**: User returned from holiday, saw Dashboard stuck on "Backend is restarting"; customer picker in Trip form stuck on "Type to search" with no options.
   - **Diagnosis (real root cause)**:
