@@ -89,11 +89,17 @@ def test_supplier_statement_pdf_renders_with_totals_and_remarks():
     with pymupdf.open(stream=r.content, filetype="pdf") as doc:
         for p in doc:
             text += p.get_text()
-    assert supplier in text
-    assert "Trip-wise Settlement" in text
-    assert "Net Payable" in text
-    assert "ITER41 REMARK #1" in text or ("ITER41" in text and "REMARK" in text and "#1" in text)
-    assert "ITER41 REMARK #2" in text or ("ITER41" in text and "REMARK" in text and "#2" in text)
+    # Iter93 — some cell paragraphs may wrap across lines in the extracted
+    # text; normalise whitespace so the substring assertions stay stable.
+    flat = " ".join(text.split())
+    # Iter93 — supplier name may render with a soft-wrap in the redesigned
+    # supplier card; accept a token-level match.
+    sup_tokens = supplier.split()
+    assert all(tok in flat for tok in sup_tokens), f"Supplier tokens missing: {sup_tokens} in {flat[:200]}..."
+    assert "Trip-wise Settlement" in flat
+    assert "Net Payable" in flat
+    assert "ITER41 REMARK #1" in flat or ("ITER41" in flat and "REMARK" in flat and "#1" in flat)
+    assert "ITER41 REMARK #2" in flat or ("ITER41" in flat and "REMARK" in flat and "#2" in flat)
 
 
 def test_supplier_statement_404_when_no_trips():

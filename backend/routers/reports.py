@@ -519,8 +519,19 @@ async def _supplier_statement_data(request: Request, supplier_name: str, start, 
     tot["margin_pct"] = round((tot["profit"] / tot["customer_freight"] * 100.0) if tot["customer_freight"] > 0 else 0, 2)
     return {
         "supplier": {"name": supplier_name, "mobile": supplier_mobile},
-        "company": {"id": company.get("id"), "name": company.get("name", ""),
-                    "gst_in": company.get("gst_in", ""), "address": company.get("address", "")},
+        "company": {
+            "id": company.get("id"), "name": company.get("name", ""),
+            # Iter93 — expose full company master for the redesigned PDF header.
+            # Backward-compat: keep `gst_in` alias for JSON consumers.
+            "gst_in": company.get("gstin") or company.get("gst_in") or "",
+            "gstin": company.get("gstin") or company.get("gst_in") or "",
+            "pan": company.get("pan", ""),
+            "address": company.get("address", ""),
+            "phone": company.get("phone", ""),
+            "email": company.get("email", ""),
+            "state": company.get("state", ""),
+            "logo": company.get("logo", ""),
+        },
         "period": {"start": start, "end": end},
         "trips": trip_rows,
         "totals": tot,
@@ -699,10 +710,12 @@ async def supplier_statement_pdf(
     """
     from reportlab.lib.pagesizes import A4, landscape
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+    from reportlab.lib.enums import TA_LEFT, TA_RIGHT, TA_CENTER
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, KeepTogether
     from reportlab.lib import colors
     from reportlab.lib.units import mm
     from pdf._base import _UNI_FONT, _UNI_FONT_BOLD
+    from io import BytesIO as _BIO
 
     data = await _supplier_statement_data(request, supplier_name, start, end, user)
     company = data["company"]
@@ -715,96 +728,315 @@ async def supplier_statement_pdf(
     if not trips and not deep["payments_in_period"] and deep["opening_balance"] == 0:
         raise HTTPException(status_code=404, detail=f"No supplier trips found for '{supplier_name}'")
 
+    # ------------------------------------------------------------------
+    # Iter93 — Modern professional Supplier Statement redesign.
+    # Landscape A4, generous margins, page-header + page-footer callbacks
+    # with logo (from Company master), page numbers, and cleaner tables.
+    # ------------------------------------------------------------------
+    PALETTE = {
+        "ink":       colors.HexColor("#0f172a"),
+        "sub":       colors.HexColor("#475569"),
+        "muted":     colors.HexColor("#64748b"),
+        "line":      colors.HexColor("#cbd5e1"),
+        "line_soft": colors.HexColor("#e2e8f0"),
+        "zebra":     colors.HexColor("#f8fafc"),
+        "band":      colors.HexColor("#f1f5f9"),
+        "accent":    colors.HexColor("#0f172a"),
+        "gold":      colors.HexColor("#fef3c7"),
+        "gold_ink":  colors.HexColor("#78350f"),
+        "danger":    colors.HexColor("#b91c1c"),
+    }
+
+    # Decode logo (base64 data URL) once for reuse in page header.
+    logo_bytes = None
+    _raw_logo = company.get("logo") or ""
+    if _raw_logo and isinstance(_raw_logo, str) and "," in _raw_logo and _raw_logo.strip().lower().startswith("data:image"):
+        try:
+            logo_bytes = base64.b64decode(_raw_logo.split(",", 1)[1])
+        except Exception:
+            logo_bytes = None
+
+    def _fmt_bal(v: float) -> str:
+        sign = "Dr" if v >= 0 else "Cr"
+        return f"₹\u00a0{abs(v):,.2f} {sign}"
+
+    def _rupee(v) -> str:
+        try:
+            # Non-breaking space keeps ₹ glued to the amount on wraps.
+            return f"₹\u00a0{float(v or 0):,.2f}"
+        except Exception:
+            return "₹\u00a00.00"
+
+    def _rupee0(v) -> str:
+        """Compact ₹ format (no decimals) — used inside the wide trip-wise table."""
+        try:
+            return f"₹\u00a0{float(v or 0):,.0f}"
+        except Exception:
+            return "₹\u00a00"
+
+    def _rupee_or_dash(v) -> str:
+        try:
+            f = float(v or 0)
+        except Exception:
+            f = 0.0
+        return _rupee0(f) if abs(f) > 0.005 else "—"
+
+    def _page_decorator(canvas, doc_):
+        """Header (logo + company block + statement title) and footer
+        (generated on … · company · page N) drawn on every page."""
+        canvas.saveState()
+        page_w, page_h = doc_.pagesize
+        m_l = 12 * mm
+        m_r = 12 * mm
+        m_top = 12 * mm
+        m_bot = 10 * mm
+
+        # ── Header band ────────────────────────────────────────────────
+        header_y = page_h - m_top
+        # Logo
+        logo_w = 22 * mm
+        logo_x = m_l
+        text_x = logo_x
+        if logo_bytes:
+            try:
+                img_reader = _BIO(logo_bytes)
+                from reportlab.lib.utils import ImageReader
+                canvas.drawImage(ImageReader(img_reader), logo_x, header_y - 22 * mm,
+                                 width=logo_w, height=22 * mm,
+                                 preserveAspectRatio=True, mask="auto")
+                text_x = logo_x + logo_w + 5 * mm
+            except Exception:
+                text_x = logo_x
+
+        # Company block (left)
+        canvas.setFillColor(PALETTE["ink"])
+        canvas.setFont(_UNI_FONT_BOLD, 15)
+        canvas.drawString(text_x, header_y - 5 * mm, (company.get("name") or "").upper() or "COMPANY")
+        canvas.setFont(_UNI_FONT, 8.5)
+        canvas.setFillColor(PALETTE["sub"])
+        canvas.drawString(text_x, header_y - 9 * mm, "Bitumen Transport Contractors")
+
+        # Address / phone / email / GSTIN wrapped into up to 3 lines under the name
+        info_lines = []
+        if company.get("address"):
+            info_lines.append(company.get("address"))
+        contact = " · ".join([x for x in [
+            (f"Phone: {company.get('phone')}" if company.get("phone") else ""),
+            (f"Email: {company.get('email')}" if company.get("email") else ""),
+        ] if x])
+        if contact:
+            info_lines.append(contact)
+        idents = " · ".join([x for x in [
+            (f"GSTIN: {company.get('gstin') or company.get('gst_in') or ''}" if (company.get('gstin') or company.get('gst_in')) else ""),
+            (f"PAN: {company.get('pan')}" if company.get("pan") else ""),
+        ] if x])
+        if idents:
+            info_lines.append(idents)
+        canvas.setFillColor(PALETTE["muted"])
+        canvas.setFont(_UNI_FONT, 8)
+        y = header_y - 13 * mm
+        for line in info_lines[:3]:
+            canvas.drawString(text_x, y, line[:160])
+            y -= 3.5 * mm
+
+        # Statement title (right)
+        canvas.setFillColor(PALETTE["ink"])
+        canvas.setFont(_UNI_FONT_BOLD, 13)
+        canvas.drawRightString(page_w - m_r, header_y - 5 * mm, "SUPPLIER SETTLEMENT")
+        canvas.drawRightString(page_w - m_r, header_y - 10 * mm, "STATEMENT")
+        canvas.setFillColor(PALETTE["muted"])
+        canvas.setFont(_UNI_FONT, 8)
+        canvas.drawRightString(page_w - m_r, header_y - 14 * mm,
+                               f"Period: {start or 'All time'} to {end or 'Today'}")
+
+        # Divider under header
+        canvas.setStrokeColor(PALETTE["line"])
+        canvas.setLineWidth(0.6)
+        canvas.line(m_l, header_y - 25 * mm, page_w - m_r, header_y - 25 * mm)
+
+        # ── Footer band ────────────────────────────────────────────────
+        canvas.setStrokeColor(PALETTE["line_soft"])
+        canvas.setLineWidth(0.4)
+        canvas.line(m_l, m_bot + 5 * mm, page_w - m_r, m_bot + 5 * mm)
+        canvas.setFillColor(PALETTE["muted"])
+        canvas.setFont(_UNI_FONT, 7.5)
+        canvas.drawString(m_l, m_bot + 1.5 * mm,
+                          f"Generated {now_utc().strftime('%Y-%m-%d %H:%M UTC')}  ·  {company.get('name','')}")
+        canvas.drawRightString(page_w - m_r, m_bot + 1.5 * mm,
+                               f"Page {doc_.page}")
+        canvas.restoreState()
+
     buf = io.BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=landscape(A4),
-        leftMargin=10 * mm, rightMargin=10 * mm,
-        topMargin=12 * mm, bottomMargin=10 * mm,
-        title=f"Supplier Statement — {supplier_name}",
+        leftMargin=12 * mm, rightMargin=12 * mm,
+        topMargin=42 * mm,    # room for the header band drawn by the callback
+        bottomMargin=14 * mm, # room for the footer band
+        title=f"Supplier Settlement Statement — {supplier_name}",
     )
     styles = getSampleStyleSheet()
-    title_st = ParagraphStyle("t", parent=styles["Title"], fontSize=14, leading=16, fontName=_UNI_FONT_BOLD)
-    hdr_st = ParagraphStyle("h", parent=styles["Normal"], fontSize=9, textColor=colors.grey, fontName=_UNI_FONT)
-    body_st = ParagraphStyle("b", parent=styles["Normal"], fontSize=7, leading=8.5, fontName=_UNI_FONT)
-    sub_st = ParagraphStyle("sub", parent=styles["Normal"], fontSize=6.5, leading=8, textColor=colors.grey, fontName=_UNI_FONT)
+    body_st = ParagraphStyle("body", parent=styles["Normal"], fontSize=7.5, leading=9,
+                             fontName=_UNI_FONT, textColor=PALETTE["ink"])
+    body_c = ParagraphStyle("bodyc", parent=body_st, alignment=TA_CENTER)
+    body_r = ParagraphStyle("bodyr", parent=body_st, alignment=TA_RIGHT)
+    # Iter93 — tighter Paragraph style for wide trip-wise table cells so the
+    # amount + currency symbol never breaks mid-value.
+    tw_cell = ParagraphStyle("twc", parent=body_st, fontSize=7, leading=8.5, wordWrap=None)
+    tw_cell_r = ParagraphStyle("twcr", parent=tw_cell, alignment=TA_RIGHT)
+    tw_head_st = ParagraphStyle("twh", parent=styles["Normal"], fontSize=7, leading=8.5,
+                                fontName=_UNI_FONT_BOLD, textColor=colors.white)
+    tw_head_r_st = ParagraphStyle("twhr", parent=tw_head_st, alignment=TA_RIGHT)
+    sub_st = ParagraphStyle("sub", parent=styles["Normal"], fontSize=7, leading=8.5,
+                            fontName=_UNI_FONT, textColor=PALETTE["muted"])
+    section_st = ParagraphStyle("sec", parent=styles["Heading3"], fontSize=10, leading=12,
+                                fontName=_UNI_FONT_BOLD, textColor=PALETTE["ink"],
+                                spaceBefore=2, spaceAfter=4)
 
     story: list = []
-    story.append(Paragraph(f"<b>{company.get('name', '')}</b>", title_st))
-    if company.get("gst_in"):
-        story.append(Paragraph(f"GSTIN: {company.get('gst_in','')} · {company.get('address','')}", hdr_st))
-    story.append(Paragraph(f"Supplier Settlement Statement — <b>{supplier_name}</b>"
-                           + (f" · {data['supplier']['mobile']}" if data["supplier"]["mobile"] else ""), hdr_st))
-    story.append(Paragraph(f"Period: {start or 'all'} to {end or 'today'}", hdr_st))
+
+    # ── Supplier identity card (immediately below the page header band) ──
+    supplier_card = [
+        [
+            Paragraph("<font size='7' color='#64748b'>SUPPLIER</font><br/>"
+                      f"<b><font size='11' color='#0f172a'>{(supplier_name or '').upper()}</font></b>", body_st),
+            Paragraph("<font size='7' color='#64748b'>MOBILE</font><br/>"
+                      f"<font size='9' color='#0f172a'>{data['supplier']['mobile'] or '—'}</font>", body_st),
+            Paragraph("<font size='7' color='#64748b'>PERIOD</font><br/>"
+                      f"<font size='9' color='#0f172a'>{start or 'All time'} → {end or 'Today'}</font>", body_st),
+            Paragraph("<font size='7' color='#64748b'>OPENING SOURCE</font><br/>"
+                      f"<font size='9' color='#0f172a'>{'Previous period closing' if deep['opening_source']=='carry_forward' else 'Supplier master'}</font>", body_st),
+        ]
+    ]
+    sc = Table(supplier_card, hAlign="LEFT",
+               colWidths=[92 * mm, 55 * mm, 65 * mm, 62 * mm])
+    sc.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, -1), _UNI_FONT),
+        ("BACKGROUND", (0, 0), (-1, -1), PALETTE["band"]),
+        ("BOX", (0, 0), (-1, -1), 0.5, PALETTE["line"]),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ]))
+    story.append(sc)
     story.append(Spacer(1, 8))
 
-    # ---- Iter47 Phase 3: Deep Monthly Statement blocks ----
-    def _fmt_bal(v: float) -> str:
-        sign = "Dr" if v >= 0 else "Cr"
-        return f"₹{abs(v):,.2f} {sign}"
-    opening_label = "Opening Balance"
-    opening_src = "(from previous period closing)" if deep["opening_source"] == "carry_forward" else "(from Supplier master)"
-    deep_blocks = [
-        ["OPENING BALANCE", _fmt_bal(deep["opening_balance"]), "MOVEMENTS · DEBITS (+)", f"₹{deep['movements_debit']:,.2f}"],
-        [opening_src, "", "MOVEMENTS · CREDITS (−)", f"₹{deep['movements_credit']:,.2f}"],
-        ["Freight (Trips)", f"₹{tot['supplier_freight']:,.2f}", "Advance", f"₹{tot['supplier_advance']:,.2f}"],
-        ["Bonus / Other Income", f"₹{tot['supplier_income']:,.2f}", "Diesel Funded by Us", f"₹{tot['supplier_diesel']:,.2f}"],
-        ["Receipts from Supplier", f"₹{deep['payments_in_total']:,.2f}", "Cust. Diesel Adjustment", f"₹{tot['customer_diesel']:,.2f}"],
-        ["", "", "Shortage Deducted", f"₹{tot['supplier_shortage']:,.2f}"],
-        ["", "", "Other Recoveries", f"₹{tot['supplier_recovery']:,.2f}"],
-        ["", "", "Payments Made (Bank/Cash)", f"₹{deep['payments_out_total']:,.2f}"],
-        ["CLOSING BALANCE", _fmt_bal(deep["closing_balance"]), "", ""],
+    # ── Opening / Debits / Credits / Closing block ──
+    story.append(Paragraph("Account Movements", section_st))
+    _cell_head = lambda t: Paragraph(f"<b><font color='#ffffff'>{t}</font></b>", body_st)
+    _cell_amt = lambda t: Paragraph(f"<font color='#0f172a'>{t}</font>", body_r)
+    _cell_lbl = lambda t: Paragraph(f"<font color='#0f172a'>{t}</font>", body_st)
+
+    movement_rows = [
+        [_cell_head("OPENING BALANCE"),  _cell_head(_fmt_bal(deep["opening_balance"])),
+         _cell_head("MOVEMENTS · DEBITS  (+)"), _cell_head(f"₹\u00a0{deep['movements_debit']:,.2f}"),
+         _cell_head("MOVEMENTS · CREDITS  (−)"), _cell_head(f"₹\u00a0{deep['movements_credit']:,.2f}")],
+        [Paragraph(f"<font size='6.5' color='#64748b'>from {'previous period closing' if deep['opening_source']=='carry_forward' else 'Supplier master'}</font>", body_st),
+         "",
+         _cell_lbl("Freight (Trips)"),          _cell_amt(_rupee(tot['supplier_freight'])),
+         _cell_lbl("Advance"),                  _cell_amt(_rupee(tot['supplier_advance']))],
+        ["", "",
+         _cell_lbl("Bonus / Other Income"),     _cell_amt(_rupee(tot['supplier_income'])),
+         _cell_lbl("Diesel Funded by Us"),      _cell_amt(_rupee(tot['supplier_diesel']))],
+        ["", "",
+         _cell_lbl("Receipts from Supplier"),   _cell_amt(_rupee(deep['payments_in_total'])),
+         _cell_lbl("Cust. Diesel Adjustment"),  _cell_amt(_rupee(tot['customer_diesel']))],
+        ["", "", "", "",
+         _cell_lbl("Shortage Deducted"),        _cell_amt(_rupee(tot['supplier_shortage']))],
+        ["", "", "", "",
+         _cell_lbl("Other Recoveries"),         _cell_amt(_rupee(tot['supplier_recovery']))],
+        ["", "", "", "",
+         _cell_lbl("Payments Made (Bank/Cash)"), _cell_amt(_rupee(deep['payments_out_total']))],
+        [Paragraph("<b><font color='#78350f'>CLOSING BALANCE</font></b>", body_st),
+         Paragraph(f"<b><font color='#78350f'>{_fmt_bal(deep['closing_balance'])}</font></b>", body_r),
+         "", "", "", ""],
     ]
-    dbt = Table(deep_blocks, hAlign="LEFT", colWidths=[55 * mm, 45 * mm, 55 * mm, 45 * mm])
-    dbt.setStyle(TableStyle([
+    mv = Table(movement_rows, hAlign="LEFT",
+               colWidths=[46 * mm, 30 * mm, 55 * mm, 30 * mm, 55 * mm, 30 * mm])
+    mv.setStyle(TableStyle([
         ("FONTNAME", (0, 0), (-1, -1), _UNI_FONT),
         ("FONTSIZE", (0, 0), (-1, -1), 8),
-        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d1d5db")),
-        # Header rows (opening + movement labels)
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), _UNI_FONT_BOLD),
-        # Opening source note
-        ("FONTSIZE", (0, 1), (1, 1), 6.5),
-        ("TEXTCOLOR", (0, 1), (1, 1), colors.grey),
-        # Closing row highlight
-        ("BACKGROUND", (0, -1), (1, -1), colors.HexColor("#fef3c7")),
-        ("FONTNAME", (0, -1), (-1, -1), _UNI_FONT_BOLD),
-        ("FONTSIZE", (0, -1), (-1, -1), 10),
-        ("SPAN", (2, -1), (3, -1)),
-        # Left-side vs right-side separator
-        ("LINEAFTER", (1, 0), (1, -1), 1.2, colors.HexColor("#0f172a")),
+        # Header row
+        ("BACKGROUND", (0, 0), (-1, 0), PALETTE["accent"]),
+        ("TEXTCOLOR",  (0, 0), (-1, 0), colors.white),
+        ("FONTNAME",   (0, 0), (-1, 0), _UNI_FONT_BOLD),
+        ("TOPPADDING", (0, 0), (-1, 0), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
+        # Body padding
+        ("TOPPADDING", (0, 1), (-1, -2), 3.5),
+        ("BOTTOMPADDING", (0, 1), (-1, -2), 3.5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        # Vertical separators between the three blocks
+        ("LINEAFTER", (1, 0), (1, -1), 0.6, PALETTE["line"]),
+        ("LINEAFTER", (3, 0), (3, -1), 0.6, PALETTE["line"]),
+        # Right-align amount cells (col 1, 3, 5)
+        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+        ("ALIGN", (3, 0), (3, -1), "RIGHT"),
+        ("ALIGN", (5, 0), (5, -1), "RIGHT"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        # Closing row
+        ("BACKGROUND", (0, -1), (1, -1), PALETTE["gold"]),
+        ("SPAN", (2, -1), (5, -1)),
+        ("TOPPADDING", (0, -1), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, -1), (-1, -1), 8),
+        # Outer box
+        ("BOX", (0, 0), (-1, -1), 0.5, PALETTE["line"]),
+        ("LINEBELOW", (0, 0), (-1, 0), 0.5, PALETTE["line"]),
     ]))
-    story.append(dbt)
+    story.append(mv)
     story.append(Spacer(1, 10))
 
-    # Summary block — 3 columns of KPIs
-    smy = [
-        ["Trips", str(tot["trips"]), "Loading (MT)", f"{tot['load_tons']:,.3f}", "Unloading (MT)", f"{tot['unload_tons']:,.3f}"],
-        ["Distance (KM)", f"{tot['distance']:,.2f}", "Customer Freight (₹)", f"{tot['customer_freight']:,.2f}", "Supplier Freight (₹)", f"{tot['supplier_freight']:,.2f}"],
-        ["Advance (₹)", f"{tot['supplier_advance']:,.2f}", "Diesel Funded (₹)", f"{tot['supplier_diesel']:,.2f}", "Cust. Diesel Adj (₹)", f"{tot['customer_diesel']:,.2f}"],
-        ["Shortage Ded (₹)", f"{tot['supplier_shortage']:,.2f}", "Other Recov. (₹)", f"{tot['supplier_recovery']:,.2f}", "Bonus / Income (₹)", f"{tot['supplier_income']:,.2f}"],
-        ["Halting (₹)", f"{tot['halting']:,.2f}", "Net Payable (₹)", f"{tot['net_payable']:,.2f}", "Trip Profit (₹)", f"{tot['profit']:,.2f} ({tot['margin_pct']}%)"],
-    ]
-    st = Table(smy, hAlign="LEFT", colWidths=[38 * mm, 38 * mm, 38 * mm, 38 * mm, 38 * mm, 38 * mm])
-    st.setStyle(TableStyle([
+    # ── Trip Summary metrics ─────────────────────────────────────────
+    story.append(Paragraph("Trip Summary", section_st))
+    def _kpi(label, value):
+        return Paragraph(
+            f"<font size='6.5' color='#64748b'>{label.upper()}</font><br/>"
+            f"<font size='9' color='#0f172a'><b>{value}</b></font>", body_st)
+    kpi_rows = [[
+        _kpi("Trips", f"{tot['trips']}"),
+        _kpi("Distance (KM)", f"{tot['distance']:,.2f}"),
+        _kpi("Loading (MT)", f"{tot['load_tons']:,.3f}"),
+        _kpi("Unloading (MT)", f"{tot['unload_tons']:,.3f}"),
+        _kpi("Customer Freight", _rupee(tot['customer_freight'])),
+        _kpi("Supplier Freight", _rupee(tot['supplier_freight'])),
+    ], [
+        _kpi("Advance", _rupee(tot['supplier_advance'])),
+        _kpi("Diesel Funded", _rupee(tot['supplier_diesel'])),
+        _kpi("Cust. Diesel Adj", _rupee(tot['customer_diesel'])),
+        _kpi("Shortage Ded", _rupee(tot['supplier_shortage'])),
+        _kpi("Other Recoveries", _rupee(tot['supplier_recovery'])),
+        _kpi("Bonus / Income", _rupee(tot['supplier_income'])),
+    ], [
+        _kpi("Halting", _rupee(tot['halting'])),
+        Paragraph(f"<font size='6.5' color='#64748b'>NET PAYABLE</font><br/>"
+                  f"<font size='11' color='#b91c1c'><b>{_rupee(tot['net_payable'])}</b></font>", body_st),
+        Paragraph(f"<font size='6.5' color='#64748b'>TRIP PROFIT</font><br/>"
+                  f"<font size='11' color='#166534'><b>{_rupee(tot['profit'])}</b>"
+                  f" <font size='7' color='#64748b'>({tot['margin_pct']}%)</font></font>", body_st),
+        "", "", "",
+    ]]
+    ks = Table(kpi_rows, hAlign="LEFT", colWidths=[45 * mm] * 6)
+    ks.setStyle(TableStyle([
         ("FONTNAME", (0, 0), (-1, -1), _UNI_FONT),
-        ("FONTSIZE", (0, 0), (-1, -1), 8),
-        ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d1d5db")),
-        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f3f4f6")),
-        ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#f3f4f6")),
-        ("BACKGROUND", (4, 0), (4, -1), colors.HexColor("#f3f4f6")),
-        ("FONTNAME", (0, 0), (0, -1), _UNI_FONT_BOLD),
-        ("FONTNAME", (2, 0), (2, -1), _UNI_FONT_BOLD),
-        ("FONTNAME", (4, 0), (4, -1), _UNI_FONT_BOLD),
-        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#fef3c7")),
+        ("BOX",      (0, 0), (-1, -1), 0.5, PALETTE["line"]),
+        ("INNERGRID", (0, 0), (-1, -1), 0.3, PALETTE["line_soft"]),
+        ("BACKGROUND", (0, 0), (-1, -1), colors.white),
+        ("BACKGROUND", (1, 2), (2, 2), PALETTE["band"]),
+        ("SPAN", (2, 2), (5, 2)),  # collapse trailing empty cells so Trip Profit sits alone
+        ("TOPPADDING",    (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 8),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
     ]))
-    story.append(st)
-    story.append(Spacer(1, 10))
+    story.append(ks)
+    story.append(Spacer(1, 12))
 
-    # ---- Iter47 Phase 3: Payments in Period block ----
+    # ── Payments in Period (unchanged content, restyled) ─────────────
     if deep["payments_in_period"]:
-        story.append(Paragraph("<b>Payments in Period</b>",
-            ParagraphStyle("h3", parent=styles["Heading3"], fontName=_UNI_FONT_BOLD)))
+        story.append(Paragraph("Payments in Period", section_st))
         pay_hdr = ["Date", "Mode", "Against", "Ref No.", "LR / Trip", "Remarks", "Type", "Amount"]
         pay_rows = [pay_hdr]
         for p in deep["payments_in_period"]:
@@ -816,118 +1048,182 @@ async def supplier_statement_pdf(
                 p.get("lr_number", "") or "—",
                 Paragraph(p.get("remarks", "") or "—", body_st),
                 "OUT" if p.get("type", "payment_out") == "payment_out" else "IN",
-                f"₹{float(p.get('amount', 0)):,.2f}",
+                _rupee(p.get("amount", 0)),
             ])
         pay_rows.append([
             "TOTAL", "", "", "", "", "",
-            f"IN: ₹{deep['payments_in_total']:,.0f}",
-            f"OUT: ₹{deep['payments_out_total']:,.2f}",
+            f"IN {_rupee(deep['payments_in_total'])}",
+            f"OUT {_rupee(deep['payments_out_total'])}",
         ])
         pt = Table(pay_rows, hAlign="LEFT", repeatRows=1,
-                   colWidths=[22, 20, 22, 30, 30, 90, 20, 42])
+                   colWidths=[22 * mm, 20 * mm, 22 * mm, 28 * mm, 28 * mm, 95 * mm, 20 * mm, 35 * mm])
         pt.setStyle(TableStyle([
             ("FONTNAME", (0, 0), (-1, -1), _UNI_FONT),
-            ("FONTSIZE", (0, 0), (-1, -1), 7),
-            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#111827")),
-            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-            ("FONTNAME", (0, 0), (-1, 0), _UNI_FONT_BOLD),
-            ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#e5e7eb")),
+            ("FONTSIZE", (0, 0), (-1, -1), 7.5),
+            ("BACKGROUND", (0, 0), (-1, 0), PALETTE["accent"]),
+            ("TEXTCOLOR",  (0, 0), (-1, 0), colors.white),
+            ("FONTNAME",   (0, 0), (-1, 0), _UNI_FONT_BOLD),
+            ("GRID", (0, 0), (-1, -1), 0.25, PALETTE["line_soft"]),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, PALETTE["zebra"]]),
             ("ALIGN", (7, 1), (7, -1), "RIGHT"),
-            ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#fef3c7")),
+            ("BACKGROUND", (0, -1), (-1, -1), PALETTE["gold"]),
             ("FONTNAME", (0, -1), (-1, -1), _UNI_FONT_BOLD),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
         ]))
         story.append(pt)
-        story.append(Spacer(1, 10))
+        story.append(Spacer(1, 12))
 
-    # Trip-wise table — landscape width ~277mm
-    story.append(Paragraph("<b>Trip-wise Settlement</b>", ParagraphStyle("h3", parent=styles["Heading3"], fontName=_UNI_FONT_BOLD)))
-    headers = [
-        "Date", "LR / Vehicle", "Customer", "Route", "Product",
-        "Load", "Unload", "S/E", "KM",
-        "Sup.Rate", "Freight", "Adv", "Diesel", "Cust.Dsl", "Ded/Rec", "Halt", "Net Pay",
+    # ── Trip-wise Settlement — the redesigned wide table ─────────────
+    story.append(Paragraph("Trip-wise Settlement", section_st))
+    tw_head = [
+        Paragraph("Date", tw_head_st),
+        Paragraph("LR / Vehicle", tw_head_st),
+        Paragraph("Customer", tw_head_st),
+        Paragraph("Route", tw_head_st),
+        Paragraph("Product", tw_head_st),
+        Paragraph("Load", tw_head_r_st),
+        Paragraph("Unload", tw_head_r_st),
+        Paragraph("Shr/Exc", tw_head_r_st),
+        Paragraph("KM", tw_head_r_st),
+        Paragraph("Sup.Rate", tw_head_r_st),
+        Paragraph("Sup.Freight", tw_head_r_st),
+        Paragraph("Advance", tw_head_r_st),
+        Paragraph("Diesel", tw_head_r_st),
+        Paragraph("Cust.Dsl", tw_head_r_st),
+        Paragraph("Ded/Rec", tw_head_r_st),
+        Paragraph("Halting", tw_head_r_st),
+        Paragraph("Net Payable", tw_head_r_st),
     ]
-    rows = [headers]
+    tw_rows = [tw_head]
+    remarks_row_indexes = []
     for r in trips:
-        se = ""
-        if r["shortage_qty"] > 0: se = f"-{r['shortage_qty']:.3f}"
-        elif r["excess_qty"] > 0: se = f"+{r['excess_qty']:.3f}"
+        # Shortage/Excess (compact)
+        if r["shortage_qty"] > 0:
+            se = f"−{r['shortage_qty']:.3f}"
+        elif r["excess_qty"] > 0:
+            se = f"+{r['excess_qty']:.3f}"
+        else:
+            se = "—"
         veh_cell = Paragraph(
-            f"{r['lr_number'] or '—'}<br/><font color='#6b7280' size='6'>{r['vehicle_number']}</font>",
+            f"<b>{r['lr_number'] or '—'}</b><br/>"
+            f"<font color='#64748b' size='6.5'>{r['vehicle_number'] or '—'}</font>",
             body_st,
         )
-        route = Paragraph(f"{r['from_location'] or '?'}<br/>→ {r['to_location'] or '?'}", body_st)
+        route = Paragraph(
+            f"{r['from_location'] or '?'}<br/>"
+            f"<font color='#64748b'>→ {r['to_location'] or '?'}</font>", body_st,
+        )
         ded_rec = r["supplier_shortage_deduction"] + r["supplier_other_recoveries"]
-        rows.append([
-            r["date"], veh_cell,
-            Paragraph(r["customer_name"], body_st),
+        tw_rows.append([
+            r["date"],
+            veh_cell,
+            Paragraph(r["customer_name"] or "—", body_st),
             route,
-            Paragraph(r["product"], body_st),
-            f"{r['loaded_qty']:.2f}",
-            f"{r['unloaded_qty']:.2f}",
-            se or "—",
-            f"{r['distance_kms']:.0f}" if r["distance_kms"] else "—",
-            f"₹{r['supplier_rate']:,.0f}" if r["supplier_rate"] else "—",
-            f"₹{r['supplier_freight']:,.0f}",
-            f"₹{r['supplier_advance']:,.0f}",
-            f"₹{r['supplier_diesel']:,.0f}",
-            f"₹{r['customer_diesel']:,.0f}",
-            f"₹{ded_rec:,.0f}",
-            f"₹{r['halting_amount']:,.0f}" if r["halting_amount"] else "—",
-            f"₹{r['supplier_net_payable']:,.0f}",
+            Paragraph(r["product"] or "—", body_st),
+            Paragraph(f"{r['loaded_qty']:.3f}", body_r),
+            Paragraph(f"{r['unloaded_qty']:.3f}", body_r),
+            Paragraph(se, body_r),
+            Paragraph(f"{r['distance_kms']:.0f}" if r["distance_kms"] else "—", body_r),
+            Paragraph(_rupee_or_dash(r['supplier_rate']), body_r),
+            Paragraph(_rupee0(r['supplier_freight']), body_r),
+            Paragraph(_rupee_or_dash(r['supplier_advance']), body_r),
+            Paragraph(_rupee_or_dash(r['supplier_diesel']), body_r),
+            Paragraph(_rupee_or_dash(r['customer_diesel']), body_r),
+            Paragraph(_rupee_or_dash(ded_rec), body_r),
+            Paragraph(_rupee_or_dash(r['halting_amount']), body_r),
+            Paragraph(f"<b>{_rupee0(r['supplier_net_payable'])}</b>", body_r),
         ])
         if r["settlement_remarks"]:
-            rows.append(["", "", Paragraph(f"<i>↳ {r['settlement_remarks']}</i>", sub_st),
-                         "", "", "", "", "", "", "", "", "", "", "", "", "", ""])
-    # Totals row
-    rows.append([
-        "TOTAL", f"{tot['trips']} trip(s)", "", "", "",
-        f"{tot['load_tons']:.2f}",
-        f"{tot['unload_tons']:.2f}",
-        "—",
-        f"{tot['distance']:.0f}",
+            remarks_row_indexes.append(len(tw_rows))  # position of the remarks row we're about to add
+            tw_rows.append([
+                "", "",
+                Paragraph(f"<i><font color='#64748b'>↳ {r['settlement_remarks']}</font></i>", sub_st),
+                "", "", "", "", "", "", "", "", "", "", "", "", "", "",
+            ])
+    # Totals row — use the same tight `tw_cell_r` style as data rows so amounts don't wrap.
+    tw_rows.append([
+        Paragraph("<b>TOTAL</b>", tw_cell),
+        Paragraph(f"<b>{tot['trips']} trip(s)</b>", tw_cell),
+        "", "", "",
+        Paragraph(f"<b>{tot['load_tons']:.3f}</b>", tw_cell_r),
+        Paragraph(f"<b>{tot['unload_tons']:.3f}</b>", tw_cell_r),
+        Paragraph("—", tw_cell_r),
+        Paragraph(f"<b>{tot['distance']:.0f}</b>", tw_cell_r),
         "",
-        f"₹{tot['supplier_freight']:,.0f}",
-        f"₹{tot['supplier_advance']:,.0f}",
-        f"₹{tot['supplier_diesel']:,.0f}",
-        f"₹{tot['customer_diesel']:,.0f}",
-        f"₹{(tot['supplier_shortage']+tot['supplier_recovery']):,.0f}",
-        f"₹{tot['halting']:,.0f}",
-        f"₹{tot['net_payable']:,.0f}",
+        Paragraph(f"<b>{_rupee0(tot['supplier_freight'])}</b>", tw_cell_r),
+        Paragraph(f"<b>{_rupee0(tot['supplier_advance'])}</b>", tw_cell_r),
+        Paragraph(f"<b>{_rupee0(tot['supplier_diesel'])}</b>", tw_cell_r),
+        Paragraph(f"<b>{_rupee0(tot['customer_diesel'])}</b>", tw_cell_r),
+        Paragraph(f"<b>{_rupee0(tot['supplier_shortage']+tot['supplier_recovery'])}</b>", tw_cell_r),
+        Paragraph(f"<b>{_rupee0(tot['halting'])}</b>", tw_cell_r),
+        Paragraph(f"<b>{_rupee0(tot['net_payable'])}</b>", tw_cell_r),
     ])
-    col_widths = [15, 20, 22, 26, 16, 11, 11, 13, 11, 17, 20, 17, 17, 18, 17, 15, 28]  # mm; wider Net Pay col
-    col_widths = [c * mm for c in col_widths]
-    tt = Table(rows, hAlign="LEFT", repeatRows=1, colWidths=col_widths)
-    ts = [
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#111827")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, -1), _UNI_FONT),
-        ("FONTNAME", (0, 0), (-1, 0), _UNI_FONT_BOLD),
-        ("FONTNAME", (0, -1), (-1, -1), _UNI_FONT_BOLD),
-        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#fef3c7")),
-        ("FONTSIZE", (0, 0), (-1, -1), 6.5),
-        ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#e5e7eb")),
-        ("ALIGN", (5, 1), (-1, -1), "RIGHT"),
-        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    # Landscape A4 usable width ≈ 273 mm (297 − 2×12mm margins). Sum must fit.
+    col_widths_mm = [
+        15,   # Date
+        20,   # LR / Vehicle
+        24,   # Customer
+        25,   # Route
+        13,   # Product
+        12,   # Load
+        13,   # Unload
+        13,   # Shr/Exc
+        10,   # KM
+        15,   # Sup.Rate   ← +2 so header stays on one line
+        18,   # Sup.Freight
+        16,   # Advance
+        14,   # Diesel
+        13,   # Cust.Dsl
+        13,   # Ded/Rec
+        12,   # Halting    ← +1 so "Halting" stays on one line
+        19,   # Net Payable  ← total = 265 mm (fits within 273mm)
     ]
-    # Remarks-row styling
-    r_idx = 1
-    for r in trips:
-        r_idx += 1
-        if r["settlement_remarks"]:
-            ts.append(("SPAN", (2, r_idx - 1), (16, r_idx - 1)))
-            ts.append(("BACKGROUND", (0, r_idx - 1), (-1, r_idx - 1), colors.HexColor("#fff7ed")))
-            r_idx += 1
-    tt.setStyle(TableStyle(ts))
+    tt = Table(tw_rows, hAlign="LEFT", repeatRows=1,
+               colWidths=[w * mm for w in col_widths_mm])
+    tw_style = [
+        ("FONTNAME", (0, 0), (-1, -1), _UNI_FONT),
+        ("FONTSIZE", (0, 0), (-1, -1), 7),
+        # Header
+        ("BACKGROUND", (0, 0), (-1, 0), PALETTE["accent"]),
+        ("TEXTCOLOR",  (0, 0), (-1, 0), colors.white),
+        ("FONTNAME",   (0, 0), (-1, 0), _UNI_FONT_BOLD),
+        ("TOPPADDING", (0, 0), (-1, 0), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 5),
+        # Body
+        ("GRID", (0, 0), (-1, -1), 0.25, PALETTE["line_soft"]),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -2), [colors.white, PALETTE["zebra"]]),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING",  (0, 0), (-1, -1), 2),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+        ("TOPPADDING",   (0, 1), (-1, -1), 4),
+        ("BOTTOMPADDING",(0, 1), (-1, -1), 4),
+        # Total row
+        ("BACKGROUND", (0, -1), (-1, -1), PALETTE["gold"]),
+        ("FONTNAME",   (0, -1), (-1, -1), _UNI_FONT_BOLD),
+        ("TEXTCOLOR",  (0, -1), (-1, -1), PALETTE["gold_ink"]),
+        ("TOPPADDING", (0, -1), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, -1), (-1, -1), 5),
+        ("LINEABOVE",  (0, -1), (-1, -1), 1.0, PALETTE["accent"]),
+    ]
+    # Remarks-row styling (spans across the data cols)
+    for r_idx in remarks_row_indexes:
+        tw_style.append(("SPAN", (2, r_idx), (16, r_idx)))
+        tw_style.append(("BACKGROUND", (0, r_idx), (-1, r_idx), colors.HexColor("#fff7ed")))
+    tt.setStyle(TableStyle(tw_style))
     story.append(tt)
 
     story.append(Spacer(1, 8))
     story.append(Paragraph(
-        f"<font size='7' color='#6b7280'>Net Payable = Supplier Freight − Advance − Diesel Funded − Cust.Diesel Adj − Shortage Ded − Other Recoveries + Bonus + Halting. "
-        f"Generated on {now_utc().date().isoformat()} for {company.get('name','')}.</font>",
-        ParagraphStyle("f", parent=styles["Normal"], fontName=_UNI_FONT),
+        "<font size='7' color='#64748b'>"
+        "Formula &nbsp;·&nbsp; <b>Net Payable</b> = Supplier Freight + Halting + Bonus "
+        "− Advance − Diesel Funded − Cust. Diesel Adj − Shortage Ded − Other Recoveries. "
+        "All figures are exclusive of GST unless a separate line specifies otherwise."
+        "</font>",
+        body_st,
     ))
 
-    doc.build(story)
+    doc.build(story, onFirstPage=_page_decorator, onLaterPages=_page_decorator)
     buf.seek(0)
     fname = f"supplier_statement_{(supplier_name or 'supplier').replace(' ', '_')}.pdf"
     return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{fname}"'})

@@ -22,6 +22,21 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Backend: FastAPI + Motor (MongoDB), reportlab for PDF, session_token cookie/Bearer
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
+- [x] **Iter93 · Supplier Settlement Statement PDF — Modern Redesign** (Feb 2026)
+  - **User need**: Trip-wise table was too compressed (Customer/Route wrapping mid-word, ₹ amounts breaking across lines), header hard-coded to name+GSTIN. Wanted an ERP-grade layout that pulls full company info from the master and keeps calculations untouched.
+  - **Header (canvas callback, repeats on every page)**: Company logo (base64 from Company master, aspect-ratio preserved), company name in caps, tagline "Bitumen Transport Contractors", full address, Phone / Email, GSTIN + PAN. Right-side: "SUPPLIER SETTLEMENT STATEMENT" + period. Divider line. Never hard-coded.
+  - **Supplier identity card**: 4-column band showing Supplier · Mobile · Period · Opening source (master vs previous-period carry-forward).
+  - **Account Movements block**: Redesigned 3-column table (Opening | Debits | Credits) with dark header row, vertical separators, closing balance highlighted in amber with `₹\u00a0…Dr/Cr`.
+  - **Trip Summary**: 15 KPIs in a clean 6-col grid — Net Payable in red, Trip Profit in green with margin %.
+  - **Payments in Period**: Zebra-striped table (Date · Mode · Against · Ref · LR · Remarks · Type · Amount) with IN/OUT totals row.
+  - **Trip-wise Settlement (LANDSCAPE, 17 columns)**: Column widths tuned so no cell wraps mid-amount and no header wraps across lines (Sup.Rate, Sup.Freight, Halting stay single-line). Amounts use non-breaking `₹\u00a0…` and compact `.0f` in rows, `.2f` in the movement block. Repeats header on every page (`repeatRows=1`). Zebra rows, gold TOTAL row with accent top-line.
+  - **Footer (canvas callback)**: "Generated YYYY-MM-DD HH:MM UTC · Company Name" on the left, "Page N" on the right, thin divider above.
+  - **Company master fields exposed**: `_supplier_statement_data` now also returns `phone`, `email`, `pan`, `logo`, `state` — used by the PDF header, safe for JSON consumers (existing `gst_in` alias preserved).
+  - **Business logic UNCHANGED**: Supplier Freight / Shortage / Advance / Diesel / Cust.Diesel / Halting / Net Payable / Closing Balance calculations are the same source of truth (`_supplier_statement_data` + `_supplier_deep_statement_blocks`).
+  - **Regression Guard**: pytest suites iter41/44/47/91/92 all pass (14 tests in ~25s). Tests iter41 & iter44 updated to normalise whitespace after extraction so header labels wrapped across soft line breaks still satisfy substring assertions.
+  - Visually verified end-to-end on rendered PDF at 170 DPI (2 pages) — beautiful ERP-grade look, all columns fit, no amount wraps.
+
+
 - [x] **Iter92 · Supplier Halting Charges (independent, manual)** (Feb 2026)
   - **User need**: Supplier Halting must be completely independent from Customer Halting — never auto-copied. Office user manually enters days / rate / amount / remarks when the supplier is to receive detention charges.
   - **Model** (`Trip`): new fields `supplier_halting_days`, `supplier_halting_rate_per_day`, `supplier_halting_amount`, `supplier_halting_remarks`. Default 0 / blank.
