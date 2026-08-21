@@ -80,18 +80,28 @@ def _compute_trip(t: Trip) -> Trip:
     _cust_limit = float(t.applied_customer_shortage_limit or 0)
     _cust_type = (t.applied_customer_shortage_limit_type or "pct").lower()
     _cust_method = (t.applied_customer_shortage_method or "net_shortage").lower()
+    # Iter102 · Product-shortage fallback — when the customer has no shortage
+    # rule configured, fall back to the Product Master's default allowance %.
+    # Customer's deduction method still governs (net_shortage / full_after_limit);
+    # default to net_shortage when the customer hasn't picked one.
+    _prod_pct = float(getattr(t, "applied_product_shortage_pct", 0) or 0)
+    if _cust_limit <= 0 and _prod_pct > 0:
+        _cust_limit = _prod_pct
+        _cust_type = "pct"
+        if not (t.applied_customer_shortage_method or "").strip():
+            _cust_method = "net_shortage"
     if _cust_type == "kg":
         _cust_allowed_mt = _cust_limit / 1000.0
     else:
         _cust_allowed_mt = float(t.tons or 0) * _cust_limit / 100.0
     if not t.shortage_amount_override:
-        if t.shortage_qty <= _cust_allowed_mt or _cust_limit <= 0 and _cust_type == "pct" and t.applied_customer_shortage_limit_type == "":
-            # Legacy trip without a snapshot AND no limit configured → full deduction (old behaviour)
-            if not t.applied_customer_shortage_limit_type:
-                t.shortage_amount = round(rate * t.shortage_qty, 2)
-            else:
-                t.shortage_amount = 0.0
-        elif t.shortage_qty <= _cust_allowed_mt:
+        _has_any_limit = _cust_limit > 0
+        if _has_any_limit and t.shortage_qty <= _cust_allowed_mt:
+            t.shortage_amount = 0.0
+        elif not _has_any_limit and not (t.applied_customer_shortage_limit_type or ""):
+            # Legacy trip without ANY snapshot → full deduction (old behaviour)
+            t.shortage_amount = round(rate * t.shortage_qty, 2)
+        elif not _has_any_limit:
             t.shortage_amount = 0.0
         elif _cust_method == "full_after_limit":
             t.shortage_amount = round(rate * t.shortage_qty, 2)

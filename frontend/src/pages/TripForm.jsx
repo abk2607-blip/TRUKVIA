@@ -242,17 +242,25 @@ export default function TripForm() {
   // Iter100 UI · Shortage Policy Snapshot (visible for UAT).
   // Must be computed BEFORE shortageAmountSystem so the auto Shortage
   // Amount respects the frozen limit / method just like the backend.
+  // Iter102 — Product-allowance fallback: when the Customer has no
+  // shortage rule, use the Product Master's `applied_product_shortage_pct`
+  // as the effective limit (pct-of-loading). Mirrors services._compute_trip.
   // ═══════════════════════════════════════════════════════════════════
-  const custShortageLimit = Number(form.applied_customer_shortage_limit || 0);
-  const custShortageLimitType = (form.applied_customer_shortage_limit_type || "").toLowerCase();
-  const custShortageMethod = (form.applied_customer_shortage_method || "").toLowerCase();
+  const _rawCustLimit = Number(form.applied_customer_shortage_limit || 0);
+  const _rawCustType = (form.applied_customer_shortage_limit_type || "").toLowerCase();
+  const _prodPct = Number(form.applied_product_shortage_pct || 0);
+  const _fallbackToProduct = _rawCustLimit <= 0 && _prodPct > 0;
+  const custShortageLimit = _fallbackToProduct ? _prodPct : _rawCustLimit;
+  const custShortageLimitType = _fallbackToProduct ? "pct" : _rawCustType;
+  const custShortageMethod = (form.applied_customer_shortage_method || (_fallbackToProduct ? "net_shortage" : "")).toLowerCase();
+  const _limitSource = _fallbackToProduct ? "Product Master" : "Customer Master";
   const hasCustShortagePolicy = custShortageLimitType === "kg" || custShortageLimitType === "pct";
   const custShortageLimitDisplay =
     !hasCustShortagePolicy || custShortageLimit === 0
       ? "—"
       : custShortageLimitType === "kg"
-      ? `${custShortageLimit} KG (fixed)`
-      : `${custShortageLimit} % of Loading Qty`;
+      ? `${custShortageLimit} KG (fixed) · from ${_limitSource}`
+      : `${custShortageLimit} % of Loading Qty · from ${_limitSource}`;
   const custShortageMethodLabel =
     custShortageMethod === "full_after_limit"
       ? "Full Shortage After Limit Exceeded"
