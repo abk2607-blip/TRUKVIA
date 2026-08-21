@@ -260,7 +260,7 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
         Paragraph(f"<b>{to_txt}</b>", styles["Route"]),
     ], [
         Paragraph("ORIGIN", styles["RouteM"]),
-        Paragraph(f"Round Trip · {_fmt(trip.get('round_trip_kms',0))} KM", styles["RouteM"]),
+        Paragraph("", styles["RouteM"]),
         Paragraph("DESTINATION", styles["RouteM"]),
     ]], colWidths=[60 * mm, 70 * mm, 60 * mm])
     tl.setStyle(TableStyle([
@@ -308,7 +308,7 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
     def _wtile(lbl, val, hi=False):
         lbl_style = "LabelE" if hi else "Label"
         inner = [Paragraph(lbl, styles[lbl_style]), Paragraph(f"<b>{val}</b>", styles["Body"])]
-        t = Table([[inner]], colWidths=[45 * mm])
+        t = Table([[inner]], colWidths=[62 * mm])
         _s = [
             ("BACKGROUND", (0, 0), (-1, -1), _BG_SLATE),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
@@ -328,8 +328,7 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
         _wtile("GROSS WT.", f"{_fmt(trip.get('gross_weight',0))} MT"),
         _wtile("TARE WT.",  f"{_fmt(trip.get('tare_weight',0))} MT"),
         _wtile("NET WT.",   f"{_fmt(net_wt)} MT", hi=True),
-        _wtile("RT KMs",    _fmt(trip.get("round_trip_kms", 0))),
-    ]], colWidths=[47 * mm, 47 * mm, 47 * mm, 47 * mm])
+    ]], colWidths=[63 * mm, 63 * mm, 63 * mm])
     wstrip.setStyle(TableStyle([("LEFTPADDING", (0, 0), (-1, -1), 0), ("RIGHTPADDING", (0, 0), (-1, -1), 2)]))
     story.append(_margined(wstrip))
     story.append(Spacer(1, 6))
@@ -343,13 +342,12 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
         Paragraph("<font color='#FFFFFF'><b>Unloading<br/>Start</b></font>", styles["Small"]),
         Paragraph("<font color='#FFFFFF'><b>Unloading<br/>End</b></font>", styles["Small"]),
         Paragraph("<font color='#FFFFFF'><b>Date of<br/>Departure</b></font>", styles["Small"]),
-        Paragraph("<font color='#FFFFFF'><b>Extra<br/>KM</b></font>", styles["Small"]),
         Paragraph("<font color='#FFFFFF'><b>Shortage /<br/>Excess (MT)</b></font>", styles["Small"]),
         Paragraph("<font color='#FFFFFF'><b>Temp.<br/>(°C)</b></font>", styles["Small"]),
         Paragraph("<font color='#FFFFFF'><b>Seal<br/>Status</b></font>", styles["Small"]),
         Paragraph("<font color='#FFFFFF'><b>Remarks</b></font>", styles["Small"]),
     ]
-    col_widths = [18*mm, 15*mm, 18*mm, 18*mm, 20*mm, 14*mm, 22*mm, 14*mm, 16*mm, 35*mm]
+    col_widths = [20*mm, 17*mm, 20*mm, 20*mm, 22*mm, 25*mm, 15*mm, 18*mm, 33*mm]
     un_tbl = Table([un_headers, [""] * len(un_headers)], colWidths=col_widths)
     un_tbl.setStyle(TableStyle([
         ("BOX", (0, 0), (-1, -1), 0.4, _LINE),
@@ -491,6 +489,44 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
     story.append(_margined(tc_title_content[0]))
     story.append(Spacer(1, 2))
     story.append(_margined(tc_title_content[2]))
+    story.append(Spacer(1, 8))
+
+    # ---- Highlighted SEAL VERIFICATION callout — prominent amber-tinted card
+    # between the T&C title and the numbered clauses. Multi-company safe — no
+    # company name is hard-coded; the clause is worded generically.
+    _AMBER      = colors.HexColor("#B45309")
+    _AMBER_L    = colors.HexColor("#FEF3C7")
+    seal_body = ParagraphStyle(name="SealBody", fontName=F, fontSize=8.5, leading=11.5,
+                                textColor=_NAVY)
+    seal_title = ParagraphStyle(name="SealTitle", fontName=FB, fontSize=9, leading=11,
+                                 textColor=_AMBER)
+    seal_lines = [
+        Paragraph("⚠  IMPORTANT · SEAL VERIFICATION &amp; UNLOADING PROTOCOL", seal_title),
+        Spacer(1, 3),
+        Paragraph(
+            "Bitumen, CRMB and PMB are dispatched <b>without</b> refinery / supplier seals. "
+            "For Emulsion, LDO, FO and other products where an official loading-facility seal "
+            "is provided, the seal number <b>must be verified against the loading document / "
+            "invoice</b> before unloading commences. Any transporter-applied safety seal is a "
+            "transit-security measure only and is <b>not</b> equivalent to an official "
+            "refinery / supplier seal — damage, absence or apparent tampering of a "
+            "transporter seal alone <b>shall not be grounds to stop or refuse unloading</b>. "
+            "Any discrepancy must be recorded in the unloading remarks and immediately "
+            "brought to the attention of the concerned site / consignor / consignee "
+            "representative.",
+            seal_body,
+        ),
+    ]
+    seal_box = Table([[seal_lines]], colWidths=[190 * mm])
+    seal_box.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), _AMBER_L),
+        ("BOX", (0, 0), (-1, -1), 0.8, _AMBER),
+        ("LEFTPADDING", (0, 0), (-1, -1), 12),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(_margined(seal_box))
     story.append(Spacer(1, 8))
 
     # T&C table — circle-numbered.
