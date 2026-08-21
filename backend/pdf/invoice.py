@@ -380,10 +380,28 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
         total_shortage_amt = round(trip_shortage_amt + expense_shortage_amt, 2)
         if total_shortage_amt > 0:
             prod_rate = t.get("product_rate_per_mt", 0) or 0
-            if shortage_qty > 0 and prod_rate > 0:
-                lbl = f"Less: Shortage — {shortage_qty:.3f} MT × ₹ {_fmt(prod_rate)} / MT"
+            # Iter101 · Invoice sign-off — reconcile the sub-row math with the
+            # NET deductible MT (what services._compute_trip actually charged),
+            # NOT the raw shortage_qty. This mirrors the Trip UI's Net Shortage
+            # chain so the printed amount = printed MT × printed Rate exactly.
+            deductible_mt = round(total_shortage_amt / prod_rate, 3) if prod_rate > 0 else shortage_qty
+            # Inline policy note so the customer understands WHY only net is charged.
+            policy_note = ""
+            lim = float(t.get("applied_customer_shortage_limit") or 0)
+            lim_type = (t.get("applied_customer_shortage_limit_type") or "").lower()
+            method = (t.get("applied_customer_shortage_method") or "").lower()
+            if lim > 0 and lim_type in ("pct", "kg") and method in ("net_shortage", "full_after_limit"):
+                loaded = float(t.get("tons") or 0)
+                allowed_mt = (lim / 1000.0) if lim_type == "kg" else (loaded * lim / 100.0)
+                allow_txt = f"{lim} KG" if lim_type == "kg" else f"{lim}% of Loading"
+                if method == "full_after_limit":
+                    policy_note = f" <font color='#94A3B8' size='6.5'>Full Actual after {allow_txt} limit ({allowed_mt:.3f} MT) exceeded</font>"
+                else:
+                    policy_note = f" <font color='#94A3B8' size='6.5'>Net — Actual {shortage_qty:.3f} MT less {allow_txt} allowance ({allowed_mt:.3f} MT)</font>"
+            if deductible_mt > 0 and prod_rate > 0:
+                lbl = f"Less: Shortage — {deductible_mt:.3f} MT × ₹ {_fmt(prod_rate)} / MT{policy_note}"
             elif shortage_qty > 0:
-                lbl = f"Less: Shortage — {shortage_qty:.3f} MT"
+                lbl = f"Less: Shortage — {shortage_qty:.3f} MT{policy_note}"
             else:
                 lbl = "Less: Shortage Deduction"
             _add_sub(lbl, f"(₹ {_fmt(total_shortage_amt)})", remark=t.get("shortage_remarks", "") or "")
