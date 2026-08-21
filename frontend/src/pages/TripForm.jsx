@@ -475,6 +475,35 @@ export default function TripForm() {
 
   const setExp = (k, v) => setForm({ ...form, expenses: { ...form.expenses, [k]: v } });
 
+  // Iter103 — Auto-clear override flag when user restores system value.
+  // If `_override=true` but final value matches system value (within 0.005),
+  // silently drop the override + its captured reason so we never persist a
+  // meaningless override row (mirrors the "revert = no audit noise" rule).
+  useEffect(() => {
+    const nextPatch = {};
+    if (form.shortage_amount_override && _eq2(form.shortage_amount, shortageAmountSystem)) {
+      nextPatch.shortage_amount_override = false;
+    }
+    if (form.excess_amount_override && _eq2(form.excess_amount, excessAmountSystem)) {
+      nextPatch.excess_amount_override = false;
+    }
+    if (Object.keys(nextPatch).length) {
+      setForm((f) => ({ ...f, ...nextPatch }));
+      // Also purge any queued override reason so the dialog doesn't re-open.
+      const purge = {};
+      if (nextPatch.shortage_amount_override === false) purge.shortage_amount = null;
+      if (nextPatch.excess_amount_override === false) purge.excess_amount = null;
+      if (Object.keys(purge).length) {
+        setCapturedReasons((cr) => {
+          const nx = { ...cr };
+          Object.keys(purge).forEach((k) => delete nx[k]);
+          return nx;
+        });
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.shortage_amount, form.excess_amount, shortageAmountSystem, excessAmountSystem, form.shortage_amount_override, form.excess_amount_override]);
+
   // Iter100 — Detect every financial field whose final value differs from
   // the system-computed value. Each entry becomes a row in the mandatory
   // Override Reason Dialog. Rounded to 2dp to ignore floating-point noise.

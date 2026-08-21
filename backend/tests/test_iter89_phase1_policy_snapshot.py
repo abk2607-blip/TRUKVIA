@@ -158,13 +158,15 @@ def test_trip_snapshot_backward_compatible_defaults():
         "from_location": "A", "to_location": "B",
     }, timeout=60).json()
     # Customer with no explicit config → falls back to per_ton_loading default
-    # Iter102 fix — When customer has NO shortage_config configured, the trip
-    # snapshot leaves the limit_type/method blank so services._compute_trip
-    # applies legacy full-deduction (protecting historical behaviour for
-    # customers who never set a policy).
+    # Iter103 fix — The Customer model defaults `shortage_config.method` to
+    # "net_shortage" even when the user never touched it, and the router now
+    # snapshots the method unconditionally (so the Product-Master allowance
+    # fallback in the engine knows how to deduct). Historical legacy full-
+    # deduction is still preserved because it keys off `_limit_type` being
+    # blank, not the method.
     assert trip["applied_freight_method"] == "per_ton_loading"
     assert trip["applied_customer_shortage_limit"] == 0.0
-    assert trip["applied_customer_shortage_method"] == ""
+    assert trip["applied_customer_shortage_method"] in ("", "net_shortage")
     assert trip["applied_customer_shortage_limit_type"] == ""
     assert trip["applied_product_shortage_pct"] == 0.0
     assert trip["applied_supplier_shortage_limit_kg"] == 0.0

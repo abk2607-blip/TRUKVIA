@@ -191,14 +191,47 @@ export default function UnloadingSection({
           <div className="font-mono text-sm font-bold text-emerald-700">{excessQtyLive.toFixed(3)} MT</div>
         </div>
         <Field label={
-          <span>Shortage Amount (₹) <button type="button" data-testid="trip-shortage-amount-toggle" onClick={() => setForm({ ...form, shortage_amount_override: !form.shortage_amount_override })} className={`ml-1 text-[9px] uppercase tracking-wider ${form.shortage_amount_override ? "text-amber-700" : "text-zinc-400"}`}>{form.shortage_amount_override ? "manual" : "auto"}</button></span>
+          <span>Shortage Amount (₹) <span className={`ml-1 text-[9px] uppercase tracking-wider ${form.shortage_amount_override ? "text-amber-700 font-bold" : "text-zinc-400"}`} data-testid="trip-shortage-amount-status">{form.shortage_amount_override ? "manual override" : "auto"}</span></span>
         }>
-          <input data-testid="trip-shortage-amount" type="number" step="0.01" min="0" value={form.shortage_amount_override ? form.shortage_amount : shortageAmountLive} disabled={!form.shortage_amount_override} onChange={(e) => setForm({ ...form, shortage_amount: e.target.value })} className={`${inputCls} disabled:bg-zinc-50 disabled:text-zinc-600`} />
+          {/* Iter103 · Always editable. First non-matching edit auto-flips
+              `shortage_amount_override=true`; restoring the system value
+              auto-clears it (see TripForm auto-clear effect). */}
+          <input
+            data-testid="trip-shortage-amount"
+            type="number" step="0.01" min="0"
+            value={form.shortage_amount_override ? form.shortage_amount : shortageAmountLive}
+            onChange={(e) => {
+              const v = e.target.value;
+              const asNum = Number(v || 0);
+              const matchesSystem = Math.abs(asNum - Number(shortageAmountLive || 0)) < 0.005;
+              setForm({
+                ...form,
+                shortage_amount: v,
+                shortage_amount_override: matchesSystem ? false : true,
+              });
+            }}
+            className={inputCls}
+          />
         </Field>
         <Field label={
-          <span>Excess Amount (₹) <button type="button" data-testid="trip-excess-amount-toggle" onClick={() => setForm({ ...form, excess_amount_override: !form.excess_amount_override })} className={`ml-1 text-[9px] uppercase tracking-wider ${form.excess_amount_override ? "text-amber-700" : "text-zinc-400"}`}>{form.excess_amount_override ? "manual" : "auto"}</button></span>
+          <span>Excess Amount (₹) <span className={`ml-1 text-[9px] uppercase tracking-wider ${form.excess_amount_override ? "text-amber-700 font-bold" : "text-zinc-400"}`} data-testid="trip-excess-amount-status">{form.excess_amount_override ? "manual override" : "auto"}</span></span>
         }>
-          <input data-testid="trip-excess-amount" type="number" step="0.01" min="0" value={form.excess_amount_override ? form.excess_amount : excessAmountLive} disabled={!form.excess_amount_override} onChange={(e) => setForm({ ...form, excess_amount: e.target.value })} className={`${inputCls} disabled:bg-zinc-50 disabled:text-zinc-600`} />
+          <input
+            data-testid="trip-excess-amount"
+            type="number" step="0.01" min="0"
+            value={form.excess_amount_override ? form.excess_amount : excessAmountLive}
+            onChange={(e) => {
+              const v = e.target.value;
+              const asNum = Number(v || 0);
+              const matchesSystem = Math.abs(asNum - Number(excessAmountLive || 0)) < 0.005;
+              setForm({
+                ...form,
+                excess_amount: v,
+                excess_amount_override: matchesSystem ? false : true,
+              });
+            }}
+            className={inputCls}
+          />
         </Field>
       </div>
 

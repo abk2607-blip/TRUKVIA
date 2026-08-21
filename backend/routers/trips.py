@@ -482,20 +482,24 @@ async def create_trip(payload: Trip, request: Request, user=Depends(get_current_
             ) or {}
             doc["applied_freight_method"] = doc.get("applied_freight_method") or cust.get("default_freight_method") or "per_ton_loading"
             sc = cust.get("shortage_config") or {}
-            # Iter102 fix — Only snapshot a customer shortage policy when a real
-            # limit was actually configured (> 0). Customer model defaults
-            # `shortage_config` to `{limit:0, limit_type:"pct", method:"net_shortage"}`
-            # even when the user never touched it — those defaults must NOT be
-            # treated as "policy configured" (would silently zero legacy shortages).
+            # Iter103 fix — snapshot the customer's DEDUCTION METHOD unconditionally
+            # (it's the primary customer decision and applies even when the
+            # allowance comes from the Product Master via the engine fallback).
+            # Only snapshot the LIMIT/LIMIT_TYPE when the customer has actually
+            # configured a custom allowance (limit > 0) — Customer Master
+            # defaults (`{limit:0, limit_type:"pct", method:"net_shortage"}`)
+            # must not be mistaken for a real policy.
             _sc_limit = float(sc.get("limit", 0) or 0)
+            _sc_method = (sc.get("method") or "").strip()
             if _sc_limit > 0:
                 doc["applied_customer_shortage_limit"] = _sc_limit
                 doc["applied_customer_shortage_limit_type"] = sc.get("limit_type") or "pct"
-                doc["applied_customer_shortage_method"] = sc.get("method") or "net_shortage"
             else:
                 doc["applied_customer_shortage_limit"] = 0.0
                 doc["applied_customer_shortage_limit_type"] = ""
-                doc["applied_customer_shortage_method"] = ""
+            # Method: always snapshot when the customer picked one (even without
+            # a custom limit — the Product fallback still needs to know it).
+            doc["applied_customer_shortage_method"] = _sc_method
             if doc.get("product_id"):
                 prod = await db.products.find_one(
                     {"id": doc["product_id"], "user_id": user["user_id"], "company_id": cid},

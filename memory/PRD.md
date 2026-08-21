@@ -23,6 +23,25 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
 
+- [x] **Iter103 · Shortage Policy Simplification + Editable Shortage/Excess Amounts** (Feb 2026)
+  - **Decision**: Product Master is the source of the Shortage Allowance; Customer Master owns the Deduction Method. Customer's Limit/Limit Type is retained but demoted to an OPTIONAL "Custom Allowance — Overrides Product Master" toggle for the rare contract exception. DB fields unchanged for backward compat + historical protection.
+  - **UI (Customers.jsx)** — Customer edit modal now presents Deduction Method first (primary decision) and hides Shortage Limit + Limit Type behind a checkbox `customer-input-shortage-custom-toggle` (default OFF). When OFF, the customer inherits the Product's default allowance.
+  - **Router snapshot fix (`routers/trips.py`)** — Only snapshot `applied_customer_shortage_limit` / `_limit_type` when the customer has a genuine custom limit (> 0). The `applied_customer_shortage_method` is now snapshotted unconditionally so the Product-fallback engine still knows how to deduct (Net vs Full-After-Limit).
+  - **Editable Shortage / Excess Amount (`UnloadingSection.jsx` + `TripForm.jsx`)** — Removed the `disabled` state; both fields are always editable. First non-matching edit auto-flips `_override=true` (no manual toggle). New TripForm `useEffect` auto-clears the override flag AND purges any captured reason when the value is restored to the system-computed amount — so no meaningless audit rows are persisted. The existing `field_overrides[]` audit trail continues to capture `field / system_value / final_value / reason / modified_by / modified_at` on save.
+  - **Excess remains customer-side** — Supplier settlement (freight, halting, diesel, advance, shortage_deduction, net_payable, ledger, outstanding) is completely unaffected by Excess overrides. Supplier fixed-KG shortage logic is unchanged and independent.
+  - **New regression guards** (`tests/test_iter103_shortage_simplification_and_editable_amounts.py`, 7 tests):
+    - Product allowance used when Customer has no custom limit (method still drives deduction)
+    - Customer custom allowance wins over Product when the override toggle is ON
+    - Historical trip snapshot is immune to later Master edits
+    - Excess override never touches Supplier settlement
+    - Manual shortage override flows to Invoice + `field_overrides` audit
+    - Reverting shortage to system value clears override flag + no audit noise
+    - Supplier fixed-KG shortage logic remains independent
+  - **UI verified via Playwright** (`/tmp/shortage_auto.png`, `_manual.png`, `_revert.png`): typed value 1500 → status auto-flipped to `MANUAL OVERRIDE`; restoring 6000 auto-cleared back to `AUTO`.
+  - **Backend deploy guard**: 56/56 focused tests PASS across iter42, 52, 89, 97, 98, 99, 100, 100b, 102 (round-trip + multi-trip UAT + UI parity), and the new 103 suite.
+
+
+
 - [x] **Iter102 · Round-Trip KM Freight Method Fix + Multi-Trip Supplier Statement UAT + UI Formula Parity** (Feb 2026)
   - **RCA (P0 issue A — engine)**: When freight mode was `fixed` + round-trip KM (`round_trip_kms × rate_per_km_per_ton`), the central engine multiplied by `tons` unconditionally — the customer's frozen `applied_freight_method` (Unloading Qty / Higher-of / Loading) was silently ignored on round-trip bills, breaking supplier statement parity.
   - **RCA (P0 issue B — UI)**: The displayed formula on the Freight Section always showed Loading Qty (`34.28 × 1220 × 2.50`) even when the final amount was correctly computed on Unloading Qty (`33.85 × 1220 × 2.50 = ₹1,03,242.50`). Root cause was two-fold: (i) `FreightSection.calcExpr` hard-coded `loadedQ` for round-trip, (ii) `TripForm.jsx` never cascaded the newly-selected customer's `default_freight_method` into `form.applied_freight_method` — it waited for the backend snapshot on save.

@@ -278,32 +278,13 @@ export default function Customers() {
                 <div className="text-[10px] text-zinc-500 mt-1">Default only. Editable at Trip level.</div>
               </div>
 
-              {/* Iter89 Phase 1.5 — Shortage Configuration */}
+              {/* Iter103 · Phase 1.6 — Shortage Configuration (simplified).
+                  Product Master owns the allowance; Customer owns the deduction
+                  METHOD. The Custom Allowance section is now OPTIONAL and hidden
+                  behind a toggle — normal customers just pick their method. */}
               <div className="border-t border-zinc-200 pt-3 mt-3">
                 <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 mb-2">Customer Shortage Rule</div>
                 <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Shortage Limit</label>
-                    <input
-                      data-testid="customer-input-shortage-limit"
-                      type="number" step="0.01" min="0"
-                      value={form.shortage_config?.limit ?? 0}
-                      onChange={(e) => setForm({ ...form, shortage_config: { ...(form.shortage_config || {}), limit: Number(e.target.value) } })}
-                      className="mt-1 w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none"
-                    />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Limit Type</label>
-                    <select
-                      data-testid="customer-input-shortage-limit-type"
-                      value={form.shortage_config?.limit_type || "pct"}
-                      onChange={(e) => setForm({ ...form, shortage_config: { ...(form.shortage_config || {}), limit_type: e.target.value } })}
-                      className="mt-1 w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm bg-white outline-none focus:border-zinc-950"
-                    >
-                      <option value="pct">% of Loaded Qty</option>
-                      <option value="kg">Fixed KG</option>
-                    </select>
-                  </div>
                   <div className="col-span-2">
                     <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Deduction Method</label>
                     <select
@@ -315,6 +296,66 @@ export default function Customers() {
                       <option value="net_shortage">Net Shortage (deduct excess above limit)</option>
                       <option value="full_after_limit">Full Shortage After Limit Exceeded</option>
                     </select>
+                    <div className="text-[10px] text-zinc-500 mt-1">
+                      Applies once the Product Master's allowance is exceeded. Product allowance is the default limit.
+                    </div>
+                  </div>
+                  {/* Custom Allowance override — collapsed by default */}
+                  <div className="col-span-2 border border-dashed border-zinc-300 rounded-sm bg-zinc-50 p-3">
+                    <label className="flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-zinc-700 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        data-testid="customer-input-shortage-custom-toggle"
+                        checked={Number(form.shortage_config?.limit || 0) > 0}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            // enable custom override with a sensible default (0.5 pct)
+                            setForm({ ...form, shortage_config: {
+                              ...(form.shortage_config || {}),
+                              limit: Number(form.shortage_config?.limit || 0.5),
+                              limit_type: form.shortage_config?.limit_type || "pct",
+                            }});
+                          } else {
+                            // disable custom override → fall back to Product Master
+                            setForm({ ...form, shortage_config: {
+                              ...(form.shortage_config || {}),
+                              limit: 0, limit_type: "pct",
+                            }});
+                          }
+                        }}
+                        className="accent-zinc-950"
+                      />
+                      Custom Allowance — overrides Product Master
+                    </label>
+                    <div className="text-[10px] text-zinc-500 mt-1 mb-2">
+                      Leave OFF for standard customers (Product's allowance is used). Turn ON only for contract exceptions.
+                    </div>
+                    {Number(form.shortage_config?.limit || 0) > 0 && (
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Shortage Limit</label>
+                          <input
+                            data-testid="customer-input-shortage-limit"
+                            type="number" step="0.01" min="0"
+                            value={form.shortage_config?.limit ?? 0}
+                            onChange={(e) => setForm({ ...form, shortage_config: { ...(form.shortage_config || {}), limit: Number(e.target.value) } })}
+                            className="mt-1 w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none bg-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Limit Type</label>
+                          <select
+                            data-testid="customer-input-shortage-limit-type"
+                            value={form.shortage_config?.limit_type || "pct"}
+                            onChange={(e) => setForm({ ...form, shortage_config: { ...(form.shortage_config || {}), limit_type: e.target.value } })}
+                            className="mt-1 w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm bg-white outline-none focus:border-zinc-950"
+                          >
+                            <option value="pct">% of Loaded Qty</option>
+                            <option value="kg">Fixed KG</option>
+                          </select>
+                        </div>
+                      </div>
+                    )}
                   </div>
                   <div>
                     <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Effective From</label>
