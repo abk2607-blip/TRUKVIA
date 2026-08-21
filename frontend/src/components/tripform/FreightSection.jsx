@@ -37,11 +37,20 @@ export default function FreightSection({
   const roundKm = Number(form.round_trip_kms || 0);
   const rateKm = Number(form.rate_per_km_per_ton || 0);
   const perTon = form.freight_mode === "per_ton";
+  // Iter102 · Displayed formula MUST reflect the frozen applied_freight_method
+  // and the actual `freight_qty_used` — not the raw Loading Qty. This keeps
+  // the three columns of the UAT invariant in lock-step:
+  //   Applied Method → Freight Qty Used → Displayed Formula → Final Amount
+  const qtyUsed = Number(freightQtyUsedLive || 0);
+  const isFixedLump = !perTon && !(roundKm > 0 && rateKm > 0);
   const calcExpr = perTon
-    ? `${(freightQtyUsedLive || 0).toFixed(3)} MT × ₹${rate.toFixed(2)}`
-    : (roundKm > 0 && rateKm > 0)
-      ? `${loadedQ.toFixed(2)} × ${roundKm.toFixed(2)} km × ₹${rateKm.toFixed(2)}`
-      : `Lump sum ₹${fixedLump.toFixed(2)}`;
+    ? `${qtyUsed.toFixed(3)} MT × ₹${rate.toFixed(2)}`
+    : isFixedLump
+      ? `Fixed Freight (Lump Sum) · ₹${fixedLump.toFixed(2)}`
+      : `${qtyUsed.toFixed(3)} MT × ${roundKm.toFixed(2)} KM × ₹${rateKm.toFixed(2)}`;
+  const basisLine = isFixedLump
+    ? "Freight Basis: Fixed / Lump Sum"
+    : `Freight Basis: ${freightQtyBasisLabel || "—"}`;
   const calculatedFreight = Number(freight || 0);
 
   return (
@@ -86,8 +95,9 @@ export default function FreightSection({
           <div className="md:col-span-2 flex items-end justify-end">
             <div className="bg-amber-50 border border-amber-200 px-4 py-3 rounded-sm text-right" data-testid="freight-preview">
               <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">Calculated Freight · ఫ్రైట్</div>
-              <div className="font-mono text-2xl font-bold text-amber-900">{fmtCurrency(calculatedFreight)}</div>
-              <div className="text-[10px] text-zinc-500 mt-1 font-mono">{calcExpr}</div>
+              <div className="font-mono text-2xl font-bold text-amber-900" data-testid="freight-preview-amount">{fmtCurrency(calculatedFreight)}</div>
+              <div className="text-[10px] font-semibold text-amber-900 mt-1" data-testid="freight-preview-basis">{basisLine}</div>
+              <div className="text-[10px] text-zinc-600 mt-0.5 font-mono" data-testid="freight-preview-formula">{calcExpr}</div>
             </div>
           </div>
         </div>
@@ -107,24 +117,32 @@ export default function FreightSection({
           <div className="mt-4 flex justify-end">
             <div className="bg-amber-50 border border-amber-200 px-4 py-3 rounded-sm text-right" data-testid="freight-preview">
               <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">Calculated Freight · ఫ్రైట్</div>
-              <div className="font-mono text-2xl font-bold text-amber-900">{fmtCurrency(calculatedFreight)}</div>
-              <div className="text-[10px] text-zinc-500 mt-1 font-mono">{calcExpr}</div>
+              <div className="font-mono text-2xl font-bold text-amber-900" data-testid="freight-preview-amount">{fmtCurrency(calculatedFreight)}</div>
+              <div className="text-[10px] font-semibold text-amber-900 mt-1" data-testid="freight-preview-basis">{basisLine}</div>
+              <div className="text-[10px] text-zinc-600 mt-0.5 font-mono" data-testid="freight-preview-formula">{calcExpr}</div>
             </div>
           </div>
         </>
       )}
 
-      {/* ═════════ Freight Breakdown Chain ═════════ */}
-      {perTon && (
+      {/* ═════════ Freight Breakdown Chain — shows for both per-ton AND round-trip ═════════ */}
+      {!isFixedLump && (
         <div className="mt-4 border border-zinc-200 rounded-sm bg-white p-3" data-testid="freight-breakdown-chain">
           <div className="text-[10px] uppercase tracking-[0.15em] font-black text-zinc-950 mb-2">
             🧮 Freight Breakdown · Verification
           </div>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+          <div className={`grid grid-cols-2 gap-2 ${perTon ? "md:grid-cols-5" : "md:grid-cols-6"}`}>
             <Chip testid="fb-loading" label="Loading Qty" value={`${loadedQ.toFixed(3)} MT`} tone={freightQtyBasisLabel === "Loading Qty" || freightQtyBasisLabel === "Higher of Loading / Unloading" ? "info" : "muted"} />
             <Chip testid="fb-unloading" label="Unloading Qty" value={`${unloadedQ.toFixed(3)} MT`} tone={freightQtyBasisLabel === "Unloading Qty" || freightQtyBasisLabel === "Higher of Loading / Unloading" ? "info" : "muted"} />
-            <Chip testid="fb-qty-used" label="Qty Used (this trip)" value={`${(freightQtyUsedLive || 0).toFixed(3)} MT`} tone="warn" highlight />
-            <Chip testid="fb-rate" label="Rate" value={`₹${rate.toFixed(2)} / MT`} />
+            <Chip testid="fb-qty-used" label="Qty Used (this trip)" value={`${qtyUsed.toFixed(3)} MT`} tone="warn" highlight />
+            {perTon ? (
+              <Chip testid="fb-rate" label="Rate" value={`₹${rate.toFixed(2)} / MT`} />
+            ) : (
+              <>
+                <Chip testid="fb-round-km" label="Round Trip KM" value={`${roundKm.toFixed(2)} KM`} />
+                <Chip testid="fb-rate" label="Rate" value={`₹${rateKm.toFixed(2)} / MT / KM`} />
+              </>
+            )}
             <Chip testid="fb-calculated" label="Calculated Freight" value={fmtCurrency(calculatedFreight)} tone="good" />
           </div>
         </div>

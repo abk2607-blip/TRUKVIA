@@ -73,6 +73,30 @@ export default function TripForm() {
     }
   }, [prefillCustomer, isEdit]);
 
+  // Iter102 · Fetch selected customer's full record so we can cascade its
+  // frozen commercial defaults (default_freight_method, shortage_config)
+  // into the trip snapshot the moment the user picks a customer — instead
+  // of waiting for the backend to snapshot on save. Without this, the
+  // Freight Section shows "Loading Qty" for every customer, regardless of
+  // their configured Unloading / Higher-of default.
+  const { data: selCustResp } = useQuery({
+    queryKey: ["trip-form-selected-cust", form.customer_id],
+    queryFn: async () =>
+      (await api.get("/customers", { params: { ids: form.customer_id, limit: 1 } })).data,
+    enabled: !!form.customer_id && !isEdit, // edit mode already has the frozen snapshot
+    staleTime: 60000,
+  });
+  const selCustFull = selCustResp?.items?.find?.((c) => c.id === form.customer_id);
+  useEffect(() => {
+    if (isEdit) return;                       // never overwrite an existing snapshot
+    if (!selCustFull) return;
+    const custMethod = (selCustFull.default_freight_method || "per_ton_loading").toLowerCase();
+    setForm((f) => {
+      if ((f.applied_freight_method || "").toLowerCase() === custMethod) return f;
+      return { ...f, applied_freight_method: custMethod };
+    });
+  }, [selCustFull, isEdit]);
+
   const save = useMutation({
     mutationFn: async () => {
       const payload = {
@@ -343,22 +367,26 @@ export default function TripForm() {
   };
   const freightMethodSnap = (form.applied_freight_method || (form.freight_mode === "fixed" ? "fixed" : "per_ton_loading")).toLowerCase();
   const freightMethodLabel = _FM_LABELS[freightMethodSnap] || freightMethodSnap;
-  const freightQtyUsedLive =
-    form.freight_mode === "fixed"
-      ? 0
-      : freightMethodSnap === "per_ton_unloading"
+  // Iter102 UI · Round-Trip KM mode ALSO honours the frozen freight method
+  // (Loading / Unloading / Higher-of). A pure Lump-Sum trip (round_trip_kms
+  // or rate_per_km_per_ton is 0) is the only case where qty_used is truly 0.
+  const _rtKmLive = Number(form.round_trip_kms || 0);
+  const _rtRateLive = Number(form.rate_per_km_per_ton || 0);
+  const _isPureLumpSum = form.freight_mode === "fixed" && !(_rtKmLive > 0 && _rtRateLive > 0);
+  const _methodBasisQty =
+    freightMethodSnap === "per_ton_unloading"
       ? unloadedQ
       : freightMethodSnap === "per_ton_higher_of"
       ? Math.max(loadedQ, unloadedQ)
-      : loadedQ; // per_ton_loading default
-  const freightQtyBasisLabel =
-    form.freight_mode === "fixed"
-      ? "N/A · Lump Sum"
-      : freightMethodSnap === "per_ton_unloading"
+      : loadedQ; // per_ton_loading OR fixed-round-trip fallback → Loading Qty
+  const freightQtyUsedLive = _isPureLumpSum ? 0 : _methodBasisQty;
+  const _methodBasisLabel =
+    freightMethodSnap === "per_ton_unloading"
       ? "Unloading Qty"
       : freightMethodSnap === "per_ton_higher_of"
       ? "Higher of Loading / Unloading"
       : "Loading Qty";
+  const freightQtyBasisLabel = _isPureLumpSum ? "N/A · Lump Sum" : _methodBasisLabel;
 
   const chargeableDaysLive = form.halting_amount_override
     ? Number(form.chargeable_halting_days || 0)
