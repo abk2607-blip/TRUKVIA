@@ -176,7 +176,10 @@ def test_pdf_multitrip_rows_and_refs(pdf_bundle, multi_trip_invoice):
 
 
 def test_pdf_freight_basis_labels(pdf_bundle):
-    text = pdf_bundle["text"]
+    # Normalise the extracted text: PDF cells wrap the "Per Ton (Higher of)"
+    # label onto two lines in the narrow Basis column, so we collapse
+    # whitespace before searching.
+    text = " ".join(pdf_bundle["text"].split())
     assert "Per Ton (Higher of)" in text, "per_ton_higher_of label missing in Basis column"
     assert "Per Ton (Loading)" in text, "per_ton_loading label missing in Basis column"
     # legacy trip (no snapshot) must still render a fallback label

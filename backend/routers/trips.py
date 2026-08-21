@@ -482,9 +482,20 @@ async def create_trip(payload: Trip, request: Request, user=Depends(get_current_
             ) or {}
             doc["applied_freight_method"] = doc.get("applied_freight_method") or cust.get("default_freight_method") or "per_ton_loading"
             sc = cust.get("shortage_config") or {}
-            doc["applied_customer_shortage_limit"] = float(sc.get("limit", 0) or 0)
-            doc["applied_customer_shortage_limit_type"] = sc.get("limit_type") or "pct"
-            doc["applied_customer_shortage_method"] = sc.get("method") or "net_shortage"
+            # Iter102 fix — Only snapshot a customer shortage policy when a real
+            # limit was actually configured (> 0). Customer model defaults
+            # `shortage_config` to `{limit:0, limit_type:"pct", method:"net_shortage"}`
+            # even when the user never touched it — those defaults must NOT be
+            # treated as "policy configured" (would silently zero legacy shortages).
+            _sc_limit = float(sc.get("limit", 0) or 0)
+            if _sc_limit > 0:
+                doc["applied_customer_shortage_limit"] = _sc_limit
+                doc["applied_customer_shortage_limit_type"] = sc.get("limit_type") or "pct"
+                doc["applied_customer_shortage_method"] = sc.get("method") or "net_shortage"
+            else:
+                doc["applied_customer_shortage_limit"] = 0.0
+                doc["applied_customer_shortage_limit_type"] = ""
+                doc["applied_customer_shortage_method"] = ""
             if doc.get("product_id"):
                 prod = await db.products.find_one(
                     {"id": doc["product_id"], "user_id": user["user_id"], "company_id": cid},

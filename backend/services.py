@@ -43,9 +43,18 @@ def _compute_trip(t: Trip) -> Trip:
         t.freight_qty_used = qty
         t.freight_amount = round(qty * (t.rate_per_ton or 0), 2)
     else:
+        # Iter102 · Round-Trip freight now honours the frozen qty basis snapshot
+        # exactly like per-ton mode — Loading / Unloading / Higher-of. Fixes the
+        # customer report where "Unloading Qty Basis" was silently ignored in RT.
+        if method == "per_ton_unloading":
+            qty = unloaded_qty_snap
+        elif method == "per_ton_higher_of":
+            qty = max(loaded_qty_snap, unloaded_qty_snap)
+        else:
+            qty = loaded_qty_snap
         if (t.round_trip_kms or 0) > 0 and (t.rate_per_km_per_ton or 0) > 0:
-            t.freight_qty_used = loaded_qty_snap
-            t.freight_amount = round(loaded_qty_snap * t.round_trip_kms * t.rate_per_km_per_ton, 2)
+            t.freight_qty_used = qty
+            t.freight_amount = round(qty * t.round_trip_kms * t.rate_per_km_per_ton, 2)
         else:
             t.freight_qty_used = 0.0
             t.freight_amount = round(t.fixed_amount, 2)

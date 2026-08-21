@@ -189,11 +189,24 @@ export default function TripForm() {
     onError: (e) => toast.error(e?.response?.data?.detail || "Failed"),
   });
 
-  // Live computed
+  // Live computed — Iter102: Round Trip KM freight now respects
+  // applied_freight_method (Loading / Unloading / Higher-of) just like
+  // per-ton mode does, matching services._compute_trip parity.
+  const _ldQ = Number(form.tons || 0);
+  const _unQ = Number(form.unloaded_qty || 0);
+  const _fmForFreight = (form.applied_freight_method || "per_ton_loading").toLowerCase();
+  const _rtQty =
+    _fmForFreight === "per_ton_unloading" ? _unQ
+    : _fmForFreight === "per_ton_higher_of" ? Math.max(_ldQ, _unQ)
+    : _ldQ;
   const freight = form.freight_mode === "per_ton"
-    ? Number(form.tons || 0) * Number(form.rate_per_ton || 0)
+    ? (
+        _fmForFreight === "per_ton_unloading" ? _unQ * Number(form.rate_per_ton || 0)
+        : _fmForFreight === "per_ton_higher_of" ? Math.max(_ldQ, _unQ) * Number(form.rate_per_ton || 0)
+        : _ldQ * Number(form.rate_per_ton || 0)
+      )
     : (Number(form.round_trip_kms || 0) > 0 && Number(form.rate_per_km_per_ton || 0) > 0)
-      ? Number(form.tons || 0) * Number(form.round_trip_kms || 0) * Number(form.rate_per_km_per_ton || 0)
+      ? _rtQty * Number(form.round_trip_kms || 0) * Number(form.rate_per_km_per_ton || 0)
       : Number(form.fixed_amount || 0);
   const totalExpense = Object.entries(form.expenses).reduce((s, [k, v]) => s + (k === "other_desc" || k === "other_remarks" ? 0 : Number(v || 0)), 0)
     + (form.other_expenditures || []).reduce((s, e2) => s + Number(e2.amount || 0), 0);
