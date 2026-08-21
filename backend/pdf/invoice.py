@@ -270,10 +270,12 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
     story.append(party_tbl)
     story.append(Spacer(1, 5))
 
-    # ================== 3. TRIP LINE ITEMS (10 cols) ==================
-    # #  ·  Date  ·  Vehicle  ·  Cust Ref  ·  Load  ·  Route  ·  Basis  ·  Tons  ·  Rate  ·  Amount
+    # ================== 3. TRIP LINE ITEMS (12 cols · Load / Unload / Net Short visible) ==================
+    # Iter101 · Invoice sign-off — Load, Unload, Net-Short columns added so the
+    # trip-wise flow that drove the freight & shortage calc is visible on the PDF.
     hdr = [Paragraph(f"<font color='#FFFFFF'><b>{txt}</b></font>", styles["Body"]) for txt in
-           ["#", "Date", "Vehicle No", "Cust Ref", "Load", "Route", "Basis", "Tons", "Rate", "Amount (₹)"]]
+           ["#", "Date", "Vehicle No", "Cust Ref", "Product", "Route", "Basis",
+            "Load\nMT", "Unload\nMT", "Shortage\n/ Net MT", "Rate", "Amount (₹)"]]
 
     rows = [hdr]
     sub_row_indices = []
@@ -307,6 +309,22 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
             else:
                 rate_html = f"₹ {_fmt(t.get('fixed_amount', 0))}"
 
+        loaded_mt = float(t.get("tons") or 0)
+        unloaded_mt = float(t.get("unloaded_qty") or 0)
+        short_qty = float(t.get("shortage_qty") or 0)
+        excess_qty = float(t.get("excess_qty") or 0)
+        prod_rate = float(t.get("product_rate_per_mt") or 0)
+        # Deductible MT reconciled with the stored shortage_amount (mirrors trip UI).
+        trip_short_amt = float(t.get("shortage_amount") or 0) + float((t.get("expenses") or {}).get("shortage_amount") or 0)
+        net_short_mt = round(trip_short_amt / prod_rate, 3) if (prod_rate > 0 and trip_short_amt > 0) else 0
+
+        if short_qty > 0:
+            short_cell = f"Actual {short_qty:.3f}<br/><font size='6.5' color='#B45309'><b>Net {net_short_mt:.3f}</b></font>"
+        elif excess_qty > 0:
+            short_cell = f"<font color='#059669'>Excess {excess_qty:.3f}</font>"
+        else:
+            short_cell = "—"
+
         rows.append([
             Paragraph(str(idx), styles["RowNum"]),
             Paragraph(t.get("date", ""), styles["RowNum"]),
@@ -315,7 +333,9 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
             Paragraph(t.get("load_details", "") or "—", styles["RowTxt"]),
             Paragraph(route_html, styles["RowTxt"]),
             Paragraph(basis_html, styles["RowTxt"]),
-            Paragraph(_fmt(t.get("tons", 0)), styles["RowNum"]),
+            Paragraph(f"{loaded_mt:.3f}", styles["RowNum"]),
+            Paragraph(f"{unloaded_mt:.3f}" if unloaded_mt > 0 else "—", styles["RowNum"]),
+            Paragraph(short_cell, styles["RowNum"]),
             Paragraph(rate_html, styles["RowRate"]),
             Paragraph(f"₹ {_fmt(t.get('freight_amount', 0))}", styles["RowAmt"]),
         ])
@@ -329,7 +349,7 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
                     styles["SubLbl"])
             else:
                 lbl = Paragraph(f"↳ {label}", styles["SubLbl"])
-            rows.append(["", lbl, "", "", "", "", "", "", "", Paragraph(amt_str, styles["AmtSub"])])
+            rows.append(["", lbl, "", "", "", "", "", "", "", "", "", Paragraph(amt_str, styles["AmtSub"])])
             sub_row_indices.append(len(rows) - 1)
 
         if float(t.get("halting_amount", 0) or 0) > 0:
@@ -418,15 +438,17 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
 
     # Column widths (total ~273mm landscape inner width)
     #             #    Date   Veh    Cust   Load   Route  Basis  Tons   Rate   Amt
-    col_widths = [8*mm, 22*mm, 26*mm, 30*mm, 32*mm, 48*mm, 34*mm, 15*mm, 26*mm, 36*mm]
+    # Column widths (total ~273mm landscape inner width) — 12 columns
+    #    #    Date   Veh    Cust   Prod   Route  Basis  Load   Unload  Short  Rate   Amt
+    col_widths = [7*mm, 18*mm, 22*mm, 24*mm, 26*mm, 40*mm, 28*mm, 15*mm, 15*mm, 20*mm, 22*mm, 36*mm]
     items_tbl = Table(rows, colWidths=col_widths, repeatRows=1)
     _style = [
         ("BACKGROUND", (0, 0), (-1, 0), C_HEAD),
         ("TEXTCOLOR",  (0, 0), (-1, 0), C_HEAD_T),
         ("TOPPADDING",    (0, 0), (-1, 0), 5),
         ("BOTTOMPADDING", (0, 0), (-1, 0), 5),
-        ("LEFTPADDING",   (0, 0), (-1, -1), 4),
-        ("RIGHTPADDING",  (0, 0), (-1, -1), 4),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 3),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 3),
         ("TOPPADDING",    (0, 1), (-1, -1), 4),
         ("BOTTOMPADDING", (0, 1), (-1, -1), 4),
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
@@ -435,8 +457,8 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
         ("BOX",       (0, 0), (-1, -1), 0.6, C_LINE_D),
         ("ALIGN", (0, 1), (0, -1), "CENTER"),   # #
         ("ALIGN", (1, 1), (1, -1), "CENTER"),   # Date
-        ("ALIGN", (7, 1), (7, -1), "CENTER"),   # Tons
-        ("ALIGN", (9, 1), (9, -1), "RIGHT"),    # Amount
+        ("ALIGN", (7, 1), (9, -1), "CENTER"),   # Load / Unload / Short
+        ("ALIGN", (11, 1), (11, -1), "RIGHT"),  # Amount
     ]
     for r in range(1, len(rows)):
         if r in sub_row_indices:
@@ -444,7 +466,7 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
         if (r % 2) == 0:
             _style.append(("BACKGROUND", (0, r), (-1, r), C_ROW_B))
     for r in sub_row_indices:
-        _style.append(("SPAN", (1, r), (8, r)))
+        _style.append(("SPAN", (1, r), (10, r)))
         _style.append(("BACKGROUND", (0, r), (-1, r), C_SUB_BG))
         _style.append(("TEXTCOLOR", (0, r), (-1, r), C_SUB_TX))
         _style.append(("TOPPADDING", (0, r), (-1, r), 3))
