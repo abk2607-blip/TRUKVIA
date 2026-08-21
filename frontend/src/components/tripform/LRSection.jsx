@@ -1,11 +1,34 @@
-// Iter55 — Extracted verbatim from TripForm.jsx. Pure JSX.
-import React from "react";
-import { FileText } from "lucide-react";
-import { API } from "@/api";
+// Iter55/101 — LR Section with Preview + Download always available.
+// Preview works during Trip Creation via POST /api/trips/lr/preview (no persist).
+// After Save (isEdit), the Download button hits the persistent GET
+// /api/trips/{tid}/lr endpoint that auto-assigns a real LR series number.
+import React, { useState } from "react";
+import { FileText, Eye, Loader2 } from "lucide-react";
 import { Section, Field } from "./FormPrimitives";
 import { inputCls } from "./tripFormDefaults";
+import { openTripLrPdf, previewLrFromDraft } from "@/utils/pdfDownload";
 
 export default function LRSection({ form, setForm, isEdit, id }) {
+  const [busy, setBusy] = useState(""); // "" | "preview" | "download"
+
+  const runPreview = async () => {
+    setBusy("preview");
+    try {
+      await previewLrFromDraft(form);
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const runDownload = async () => {
+    setBusy("download");
+    try {
+      await openTripLrPdf(id, `LR_${form.lr_number || id}.pdf`);
+    } finally {
+      setBusy("");
+    }
+  };
+
   return (
     <Section title="LR / Lorry Receipt (Optional)">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -61,14 +84,35 @@ export default function LRSection({ form, setForm, isEdit, id }) {
           <input data-testid="trip-to-pin" value={form.to_pincode} onChange={(e) => setForm({ ...form, to_pincode: e.target.value })} className={inputCls} />
         </Field>
       </div>
-      {isEdit && (
-        <div className="mt-4">
-          <a data-testid="download-lr-btn" href={`${API}/trips/${id}/lr`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-2 px-3 py-2 text-xs uppercase tracking-wider font-semibold bg-zinc-950 text-white rounded-sm hover:bg-zinc-800">
-            <FileText size={14} /> Download LR PDF
-          </a>
-          <span className="ml-2 text-xs text-zinc-500">Auto-assigns an LR number on first download.</span>
-        </div>
-      )}
+
+      <div className="mt-5 border-t border-zinc-200 pt-4 flex flex-wrap items-center gap-3">
+        <button
+          type="button"
+          data-testid="preview-lr-btn"
+          disabled={!!busy}
+          onClick={runPreview}
+          className="inline-flex items-center gap-2 px-4 py-2 text-xs uppercase tracking-wider font-semibold border-2 border-amber-700 text-amber-800 bg-amber-50 rounded-sm hover:bg-amber-100 disabled:opacity-50"
+        >
+          {busy === "preview" ? <Loader2 size={14} className="animate-spin" /> : <Eye size={14} />}
+          Preview LR (before Save)
+        </button>
+        {isEdit && (
+          <button
+            type="button"
+            data-testid="download-lr-btn"
+            disabled={!!busy}
+            onClick={runDownload}
+            className="inline-flex items-center gap-2 px-4 py-2 text-xs uppercase tracking-wider font-semibold bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 disabled:opacity-50"
+          >
+            {busy === "download" ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
+            Download LR PDF
+          </button>
+        )}
+        <span className="text-[11px] text-zinc-500">
+          Preview renders the LR without saving — use it to verify all fields before finalising the trip.
+          {isEdit ? "" : " Download activates after Save (auto-assigns the LR series number)."}
+        </span>
+      </div>
     </Section>
   );
 }

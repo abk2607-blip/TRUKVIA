@@ -1,6 +1,7 @@
 import React from "react";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { api, API, fmtCurrency, fmtDate } from "@/api";
+import { openTripLrPdf } from "@/utils/pdfDownload";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { Plus, CheckCircle2, Clock, Download, FileText, Trash2, Eye, Pencil, Copy, Share2, Search, X, ChevronLeft, ChevronRight, Bookmark, BookmarkPlus, FileWarning } from "lucide-react";
@@ -761,7 +762,7 @@ export default function Trips() {
                     <div className="flex items-center justify-end gap-0.5">
                       <Link data-testid={`view-trip-${t.id}`} to={`/trips/${t.id}/view`} className="p-1.5 border border-zinc-200 rounded-sm text-zinc-600 hover:bg-zinc-950 hover:text-white transition" title="View details"><Eye size={12} /></Link>
                       <Link data-testid={`edit-trip-${t.id}`} to={`/trips/${t.id}/edit`} className={`p-1.5 border rounded-sm hover:bg-zinc-950 hover:text-white transition ${t.status === "invoiced" ? "border-amber-300 text-amber-700" : "border-zinc-200 text-zinc-600"}`} title={t.status === "invoiced" ? "Edit (invoice will recalc)" : "Edit"}><Pencil size={12} /></Link>
-                      <a data-testid={`lr-${t.id}`} href={`${API}/trips/${t.id}/lr`} target="_blank" rel="noreferrer" className="p-1.5 border border-indigo-200 rounded-sm text-indigo-700 hover:bg-indigo-600 hover:text-white transition" title="LR PDF"><FileText size={12} /></a>
+                      <button data-testid={`lr-${t.id}`} onClick={() => openTripLrPdf(t.id, `LR_${t.lr_number || t.id}.pdf`)} className="p-1.5 border border-indigo-200 rounded-sm text-indigo-700 hover:bg-indigo-600 hover:text-white transition" title="LR PDF"><FileText size={12} /></button>
                       <button data-testid={`share-lr-${t.id}`}
                         onClick={async () => {
                           try {

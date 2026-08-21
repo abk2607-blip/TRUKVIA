@@ -2,6 +2,7 @@ import React from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api, API, fmtCurrency, fmtDate } from "@/api";
+import { openTripLrPdf } from "@/utils/pdfDownload";
 import { ArrowLeft, Pencil, FileText, ExternalLink } from "lucide-react";
 import FileAttachments from "@/components/FileAttachments";
 import OverrideBadge from "@/components/OverrideBadge";
@@ -60,10 +61,10 @@ export default function TripView() {
           </h1>
         </div>
         <div className="flex gap-2">
-          <a data-testid="trip-view-lr" href={`${API}/trips/${trip.id}/lr`} target="_blank" rel="noreferrer"
+          <button data-testid="trip-view-lr" onClick={() => openTripLrPdf(trip.id, `LR_${trip.lr_number || trip.id}.pdf`)}
              className="inline-flex items-center gap-2 px-3 py-2 text-xs uppercase tracking-wider border border-zinc-200 rounded-sm hover:bg-zinc-950 hover:text-white">
             <FileText size={14} /> LR PDF
-          </a>
+          </button>
           <Link data-testid="trip-view-edit" to={`/trips/${trip.id}/edit`}
                 className="inline-flex items-center gap-2 px-3 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm hover:bg-zinc-800">
             <Pencil size={14} /> Edit Trip

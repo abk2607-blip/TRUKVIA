@@ -1149,6 +1149,42 @@ async def eway_bill(tid: str, user=Depends(get_current_user)):
 # ==================== File Uploads (Object Storage) ====================
 
 
+@router.post("/trips/lr/preview")
+async def trip_lr_preview(payload: dict, user=Depends(get_current_user)):
+    """Iter101 — Render an LR / Goods Consignment Note PDF from a DRAFT trip payload
+    WITHOUT persisting anything. Used by the Trip Form to preview the LR before Save.
+
+    The payload is the same shape the Trip Form POSTs to /api/trips. Missing
+    `lr_number` renders as the placeholder "DRAFT" so users can verify layout
+    even before a real LR series number is auto-assigned on the real save."""
+    trip = dict(payload or {})
+    if not trip.get("lr_number"):
+        trip["lr_number"] = "DRAFT"
+    # Resolve customer (best-effort — LR preview works even without a customer link)
+    customer = {}
+    cust_id = (trip.get("customer_id") or "").strip()
+    if cust_id:
+        customer = await db.customers.find_one(
+            {"id": cust_id, "user_id": user["user_id"]}, {"_id": 0}
+        ) or {}
+    # Resolve company: explicit → active header → user default
+    trip_company_id = (trip.get("company_id") or "").strip()
+    company = None
+    if trip_company_id:
+        company = await db.companies.find_one(
+            {"id": trip_company_id, "user_id": user["user_id"]}, {"_id": 0}
+        )
+    company = company or await db.companies.find_one(
+        {"user_id": user["user_id"], "is_default": True}, {"_id": 0}
+    ) or {}
+    pdf_bytes = build_lr_pdf(company, customer, trip)
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": 'inline; filename="LR_Preview.pdf"'},
+    )
+
+
 @router.get("/trips/{tid}/lr")
 async def trip_lr_pdf(tid: str, user=Depends(get_current_user)):
     trip = await db.trips.find_one({"id": tid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})

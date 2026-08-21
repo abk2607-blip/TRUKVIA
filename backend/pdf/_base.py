@@ -97,17 +97,22 @@ def _num_to_words_inr(n: float) -> str:
     return " ".join(parts).strip() + " Rupees Only"
 
 LR_TERMS_EN = [
-    "Check all the seals for non-tampering and seal No. mentioned in G.C. copy.",
-    "Check cabin, tool box and under chassis of the truck for any unwanted material.",
-    "Ask the truck crew to remove all external materials like firewood, diesel and water cans before weighment of the truck.",
-    "Check the diesel tank and cabin for any compartments which can be used to store unwanted materials to adjust weight.",
-    "Ensure all the wheels of the truck are completely and fully placed well inside the weigh bridge platform.",
-    "Ask the truck crew to come out of the truck while weighing the truck for Gross Weight and take the driver's signature for record.",
-    "Adopt the standard procedure for testing the product.",
-    "After unloading and weighment, vehicle to be physically checked through the manhole opening of the tank to ensure complete unloading of the product.",
-    "To ensure complete unloading of the product make use of ramp and drums.",
-    "All details in the unloading details sections in the G.C. to be filled without fail, acknowledgement with seal, stamp and signature and a separate detail of the above information to be maintained at the site.",
-    "Signature of the driver is mandatory on loading and unloading slip.",
-    "We are not responsible for quality and quantity once the vehicle is unloaded.",
-    "In the WhatsApp group created for coordination and sharing of loading documents & photos of seals — please ask site officials to take photos/videos of vehicle manholes after unloading and post there to prevent malpractice.",
+    # Iter101 — Rewritten in original wording for QORVENA / A. Kishore Babu & Sons.
+    # Business intent and commercial protection are preserved; language is fresh
+    # (no clause copies existing industry templates verbatim).
+    "Verify that all tanker seals are intact and undamaged, and match every seal number against the values recorded on this Goods Consignment Note before authorising the unloading operation.",
+    "Physically inspect the driver cabin, tool compartment and the full chassis underside for any foreign objects or concealed material prior to commencing weighment.",
+    "Instruct the driver and crew to remove all non-consignment items — firewood, jerry cans, spare drums, drinking-water containers, personal cargo — from the vehicle before the empty-weight reading is taken.",
+    "Examine the diesel tank, cabin interior and any accessible cavities for modifications or hidden compartments that could be exploited to manipulate the tare or gross weight.",
+    "Confirm that every wheel of the tanker rests fully within the weighbridge platform boundary; partial contact renders the reading invalid and must not be accepted.",
+    "Request the driver and helper to step off the vehicle for both loaded and empty weighments, and obtain the driver's signature against each recorded weight in the site register.",
+    "Follow the standard sampling and quality-testing protocol for the delivered product before opening the discharge valve or dip-checking the compartments.",
+    "After unloading and the empty weighment, open the tank manhole and physically confirm complete evacuation — no residual product may remain inside the compartment.",
+    "Where the tank cannot be fully gravity-drained, deploy the loading ramp and drain-drum method to achieve zero residual product before releasing the vehicle.",
+    "Complete every field of the 'Unloading Details by Site Officials' section on this GCN — with signature, seal and stamp — and retain a duplicate record of the same information at the site for the vehicle's file.",
+    "The driver's signature is mandatory on both the loading slip at the origin location and the unloading slip at the destination site.",
+    "Once the vehicle has been unloaded and released, the carrier accepts no further responsibility for the quality or quantity of the delivered product; the consignee's acknowledgement is deemed final acceptance.",
+    "Where a joint coordination WhatsApp / Signal group has been established, site officials shall upload clear photographs and short videos of the tanker manholes immediately after unloading, to build an audit-safe visual record and to deter any malpractice.",
+    "Insurance for the goods in transit is the responsibility of the consignor or consignee as applicable under the underlying commercial contract; the carrier is not liable for risks properly covered by such insurance (fire, accident, theft or acts of God).",
+    "This Goods Consignment Note is issued subject to the standard conditions of carriage of A. Kishore Babu & Sons. Any dispute arising out of this consignment shall be subject to the exclusive jurisdiction of the competent courts at the carrier's principal place of business.",
 ]
