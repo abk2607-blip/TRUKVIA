@@ -529,21 +529,21 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
     story.append(_margined(seal_box))
     story.append(Spacer(1, 8))
 
-    # T&C table — circle-numbered.
+    # T&C table — pill-numbered (wider box to fit 2-digit numbers cleanly).
     tc_body_style = ParagraphStyle(name="TCBody", fontName=F, fontSize=8.3, leading=11,
                                     textColor=_NAVY, spaceAfter=2)
-    circle_style = ParagraphStyle(name="Circle", fontName=FB, fontSize=9.5, leading=11,
+    circle_style = ParagraphStyle(name="Circle", fontName=FB, fontSize=8.5, leading=10,
                                    textColor=_WHITE, alignment=1)
     tc_rows = []
     for i, t in enumerate(LR_TERMS_EN, start=1):
-        num = Table([[Paragraph(f"<b>{i}</b>", circle_style)]], colWidths=[7.5 * mm], rowHeights=[7.5 * mm])
+        num = Table([[Paragraph(f"<b>{i}</b>", circle_style)]], colWidths=[9 * mm], rowHeights=[7.5 * mm])
         num.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), _EMERALD_D),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ]))
         tc_rows.append([num, Paragraph(t, tc_body_style)])
 
-    tc_tbl = Table(tc_rows, colWidths=[9.5 * mm, 180.5 * mm])
+    tc_tbl = Table(tc_rows, colWidths=[11 * mm, 179 * mm])
     tc_tbl.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("LEFTPADDING", (0, 0), (-1, -1), 0),
@@ -559,8 +559,9 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
         Spacer(1, 2),
         Paragraph(
             "I / We hereby confirm that the material described on this Goods Consignment Note has been "
-            "received in good condition and quantity, all applicable seals were intact, and I / We have "
-            "read and agree to the Terms &amp; Conditions above.",
+            "received in good condition and quantity, and that any applicable seal condition / "
+            "discrepancy has been recorded as required. I / We have read and agree to the Terms "
+            "&amp; Conditions above.",
             styles["Body"],
         ),
         Spacer(1, 18),

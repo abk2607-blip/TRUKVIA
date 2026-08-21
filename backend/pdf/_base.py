@@ -100,7 +100,7 @@ LR_TERMS_EN = [
     # Iter101 — Rewritten in original wording for QORVENA / A. Kishore Babu & Sons.
     # Business intent and commercial protection are preserved; language is fresh
     # (no clause copies existing industry templates verbatim).
-    "Verify that all tanker seals are intact and undamaged, and match every seal number against the values recorded on this Goods Consignment Note before authorising the unloading operation.",
+    "Where an official loading-facility seal is applicable, verify the seal number against the relevant loading document / invoice before unloading. Any transporter-applied safety seal discrepancy shall be recorded in the unloading remarks and handled as per the Seal Verification &amp; Unloading Protocol above.",
     "Physically inspect the driver cabin, tool compartment and the full chassis underside for any foreign objects or concealed material prior to commencing weighment.",
     "Instruct the driver and crew to remove all non-consignment items — firewood, jerry cans, spare drums, drinking-water containers, personal cargo — from the vehicle before the empty-weight reading is taken.",
     "Examine the diesel tank, cabin interior and any accessible cavities for modifications or hidden compartments that could be exploited to manipulate the tare or gross weight.",
