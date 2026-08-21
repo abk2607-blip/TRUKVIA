@@ -89,12 +89,43 @@ function _flattenDetail(d) {
 
 api.interceptors.response.use(
   (r) => r,
-  (err) => {
+  async (err) => {
     try {
       const status = err?.response?.status;
       const url = (err?.config?.url || "");
-      if (status === 401 && url.includes("/auth/me")) {
-        localStorage.removeItem("session_token");
+      const detail = err?.response?.data?.detail || err?.response?.data?.detail_raw;
+      const detailStr = typeof detail === "string" ? detail.toLowerCase() : "";
+      // Iter102 — Hardened sign-out trigger.
+      // Only clear the token when the server EXPLICITLY confirms the session
+      // is dead — never on a generic 401, and never before a one-shot retry
+      // (backend restart / transient network hiccup should not sign the user
+      // out). Two guards:
+      //   1. Detail must be one of: "invalid session", "session expired",
+      //      "not authenticated" — anything else (permission errors, RBAC,
+      //      wrong-tenant, missing header) leaves the token intact.
+      //   2. Only trigger on /auth/me — the canonical session-health probe.
+      const isAuthMe = url.includes("/auth/me");
+      const isSessionDead = ["invalid session", "session expired", "not authenticated"]
+        .some((s) => detailStr.includes(s));
+      if (status === 401 && isAuthMe && isSessionDead && !err.config._retriedAuthMe) {
+        // One-shot retry after a short cushion — protects against transient
+        // 401s during a backend restart or a race on the demo-token ensure step.
+        err.config._retriedAuthMe = true;
+        await new Promise((r) => setTimeout(r, 800));
+        try {
+          return await api.request(err.config);
+        } catch (retryErr) {
+          const rStatus = retryErr?.response?.status;
+          const rDetail = retryErr?.response?.data?.detail;
+          const rDetailStr = typeof rDetail === "string" ? rDetail.toLowerCase() : "";
+          const stillDead = ["invalid session", "session expired", "not authenticated"]
+            .some((s) => rDetailStr.includes(s));
+          if (rStatus === 401 && stillDead) {
+            // Confirmed dead session — safe to clear now.
+            localStorage.removeItem("session_token");
+          }
+          err = retryErr;
+        }
       }
       // Normalise error detail so React text nodes never crash
       if (err?.response?.data && err.response.data.detail !== undefined) {
