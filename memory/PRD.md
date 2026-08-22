@@ -23,6 +23,15 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
 
+- [x] **Iter108 · Multi-Company Logo Upload + Isolation** (Feb 2026)
+  - **Discovery**: end-to-end multi-company logo pipeline was already implemented — the request required verification + regression guards.
+  - **Existing infra verified**: `POST /api/company/logo` writes to `_active_company_id(request, user)`; validates `image/*` MIME and 1MB max; stores as base64 data URL on the Company doc; `DELETE /api/company/logo` clears it. Settings.jsx already exposes Upload / Replace / Remove. Invoice PDF (`pdf/invoice.py`), LR PDF (`pdf/lr.py` with monogram fallback), Ledger PDF (`pdf/ledger.py`), and Supplier Statement PDF (`routers/reports.py:750-808`) all read `company.logo` — no hard-coded logo anywhere.
+  - **Active-company resolution** — `_active_company_id` reads `X-Company-Id` header → user's default_company_id → first company. So switching company context in the frontend automatically picks the right logo on every PDF endpoint.
+  - **New guard** `test_iter108_multi_company_logo_isolation.py` (4 tests): upload isolation, image + size validation, replace/delete flow scoped per company, and end-to-end proof that Invoice PDFs generated under two companies embed their OWN logo bytes (never each other's).
+  - **Sample PDFs for verification** — `/app/sample_pdfs/iter108_invoice_RED_company.pdf` (red 128×128 logo) and `_BLUE_company.pdf` (blue 128×128 logo). Each PDF's header shows only its own company's logo — no cross-contamination.
+
+
+
 - [x] **Iter107 · Invoice PDF Shortage Allowance % Caption** (Feb 2026)
   - **Trigger**: user-approved P1 — the Invoice should show, per shortage sub-row, which allowance was actually applied so customers can trace the deduction to the frozen policy.
   - **`pdf/invoice.py`** — rewrote the inline `policy_note` beneath each Trip's `Less: Shortage` sub-row. Now renders two lines:
