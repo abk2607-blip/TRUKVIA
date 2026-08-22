@@ -23,6 +23,16 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
 
+- [x] **Iter109 · Bulk LR Regenerate** (Feb 2026)
+  - **Backend** — New `POST /api/trips/{tid}/regenerate-lr` returns a fresh LR PDF from the current approved Trip data. Existing `lr_number` is preserved (assigned only if the trip had none). Trip financial fields are never mutated. `audit_logs` row appended with `action="lr_regenerate"`.
+  - **Backend** — New `POST /api/trips/bulk-regenerate-lr` accepts `{trip_ids: [...]}` (max 200) and returns a ZIP of PDFs, one per trip. Only the requested trips are touched; non-selected trips are guaranteed untouched. Companies + customers pre-loaded in one batch each for efficiency. Audit row logged with `action="lr_bulk_regenerate"` and count.
+  - **Frontend (`Trips.jsx`)** — Added a per-row **Regenerate LR** button (amber icon, testid `regenerate-lr-{id}`) beside the existing LR button, opens the fresh PDF inline. Added a **Regenerate LR** action on the bulk-selection toolbar (testid `bulk-regenerate-lr-btn`) that downloads the ZIP.
+  - **Design fidelity** — Both endpoints call `build_lr_pdf(company, customer, trip)` — the existing final locked 2-page LR renderer with company logo. Company logo per-trip via `trip.company_id` → `db.companies.find_one(...)`.
+  - **Sample PDFs** — `/app/sample_pdfs/iter109_single_lr_regenerated.pdf` + `/app/sample_pdfs/iter109_bulk_lr_regenerated.zip` (3 LRs inside).
+  - **New guard** `test_iter109_bulk_lr_regenerate.py` (4 tests): single-row returns PDF + leaves trip unchanged; bulk returns ZIP scoped strictly to selected trips (non-selected untouched); bulk rejects empty and >200; regenerate reflects the LATEST edited trip data.
+
+
+
 - [x] **Iter108 · Multi-Company Logo Upload + Isolation** (Feb 2026)
   - **Discovery**: end-to-end multi-company logo pipeline was already implemented — the request required verification + regression guards.
   - **Existing infra verified**: `POST /api/company/logo` writes to `_active_company_id(request, user)`; validates `image/*` MIME and 1MB max; stores as base64 data URL on the Company doc; `DELETE /api/company/logo` clears it. Settings.jsx already exposes Upload / Replace / Remove. Invoice PDF (`pdf/invoice.py`), LR PDF (`pdf/lr.py` with monogram fallback), Ledger PDF (`pdf/ledger.py`), and Supplier Statement PDF (`routers/reports.py:750-808`) all read `company.logo` — no hard-coded logo anywhere.

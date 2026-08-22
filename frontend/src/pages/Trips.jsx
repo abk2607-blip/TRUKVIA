@@ -577,6 +577,24 @@ export default function Trips() {
           </button>
           <button
             type="button"
+            data-testid="bulk-regenerate-lr-btn"
+            onClick={async () => {
+              try {
+                const trip_ids = Array.from(selected);
+                const res = await api.post(`/trips/bulk-regenerate-lr`, { trip_ids }, { responseType: "blob" });
+                const url = URL.createObjectURL(res.data);
+                const a = document.createElement("a"); a.href = url; a.download = `LR_bulk_${trip_ids.length}_trips.zip`; a.click();
+                URL.revokeObjectURL(url);
+                toast.success(`Regenerated ${trip_ids.length} LR${trip_ids.length === 1 ? "" : "s"}`);
+              } catch (e) { toast.error(e?.response?.data?.detail || "Regenerate failed"); }
+            }}
+            className="px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold bg-indigo-600 text-white rounded-sm hover:bg-indigo-700 inline-flex items-center gap-1"
+            title="Regenerate LR PDFs for selected trips (does NOT modify any trip)"
+          >
+            <FileText size={12} /> Regenerate LR
+          </button>
+          <button
+            type="button"
             data-testid="bulk-delete-btn"
             onClick={runBulkDelete}
             disabled={bulkDelete.isPending}
@@ -763,6 +781,21 @@ export default function Trips() {
                       <Link data-testid={`view-trip-${t.id}`} to={`/trips/${t.id}/view`} className="p-1.5 border border-zinc-200 rounded-sm text-zinc-600 hover:bg-zinc-950 hover:text-white transition" title="View details"><Eye size={12} /></Link>
                       <Link data-testid={`edit-trip-${t.id}`} to={`/trips/${t.id}/edit`} className={`p-1.5 border rounded-sm hover:bg-zinc-950 hover:text-white transition ${t.status === "invoiced" ? "border-amber-300 text-amber-700" : "border-zinc-200 text-zinc-600"}`} title={t.status === "invoiced" ? "Edit (invoice will recalc)" : "Edit"}><Pencil size={12} /></Link>
                       <button data-testid={`lr-${t.id}`} onClick={() => openTripLrPdf(t.id, `LR_${t.lr_number || t.id}.pdf`)} className="p-1.5 border border-indigo-200 rounded-sm text-indigo-700 hover:bg-indigo-600 hover:text-white transition" title="LR PDF"><FileText size={12} /></button>
+                      <button
+                        data-testid={`regenerate-lr-${t.id}`}
+                        onClick={async () => {
+                          try {
+                            const res = await api.post(`/trips/${t.id}/regenerate-lr`, {}, { responseType: "blob" });
+                            const url = URL.createObjectURL(res.data);
+                            window.open(url, "_blank");
+                            setTimeout(() => URL.revokeObjectURL(url), 30000);
+                            toast.success(`LR regenerated · ${t.lr_number || t.id.slice(0, 8)}`);
+                            qc.invalidateQueries({ queryKey: ["trips"] });
+                          } catch (e) { toast.error(e?.response?.data?.detail || "Regenerate failed"); }
+                        }}
+                        className="p-1.5 border border-amber-300 rounded-sm text-amber-700 hover:bg-amber-600 hover:text-white transition"
+                        title="Regenerate LR (re-render with current trip data — no modification)"
+                      ><FileText size={12} /></button>
                       <button data-testid={`share-lr-${t.id}`}
                         onClick={async () => {
                           try {

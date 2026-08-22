@@ -1222,6 +1222,119 @@ async def trip_lr_pdf(tid: str, user=Depends(get_current_user)):
     )
 
 
+@router.post("/trips/{tid}/regenerate-lr")
+async def regenerate_trip_lr(tid: str, user=Depends(get_current_user)):
+    """Iter109 · Regenerate LR PDF from the current approved Trip data. This
+    ONLY re-renders the PDF — it does NOT modify the Trip, does NOT change
+    the lr_number (unless the trip never had one), and does NOT create
+    duplicate financial transactions. An audit_log row is appended.
+    Returns the fresh PDF inline."""
+    trip = await db.trips.find_one({"id": tid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    if not trip.get("lr_number"):
+        lr_num = await _next_lr_number(user["user_id"], trip.get("company_id", ""))
+        await db.trips.update_one({"id": tid, "user_id": user["user_id"]}, {"$set": {"lr_number": lr_num}})
+        trip["lr_number"] = lr_num
+    customer = await db.customers.find_one({"id": trip["customer_id"], "user_id": user["user_id"]}, {"_id": 0}) or {}
+    trip_company_id = trip.get("company_id", "")
+    company = await db.companies.find_one({"id": trip_company_id, "user_id": user["user_id"]}, {"_id": 0}) if trip_company_id else None
+    company = company or await db.companies.find_one({"user_id": user["user_id"], "is_default": True}, {"_id": 0}) or {}
+    pdf_bytes = build_lr_pdf(company, customer, trip)
+    try:
+        await db.audit_logs.insert_one({
+            "user_id": user["user_id"], "company_id": trip.get("company_id", ""),
+            "action": "lr_regenerate", "entity_type": "trip", "entity_id": tid,
+            "entity_name": trip.get("lr_number") or tid[:8],
+            "timestamp": now_utc().isoformat(),
+            "actor_email": user.get("email"), "detail": {"source": "single"},
+        })
+    except Exception:
+        pass
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{trip["lr_number"].replace("/", "_")}.pdf"'},
+    )
+
+
+@router.post("/trips/bulk-regenerate-lr")
+async def bulk_regenerate_lr(payload: dict, user=Depends(get_current_user)):
+    """Iter109 · Regenerate LR PDFs for the SELECTED trips only. Returns a
+    ZIP of PDFs, one per trip. Does NOT modify any Trip data, does NOT
+    change existing lr_numbers, and does NOT create duplicate transactions.
+    Only the requested `trip_ids` are touched — no side effects on other trips."""
+    trip_ids = payload.get("trip_ids") or []
+    if not isinstance(trip_ids, list) or not trip_ids:
+        raise HTTPException(status_code=400, detail="trip_ids is required")
+    if len(trip_ids) > 200:
+        raise HTTPException(status_code=400, detail="Max 200 trips per bulk regeneration")
+    import zipfile
+    trips = await db.trips.find(
+        {"id": {"$in": trip_ids}, "user_id": user["user_id"]},
+        {"_id": 0, "user_id": 0},
+    ).to_list(len(trip_ids))
+    found_ids = {t["id"] for t in trips}
+    missing = [tid for tid in trip_ids if tid not in found_ids]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Trips not found: {missing[:5]}")
+
+    # Pre-load companies + customers used by these trips
+    company_ids = {t.get("company_id", "") for t in trips if t.get("company_id")}
+    customer_ids = {t["customer_id"] for t in trips if t.get("customer_id")}
+    companies = {c["id"]: c for c in await db.companies.find(
+        {"id": {"$in": list(company_ids)}, "user_id": user["user_id"]}, {"_id": 0}
+    ).to_list(len(company_ids) or 1)}
+    default_company = await db.companies.find_one(
+        {"user_id": user["user_id"], "is_default": True}, {"_id": 0}) or {}
+    customers = {c["id"]: c for c in await db.customers.find(
+        {"id": {"$in": list(customer_ids)}, "user_id": user["user_id"]}, {"_id": 0}
+    ).to_list(len(customer_ids) or 1)}
+
+    zbuf = io.BytesIO()
+    used_names = set()
+    with zipfile.ZipFile(zbuf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for t in trips:
+            # Assign lr_number if missing (per Iter109 spec — never overwrite existing)
+            if not t.get("lr_number"):
+                lr_num = await _next_lr_number(user["user_id"], t.get("company_id", ""))
+                await db.trips.update_one(
+                    {"id": t["id"], "user_id": user["user_id"]},
+                    {"$set": {"lr_number": lr_num}},
+                )
+                t["lr_number"] = lr_num
+            company = companies.get(t.get("company_id", "")) or default_company
+            customer = customers.get(t.get("customer_id", "")) or {}
+            pdf_bytes = build_lr_pdf(company, customer, t)
+            base_name = (t.get("lr_number") or t["id"][:8]).replace("/", "_")
+            name = f"{base_name}.pdf"
+            i = 1
+            while name in used_names:
+                i += 1
+                name = f"{base_name}_{i}.pdf"
+            used_names.add(name)
+            zf.writestr(name, pdf_bytes)
+
+    try:
+        await db.audit_logs.insert_one({
+            "user_id": user["user_id"],
+            "action": "lr_bulk_regenerate", "entity_type": "trip",
+            "entity_id": ",".join(trip_ids[:50]),
+            "entity_name": f"{len(trip_ids)} trips",
+            "timestamp": now_utc().isoformat(),
+            "actor_email": user.get("email"),
+            "detail": {"source": "bulk", "count": len(trip_ids)},
+        })
+    except Exception:
+        pass
+
+    zbuf.seek(0)
+    return StreamingResponse(
+        zbuf, media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="LR_bulk_{len(trip_ids)}_trips.zip"'},
+    )
+
+
 @router.post("/trips/{tid}/share-lr")
 async def share_lr_whatsapp(tid: str, request: Request, user=Depends(get_current_user)):
     """Generate the LR PDF, upload to object storage, return a public URL + WhatsApp-ready text.
