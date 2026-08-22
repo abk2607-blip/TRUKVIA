@@ -10,6 +10,7 @@ export default function Products() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [viewMode, setViewMode] = useState(false);   // Iter104 — read-only when opened via name click
   const [form, setForm] = useState(EMPTY);
 
   const { data: products = [] } = useQuery({
@@ -37,8 +38,9 @@ export default function Products() {
     onSuccess: () => { toast.success("Deleted"); qc.invalidateQueries({ queryKey: ["products"] }); },
   });
 
-  const openEdit = (p) => { setEditing(p); setForm({ ...EMPTY, ...p }); setOpen(true); };
-  const openNew = () => { setEditing(null); setForm(EMPTY); setOpen(true); };
+  const openEdit = (p) => { setEditing(p); setForm({ ...EMPTY, ...p }); setViewMode(false); setOpen(true); };
+  const openView = (p) => { setEditing(p); setForm({ ...EMPTY, ...p }); setViewMode(true); setOpen(true); };
+  const openNew = () => { setEditing(null); setForm(EMPTY); setViewMode(false); setOpen(true); };
 
   return (
     <div className="space-y-6" data-testid="products-page">
@@ -69,8 +71,21 @@ export default function Products() {
           </thead>
           <tbody>
             {products.map((p) => (
-              <tr key={p.id} data-testid={`product-row-${p.id}`} className="border-t border-zinc-100">
-                <td className="px-4 py-3 font-semibold flex items-center gap-2"><Package size={14} className="text-zinc-400" /> {p.name}</td>
+              <tr key={p.id} data-testid={`product-row-${p.id}`} className="border-t border-zinc-100 hover:bg-zinc-50">
+                <td className="px-4 py-3 font-semibold flex items-center gap-2">
+                  <Package size={14} className="text-zinc-400" />
+                  {/* Iter104 · Option A — clicking Name opens the Edit modal in
+                      read-only View mode. Existing Edit / Delete buttons intact. */}
+                  <button
+                    type="button"
+                    data-testid={`view-product-${p.id}`}
+                    onClick={() => openView(p)}
+                    className="text-left hover:text-indigo-700 hover:underline"
+                    title="View product details"
+                  >
+                    {p.name}
+                  </button>
+                </td>
                 <td className="px-4 py-3 font-mono text-xs">{p.hsn_sac}</td>
                 <td className="px-4 py-3 text-xs">{p.unit}</td>
                 <td className="px-4 py-3 text-right font-mono">{fmtCurrency(p.default_rate)}</td>
@@ -96,21 +111,41 @@ export default function Products() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4" data-testid="product-modal">
           <div className="bg-white w-full max-w-md border border-zinc-950 rounded-sm flex flex-col max-h-[90vh]">
             <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-200 shrink-0">
-              <h3 className="font-bold">{editing ? "Edit Product" : "New Product"}</h3>
-              <button onClick={() => setOpen(false)}><X size={18} /></button>
+              <h3 className="font-bold" data-testid="product-modal-title">
+                {viewMode ? "Product Details" : (editing ? "Edit Product" : "New Product")}
+              </h3>
+              <div className="flex items-center gap-2">
+                {viewMode && (
+                  <button
+                    type="button"
+                    data-testid="product-switch-to-edit"
+                    onClick={() => setViewMode(false)}
+                    className="text-xs uppercase tracking-wider px-3 py-1.5 border border-zinc-950 rounded-sm hover:bg-zinc-950 hover:text-white inline-flex items-center gap-1"
+                  >
+                    <Pencil size={12} /> Switch to Edit
+                  </button>
+                )}
+                <button onClick={() => setOpen(false)}><X size={18} /></button>
+              </div>
             </div>
-            <form onSubmit={(e) => { e.preventDefault(); save.mutate(); }} className="p-5 space-y-3 overflow-y-auto flex-1">
-              <F label="Name · పేరు *"><input data-testid="product-name" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={ic} placeholder="Bitumen VG 40" /></F>
-              <F label="HSN/SAC"><input data-testid="product-hsn" value={form.hsn_sac} onChange={(e) => setForm({ ...form, hsn_sac: e.target.value })} className={ic} /></F>
-              <F label="Unit"><input data-testid="product-unit" value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} className={ic} /></F>
-              <F label="Default Rate (per unit)"><input data-testid="product-rate" type="number" step="0.01" min="0" value={form.default_rate} onChange={(e) => setForm({ ...form, default_rate: e.target.value })} className={ic} /></F>
-              <F label="Default Shortage Allowance (%)"><input data-testid="product-shortage-pct" type="number" step="0.01" min="0" value={form.default_shortage_allowance_pct ?? 0} onChange={(e) => setForm({ ...form, default_shortage_allowance_pct: e.target.value })} className={ic} placeholder="e.g. 0.5 for Bitumen" /></F>
-              <F label="Notes"><textarea rows={2} data-testid="product-notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={ic} /></F>
+            <form onSubmit={(e) => { e.preventDefault(); if (viewMode) return; save.mutate(); }} className="p-5 space-y-3 overflow-y-auto flex-1">
+              <fieldset disabled={viewMode} className={viewMode ? "opacity-90 [&_input]:bg-zinc-50 [&_textarea]:bg-zinc-50" : ""}>
+                <F label="Name · పేరు *"><input data-testid="product-name" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} className={ic} placeholder="Bitumen VG 40" /></F>
+                <F label="HSN/SAC"><input data-testid="product-hsn" value={form.hsn_sac} onChange={(e) => setForm({ ...form, hsn_sac: e.target.value })} className={ic} /></F>
+                <F label="Unit"><input data-testid="product-unit" value={form.unit} onChange={(e) => setForm({ ...form, unit: e.target.value })} className={ic} /></F>
+                <F label="Default Rate (per unit)"><input data-testid="product-rate" type="number" step="0.01" min="0" value={form.default_rate} onChange={(e) => setForm({ ...form, default_rate: e.target.value })} className={ic} /></F>
+                <F label="Default Shortage Allowance (%)"><input data-testid="product-shortage-pct" type="number" step="0.01" min="0" value={form.default_shortage_allowance_pct ?? 0} onChange={(e) => setForm({ ...form, default_shortage_allowance_pct: e.target.value })} className={ic} placeholder="e.g. 0.5 for Bitumen" /></F>
+                <F label="Notes"><textarea rows={2} data-testid="product-notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={ic} /></F>
+              </fieldset>
               <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setOpen(false)} className="px-4 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm">Cancel</button>
-                <button data-testid="save-product-btn" type="submit" disabled={save.isPending} className="px-4 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 disabled:opacity-50">
-                  {save.isPending ? "Saving..." : "Save"}
+                <button type="button" onClick={() => setOpen(false)} className="px-4 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm">
+                  {viewMode ? "Close" : "Cancel"}
                 </button>
+                {!viewMode && (
+                  <button data-testid="save-product-btn" type="submit" disabled={save.isPending} className="px-4 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 disabled:opacity-50">
+                    {save.isPending ? "Saving..." : "Save"}
+                  </button>
+                )}
               </div>
             </form>
           </div>

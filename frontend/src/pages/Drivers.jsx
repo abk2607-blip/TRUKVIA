@@ -107,9 +107,20 @@ export default function Drivers() {
           </thead>
           <tbody>
             {filteredDrivers.map((d) => (
-              <tr key={d.id} data-testid={`driver-row-${d.id}`} className="border-t border-zinc-100">
+              <tr key={d.id} data-testid={`driver-row-${d.id}`} className="border-t border-zinc-100 hover:bg-zinc-50">
                 <td className="px-4 py-3 font-semibold flex items-center gap-2">
-                  <Truck size={14} className="text-zinc-400" /> {d.name}
+                  <Truck size={14} className="text-zinc-400" />
+                  {/* Iter104 · Option A — clicking the Name opens the existing
+                      Driver Trip History details page. Existing History/Ledger/
+                      Edit/Delete buttons untouched. */}
+                  <Link
+                    to={`/drivers/${d.id}/history`}
+                    data-testid={`view-driver-${d.id}`}
+                    className="hover:text-indigo-700 hover:underline"
+                    title="View driver details"
+                  >
+                    {d.name}
+                  </Link>
                 </td>
                 <td className="px-4 py-3 font-mono text-xs">{d.phone || "—"}</td>
                 <td className="px-4 py-3 font-mono text-xs">{d.license_number || "—"}</td>

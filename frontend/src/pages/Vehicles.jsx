@@ -29,6 +29,7 @@ export default function Vehicles() {
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
+  const [viewMode, setViewMode] = useState(false);   // Iter104 — read-only when opened via name click
   const [form, setForm] = useState(EMPTY);
   const [showQaSupplier, setShowQaSupplier] = useState(false);
   // Iter64 · Priority 2 — deactivate/reactivate dialog + audit history modal
@@ -96,8 +97,9 @@ export default function Vehicles() {
     onSuccess: () => { toast.success("Deleted"); qc.invalidateQueries({ queryKey: ["vehicles"] }); },
   });
 
-  const openEdit = (v) => { setEditing(v); setForm({ ...EMPTY, ...v }); setOpen(true); };
-  const openNew = () => { setEditing(null); setForm(EMPTY); setOpen(true); };
+  const openEdit = (v) => { setEditing(v); setForm({ ...EMPTY, ...v }); setViewMode(false); setOpen(true); };
+  const openView = (v) => { setEditing(v); setForm({ ...EMPTY, ...v }); setViewMode(true); setOpen(true); };
+  const openNew = () => { setEditing(null); setForm(EMPTY); setViewMode(false); setOpen(true); };
 
   return (
     <div className="space-y-6" data-testid="vehicles-page">
@@ -164,8 +166,21 @@ export default function Vehicles() {
           </thead>
           <tbody>
             {filteredVehicles.map((v) => (
-              <tr key={v.id} data-testid={`vehicle-row-${v.id}`} className="border-t border-zinc-100">
-                <td className="px-3 py-3 font-mono font-bold flex items-center gap-2"><Truck size={14} className="text-zinc-400" /> {v.vehicle_number}</td>
+              <tr key={v.id} data-testid={`vehicle-row-${v.id}`} className="border-t border-zinc-100 hover:bg-zinc-50">
+                <td className="px-3 py-3 font-mono font-bold flex items-center gap-2">
+                  <Truck size={14} className="text-zinc-400" />
+                  {/* Iter104 · Option A — clicking the vehicle number opens the
+                      Edit modal in read-only View mode. Edit / Delete unaffected. */}
+                  <button
+                    type="button"
+                    data-testid={`view-vehicle-${v.id}`}
+                    onClick={() => openView(v)}
+                    className="text-left hover:text-indigo-700 hover:underline"
+                    title="View vehicle details"
+                  >
+                    {v.vehicle_number}
+                  </button>
+                </td>
                 <td className="px-3 py-3 text-xs">
                   {v.vehicle_type === "supplier" ? (
                     <span data-testid={`vehicle-type-badge-${v.id}`} className="inline-block px-2 py-0.5 rounded-full bg-amber-50 text-amber-800 border border-amber-200 text-[10px] uppercase tracking-wider font-bold">Supplier</span>
@@ -216,10 +231,25 @@ export default function Vehicles() {
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4" data-testid="vehicle-modal">
           <div className="bg-white w-full max-w-2xl max-h-[90vh] flex flex-col border border-zinc-950 rounded-sm">
             <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-200 flex-shrink-0">
-              <h3 className="font-bold">{editing ? "Edit Vehicle" : "New Vehicle"}</h3>
-              <button onClick={() => setOpen(false)}><X size={18} /></button>
+              <h3 className="font-bold" data-testid="vehicle-modal-title">
+                {viewMode ? "Vehicle Details" : (editing ? "Edit Vehicle" : "New Vehicle")}
+              </h3>
+              <div className="flex items-center gap-2">
+                {viewMode && (
+                  <button
+                    type="button"
+                    data-testid="vehicle-switch-to-edit"
+                    onClick={() => setViewMode(false)}
+                    className="text-xs uppercase tracking-wider px-3 py-1.5 border border-zinc-950 rounded-sm hover:bg-zinc-950 hover:text-white inline-flex items-center gap-1"
+                  >
+                    <Pencil size={12} /> Switch to Edit
+                  </button>
+                )}
+                <button onClick={() => setOpen(false)}><X size={18} /></button>
+              </div>
             </div>
-            <form onSubmit={(e) => { e.preventDefault(); save.mutate(); }} className="flex flex-col flex-1 min-h-0">
+            <form onSubmit={(e) => { e.preventDefault(); if (viewMode) return; save.mutate(); }} className="flex flex-col flex-1 min-h-0">
+              <fieldset disabled={viewMode} className={`flex flex-col flex-1 min-h-0 ${viewMode ? "[&_input]:bg-zinc-50 [&_select]:bg-zinc-50 [&_textarea]:bg-zinc-50" : ""}`}>
               <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-3 overflow-y-auto flex-1">
               <F label="Vehicle Number *"><input data-testid="vehicle-number" required value={form.vehicle_number} onChange={(e) => setForm({ ...form, vehicle_number: e.target.value.toUpperCase() })} className={ic} placeholder="AP16TA1234" /></F>
               <F label="Vehicle Type">
@@ -341,11 +371,16 @@ export default function Vehicles() {
               )}
               </div>
               <div className="px-5 py-3 border-t border-zinc-200 bg-white flex justify-end gap-2 flex-shrink-0 sticky bottom-0">
-                <button type="button" onClick={() => setOpen(false)} className="px-4 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm">Cancel</button>
+                <button type="button" onClick={() => setOpen(false)} className="px-4 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm">
+                  {viewMode ? "Close" : "Cancel"}
+                </button>
+                {!viewMode && (
                 <button data-testid="save-vehicle-btn" type="submit" disabled={save.isPending} className="px-4 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 disabled:opacity-50">
                   {save.isPending ? "Saving..." : "Save"}
                 </button>
+                )}
               </div>
+              </fieldset>
             </form>
           </div>
         </div>

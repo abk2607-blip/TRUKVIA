@@ -138,8 +138,19 @@ export default function Customers() {
           </thead>
           <tbody>
             {customers.map((c) => (
-              <tr key={c.id} data-testid={`customer-row-${c.id}`} className="border-t border-zinc-100">
-                <td className="px-4 py-3 font-semibold">{c.name}</td>
+              <tr key={c.id} data-testid={`customer-row-${c.id}`} className="border-t border-zinc-100 hover:bg-zinc-50">
+                <td className="px-4 py-3 font-semibold">
+                  {/* Iter104 · Option A — clicking the Name opens the existing
+                      Customer History details page (trip history + balances). */}
+                  <Link
+                    to={`/customers/history/${c.id}`}
+                    data-testid={`view-customer-${c.id}`}
+                    className="hover:text-indigo-700 hover:underline"
+                    title="View customer details"
+                  >
+                    {c.name}
+                  </Link>
+                </td>
                 <td className="px-4 py-3 font-mono text-xs">{c.gstin || "—"}</td>
                 <td className="px-4 py-3">{c.phone || "—"}</td>
                 <td className="px-4 py-3">{c.state || "—"}</td>

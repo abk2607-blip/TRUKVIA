@@ -23,6 +23,19 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
 
+- [x] **Iter104 · Master List Row → View/Details Navigation (Option A)** (Feb 2026)
+  - **Approved model**: click the record Name / Vehicle Number in each master to open the appropriate existing details screen. Do NOT create four new dedicated View pages at this stage. Existing Edit / Delete / History / Ledger actions untouched.
+  - **Customers.jsx** — Name is now a `<Link>` to `/customers/history/:id` (existing Customer Transaction History page). Testid `view-customer-{id}`. Row hover styling added.
+  - **Drivers.jsx** — Name is now a `<Link>` to `/drivers/:id/history` (existing Driver Trip History page). Testid `view-driver-{id}`.
+  - **Products.jsx** — Name click calls `openView(p)` which opens the existing Edit modal in read-only mode (fields disabled via `<fieldset disabled>`, modal titled "Product Details", "Switch to Edit" pill in the header, Save button hidden). Testid `view-product-{id}` on the name; `product-modal-title` + `product-switch-to-edit` on the modal.
+  - **Vehicles.jsx** — Same pattern: name click → `openView(v)` → modal titled "Vehicle Details" with "Switch to Edit" pill. Testid `view-vehicle-{id}` on the name; `vehicle-modal-title` + `vehicle-switch-to-edit`.
+  - **Existing routes untouched** — `/customers/history/:id` and `/drivers/:id/history` were already registered in `App.js`. No new routes added.
+  - **Trip Templates**: deferred by user. Existing implementation kept as-is. Backlog acceptance criteria for later completion: Customer + From/To + Product + Ship-To + Freight Method + Freight Rate + Supplier & supplier freight where applicable + HSN/SAC + GST defaults + Halting defaults. Templates must ONLY pre-fill the New Trip form — never bypass or alter the Trip policy snapshot, shortage logic, freight calc or audit rules.
+  - **New guard** — `test_iter104_master_view_navigation.py` (5 tests) verifies each master row exposes the correct `view-<entity>-<id>` testid, retains the existing action testids, and Products/Vehicles expose the view-mode / switch-to-edit affordances.
+  - **Full regression pass** — 47/47 focused tests green across iter42, 89, 100, 100b, 102 (round-trip + multi-trip UAT + UI parity), 103 (shortage simplification + editable amounts) and the new 104 nav guard.
+
+
+
 - [x] **Iter103 · Shortage Policy Simplification + Editable Shortage/Excess Amounts** (Feb 2026)
   - **Decision**: Product Master is the source of the Shortage Allowance; Customer Master owns the Deduction Method. Customer's Limit/Limit Type is retained but demoted to an OPTIONAL "Custom Allowance — Overrides Product Master" toggle for the rare contract exception. DB fields unchanged for backward compat + historical protection.
   - **UI (Customers.jsx)** — Customer edit modal now presents Deduction Method first (primary decision) and hides Shortage Limit + Limit Type behind a checkbox `customer-input-shortage-custom-toggle` (default OFF). When OFF, the customer inherits the Product's default allowance.
