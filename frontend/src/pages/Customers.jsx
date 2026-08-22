@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Plus, Pencil, Trash2, X, FileText, MapPin, Search, Loader2 } from "lucide-react";
 import { StateSelect } from "@/lib/states";
 import ShipSitesModal from "@/components/ShipSitesModal";
+import PolicyChangeDialog from "@/components/PolicyChangeDialog";
 
 const EMPTY = {
   name: "", address: "", phone: "", gstin: "", pan: "", state: "",
@@ -22,6 +23,11 @@ export default function Customers() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY);
   const [shipCust, setShipCust] = useState(null);
+  // Iter105 — Policy Change Workflow. When editing a customer and the
+  // freight method / shortage config differ from the DB, hold the pending
+  // save in this state and let PolicyChangeDialog decide whether the master
+  // is saved as-is (OFF) or applied to selected historical trips (ON).
+  const [policyDlg, setPolicyDlg] = useState(null);
 
   // Iter68 — debounced server-side search
   const [rawQuery, setRawQuery] = useState("");
@@ -66,6 +72,47 @@ export default function Customers() {
     },
     onError: (e) => toast.error(e?.response?.data?.detail || "Failed to save"),
   });
+
+  // Iter105 — Detect a policy change on submit. If the customer's freight
+  // method or shortage_config differs from the DB row we intercept the save
+  // and open PolicyChangeDialog. If nothing changed we fall through to the
+  // normal mutation (unchanged legacy behaviour for new customers / trivial
+  // edits like name / GSTIN).
+  const _policyChanged = (dbRow, next) => {
+    if (!dbRow) return false;
+    if ((dbRow.default_freight_method || "") !== (next.default_freight_method || "")) return true;
+    const a = dbRow.shortage_config || {};
+    const b = next.shortage_config || {};
+    return (
+      Number(a.limit || 0) !== Number(b.limit || 0) ||
+      (a.limit_type || "pct") !== (b.limit_type || "pct") ||
+      (a.method || "net_shortage") !== (b.method || "net_shortage") ||
+      (a.effective_from || "") !== (b.effective_from || "") ||
+      Boolean(a.active !== false) !== Boolean(b.active !== false)
+    );
+  };
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    if (editing && _policyChanged(editing, form)) {
+      // Open the Iter105 dialog. The dialog receives the OLD policy from the
+      // DB row and the NEW policy from the current form, and decides whether
+      // to save the master only, or apply to previous eligible trips.
+      setPolicyDlg({
+        customerId: editing.id,
+        customerName: form.name || editing.name,
+        oldPolicy: {
+          default_freight_method: editing.default_freight_method || "per_ton_loading",
+          shortage_config: editing.shortage_config || {},
+        },
+        newPolicy: {
+          default_freight_method: form.default_freight_method || "per_ton_loading",
+          shortage_config: form.shortage_config || {},
+        },
+      });
+      return;
+    }
+    saveWithReturn.mutate();
+  };
 
   const del = useMutation({
     mutationFn: async (id) => (await api.delete(`/customers/${id}`)).data,
@@ -243,7 +290,7 @@ export default function Customers() {
               <h3 className="font-bold">{editing ? "Edit Customer" : "New Customer"}</h3>
               <button onClick={() => setOpen(false)} data-testid="close-customer-modal"><X size={18} /></button>
             </div>
-            <form onSubmit={(e) => { e.preventDefault(); saveWithReturn.mutate(); }} className="p-5 space-y-3 overflow-y-auto flex-1">
+            <form onSubmit={handleSubmit} className="p-5 space-y-3 overflow-y-auto flex-1">
               <div>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Name / పేరు *</label>
                 <input data-testid="customer-input-name" required value={form.name || ""} onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -450,6 +497,32 @@ export default function Customers() {
 
       {shipCust && (
         <ShipSitesModal customer={shipCust} onClose={() => setShipCust(null)} />
+      )}
+
+      {policyDlg && (
+        <PolicyChangeDialog
+          customerId={policyDlg.customerId}
+          customerName={policyDlg.customerName}
+          oldPolicy={policyDlg.oldPolicy}
+          newPolicy={policyDlg.newPolicy}
+          onClose={() => setPolicyDlg(null)}
+          onSaveMaster={async () => {
+            // OFF path — parent still runs the standard PUT /customers.
+            await api.put(`/customers/${policyDlg.customerId}`, { ...editing, ...form });
+          }}
+          onDone={() => {
+            setPolicyDlg(null);
+            qc.invalidateQueries({ queryKey: ["customers-paginated"] });
+            qc.invalidateQueries({ queryKey: ["customers"] });
+            qc.invalidateQueries({ queryKey: ["trips"] });
+            qc.invalidateQueries({ queryKey: ["dashboard"] });
+            setOpen(false); setEditing(null); setForm(EMPTY);
+            if (returnTo === "history" && editIdFromUrl) {
+              setSearchParams({}, { replace: true });
+              navRR(`/customers/history/${editIdFromUrl}`, { replace: true });
+            }
+          }}
+        />
       )}
     </div>
   );
