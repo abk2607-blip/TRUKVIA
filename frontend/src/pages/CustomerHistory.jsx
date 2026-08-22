@@ -5,8 +5,9 @@ import { api, API, fmtCurrency, fmtDate } from "@/api";
 import { toast } from "sonner";
 import {
   Search, Loader2, FileText, Truck, Wallet, ArrowUpRight, ArrowDownRight,
-  Download, Share2, Filter, X, ChevronRight, ChevronDown, Bell, Plus, Send, Pencil
+  Download, Share2, Filter, X, ChevronRight, ChevronDown, Bell, Plus, Send, Pencil, History
 } from "lucide-react";
+import PolicyChangeHistory from "@/components/PolicyChangeHistory";
 
 const inputCls = "w-full border border-zinc-300 px-2.5 py-1.5 rounded-sm text-xs focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none bg-white";
 const chipCls = "inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full border";
@@ -651,6 +652,7 @@ function CustomerProfileAndPolicyCard({ customer }) {
   const sc = customer.shortage_config || {};
   const scLimit = Number(sc.limit || 0);
   const hasCustom = scLimit > 0;
+  const [historyOpen, setHistoryOpen] = useState(false);
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4" data-testid="customer-view-profile-policy">
       {/* Profile ----------------------------------------------------- */}
@@ -674,7 +676,16 @@ function CustomerProfileAndPolicyCard({ customer }) {
 
       {/* Current Billing Policy ------------------------------------- */}
       <div className="border border-zinc-200 bg-white rounded-sm p-4" data-testid="customer-view-policy">
-        <div className="text-[10px] uppercase tracking-[0.12em] font-bold text-zinc-500 mb-2">Current Billing Policy</div>
+        <div className="flex items-center justify-between mb-2">
+          <div className="text-[10px] uppercase tracking-[0.12em] font-bold text-zinc-500">Current Billing Policy</div>
+          {/* Iter105 · Phase B — Policy Change History launcher */}
+          <button
+            onClick={() => setHistoryOpen(true)}
+            className="inline-flex items-center gap-1 text-[10px] uppercase tracking-widest font-bold px-2 py-1 border border-amber-500 text-amber-700 hover:bg-amber-50"
+            data-testid="open-policy-history-btn">
+            <History size={12} /> Policy History
+          </button>
+        </div>
         <dl className="grid grid-cols-1 gap-y-2 text-xs">
           <_L k="Freight Calculation Method" v={_FM_LABELS[fm] || fm} testid="cvp-freight-method" bold />
           <_L k="Shortage Deduction Method" v={_SM_LABELS[(sc.method || "net_shortage")] || (sc.method || "—")} testid="cvp-shortage-method" bold />
@@ -698,6 +709,14 @@ function CustomerProfileAndPolicyCard({ customer }) {
           {sc.remarks && <_L k="Policy Remarks" v={sc.remarks} testid="cvp-policy-remarks" wrap />}
         </dl>
       </div>
+
+      {historyOpen && (
+        <PolicyChangeHistory
+          customerId={customer.id}
+          customerName={customer.name}
+          onClose={() => setHistoryOpen(false)}
+        />
+      )}
     </div>
   );
 }

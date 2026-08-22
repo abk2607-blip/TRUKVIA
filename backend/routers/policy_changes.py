@@ -492,3 +492,158 @@ async def list_policy_change_events(request: Request, customer_id: Optional[str]
     rows = await db.policy_change_events.find(q, {"_id": 0}).sort(
         "created_at", -1).to_list(max(1, min(200, int(limit))))
     return {"items": rows, "total": len(rows)}
+
+
+# ── Phase B · Revert (mandatory reason + invoice safety gate) ─────────────
+
+class RevertRequest(BaseModel):
+    reason: str
+
+
+@router.post("/policy-changes/{event_id}/revert")
+async def revert_policy_change(event_id: str, payload: RevertRequest,
+                               request: Request,
+                               user=Depends(get_current_user)):
+    """Revert a previously-applied Policy Change Event.
+
+    Contract:
+      • `reason` is MANDATORY (400 if blank).
+      • Only events with `status='applied'` can be reverted (400 otherwise).
+      • If ANY of the previously-applied trips is now invoiced, the revert
+        is REFUSED (409 Conflict) with the list of blocking trip IDs — no
+        partial revert is ever performed.
+      • Customer master is restored to `old_policy` on the event.
+      • Each applied trip's `applied_*` snapshot + recomputed financial
+        fields are restored from `per_trip_deltas[i].old`.
+      • Event row status flips to `reverted` with reverted_at + reverted_by
+        + revert_reason. Audit crumb dropped in `audit_logs`.
+    """
+    reason = (payload.reason or "").strip()
+    if not reason:
+        raise HTTPException(400, "reason is required for revert")
+
+    cid = await _active_company_id(request, user)
+    event = await db.policy_change_events.find_one(
+        {"id": event_id, "user_id": user["user_id"], "company_id": cid},
+        {"_id": 0},
+    )
+    if not event:
+        raise HTTPException(404, "Policy Change Event not found")
+    if event.get("status") != "applied":
+        raise HTTPException(400, f"Event is already {event.get('status')}; nothing to revert")
+
+    applied_trip_ids = event.get("applied_trip_ids") or []
+    per_trip_deltas = event.get("per_trip_deltas") or []
+    delta_by_id = {d["trip_id"]: d for d in per_trip_deltas}
+
+    # Safety gate — refuse the revert wholesale if ANY applied trip has
+    # since been invoiced. We never partially revert.
+    if applied_trip_ids:
+        invoiced_now = await db.trips.find(
+            {"id": {"$in": applied_trip_ids},
+             "user_id": user["user_id"], "company_id": cid,
+             "invoice_id": {"$exists": True, "$nin": [None, ""]}},
+            {"_id": 0, "id": 1, "lr_number": 1, "invoice_id": 1},
+        ).to_list(len(applied_trip_ids))
+        if invoiced_now:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "REVERT_BLOCKED_INVOICED",
+                    "message": (
+                        f"Cannot revert — {len(invoiced_now)} of the affected "
+                        f"trip(s) have since been invoiced. Void the invoice(s) "
+                        f"first, then retry revert."
+                    ),
+                    "invoiced_trip_ids": [t["id"] for t in invoiced_now],
+                    "invoiced_lr_numbers": [t.get("lr_number", "") for t in invoiced_now],
+                },
+            )
+
+    # 1) Restore the Customer master to the OLD policy captured on the event.
+    old_policy = event.get("old_policy") or {}
+    restore_set = {}
+    if "default_freight_method" in old_policy:
+        restore_set["default_freight_method"] = old_policy["default_freight_method"] or "per_ton_loading"
+    if "shortage_config" in old_policy:
+        restore_set["shortage_config"] = old_policy["shortage_config"] or {}
+    if restore_set:
+        await db.customers.update_one(
+            {"id": event["customer_id"], "user_id": user["user_id"], "company_id": cid},
+            {"$set": restore_set},
+        )
+
+    # 2) Restore each trip's applied_* + recomputed financial fields.
+    reverted_trip_ids: List[str] = []
+    for tid in applied_trip_ids:
+        d = delta_by_id.get(tid)
+        if not d or not d.get("old"):
+            continue
+        old = d["old"]
+        # Only touch fields we captured. Everything else stays untouched.
+        trip_set = {
+            "applied_freight_method": old.get("applied_freight_method", ""),
+            "applied_customer_shortage_limit": float(old.get("applied_customer_shortage_limit", 0) or 0),
+            "applied_customer_shortage_limit_type": old.get("applied_customer_shortage_limit_type", ""),
+            "applied_customer_shortage_method": old.get("applied_customer_shortage_method", ""),
+            "applied_product_shortage_pct": float(old.get("applied_product_shortage_pct", 0) or 0),
+            "applied_supplier_shortage_limit_kg": float(old.get("applied_supplier_shortage_limit_kg", 0) or 0),
+            "policy_snapshot_at": old.get("policy_snapshot_at", ""),
+            "freight_amount": float(old.get("freight_amount", 0) or 0),
+            "shortage_qty": float(old.get("shortage_qty", 0) or 0),
+            "shortage_amount": float(old.get("shortage_amount", 0) or 0),
+            "excess_amount": float(old.get("excess_amount", 0) or 0),
+            "net_settlement": float(old.get("net_settlement", 0) or 0),
+        }
+        await db.trips.update_one(
+            {"id": tid, "user_id": user["user_id"], "company_id": cid},
+            {"$set": trip_set},
+        )
+        reverted_trip_ids.append(tid)
+
+    # 3) Flip event status → reverted.
+    now = now_utc().isoformat()
+    await db.policy_change_events.update_one(
+        {"id": event_id, "user_id": user["user_id"], "company_id": cid},
+        {"$set": {
+            "status": "reverted",
+            "reverted_at": now,
+            "reverted_by": user.get("email", ""),
+            "reverted_by_user_id": user["user_id"],
+            "revert_reason": reason,
+        }},
+    )
+
+    # 4) Audit crumb.
+    try:
+        await db.audit_logs.insert_one({
+            "id": new_id("audit_"),
+            "user_id": user["user_id"],
+            "company_id": cid,
+            "action": "policy_change_revert",
+            "module": "customer",
+            "entity_id": event["customer_id"],
+            "entity_ref": event.get("old_policy", {}).get("default_freight_method", ""),
+            "timestamp": now,
+            "actor_email": user.get("email", ""),
+            "user_email": user.get("email", ""),
+            "user_name": user.get("name", ""),
+            "reason": reason,
+            "changes": {"reverted_trip_count": len(reverted_trip_ids),
+                        "event_id": event_id},
+            "detail": {"event_id": event_id},
+        })
+    except Exception as exc:
+        logger.warning("policy_change_revert: audit crumb failed: %s", exc)
+
+    refreshed = await db.policy_change_events.find_one(
+        {"id": event_id, "user_id": user["user_id"], "company_id": cid},
+        {"_id": 0},
+    )
+    return {
+        "event_id": event_id,
+        "reverted_trip_ids": reverted_trip_ids,
+        "reverted_trip_count": len(reverted_trip_ids),
+        "customer_restored": bool(restore_set),
+        "event": refreshed,
+    }
