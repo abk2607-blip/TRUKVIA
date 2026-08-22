@@ -69,35 +69,38 @@ export default function Login() {
             <GoogleIcon /> Continue with Google
           </button>
 
-          <div className="relative my-4">
-            <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-zinc-200"></div></div>
-            <div className="relative flex justify-center"><span className="bg-white px-2 text-[10px] uppercase tracking-widest text-zinc-500">or</span></div>
-          </div>
-
-          <button
-            data-testid="demo-login-button"
-            onClick={async () => {
-              // Iter48 — server-side provisioning ensures the token+user exist BEFORE
-              // we redirect. Fixes "Demo Login not working" caused by races.
-              try {
-                const { data } = await (await import("@/api")).api.post("/auth/demo-login");
-                localStorage.setItem("session_token", data.session_token);
-                localStorage.setItem("auth_user", JSON.stringify({
-                  user_id: data.user_id, email: data.email, name: data.name, picture: data.picture,
-                }));
-                window.location.href = "/dashboard";
-              } catch (e) {
-                // Fallback: use the hardcoded token so testers are never fully stuck
-                console.error("Demo login endpoint failed, falling back to static token:", e);
-                localStorage.setItem("session_token", "test_session_bitumen_2026");
-                window.location.href = "/dashboard";
-              }
-            }}
-            className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 bg-amber-500 text-white text-sm font-semibold uppercase tracking-wider rounded-sm border border-amber-500 hover:bg-amber-600 transition-colors"
-          >
-            Continue as Demo — Skip Login
-          </button>
-          <p className="mt-1 text-[10px] text-zinc-400 text-center">Temporary — for testing the app without OAuth</p>
+          {/* Iter106 — Demo-login button is now hidden in production and only
+              rendered when REACT_APP_ENABLE_DEMO_LOGIN=1 is set on the build.
+              The hardcoded static-token fallback has been removed — testers
+              should now use Google OAuth or the pytest suite's Authorization
+              header directly. */}
+          {process.env.REACT_APP_ENABLE_DEMO_LOGIN === "1" && (
+            <>
+              <div className="relative my-4">
+                <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-zinc-200"></div></div>
+                <div className="relative flex justify-center"><span className="bg-white px-2 text-[10px] uppercase tracking-widest text-zinc-500">or</span></div>
+              </div>
+              <button
+                data-testid="demo-login-button"
+                onClick={async () => {
+                  try {
+                    const { data } = await (await import("@/api")).api.post("/auth/demo-login");
+                    localStorage.setItem("session_token", data.session_token);
+                    localStorage.setItem("auth_user", JSON.stringify({
+                      user_id: data.user_id, email: data.email, name: data.name, picture: data.picture,
+                    }));
+                    window.location.href = "/dashboard";
+                  } catch (e) {
+                    console.error("Demo login endpoint failed:", e);
+                  }
+                }}
+                className="w-full inline-flex items-center justify-center gap-2 px-4 py-3 bg-amber-500 text-white text-sm font-semibold uppercase tracking-wider rounded-sm border border-amber-500 hover:bg-amber-600 transition-colors"
+              >
+                Continue as Demo — Skip Login
+              </button>
+              <p className="mt-1 text-[10px] text-zinc-400 text-center">Dev/QA only — hidden in production builds</p>
+            </>
+          )}
 
           <div className="mt-8 border-t border-zinc-200 pt-4">
             <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Compliance</div>

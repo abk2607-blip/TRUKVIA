@@ -931,11 +931,15 @@ async def startup_event():
                 await db.user_sessions.delete_one({"_id": s["_id"]})
         # Now create the indexes (idempotent — will no-op if already there)
         await db.user_sessions.create_index("session_token", unique=True, name="uniq_session_token")
-        await db.user_sessions.create_index("expires_at_ttl", expireAfterSeconds=0,
-                                            partialFilterExpression={"expires_at_ttl": {"$exists": True}},
-                                            name="auto_purge_expired") if False else None
-        # Simpler approach: index expires_at as string (ISO) is not TTL-eligible; skip TTL for now
-        # (rolling refresh + login-time cleanup keeps rows in check)
+        # Iter106 — Real TTL index on expires_at. Requires expires_at to be a
+        # BSON Date (which auth.py now stores). MongoDB prunes rows within
+        # ~60s of `expires_at` passing, so no more stale user_sessions rows
+        # accumulating in the collection.
+        try:
+            await db.user_sessions.create_index("expires_at", expireAfterSeconds=0,
+                                                name="user_sessions_ttl")
+        except Exception as _ttl_e:
+            logger.warning(f"user_sessions TTL index setup issue: {_ttl_e}")
         await db.users.create_index("email", unique=True, name="uniq_user_email", sparse=True)
         await db.users.create_index("user_id", unique=True, name="uniq_user_id")
         # Iter50 — Save-Health TTL (14 days)

@@ -44,14 +44,36 @@ export const AuthProvider = ({ children }) => {
       const { data } = await api.get("/auth/me");
       setUser(data);
     } catch (err) {
-      // Iter48 — Only clear the session on an EXPLICIT 401 from /auth/me. Any
-      // other error (network, 5xx, timeout, CORS) must keep the cached user
-      // intact so a transient backend hiccup never logs the user out.
-      if (err?.response?.status === 401) {
-        setUser(null);
+      // Iter106 — On a hard, confirmed session-dead 401 from /auth/me, auto
+      // relaunch the Google OAuth flow so the user never lands on a dead
+      // Login screen. Only two error strings from the server are treated as
+      // "session dead": "invalid session" and "session expired". Any other
+      // 401 (permission errors, RBAC, wrong-tenant) is left alone — cached
+      // user stays and downstream calls surface the real error. Any non-401
+      // (network, 5xx, timeout, CORS) also leaves cached user intact.
+      const status = err?.response?.status;
+      const rawDetail = err?.response?.data?.detail || err?.response?.data?.detail_raw;
+      const detailStr = typeof rawDetail === "string" ? rawDetail.toLowerCase() : "";
+      const isSessionDead = ["invalid session", "session expired"].some(
+        (s) => detailStr.includes(s)
+      );
+      if (status === 401 && isSessionDead) {
         try { localStorage.removeItem("session_token"); } catch {}
+        try { localStorage.removeItem(USER_KEY); } catch {}
+        setUser(null);
+        // Skip the auto-relaunch if the OAuth callback fragment is present
+        // (AuthCallback will exchange the session_id) or if we are already
+        // on the Login screen (never redirect-loop).
+        const onLoginPage = window.location?.pathname === "/";
+        const inCallback = window.location?.hash?.includes("session_id=");
+        if (!onLoginPage && !inCallback) {
+          // REMINDER: DO NOT HARDCODE THE URL, OR ADD ANY FALLBACKS OR REDIRECT URLS, THIS BREAKS THE AUTH
+          const redirectUrl = window.location.origin + "/dashboard";
+          window.location.href = `https://auth.emergentagent.com/?redirect=${encodeURIComponent(redirectUrl)}`;
+          return;
+        }
       }
-      // else: keep the current user state (cached from LS) — user stays signed in
+      // else: keep cached user (transient error) — user stays signed in
     } finally {
       inflight.current = false;
       setLoading(false);

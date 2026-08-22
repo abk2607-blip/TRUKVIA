@@ -67,16 +67,25 @@ async def auth_health():
         except Exception:
             pass
 
+        # Iter106 · Serialize any datetime fields to ISO strings so
+        # FastAPI's JSONResponse doesn't 500. `expires_at` is now a BSON
+        # Date (needed for the TTL index), and `checked_at` on
+        # deploy_status may also be a datetime.
+        def _iso(v):
+            try:
+                return v.isoformat() if hasattr(v, "isoformat") else v
+            except Exception:
+                return v
         payload = {
             "ok": True,
             "db": "up",
             "session_index_unique": has_unique,
             "demo_ready": bool(demo),
-            "demo_expiry": (demo or {}).get("expires_at"),
+            "demo_expiry": _iso((demo or {}).get("expires_at")),
             "regression_guard": {
                 "status": guard_status,
                 "exit_code": guard_exit_code,
-                "checked_at": guard_checked_at,
+                "checked_at": _iso(guard_checked_at),
                 "strict_mode": strict_mode,
                 "consecutive_failures": consecutive,
             },

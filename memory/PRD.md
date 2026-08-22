@@ -23,6 +23,17 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
 
+- [x] **Iter106 · Auth Stability Fixes** (Feb 2026)
+  - **Trigger**: user reported "app not loading" again — Emergent support returned a 4-item action list.
+  - **Fix 1 — Rolling refresh unconditional + 30-day lifetime** (`backend/auth.py`) — every authenticated request now touches `expires_at = now + 30d` (throttled to 30s of activity, was 4min). Session lifetime raised from 7d → 30d. Active users can no longer lapse mid-form.
+  - **Fix 2 — Auto-relaunch Google OAuth on hard 401** (`frontend/src/context/AuthContext.jsx`) — when `/auth/me` returns 401 with detail "invalid session" or "session expired", the user is immediately redirected to `https://auth.emergentagent.com/?redirect=...` instead of dropping to a dead Login screen. Guardrails: never redirect from the Login page itself; never interrupt an in-progress OAuth callback.
+  - **Fix 3 — Demo token gated by env flag** (`backend/auth.py` + `frontend/src/pages/Login.jsx` + `frontend/.env` + `backend/.env`) — `test_session_bitumen_2026` now requires `ENABLE_DEMO_TOKEN=1` on the backend. Preview/pytest keep it ON; production ships without the flag → the token is refused (401). The demo button on the Login screen is gated by `REACT_APP_ENABLE_DEMO_LOGIN=1` at build time. The hardcoded static-token fallback that used to run when `/auth/demo-login` failed is removed entirely.
+  - **Fix 4 — TTL index on user_sessions.expires_at** (`backend/server.py`) — added a real `expireAfterSeconds=0` TTL index on the `expires_at` field. Requires storing `expires_at` as a BSON Date (not ISO string) — done in `auth.py`. Mongo now prunes stale sessions within ~60s of expiry.
+  - **Owner user provisioned** — `abk2607@gmail.com` auto-created on server startup via `_ensure_owner_user()`, `user_id` is a stable custom UUID (`user_owner_<hex>`) per the Emergent Auth playbook. Real login flow will attach any new Google session_id to this pre-existing user (matched by email).
+  - **Regression** — new guard `test_iter106_auth_stability_fixes.py` (7 tests) locks: session lifetime, rolling refresh, TTL index presence, env-gated demo token (backend + frontend), owner seeding, and the frontend auto-relaunch source contract. Full focused suite: **60/60 PASS**.
+
+
+
 - [x] **Iter104 · Master List Row → View/Details Navigation (Option A)** (Feb 2026)
   - **Approved model**: click the record Name / Vehicle Number in each master to open the appropriate existing details screen. Do NOT create four new dedicated View pages at this stage. Existing Edit / Delete / History / Ledger actions untouched.
   - **Customers.jsx** — Name is now a `<Link>` to `/customers/history/:id` (existing Customer Transaction History page). Testid `view-customer-{id}`. Row hover styling added.
