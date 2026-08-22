@@ -23,6 +23,20 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
 
+- [x] **Iter104b · Customer View Profile + Policy panel** (Feb 2026)
+  - **Trigger**: user asked for Customer name click to show the Customer profile + current billing policy alongside the transaction history — not just the ledger.
+  - **CustomerHistory.jsx** — Added a new `CustomerProfileAndPolicyCard` component rendered right below the header. Two side-by-side cards:
+    - **Customer Profile** — Name, GSTIN, PAN, State, Pincode, Phone, Email, Billing Address, Opening Balance, Notes (testids `cvp-*`)
+    - **Current Billing Policy** — Freight Calculation Method (with human label), Shortage Deduction Method (with human label), Shortage Allowance sub-card with two branches:
+      - Custom allowance highlighted in amber (`cvp-custom-allowance`) with "Overrides Product Master allowance" hint
+      - Product-fallback message (`cvp-product-fallback`) when no custom limit configured
+      - Effective From, Policy Status (Active / Inactive with tone)
+  - **Edit round-trip** — New `customer-view-edit-btn` deep-links to `/customers?edit={id}&returnTo=history`. Customers.jsx now reads the query params via `useSearchParams`, auto-opens the Edit modal on mount, and on save navigates back to `/customers/history/{id}`. Existing Add Customer / Edit / Delete / History / Ship-To flows unaffected.
+  - **Products / Vehicles / Drivers untouched** — Iter104b is Customers-only, per user instruction.
+  - **Regression** — `test_iter104b_customer_view_profile_policy.py` (5 tests) locks the profile card, policy card (both branches), edit deep-link, Customers page handler + return-to-view, and confirms other masters retain their Iter104 testids. Full focused suite: **63/63 PASS**.
+
+
+
 - [x] **Iter106 · Auth Stability Fixes** (Feb 2026)
   - **Trigger**: user reported "app not loading" again — Emergent support returned a 4-item action list.
   - **Fix 1 — Rolling refresh unconditional + 30-day lifetime** (`backend/auth.py`) — every authenticated request now touches `expires_at = now + 30d` (throttled to 30s of activity, was 4min). Session lifetime raised from 7d → 30d. Active users can no longer lapse mid-form.

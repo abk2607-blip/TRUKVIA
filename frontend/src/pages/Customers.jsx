@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { api } from "@/api";
 import { toast } from "sonner";
@@ -78,6 +78,41 @@ export default function Customers() {
 
   const openEdit = (c) => { setEditing(c); setForm({ ...EMPTY, ...c }); setOpen(true); };
   const openNew = () => { setEditing(null); setForm(EMPTY); setOpen(true); };
+
+  // Iter104b — Deep-link edit support. `/customers?edit={id}&returnTo=history`
+  // opens the Edit modal for that customer on mount. On save, if returnTo is
+  // "history", navigate back to the Customer View. Existing UX unaffected.
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navRR = useNavigate();
+  const editIdFromUrl = searchParams.get("edit");
+  const returnTo = searchParams.get("returnTo");
+  useEffect(() => {
+    if (!editIdFromUrl || open) return;
+    (async () => {
+      try {
+        const { data } = await api.get("/customers", { params: { ids: editIdFromUrl, limit: 1 } });
+        const found = (data?.items || []).find((c) => c.id === editIdFromUrl);
+        if (found) openEdit(found);
+      } catch {}
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editIdFromUrl]);
+  // Wrap the mutation success to honour `returnTo`.
+  const _origSave = save;
+  const saveWithReturn = {
+    ..._origSave,
+    mutate: (...args) => {
+      _origSave.mutate(...args, {
+        onSuccess: (data) => {
+          if (returnTo === "history" && editIdFromUrl) {
+            setOpen(false); setEditing(null); setForm(EMPTY);
+            setSearchParams({}, { replace: true });
+            navRR(`/customers/history/${editIdFromUrl}`, { replace: true });
+          }
+        },
+      });
+    },
+  };
 
   const start = total === 0 ? 0 : page * PAGE_SIZE + 1;
   const end = Math.min((page + 1) * PAGE_SIZE, total);
@@ -208,7 +243,7 @@ export default function Customers() {
               <h3 className="font-bold">{editing ? "Edit Customer" : "New Customer"}</h3>
               <button onClick={() => setOpen(false)} data-testid="close-customer-modal"><X size={18} /></button>
             </div>
-            <form onSubmit={(e) => { e.preventDefault(); save.mutate(); }} className="p-5 space-y-3 overflow-y-auto flex-1">
+            <form onSubmit={(e) => { e.preventDefault(); saveWithReturn.mutate(); }} className="p-5 space-y-3 overflow-y-auto flex-1">
               <div>
                 <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Name / పేరు *</label>
                 <input data-testid="customer-input-name" required value={form.name || ""} onChange={(e) => setForm({ ...form, name: e.target.value })}

@@ -5,7 +5,7 @@ import { api, API, fmtCurrency, fmtDate } from "@/api";
 import { toast } from "sonner";
 import {
   Search, Loader2, FileText, Truck, Wallet, ArrowUpRight, ArrowDownRight,
-  Download, Share2, Filter, X, ChevronRight, ChevronDown, Bell, Plus, Send
+  Download, Share2, Filter, X, ChevronRight, ChevronDown, Bell, Plus, Send, Pencil
 } from "lucide-react";
 
 const inputCls = "w-full border border-zinc-300 px-2.5 py-1.5 rounded-sm text-xs focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none bg-white";
@@ -635,6 +635,84 @@ function CustomersList({ customers, selectedId, onSelect, search, setSearch }) {
   );
 }
 
+// ---------- Iter104b · Profile + Billing Policy read-only card ----------
+const _FM_LABELS = {
+  per_ton_loading: "Per Ton · Loading Qty",
+  per_ton_unloading: "Per Ton · Unloading Qty",
+  per_ton_higher_of: "Per Ton · Higher of Loading / Unloading",
+  fixed: "Fixed / Round Trip",
+};
+const _SM_LABELS = {
+  net_shortage: "Net Shortage (deduct only excess above limit)",
+  full_after_limit: "Full Shortage After Limit Exceeded",
+};
+function CustomerProfileAndPolicyCard({ customer }) {
+  const fm = (customer.default_freight_method || "per_ton_loading").toLowerCase();
+  const sc = customer.shortage_config || {};
+  const scLimit = Number(sc.limit || 0);
+  const hasCustom = scLimit > 0;
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4" data-testid="customer-view-profile-policy">
+      {/* Profile ----------------------------------------------------- */}
+      <div className="border border-zinc-200 bg-white rounded-sm p-4" data-testid="customer-view-profile">
+        <div className="text-[10px] uppercase tracking-[0.12em] font-bold text-zinc-500 mb-2">Customer Profile</div>
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+          <_L k="Name" v={customer.name} testid="cvp-name" bold />
+          <_L k="GSTIN" v={customer.gstin} testid="cvp-gstin" mono />
+          <_L k="PAN" v={customer.pan} testid="cvp-pan" mono />
+          <_L k="State" v={customer.state} testid="cvp-state" />
+          <_L k="Pincode" v={customer.pincode} testid="cvp-pincode" mono />
+          <_L k="Phone" v={customer.phone} testid="cvp-phone" mono />
+          <_L k="Email" v={customer.email} testid="cvp-email" />
+          <_L k="Opening Balance" v={fmtCurrency(customer.opening_balance || 0)} testid="cvp-opening" mono />
+          <div className="col-span-2">
+            <_L k="Billing Address" v={customer.address} testid="cvp-address" wrap />
+          </div>
+          {customer.notes && <div className="col-span-2"><_L k="Notes" v={customer.notes} testid="cvp-notes" wrap /></div>}
+        </dl>
+      </div>
+
+      {/* Current Billing Policy ------------------------------------- */}
+      <div className="border border-zinc-200 bg-white rounded-sm p-4" data-testid="customer-view-policy">
+        <div className="text-[10px] uppercase tracking-[0.12em] font-bold text-zinc-500 mb-2">Current Billing Policy</div>
+        <dl className="grid grid-cols-1 gap-y-2 text-xs">
+          <_L k="Freight Calculation Method" v={_FM_LABELS[fm] || fm} testid="cvp-freight-method" bold />
+          <_L k="Shortage Deduction Method" v={_SM_LABELS[(sc.method || "net_shortage")] || (sc.method || "—")} testid="cvp-shortage-method" bold />
+          <div className={`border rounded-sm p-2 mt-1 ${hasCustom ? "bg-amber-50 border-amber-300" : "bg-zinc-50 border-zinc-200"}`}>
+            <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-600">Shortage Allowance</div>
+            {hasCustom ? (
+              <>
+                <div className="text-sm font-bold text-amber-900 mt-0.5" data-testid="cvp-custom-allowance">
+                  Custom · {scLimit}{sc.limit_type === "kg" ? " KG" : " %"} of Loaded Qty
+                </div>
+                <div className="text-[10px] text-amber-800 mt-0.5">Overrides Product Master allowance for this customer.</div>
+              </>
+            ) : (
+              <div className="text-sm font-bold text-zinc-800 mt-0.5" data-testid="cvp-product-fallback">
+                Uses Product Master allowance (per product default_shortage_allowance_pct)
+              </div>
+            )}
+          </div>
+          <_L k="Effective From" v={sc.effective_from ? fmtDate(sc.effective_from) : "—"} testid="cvp-effective-from" />
+          <_L k="Policy Status" v={sc.active === false ? "Inactive" : "Active"} testid="cvp-policy-status" tone={sc.active === false ? "rose" : "emerald"} />
+          {sc.remarks && <_L k="Policy Remarks" v={sc.remarks} testid="cvp-policy-remarks" wrap />}
+        </dl>
+      </div>
+    </div>
+  );
+}
+function _L({ k, v, testid, bold, mono, wrap, tone }) {
+  const toneCls = tone === "emerald" ? "text-emerald-700" : tone === "rose" ? "text-rose-700" : "text-zinc-800";
+  return (
+    <div className={wrap ? "" : "min-w-0"}>
+      <dt className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">{k}</dt>
+      <dd data-testid={testid} className={`${mono ? "font-mono" : ""} ${bold ? "font-bold" : ""} ${toneCls} ${wrap ? "whitespace-pre-wrap" : "truncate"}`}>
+        {v || "—"}
+      </dd>
+    </div>
+  );
+}
+
 // ---------- MAIN ----------
 export default function CustomerHistory() {
   const params = useParams();
@@ -747,12 +825,25 @@ export default function CustomerHistory() {
                   </div>
                 </div>
                 <div className="flex gap-2 flex-shrink-0 flex-wrap">
+                  {/* Iter104b — Edit routes to Customers page with ?edit= param so the
+                      existing modal opens; on save Customers.jsx returns to this view. */}
+                  <button
+                    data-testid="customer-view-edit-btn"
+                    onClick={() => nav(`/customers?edit=${selectedId}&returnTo=history`)}
+                    className="inline-flex items-center gap-1.5 text-xs uppercase tracking-wider px-3 py-2 border border-zinc-950 text-zinc-950 rounded-sm hover:bg-zinc-950 hover:text-white font-bold"
+                    title="Edit customer profile & policy"
+                  >
+                    <Pencil size={12} /> Edit
+                  </button>
                   <button data-testid="add-payment-btn" onClick={() => setShowPayment(true)} className="inline-flex items-center gap-1.5 text-xs uppercase tracking-wider px-3 py-2 bg-blue-600 text-white rounded-sm hover:bg-blue-700 font-bold"><Plus size={12} /> Add Payment</button>
                   <button data-testid="add-trip-btn" onClick={() => nav(`/trips/new?customer_id=${selectedId}`)} className="inline-flex items-center gap-1.5 text-xs uppercase tracking-wider px-3 py-2 bg-emerald-600 text-white rounded-sm hover:bg-emerald-700 font-bold"><Plus size={12} /> Add Trip</button>
                   <button data-testid="download-statement-btn" onClick={downloadStatement} className="inline-flex items-center gap-1.5 text-xs uppercase tracking-wider px-3 py-2 border border-zinc-950 text-zinc-950 rounded-sm hover:bg-zinc-950 hover:text-white font-bold"><Download size={12} /> PDF</button>
                   <button data-testid="share-statement-btn" onClick={shareStatement} disabled={sharing} className="inline-flex items-center gap-1.5 text-xs uppercase tracking-wider px-3 py-2 border border-emerald-500 bg-emerald-50 text-emerald-800 rounded-sm hover:bg-emerald-100 font-bold disabled:opacity-50">{sharing ? <Loader2 size={12} className="animate-spin" /> : <Share2 size={12} />} WhatsApp</button>
                 </div>
               </div>
+
+              {/* Iter104b — Customer Profile + Current Billing Policy (read-only) */}
+              <CustomerProfileAndPolicyCard customer={history.customer} />
 
               <SummaryStrip summary={history.summary} />
               <AgingCards aging={history.summary.aging} />
