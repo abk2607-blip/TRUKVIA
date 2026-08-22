@@ -91,24 +91,36 @@ export default function Customers() {
       Boolean(a.active !== false) !== Boolean(b.active !== false)
     );
   };
+  // Iter105 fix (UAT-1) — A policy-bearing customer must always route Save
+  // through the Policy Change Dialog, even when the form values match the
+  // DB exactly. This is the "re-apply the current policy to old trips
+  // that have empty/stale snapshots" case, which is the exact scenario the
+  // user hit on MEGHA (policy already in the master, but the 12-May-2026
+  // trip was created before the policy existed).
+  const _hasEffectivePolicy = (f) => Boolean((f?.shortage_config?.effective_from || "").trim());
+  const _shouldOpenPolicyDialog = () => {
+    if (!editing) return false;                  // new-customer flow: no dialog
+    if (_policyChanged(editing, form)) return true;
+    return _hasEffectivePolicy(form);            // policy is set → always review
+  };
+  const openPolicyDialog = () => {
+    setPolicyDlg({
+      customerId: editing.id,
+      customerName: form.name || editing.name,
+      oldPolicy: {
+        default_freight_method: editing.default_freight_method || "per_ton_loading",
+        shortage_config: editing.shortage_config || {},
+      },
+      newPolicy: {
+        default_freight_method: form.default_freight_method || "per_ton_loading",
+        shortage_config: form.shortage_config || {},
+      },
+    });
+  };
   const handleSubmit = (e) => {
     e.preventDefault();
-    if (editing && _policyChanged(editing, form)) {
-      // Open the Iter105 dialog. The dialog receives the OLD policy from the
-      // DB row and the NEW policy from the current form, and decides whether
-      // to save the master only, or apply to previous eligible trips.
-      setPolicyDlg({
-        customerId: editing.id,
-        customerName: form.name || editing.name,
-        oldPolicy: {
-          default_freight_method: editing.default_freight_method || "per_ton_loading",
-          shortage_config: editing.shortage_config || {},
-        },
-        newPolicy: {
-          default_freight_method: form.default_freight_method || "per_ton_loading",
-          shortage_config: form.shortage_config || {},
-        },
-      });
+    if (_shouldOpenPolicyDialog()) {
+      openPolicyDialog();
       return;
     }
     saveWithReturn.mutate();
@@ -376,7 +388,24 @@ export default function Customers() {
                   METHOD. The Custom Allowance section is now OPTIONAL and hidden
                   behind a toggle — normal customers just pick their method. */}
               <div className="border-t border-zinc-200 pt-3 mt-3">
-                <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 mb-2">Customer Shortage Rule</div>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-500">Customer Shortage Rule</div>
+                  {/* Iter105 fix (UAT-1) — Explicit entry point into the Policy
+                      Change Dialog. Available on the edit form for any
+                      existing customer, so a user can review and apply the
+                      CURRENT policy to previous pending trips even when no
+                      field on the form has been changed. */}
+                  {editing && (
+                    <button
+                      type="button"
+                      data-testid="review-policy-pending-trips-btn"
+                      onClick={openPolicyDialog}
+                      className="text-[10px] uppercase tracking-wider font-bold px-2 py-1 border border-amber-500 text-amber-700 hover:bg-amber-50"
+                    >
+                      Review policy · pending trips…
+                    </button>
+                  )}
+                </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="col-span-2">
                     <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Deduction Method</label>
