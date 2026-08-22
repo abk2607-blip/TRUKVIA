@@ -23,6 +23,19 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
 
+- [x] **Iter107 · Invoice PDF Shortage Allowance % Caption** (Feb 2026)
+  - **Trigger**: user-approved P1 — the Invoice should show, per shortage sub-row, which allowance was actually applied so customers can trace the deduction to the frozen policy.
+  - **`pdf/invoice.py`** — rewrote the inline `policy_note` beneath each Trip's `Less: Shortage` sub-row. Now renders two lines:
+    - `Allowance: <X%|X KG> · <Custom Customer Allowance|Product Master> (≈ <allowed MT>)`
+    - `Method: <Net Shortage|Full Shortage after Limit Exceeded> · Actual <A> MT − Allowed <B> MT`
+  - Source resolution reads STRICTLY from the frozen trip snapshot (`applied_customer_shortage_limit` + `_limit_type` → Custom; else `applied_product_shortage_pct` → Product Master). No live master fields are consulted — historical invoices always print what was applied at trip creation time.
+  - Legacy trips with no snapshotted allowance → no caption (silent), preserving old invoice appearance.
+  - Underlying `_compute_trip` math + `shortage_amount` totals unchanged — cosmetic-only.
+  - **Sample PDFs** — `/app/sample_pdfs/iter107_invoice_product_master_allowance.pdf` and `/app/sample_pdfs/iter107_invoice_custom_customer_allowance.pdf` for user verification.
+  - **New guard** `test_iter107_invoice_shortage_allowance_caption.py` (4 tests): Product Master caption, Custom Customer Allowance caption, frozen snapshot immunity to later master edits, and paisa-accurate math preservation.
+
+
+
 - [x] **Iter104b · Customer View Profile + Policy panel** (Feb 2026)
   - **Trigger**: user asked for Customer name click to show the Customer profile + current billing policy alongside the transaction history — not just the ledger.
   - **CustomerHistory.jsx** — Added a new `CustomerProfileAndPolicyCard` component rendered right below the header. Two side-by-side cards:

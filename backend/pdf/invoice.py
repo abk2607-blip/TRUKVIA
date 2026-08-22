@@ -406,18 +406,53 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
             # chain so the printed amount = printed MT × printed Rate exactly.
             deductible_mt = round(total_shortage_amt / prod_rate, 3) if prod_rate > 0 else shortage_qty
             # Inline policy note so the customer understands WHY only net is charged.
+            #
+            # Iter107 · Explicit Allowance caption below the shortage line.
+            # Reads ONLY from the frozen trip snapshot (never live master
+            # fields), so historical invoices always print the allowance
+            # that was applied at the time of that trip.
             policy_note = ""
             lim = float(t.get("applied_customer_shortage_limit") or 0)
             lim_type = (t.get("applied_customer_shortage_limit_type") or "").lower()
             method = (t.get("applied_customer_shortage_method") or "").lower()
-            if lim > 0 and lim_type in ("pct", "kg") and method in ("net_shortage", "full_after_limit"):
-                loaded = float(t.get("tons") or 0)
+            prod_pct = float(t.get("applied_product_shortage_pct") or 0)
+            loaded = float(t.get("tons") or 0)
+
+            # Determine the effective allowance source that ran on this trip
+            allowance_txt = None
+            allowance_src = None
+            allowed_mt = 0.0
+            if lim > 0 and lim_type in ("pct", "kg"):
+                # Custom Customer Allowance overrode the Product Master value
+                allowance_txt = f"{lim} KG" if lim_type == "kg" else f"{lim}% of Loaded Qty"
+                allowance_src = "Custom Customer Allowance"
                 allowed_mt = (lim / 1000.0) if lim_type == "kg" else (loaded * lim / 100.0)
-                allow_txt = f"{lim} KG" if lim_type == "kg" else f"{lim}% of Loading"
-                if method == "full_after_limit":
-                    policy_note = f" <font color='#94A3B8' size='6.5'>Full Actual after {allow_txt} limit ({allowed_mt:.3f} MT) exceeded</font>"
-                else:
-                    policy_note = f" <font color='#94A3B8' size='6.5'>Net — Actual {shortage_qty:.3f} MT less {allow_txt} allowance ({allowed_mt:.3f} MT)</font>"
+            elif prod_pct > 0:
+                # Product Master allowance (default fallback)
+                allowance_txt = f"{prod_pct}% of Loaded Qty"
+                allowance_src = "Product Master"
+                allowed_mt = loaded * prod_pct / 100.0
+            # else: legacy trip with no snapshotted allowance — no caption
+
+            if allowance_txt and method in ("net_shortage", "full_after_limit"):
+                method_txt = "Full Shortage after Limit Exceeded" if method == "full_after_limit" else "Net Shortage"
+                policy_note = (
+                    f"<br/><font size='6.5' color='#64748B'>"
+                    f"<b>Allowance:</b> {allowance_txt} · <b>{allowance_src}</b> "
+                    f"<font color='#94A3B8'>(≈ {allowed_mt:.3f} MT)</font><br/>"
+                    f"<b>Method:</b> {method_txt} · "
+                    f"Actual {shortage_qty:.3f} MT − Allowed {allowed_mt:.3f} MT"
+                    f"</font>"
+                )
+            elif allowance_txt:
+                # Snapshot has allowance but no deduction method → still print the caption
+                policy_note = (
+                    f"<br/><font size='6.5' color='#64748B'>"
+                    f"<b>Allowance:</b> {allowance_txt} · <b>{allowance_src}</b> "
+                    f"<font color='#94A3B8'>(≈ {allowed_mt:.3f} MT)</font>"
+                    f"</font>"
+                )
+
             if deductible_mt > 0 and prod_rate > 0:
                 lbl = f"Less: Shortage — {deductible_mt:.3f} MT × ₹ {_fmt(prod_rate)} / MT{policy_note}"
             elif shortage_qty > 0:
