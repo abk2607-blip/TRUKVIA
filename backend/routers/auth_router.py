@@ -175,33 +175,41 @@ async def create_session(request: Request, response: Response):
             user_id = row["user_id"]
 
     session_token = data["session_token"]
-    expires_at = now_utc() + timedelta(days=7)
+    # Iter110 — Align DB session expires_at with cookie (SESSION_LIFETIME_DAYS = 30d).
+    # Store as BSON Date so the TTL index prunes stale rows correctly. Rolling
+    # refresh in `auth.get_current_user` writes BSON Date too, so this is
+    # consistent across login and subsequent hits.
+    from auth import SESSION_LIFETIME_DAYS as _SESSION_LIFETIME_DAYS
+    expires_at = now_utc() + timedelta(days=_SESSION_LIFETIME_DAYS)
     # Iter48 — UPSERT (was insert_one). Prevents duplicate session-token rows.
     await db.user_sessions.update_one(
         {"session_token": session_token},
         {"$set": {
             "user_id": user_id,
             "session_token": session_token,
-            "expires_at": expires_at.isoformat(),
-            "created_at": now_utc().isoformat(),
+            "expires_at": expires_at,
+            "created_at": now_utc(),
+            "last_refreshed_at": now_utc(),
         }},
         upsert=True,
     )
 
     # Iter48 — Best-effort cleanup of expired rows for this user (never blocks login)
     try:
-        cutoff = now_utc().isoformat()
-        await db.user_sessions.delete_many({"user_id": user_id, "expires_at": {"$lt": cutoff}})
+        await db.user_sessions.delete_many({"user_id": user_id, "expires_at": {"$lt": now_utc()}})
     except Exception:
         pass
 
+    # Iter110 — Align cookie lifetime with backend SESSION_LIFETIME_DAYS (30d).
+    # Persistent cookie with an explicit Max-Age survives browser restarts /
+    # OS power-cycles; a "session cookie" (no Max-Age) is cleared on close.
     response.set_cookie(
         key="session_token",
         value=session_token,
         httponly=True,
         secure=True,
         samesite="none",
-        max_age=7 * 24 * 60 * 60,
+        max_age=_SESSION_LIFETIME_DAYS * 24 * 60 * 60,
         path="/",
     )
     return {

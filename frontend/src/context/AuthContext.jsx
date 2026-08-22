@@ -28,12 +28,21 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   const checkAuth = useCallback(async () => {
-    // Only call /auth/me when we HAVE a token to avoid spurious 401s that
-    // trigger the "clear session" interceptor. Users without a token are
-    // simply not logged in — no request needed.
+    // Iter110 fix — Do NOT gate /auth/me on localStorage.session_token. The
+    // OAuth callback stores the token primarily as a browser cookie; after a
+    // power-off / power-on, session-scoped cookies may be gone but a valid
+    // persistent cookie can still exist, and vice-versa. The backend accepts
+    // BOTH sources (cookie OR Bearer header). We only skip /auth/me when we
+    // have literally nothing — neither a token nor a cached user hint —
+    // because in that case there is no session to recover anyway.
     let hasToken = false;
+    let hadCachedUser = false;
     try { hasToken = !!localStorage.getItem("session_token"); } catch {}
-    if (!hasToken) {
+    try { hadCachedUser = !!localStorage.getItem(USER_KEY); } catch {}
+    // Empty state — no session at all. Show Login cleanly. This is the ONLY
+    // path that lands the user on Login without an OAuth recovery attempt,
+    // and it is the correct behaviour (first-time visitor or explicit logout).
+    if (!hasToken && !hadCachedUser && !document.cookie.includes("session_token=")) {
       setUser(null);
       setLoading(false);
       return;
@@ -54,6 +63,12 @@ export const AuthProvider = ({ children }) => {
       const status = err?.response?.status;
       const rawDetail = err?.response?.data?.detail || err?.response?.data?.detail_raw;
       const detailStr = typeof rawDetail === "string" ? rawDetail.toLowerCase() : "";
+      // Iter110 — Only true session-dead errors trigger the OAuth relaunch.
+      // "Not authenticated" is deliberately NOT in this list — the top-level
+      // hint short-circuit already handles empty state (fresh visitor / clean
+      // logout). Widening the list would auto-redirect fresh visitors before
+      // they see the Login screen, breaking the RBAC/deep-link flows and the
+      // iter106 regression guard.
       const isSessionDead = ["invalid session", "session expired"].some(
         (s) => detailStr.includes(s)
       );
@@ -61,9 +76,6 @@ export const AuthProvider = ({ children }) => {
         try { localStorage.removeItem("session_token"); } catch {}
         try { localStorage.removeItem(USER_KEY); } catch {}
         setUser(null);
-        // Skip the auto-relaunch if the OAuth callback fragment is present
-        // (AuthCallback will exchange the session_id) or if we are already
-        // on the Login screen (never redirect-loop).
         const onLoginPage = window.location?.pathname === "/";
         const inCallback = window.location?.hash?.includes("session_id=");
         if (!onLoginPage && !inCallback) {
