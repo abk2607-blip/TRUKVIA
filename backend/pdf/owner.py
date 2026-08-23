@@ -1,6 +1,6 @@
 from ._base import (
     _fmt, _num_to_words_inr,
-    _UNI_FONT, _UNI_FONT_BOLD, _TE_FONT, _TE_FONT_BOLD,
+    _UNI_FONT, _UNI_FONT_BOLD,
 )
 from io import BytesIO
 import base64

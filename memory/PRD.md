@@ -23,13 +23,15 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
 
-- [x] **Iter112 · Bilingual LR T&C (Telugu under English) — Telugu Font Fix APPLIED** (Feb 2026 — awaiting UAT · **2-page lock + Telugu glyphs verified**)
-  - **`pdf/_base.py`** — Introduces `LR_TERMS_TE` (15 Telugu translations) parallel to `LR_TERMS_EN`; import-time 1:1 assertion. Registers **Anek Telugu** as the primary Telugu face (`_TE_FONT`) — the SAME font family the QORVENA web UI uses via the `.telugu` CSS class (`frontend/src/index.css`) and Google Fonts preload in `index.html`. TTF sourced from google/fonts variable file (`AnekTelugu[wdth,wght].ttf`, ~1.8 MB) placed at `backend/fonts/AnekTelugu-Regular.ttf` + `AnekTelugu-Bold.ttf`. `NotoSansTelugu` kept registered as a legacy fallback face for back-compat.
-  - **`pdf/lr.py`** — Each numbered clause row renders English on top (6.6pt DejaVuSans) + Telugu directly below using `_TE_FONT` (Anek Telugu, 6.2pt / 7.6 leading). WHOLE page-2 body (T&C title + Seal-Verification callout + clauses table + Consignee Ack panel) is wrapped in ONE `KeepInFrame(mode='shrink', maxHeight=275mm)` so shrink measures the full stack — fixes the earlier page-3 spillover.
-  - **Previous bug** (fixed here): Telugu paragraph style was pointing at `DejaVuSans` which has zero Telugu glyph coverage → all 15 clauses rendered as tofu boxes. Switching to Anek Telugu = same font as the app UI + full Telugu glyph coverage (matras, guninthalu, conjuncts).
-  - **Tests** `test_iter112_bilingual_lr_tc.py` (5/5 ✅): EN/TE 1:1, every English anchor present, Telugu Unicode source-level check, Telugu font embedded, PDF ≤2 pages, existing anchors intact. Visual PNG render inspection confirms all 15 Telugu clauses shape correctly.
-  - **Sample PDF for UAT**: `/app/sample_pdfs/iter112_bilingual_lr.pdf` (regenerated · exactly 2 pages · ~73 KB · Anek Telugu embedded).
-  - **Not touched**: freight, shortage, invoice, invoice PDF, supplier, Iter105, auth, Iter108 logo behaviour.
+- [x] **Iter112 · LR reverted to English-only (final)** (Feb 2026 — awaiting UAT)
+  - **Decision**: Bilingual EN + Telugu approach dropped. LR reverts to the English-only T&C that shipped before the Iter112 experiment. Invoice was never bilingualised and stays English-only.
+  - **`pdf/_base.py`** — Removed `LR_TERMS_TE`, `_TE_FONT`, `_TE_FONT_BOLD`, and all Telugu / Anek / Noto font registration blocks. Only DejaVuSans stays registered (needed for the Indian Rupee sign ₹ on Invoice / Report bodies).
+  - **`pdf/lr.py`** — T&C clause row renders English only (7.4pt DejaVuSans, 9.2 leading, one Paragraph per numbered clause). Page-2 body stays wrapped in one `KeepInFrame(mode='shrink', maxHeight=275mm)` so the 2-page lock is preserved.
+  - **`pdf/ledger.py` / `pdf/owner.py` / `pdf/__init__.py`** — Dropped stale `_TE_FONT` imports and the unused `LR_TERMS_TE` list in ledger.
+  - **`fonts/`** — Removed `AnekTelugu-Regular.ttf`, `AnekTelugu-Bold.ttf`. Kept DejaVu + Noto Sans Telugu on disk (Noto is unreferenced but harmless).
+  - **Test / regression cleanup** — Deleted `tests/test_iter112_bilingual_lr_tc.py`; removed `iter112` line from `scripts/run_regression.sh` `CRITICAL_TESTS`. Adjacent LR / invoice / supplier suites (iter31, iter109, iter107, iter108, iter111) all pass 32/32.
+  - **Sample PDF for final UAT**: `/app/sample_pdfs/iter112_english_only_lr.pdf` (also copied over the older `iter112_bilingual_lr.pdf` so no stale artefact remains). Verified: 2 pages · ~53 KB · 0 Telugu code points · 12/12 English anchors present · direct PNG render inspection confirms Option B design + Seal callout + all 15 numbered clauses + Consignee Ack panel intact on page 2.
+  - **Not touched**: Invoice PDF, freight, shortage, supplier, Iter105, Auth, Iter108 logo behaviour.
 
 
 - [x] **Iter105 Phase B · APPROVED** (Feb 2026) — user verified Simple Revert + Invoice-Safety Block on live UAT scenarios. Revert-with-reason works; invoice-safety block refuses with inline LR display; no partial revert. Regression guards `test_iter105b_policy_change_revert.py` (6/6) added to `scripts/run_regression.sh`.
