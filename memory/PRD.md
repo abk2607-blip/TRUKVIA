@@ -23,11 +23,12 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
 
-- [x] **Iter112 · Bilingual LR T&C (Telugu under English)** (Feb 2026 — awaiting UAT · **2-page lock verified**)
-  - **`pdf/_base.py`** — New `LR_TERMS_TE` (15 Telugu translations) parallel to `LR_TERMS_EN`. Assertion at import time enforces 1:1 pairing so a future EN edit cannot silently desynchronise TE.
-  - **`pdf/lr.py`** — Each numbered clause row renders English on top (6.6pt) + Telugu directly below (5.7pt). The WHOLE page-2 body (T&C title + subtitle + Seal-Verification callout + clauses table + Consignee Ack panel) is now wrapped in ONE `KeepInFrame(mode='shrink', maxHeight=275mm)` measured against the true available page-2 height, so shrink scales the full stack as a single unit — this is what fixed the earlier page-3 spillover. Seal callout compacted (7.5pt body, 8.5pt title, 4pt padding) as approved.
-  - **Tests** `test_iter112_bilingual_lr_tc.py` (5/5 ✅ passing): EN/TE 1:1 assertion, every English anchor present in generated PDF, source-level Telugu Unicode block validation, DejaVuSans font embedded (needed for Telugu glyphs), PDF stays ≤2 pages, existing content anchors intact.
-  - **Sample PDF for UAT**: `/app/sample_pdfs/iter112_bilingual_lr.pdf` (regenerated · exactly 2 pages · ~53 KB).
+- [x] **Iter112 · Bilingual LR T&C (Telugu under English) — Telugu Font Fix APPLIED** (Feb 2026 — awaiting UAT · **2-page lock + Telugu glyphs verified**)
+  - **`pdf/_base.py`** — Introduces `LR_TERMS_TE` (15 Telugu translations) parallel to `LR_TERMS_EN`; import-time 1:1 assertion. Registers **Anek Telugu** as the primary Telugu face (`_TE_FONT`) — the SAME font family the QORVENA web UI uses via the `.telugu` CSS class (`frontend/src/index.css`) and Google Fonts preload in `index.html`. TTF sourced from google/fonts variable file (`AnekTelugu[wdth,wght].ttf`, ~1.8 MB) placed at `backend/fonts/AnekTelugu-Regular.ttf` + `AnekTelugu-Bold.ttf`. `NotoSansTelugu` kept registered as a legacy fallback face for back-compat.
+  - **`pdf/lr.py`** — Each numbered clause row renders English on top (6.6pt DejaVuSans) + Telugu directly below using `_TE_FONT` (Anek Telugu, 6.2pt / 7.6 leading). WHOLE page-2 body (T&C title + Seal-Verification callout + clauses table + Consignee Ack panel) is wrapped in ONE `KeepInFrame(mode='shrink', maxHeight=275mm)` so shrink measures the full stack — fixes the earlier page-3 spillover.
+  - **Previous bug** (fixed here): Telugu paragraph style was pointing at `DejaVuSans` which has zero Telugu glyph coverage → all 15 clauses rendered as tofu boxes. Switching to Anek Telugu = same font as the app UI + full Telugu glyph coverage (matras, guninthalu, conjuncts).
+  - **Tests** `test_iter112_bilingual_lr_tc.py` (5/5 ✅): EN/TE 1:1, every English anchor present, Telugu Unicode source-level check, Telugu font embedded, PDF ≤2 pages, existing anchors intact. Visual PNG render inspection confirms all 15 Telugu clauses shape correctly.
+  - **Sample PDF for UAT**: `/app/sample_pdfs/iter112_bilingual_lr.pdf` (regenerated · exactly 2 pages · ~73 KB · Anek Telugu embedded).
   - **Not touched**: freight, shortage, invoice, invoice PDF, supplier, Iter105, auth, Iter108 logo behaviour.
 
 

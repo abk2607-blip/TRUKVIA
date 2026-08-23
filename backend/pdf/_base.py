@@ -15,16 +15,33 @@ from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer, KeepTogether, Image, PageBreak,
 )
 
-# Register Noto Sans Telugu for Unicode rendering (LR terms, invoice labels)
+# Register Telugu fonts. Iter112 switched the LR bilingual T&C to Anek Telugu
+# (the SAME font family used by the QORVENA web application UI — see
+# frontend/src/index.css `.telugu` class + Anek Telugu loaded from Google
+# Fonts in index.html). This gives PDF Telugu = App UI Telugu, and correctly
+# renders Telugu conjuncts / vowel signs / guninthalu / consonant clusters,
+# unlike DejaVuSans (no Telugu block coverage) or Helvetica (Latin-only).
+# NotoSansTelugu is retained as a secondary registered face for any legacy
+# call site that still references it.
 _FONTS_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "fonts")
-_TE_FONT = "NotoSansTelugu"
-_TE_FONT_BOLD = "NotoSansTelugu-Bold"
+_TE_FONT = "AnekTelugu"
+_TE_FONT_BOLD = "AnekTelugu-Bold"
 try:
     if _TE_FONT not in pdfmetrics.getRegisteredFontNames():
-        pdfmetrics.registerFont(TTFont(_TE_FONT, os.path.join(_FONTS_DIR, "NotoSansTelugu-Regular.ttf")))
-        pdfmetrics.registerFont(TTFont(_TE_FONT_BOLD, os.path.join(_FONTS_DIR, "NotoSansTelugu-Bold.ttf")))
+        pdfmetrics.registerFont(TTFont(_TE_FONT, os.path.join(_FONTS_DIR, "AnekTelugu-Regular.ttf")))
+        pdfmetrics.registerFont(TTFont(_TE_FONT_BOLD, os.path.join(_FONTS_DIR, "AnekTelugu-Bold.ttf")))
+        from reportlab.pdfbase.pdfmetrics import registerFontFamily
+        registerFontFamily(_TE_FONT, normal=_TE_FONT, bold=_TE_FONT_BOLD,
+                           italic=_TE_FONT, boldItalic=_TE_FONT_BOLD)
+    # Also keep NotoSansTelugu registered as a fallback face (backward compat).
+    if "NotoSansTelugu" not in pdfmetrics.getRegisteredFontNames():
+        pdfmetrics.registerFont(TTFont("NotoSansTelugu",
+                                       os.path.join(_FONTS_DIR, "NotoSansTelugu-Regular.ttf")))
+        pdfmetrics.registerFont(TTFont("NotoSansTelugu-Bold",
+                                       os.path.join(_FONTS_DIR, "NotoSansTelugu-Bold.ttf")))
 except Exception:
-    _TE_FONT = "Helvetica"  # fallback
+    _TE_FONT = "Helvetica"  # fallback (Telugu will not render — dev-only)
+    _TE_FONT_BOLD = "Helvetica-Bold"
 
 # DejaVu Sans is used across invoice/LR/report bodies because it supports the
 # Indian Rupee sign (₹, U+20B9) which the built-in Helvetica lacks.
