@@ -65,6 +65,18 @@ CRITICAL_TESTS=(
   "tests/test_iter85_inline_cust_ref_fill.py"             # Iter85 · One-click inline Cust Ref fill (PATCH endpoint)
   "tests/test_iter86_historical_isolation.py"             # Iter86 · Historical Isolation Layer — imports don't leak into live aggregations
   "tests/test_iter89_phase1_policy_snapshot.py"           # Iter89 Phase 1 · Customer/Product/Supplier policy snapshot on Trip create
+  "tests/test_iter98_phase3_shortage_engine.py"           # Iter98 Phase 3 · Central Shortage Engine (customer + supplier independent)
+  "tests/test_iter102_ui_formula_parity.py"               # Iter102 · Freight Calculation Formula & UI parity
+  "tests/test_iter103_shortage_simplification_and_editable_amounts.py"  # Iter103 · Shortage simplification + editable amounts
+  "tests/test_iter104b_customer_view_profile_policy.py"   # Iter104b · Customer view (profile + policy)
+  "tests/test_iter105_policy_change_workflow.py"          # Iter105 Phase A · Customer Policy Change Preview + Apply
+  "tests/test_iter105b_policy_change_revert.py"           # Iter105 Phase B · Revert with mandatory reason + invoice-safety block
+  "tests/test_iter106_auth_stability_fixes.py"            # Iter106 · Auth stability (401 relaunch, session-dead)
+  "tests/test_iter106b_auth_bootstrap_resilience.py"      # Iter106b · Auth bootstrap resilience backend contract
+  "tests/test_iter107_invoice_shortage_allowance_caption.py"  # Iter107 · Invoice shortage allowance caption
+  "tests/test_iter108_multi_company_logo_isolation.py"    # Iter108 · Multi-company logo upload + isolation
+  "tests/test_iter109_bulk_lr_regenerate.py"              # Iter109 · Bulk LR regenerate + ZIP
+  "tests/test_iter111_supplier_freight_and_shortage.py"   # Iter111 · Supplier freight basis + shortage threshold + override + audit
 )
 
 # Explicit venv PATH so this runs cleanly from asyncio subprocess (which

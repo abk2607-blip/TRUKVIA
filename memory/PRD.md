@@ -23,6 +23,11 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
 
+- [x] **Iter105 Phase B · APPROVED** (Feb 2026) — user verified Simple Revert + Invoice-Safety Block on live UAT scenarios. Revert-with-reason works; invoice-safety block refuses with inline LR display; no partial revert. Regression guards `test_iter105b_policy_change_revert.py` (6/6) added to `scripts/run_regression.sh`.
+- [x] **Iter111 · APPROVED** (Feb 2026) — user verified 7-step supplier calc walkthrough (freight basis / threshold / override / audit / restore). Regression guards `test_iter111_supplier_freight_and_shortage.py` (13/13) added to `scripts/run_regression.sh`.
+- [x] **Iter50 Strict Regression Guard expanded** (Feb 2026) — added iter98 / 102 / 103 / 104b / 105 / 105b / 106 / 106b / 107 / 108 / 109 / 111 suites to `CRITICAL_TESTS` in `scripts/run_regression.sh`. Deploy pipeline now blocks on any regression across the full policy-snapshot / freight / shortage / customer-policy / auth / bulk-LR / supplier stack.
+
+
 - [x] **Iter105 · Customer Policy Change Workflow — Phase A + Phase B COMPLETE** (Feb 2026 — Phase A user-approved · Phase B awaiting UAT)
   - **Phase A · Backend router** `/app/backend/routers/policy_changes.py` — endpoints under `/api/policy-changes`:
     - `POST /preview` — READ-ONLY dry-run. Returns eligible pending trips (uninvoiced + non-historical + `date >= effective_from`) with old vs new snapshot + old vs new engine-recomputed financials + Δ freight/Δ shortage/Δ net-settlement per trip. Both sides run through `services._compute_trip` on the same code path so deltas are apples-to-apples.
