@@ -40,6 +40,22 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
   - **Status** — Phase B DONE. Ready for user UAT on revert-with-reason + policy history tab.
 
 
+- [x] **Iter106b · Auth Bootstrap Resilience — 5 layered guarantees against permanent loading states** (Feb 2026 — awaiting extended user UAT)
+  - **Root cause pinned**: Backend takes 0-15 s to boot (FastAPI startup handlers → index build, TTL, seed guards, RBAC bootstrap). During that window Kubernetes ingress returns 502, and the previous AuthContext could stay in `loading=true` up to 25 s (axios default), rendering "Signing you in…" indefinitely. Also, on any silent 502/network error, no visible recovery affordance was shown — the user had no way to retry.
+  - **Fix — `/app/frontend/src/context/AuthContext.jsx`** rewritten with FIVE layered guarantees:
+    1. **Hard 6-second bootstrap ceiling** via `setTimeout` — `loading` flips to `false` no matter what /auth/me does.
+    2. **3-attempt retry with exponential backoff** — 400 ms, 900 ms, 2 s — fires ONLY on 5xx / network / timeout / aborted requests. Silently covers the backend-boot window.
+    3. **Per-attempt AbortController timeout** at 4.5 s so a hung TCP connection never blocks the retry cycle.
+    4. **Strict error-class separation** — 401 "invalid session"/"session expired" → OAuth relaunch. 401 "not authenticated" / other 401 → no relaunch. 5xx / network → NEVER relaunch OAuth, NEVER drop cached user.
+    5. **Visible recovery UI** — new `authError` + `retryBootstrap()` exposed via context. Login page renders an amber "Reconnecting…" chip during retries and a red "Server Unreachable · Retry" panel with a manual Retry button after exhaustion. No black-box spinner ever.
+  - **Frontend `/app/frontend/src/pages/Login.jsx`** — subscribes to `authError` / `retryBootstrap` and renders the two visible states with `data-testid`s `auth-status-reconnecting`, `auth-status-unreachable`, `auth-retry-btn`, and `auth-bootstrap-loading` for the initial spinner.
+  - **Backend contract regression `/app/backend/tests/test_iter106b_auth_bootstrap_resilience.py`** (8/8 pass) — pins the exact 401 detail strings, health probe latency, cookie-based session read (Iter110 dependency), and forbids the backend from ever returning 5xx on an auth failure.
+  - **Live Playwright smoke** — 4 scenarios verified end-to-end: **(A)** valid session → 200 → Dashboard, no chip. **(B)** No session → clean Login, no chip. **(D)** Hanging /auth/me → chip visible in **5.72 s** (< 6 s hard ceiling), Login rendered, no spinner. **(E)** 502 storm → "Server Unreachable" chip in **2.46 s** → Retry click → recovery to /dashboard.
+  - **Regression**: 26/26 iter106 + iter48 + iter54 auth tests still green.
+  - **Production vs Preview** — Same code both places. In production, this fix masks pod restarts, rolling deploys, and short backend blips silently; on hard failure the user gets an explicit Retry button instead of a hang. Static-preview mode (Emergent-only) freezes JS and is unaffected by any code change.
+  - **Status** — DONE code-side. **Iter106 remains OPEN** pending user's extended live UAT (Power-Cycle + normal daily testing).
+
+
 - [x] **Iter110 · Auth Power-Cycle Cookie Alignment** (Feb 2026 — Bug fix, awaiting user UAT)
   - **Bug**: After OS power-off → power-on, the user landed on a dead Login screen. Two root causes: (a) `AuthContext.jsx` short-circuited to Login whenever `localStorage.session_token` was empty, skipping the `/auth/me` cookie-based recovery; (b) the OAuth callback set the `session_token` cookie with `max_age=7 days` and stored the DB session's `expires_at` as an ISO string for 7 days, but the backend session lifetime was already 30 days with a rolling refresh — so cookies acted as short-lived and the DB TTL index couldn't prune stale rows.
   - **Backend fix (`/app/backend/routers/auth_router.py`)** — On `/auth/session` (OAuth callback), the cookie `max_age` and the DB session `expires_at` are now both `SESSION_LIFETIME_DAYS × 86400` seconds (= 30 days). DB `expires_at` is stored as a native BSON `datetime` (not ISO string) so the TTL index actually prunes stale rows. `created_at` and `last_refreshed_at` are set at login too, so the rolling refresh in `auth.get_current_user` picks up cleanly on the next request.

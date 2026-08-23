@@ -1,17 +1,25 @@
 import React from "react";
 import { useAuth } from "@/context/AuthContext";
 import { Navigate } from "react-router-dom";
-import { Truck, ShieldCheck, FileText, IndianRupee } from "lucide-react";
+import { Truck, ShieldCheck, FileText, IndianRupee, Loader2, RefreshCw, WifiOff } from "lucide-react";
 
 const HERO_IMG =
   "https://images.unsplash.com/photo-1591768793355-74d04bb6608f?crop=entropy&cs=srgb&fm=jpg&w=1600&q=85";
 
 export default function Login() {
-  const { user, loading } = useAuth();
+  const { user, loading, authError, retryBootstrap } = useAuth();
 
-  if (loading) {
+  // Iter106b — Only show the loading spinner while the bootstrap is BOTH
+  // still in-flight AND has no diagnostic state yet. The hard 6 s ceiling
+  // in AuthContext guarantees `loading` flips to false regardless, so we
+  // can never be trapped here permanently.
+  if (loading && !authError) {
     return (
-      <div className="flex items-center justify-center h-screen text-zinc-500">Loading...</div>
+      <div className="flex flex-col items-center justify-center h-screen text-zinc-500 gap-3"
+           data-testid="auth-bootstrap-loading">
+        <Loader2 className="animate-spin" size={22} />
+        <div className="text-sm">Checking your session…</div>
+      </div>
     );
   }
   if (user) return <Navigate to="/dashboard" replace />;
@@ -60,6 +68,39 @@ export default function Login() {
             <br />
             <span className="text-zinc-500 text-xs">Sign in with your Google account to continue.</span>
           </p>
+
+          {/* Iter106b — Visible auth-bootstrap status chip. Never a black-
+              box spinner; the user always has either a working Sign-In
+              action or an explicit Retry. */}
+          {authError && (
+            <div
+              data-testid={`auth-status-${authError.code}`}
+              className={`mt-6 border p-3 flex items-start gap-3 ${
+                authError.code === "unreachable"
+                  ? "bg-rose-50 border-rose-300 text-rose-900"
+                  : "bg-amber-50 border-amber-300 text-amber-900"
+              }`}
+            >
+              {authError.code === "unreachable"
+                ? <WifiOff size={16} className="mt-0.5 flex-shrink-0" />
+                : <Loader2 size={16} className="mt-0.5 flex-shrink-0 animate-spin" />}
+              <div className="flex-1 min-w-0">
+                <div className="text-[11px] uppercase tracking-widest font-bold">
+                  {authError.code === "unreachable" ? "Server Unreachable" : "Reconnecting"}
+                </div>
+                <div className="text-xs mt-0.5">{authError.message}</div>
+              </div>
+              {authError.code === "unreachable" && (
+                <button
+                  data-testid="auth-retry-btn"
+                  onClick={retryBootstrap}
+                  className="text-[11px] uppercase tracking-widest font-bold px-2 py-1 border border-rose-600 text-rose-700 hover:bg-rose-100 inline-flex items-center gap-1"
+                >
+                  <RefreshCw size={12} /> Retry
+                </button>
+              )}
+            </div>
+          )}
 
           <button
             data-testid="google-login-button"
