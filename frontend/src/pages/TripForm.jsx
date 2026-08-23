@@ -236,8 +236,18 @@ export default function TripForm() {
     + (form.other_expenditures || []).reduce((s, e2) => s + Number(e2.amount || 0), 0);
   const profit = freight - totalExpense + Number(form.other_income || 0);
 
-  // Supplier live compute
-  const supQty = Number(form.supplier_quantity || 0) > 0 ? Number(form.supplier_quantity) : Number(form.tons || 0);
+  // Iter111 · Supplier Freight — quantity basis follows the trip's
+  // applied_freight_method exactly like the backend engine. Prevents the
+  // "Net Payable (Live)" tile from disagreeing with the value saved by
+  // the server on submit.
+  const _sup_method = (form.applied_freight_method || "per_ton_loading").toLowerCase();
+  const _sup_loaded = Number(form.tons || form.loaded_qty || 0);
+  const _sup_unloaded = Number(form.unloaded_qty || 0);
+  let _sup_basis_qty;
+  if (_sup_method === "per_ton_unloading") _sup_basis_qty = _sup_unloaded;
+  else if (_sup_method === "per_ton_higher_of") _sup_basis_qty = Math.max(_sup_loaded, _sup_unloaded);
+  else _sup_basis_qty = _sup_loaded;
+  const supQty = _sup_basis_qty;
   let supplierFreightLive = Number(form.supplier_freight || 0);
   if (form.supplier_freight_mode === "per_ton" && Number(form.supplier_rate_per_ton || 0) > 0) {
     supplierFreightLive = supQty * Number(form.supplier_rate_per_ton);
@@ -438,20 +448,11 @@ export default function TripForm() {
     form.tons,
   ]);
 
-  // Iter74 — Auto-mirror trip.shortage_amount → supplier_shortage_deduction
-  // for supplier vehicles UNLESS user has explicitly overridden. Matches the
-  // backend `_compute_trip` mirror so the live "Net Payable" tile stays
-  // consistent with what the server will compute on save.
-  useEffect(() => {
-    if (form.vehicle_type !== "supplier") return;
-    if (form.supplier_shortage_deduction_override) return;
-    const target = Number(Number(form.shortage_amount || 0).toFixed(2));
-    const current = Number(Number(form.supplier_shortage_deduction || 0).toFixed(2));
-    if (target !== current) {
-      setForm((f) => ({ ...f, supplier_shortage_deduction: target }));
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [form.vehicle_type, form.shortage_amount, form.supplier_shortage_deduction_override]);
+  // Iter111 — REMOVED the legacy customer→supplier shortage mirror.
+  // The backend engine (services._compute_trip) now applies the correct
+  // independent supplier shortage rule (≤ limit → 0 · > limit → FULL ×
+  // product_rate · no-limit → FULL). Mirroring customer shortage into the
+  // supplier deduction from the FE would defeat that rule.
 
   useEffect(() => {
     if (!form.halting_amount_override) {

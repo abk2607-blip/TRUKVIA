@@ -4,6 +4,7 @@
 // override with a fresh value dirties the field and shows a "Reset to Trip" chip.
 import React, { useMemo } from "react";
 import { fmtCurrency } from "@/api";
+import { toast } from "sonner";
 import SearchableSelect from "@/components/SearchableSelect";
 import { Section, Field } from "./FormPrimitives";
 import { inputCls } from "./tripFormDefaults";
@@ -170,23 +171,58 @@ export default function SupplierSection({
         <Field label="Supplier Freight (₹)">
           <input data-testid="trip-supplier-freight" type="number" step="0.01" min="0" value={form.supplier_freight} onChange={(e) => setForm({ ...form, supplier_freight: e.target.value })} className={inputCls} placeholder="Auto-computed" />
         </Field>
-        <Field label={`Shortage Deduction (₹)${form.supplier_shortage_deduction_override ? "" : "  · auto from trip shortage"}`}>
+        <Field label={`Shortage Deduction (₹)${form.supplier_shortage_deduction_override ? "  · MANUAL OVERRIDE" : "  · AUTO"}`}>
           <div className="flex items-center gap-2">
             <input
               data-testid="trip-supplier-shortage"
               type="number" step="0.01" min="0"
               value={form.supplier_shortage_deduction}
-              onChange={(e) => setForm({ ...form, supplier_shortage_deduction: e.target.value, supplier_shortage_deduction_override: true })}
+              onChange={(e) => {
+                const newVal = Number(e.target.value);
+                const sys = Number(form.supplier_shortage_original_amount || 0);
+                // Match backend Iter111 restore-to-auto contract (delta < 0.005)
+                const isSystemVal = Math.abs(newVal - sys) < 0.005;
+                if (isSystemVal) {
+                  setForm({ ...form, supplier_shortage_deduction: newVal,
+                            supplier_shortage_deduction_override: false,
+                            supplier_shortage_override_reason: "" });
+                  return;
+                }
+                // Ask reason inline — mandatory per Iter111 rule #6
+                const existing = (form.supplier_shortage_override_reason || "").trim();
+                let reason = existing;
+                if (!existing) {
+                  reason = (window.prompt(
+                    "Reason for manual Supplier Shortage override (required):",
+                    ""
+                  ) || "").trim();
+                }
+                if (!reason) {
+                  toast?.error?.("Override reason is required. Value not changed.");
+                  return;
+                }
+                setForm({ ...form, supplier_shortage_deduction: newVal,
+                          supplier_shortage_deduction_override: true,
+                          supplier_shortage_override_reason: reason });
+              }}
               className={inputCls}
-              placeholder="Auto from trip shortage"
+              placeholder="System-calculated"
             />
             {form.supplier_shortage_deduction_override && (
               <button type="button" data-testid="trip-supplier-shortage-reset"
-                onClick={() => setForm({ ...form, supplier_shortage_deduction_override: false })}
+                onClick={() => setForm({ ...form,
+                  supplier_shortage_deduction: Number(form.supplier_shortage_original_amount || 0),
+                  supplier_shortage_deduction_override: false,
+                  supplier_shortage_override_reason: "" })}
                 className="text-[10px] uppercase font-bold text-blue-700 hover:underline whitespace-nowrap"
-                title="Restore auto-computed value from trip shortage">Reset&nbsp;auto</button>
+                title="Restore system-calculated value">Restore&nbsp;AUTO</button>
             )}
           </div>
+          {form.supplier_shortage_deduction_override && (
+            <div className="text-[10px] text-amber-800 mt-1">
+              Override · system value = ₹{Number(form.supplier_shortage_original_amount || 0).toLocaleString("en-IN", { minimumFractionDigits: 2 })} · reason: {form.supplier_shortage_override_reason || "—"}
+            </div>
+          )}
         </Field>
         <Field label="Other Recoveries (₹)">
           <input data-testid="trip-supplier-recovery" type="number" step="0.01" min="0" value={form.supplier_other_recoveries} onChange={(e) => setForm({ ...form, supplier_other_recoveries: e.target.value })} className={inputCls} placeholder="Damages, penalties etc." />
@@ -283,6 +319,117 @@ export default function SupplierSection({
           <input data-testid="trip-supplier-settlement-remarks" value={form.supplier_settlement_remarks} onChange={(e) => setForm({ ...form, supplier_settlement_remarks: e.target.value })} className={inputCls} placeholder="Payment / TDS / adjustments notes (optional)" />
         </Field>
       </div>
+
+      {/* Iter111 · Requirement #7 — Transparent Supplier Calculation Summary.
+          Reads engine-computed fields directly from `form` — introduces NO
+          second calculation. Purely a display for UAT verification. */}
+      <SupplierCalcSummary
+        form={form}
+        supplierFreightLive={supplierFreightLive}
+        supplierNetPayable={supplierNetPayable}
+      />
     </Section>
+  );
+}
+
+// ─── Iter111 · Requirement #7 · Supplier Calculation Summary card ─────────
+function _fmtQty(n, dp = 3) {
+  return Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: dp, maximumFractionDigits: dp });
+}
+function _fmtMoney(n) {
+  return "₹ " + Number(n || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function SupplierCalcSummary({ form, supplierFreightLive, supplierNetPayable }) {
+  const method = (form.applied_freight_method || "per_ton_loading").toLowerCase();
+  const methodLabel = {
+    per_ton_loading: "Per Ton · Loading Quantity",
+    per_ton_unloading: "Per Ton · Unloading Quantity",
+    per_ton_higher_of: "Per Ton · Higher of Loading / Unloading",
+    fixed: "Fixed / Round-trip",
+  }[method] || method;
+  const loaded = Number(form.tons || form.loaded_qty || 0);
+  const unloaded = Number(form.unloaded_qty || 0);
+  let basisQty;
+  if (method === "per_ton_unloading") basisQty = unloaded;
+  else if (method === "per_ton_higher_of") basisQty = Math.max(loaded, unloaded);
+  else basisQty = loaded;
+  const supQty = Number(form.supplier_quantity || 0) > 0 ? Number(form.supplier_quantity) : basisQty;
+  const supRate = form.supplier_freight_mode === "per_ton"
+    ? `${_fmtMoney(form.supplier_rate_per_ton)} / MT`
+    : (Number(form.supplier_fixed_amount) > 0
+        ? `Fixed ${_fmtMoney(form.supplier_fixed_amount)}`
+        : `${_fmtMoney(form.supplier_rate_per_km_per_ton)} / ton / km × ${form.supplier_round_trip_kms || 0} km`);
+  const allowedLimitKg = Number(form.applied_supplier_shortage_limit_kg || 0);
+  const actualShortageMt = Number(form.shortage_qty || 0);
+  const actualShortageKg = Math.round(actualShortageMt * 1000);
+  const withinLimit = allowedLimitKg > 0 && actualShortageKg <= allowedLimitKg;
+  const deductibleMt = withinLimit ? 0 : actualShortageMt;
+  const productRate = Number(form.product_rate_per_mt || 0);
+  const sysShortageDeduction = Number(form.supplier_shortage_original_amount || 0);
+  const finalShortageDeduction = Number(form.supplier_shortage_deduction || 0);
+  const isOverride = !!form.supplier_shortage_deduction_override;
+
+  return (
+    <div className="mt-6 border-2 border-zinc-950 bg-white" data-testid="supplier-calc-summary">
+      <div className="px-4 py-2 bg-zinc-950 text-white flex items-center justify-between">
+        <div className="text-[11px] uppercase tracking-widest font-bold">
+          Iter111 · Supplier Calculation Summary
+        </div>
+        <span className={`text-[10px] uppercase tracking-widest font-bold px-2 py-0.5 border ${
+          isOverride
+            ? "border-amber-300 bg-amber-100 text-amber-900"
+            : "border-emerald-300 bg-emerald-100 text-emerald-900"
+        }`}>
+          {isOverride ? "Manual Override" : "AUTO"}
+        </span>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1 p-4 text-xs">
+        <_Row k="Loading Quantity" v={`${_fmtQty(loaded)} MT`} testid="sc-loading" />
+        <_Row k="Unloading Quantity" v={`${_fmtQty(unloaded)} MT`} testid="sc-unloading" />
+        <_Row k="Applied Freight Basis" v={methodLabel} testid="sc-basis" bold />
+        <_Row k="Supplier Freight Qty Used" v={`${_fmtQty(supQty)} MT`} testid="sc-supqty" mono />
+        <_Row k="Supplier Freight Rate" v={supRate} testid="sc-rate" />
+        <_Row k="Supplier Freight Amount" v={_fmtMoney(supplierFreightLive)} testid="sc-freight-amt" bold />
+        <div className="col-span-full my-2 border-t border-dashed border-zinc-300" />
+        <_Row k="Allowed Shortage Limit" v={allowedLimitKg > 0 ? `${allowedLimitKg} KG` : "— (no limit → FULL deduction)"} testid="sc-limit" />
+        <_Row k="Actual Shortage" v={`${actualShortageKg} KG  (${_fmtQty(actualShortageMt)} MT)`} testid="sc-actual" />
+        <_Row k="Deductible Shortage" v={
+          withinLimit
+            ? "0 KG  (within limit → ₹0)"
+            : `${Math.round(deductibleMt * 1000)} KG  (${_fmtQty(deductibleMt)} MT)`
+        } testid="sc-deductible" bold tone={withinLimit ? "emerald" : "rose"} />
+        <_Row k="Shortage Rate" v={`${_fmtMoney(productRate)} / MT  (product_rate_per_mt)`} testid="sc-shortage-rate" />
+        <_Row k="System-Calculated Deduction" v={_fmtMoney(sysShortageDeduction)} testid="sc-sys-deduction" mono />
+        <_Row
+          k={isOverride ? "Final Deduction (Manual)" : "Final Deduction"}
+          v={_fmtMoney(finalShortageDeduction)}
+          testid="sc-final-deduction" bold
+          tone={isOverride ? "amber" : "zinc"}
+        />
+        {isOverride && form.supplier_shortage_override_reason && (
+          <div className="col-span-full text-[10px] text-amber-800 border-l-2 border-amber-500 pl-2 mt-1" data-testid="sc-override-reason">
+            Override reason: {form.supplier_shortage_override_reason}
+            {form.supplier_shortage_override_by ? ` · by ${form.supplier_shortage_override_by}` : ""}
+            {form.supplier_shortage_override_at ? ` · ${form.supplier_shortage_override_at.slice(0, 16).replace("T", " ")}` : ""}
+          </div>
+        )}
+        <div className="col-span-full my-2 border-t-2 border-zinc-950" />
+        <_Row k="Final Supplier Settlement · Net Payable" v={_fmtMoney(supplierNetPayable)} testid="sc-net-payable" bold big tone="rose" />
+      </div>
+    </div>
+  );
+}
+function _Row({ k, v, testid, bold, mono, big, tone }) {
+  const toneCls = {
+    emerald: "text-emerald-800",
+    rose: "text-rose-800",
+    amber: "text-amber-800",
+    zinc: "text-zinc-950",
+  }[tone] || "text-zinc-950";
+  return (
+    <div className="flex items-baseline gap-3 py-0.5" data-testid={testid}>
+      <div className="text-[10px] uppercase tracking-widest text-zinc-500 flex-shrink-0" style={{ minWidth: 220 }}>{k}</div>
+      <div className={`${bold ? "font-bold" : ""} ${mono ? "font-mono" : ""} ${big ? "text-base" : ""} ${toneCls}`}>{v}</div>
+    </div>
   );
 }
