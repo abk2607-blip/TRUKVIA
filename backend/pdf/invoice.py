@@ -459,7 +459,10 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
                 lbl = f"Less: Shortage — {shortage_qty:.3f} MT{policy_note}"
             else:
                 lbl = "Less: Shortage Deduction"
-            _add_sub(lbl, f"(₹ {_fmt(total_shortage_amt)})", remark=t.get("shortage_remarks", "") or "")
+            # Iter114 · Shortage Remarks are internal ops notes — do NOT surface
+            # them on the customer-facing invoice. They remain accessible in
+            # the Trip record, ledger reports and audit log.
+            _add_sub(lbl, f"(₹ {_fmt(total_shortage_amt)})")
 
         excess_amt = float(t.get("excess_amount", 0) or 0)
         if excess_amt > 0:
@@ -591,7 +594,51 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
     _tot_style.append(("BOTTOMPADDING", (0, final_idx), (-1, final_idx), 5))
     totals_tbl.setStyle(TableStyle(_tot_style))
 
+    # ================== 5. TERMS & CONDITIONS (built early so we can fold
+    # them into the LEFT column of the bottom row for Iter114 page-balance) ==
+    # Clause 2 (shortage / excess) is intentionally GENERIC — the actual
+    # allowance is stamped per-trip on the Invoice line item ("Allowance: …
+    # from Product Master / Customer Override") and driven by the Product
+    # Master / Customer Custom Allowance policy engine. Hard-coding a percent
+    # here would contradict the real Trip policy.
+    terms = [
+        ("GST shall be paid by the service recipient under the Reverse Charge Mechanism as per Notification No. 08/2017 (if RCM = YES)."
+         if invoice.get("rcm") else "GST is charged under forward charge and included in the total payable."),
+        "Shortage or excess shall be accounted for in accordance with the applicable product and customer billing policy; the per-trip allowance is stamped against each line item above.",
+        "Halting Charges applicable after 48 hours from arrival at the site.",
+        "Responsibility for product insurance lies with the consignor or consignee, as applicable.",
+    ]
+    udyam = (company.get("udyam_registration") or "").strip()
+    if udyam:
+        from xml.sax.saxutils import escape as _xml_escape
+        terms.append(f"MSME / Udyam Registration No: {_xml_escape(udyam)}")
+    if invoice.get("notes"):
+        from xml.sax.saxutils import escape as _xml_escape
+        terms.append(f"Notes: {_xml_escape(invoice.get('notes'))}")
+
+    terms_html = "<br/>".join([f"<b>{i}.</b> {t}" for i, t in enumerate(terms, start=1)])
+    # Nested T&C mini-table sized to fit the LEFT column of the bottom row
+    # (167mm cell inner width ≈ 151mm after L/R padding).
+    tc_inline_tbl = Table([
+        [Paragraph("TERMS &amp; CONDITIONS", styles["SectLbl"])],
+        [Paragraph(terms_html, styles["Small"])],
+    ], colWidths=[151 * mm])
+    tc_inline_tbl.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FFFBEB")),
+        ("BOX", (0, 0), (-1, -1), 0.6, C_ACCENT),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (0, 0), 4),
+        ("BOTTOMPADDING", (0, 0), (0, 0), 2),
+        ("TOPPADDING", (0, 1), (0, 1), 2),
+        ("BOTTOMPADDING", (0, 1), (0, 1), 4),
+    ]))
+
     words = _num_to_words_inr(total)
+    # Iter114 · Fold T&C into the LEFT column so the lower page is balanced —
+    # previously the right column (totals) was much taller than the left
+    # (Amount-in-Words + bank details), leaving a large blank patch on the
+    # left and a lonely full-width T&C block floating below on page 2.
     bank_lines = [
         Paragraph("AMOUNT IN WORDS", styles["SectLbl"]),
         Paragraph(f"<b>{words}</b>", styles["Body"]),
@@ -601,6 +648,8 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
                   f"<b>A/c No:</b> {company.get('account_number','—')}<br/>"
                   f"<b>IFSC:</b> {company.get('ifsc','—')}   <b>Branch:</b> {company.get('branch','—')}",
                   styles["Small"]),
+        Spacer(1, 6),
+        tc_inline_tbl,
     ]
     left_bank_tbl = Table([[bank_lines]], colWidths=[167 * mm])
     left_bank_tbl.setStyle(TableStyle([
@@ -622,38 +671,6 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
     story.append(bottom_tbl)
     story.append(Spacer(1, 5))
 
-    # ================== 5. TERMS & CONDITIONS ==================
-    terms = [
-        ("GST shall be paid by the service recipient under the Reverse Charge Mechanism as per Notification No. 08/2017 (if RCM = YES)."
-         if invoice.get("rcm") else "GST is charged under forward charge and included in the total payable."),
-        "Shortage or excess in quantity will be accounted for only beyond a permissible variation of 0.5% for Bitumen, Emulsion, and Other Products, and 1% for CRMB / PMB.",
-        "Halting Charges applicable after 48 hours from arrival at the site.",
-        "Responsibility for product insurance lies with the consignor or consignee, as applicable.",
-    ]
-    udyam = (company.get("udyam_registration") or "").strip()
-    if udyam:
-        from xml.sax.saxutils import escape as _xml_escape
-        terms.append(f"MSME / Udyam Registration No: {_xml_escape(udyam)}")
-    if invoice.get("notes"):
-        from xml.sax.saxutils import escape as _xml_escape
-        terms.append(f"Notes: {_xml_escape(invoice.get('notes'))}")
-
-    terms_html = "<br/>".join([f"<b>{i}.</b> {t}" for i, t in enumerate(terms, start=1)])
-    tc_tbl = Table([
-        [Paragraph("TERMS &amp; CONDITIONS", styles["SectLbl"])],
-        [Paragraph(terms_html, styles["Small"])],
-    ], colWidths=[277 * mm])
-    tc_tbl.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FFFBEB")),
-        ("BOX", (0, 0), (-1, -1), 0.6, C_ACCENT),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ("TOPPADDING", (0, 0), (0, 0), 5),
-        ("BOTTOMPADDING", (0, 0), (0, 0), 2),
-        ("TOPPADDING", (0, 1), (0, 1), 2),
-        ("BOTTOMPADDING", (0, 1), (0, 1), 5),
-    ]))
-
     # ================== 6. SIGNATURE ==================
     sig_tbl = Table(
         [[Paragraph("<font color='#94A3B8'>Received in good condition</font>", styles["Small"]),
@@ -668,7 +685,7 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
         ("LINEABOVE", (0, 1), (0, 1), 0.4, C_LINE_D),
         ("LINEABOVE", (1, 1), (1, 1), 0.4, C_LINE_D),
     ]))
-    story.append(KeepTogether([tc_tbl, Spacer(1, 10), sig_tbl]))
+    story.append(KeepTogether([Spacer(1, 6), sig_tbl]))
 
     doc.build(story)
     return buf.getvalue()

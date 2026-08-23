@@ -373,6 +373,25 @@ async def _recompute_invoice(iid: str, user):
 # ==================== Invoices ====================
 
 
+import re as _re
+_FY_IN_PREFIX = _re.compile(r"\d{2}-\d{2}")
+
+def _compose_invoice_number(prefix: str, fy_str: str, seq: int) -> str:
+    """Iter114 · Assemble the invoice number, self-healing against a company
+    prefix that ALREADY carries the FY segment (e.g. `VBK/26-27/`). Without
+    this guard, the composer produced `VBK/26-27//26-27/0003` — a duplicated
+    FY plus an accidental double slash. Rule:
+      • strip a trailing slash from the stored prefix (cosmetic)
+      • if the prefix already contains an `NN-NN` FY pattern, append ONLY
+        the running sequence (`prefix/0003`)
+      • otherwise, append `fy_str` + sequence (`prefix/26-27/0003`)
+    """
+    p = (prefix or "INV").rstrip("/")
+    if _FY_IN_PREFIX.search(p):
+        return f"{p}/{seq:04d}"
+    return f"{p}/{fy_str}/{seq:04d}"
+
+
 async def _next_invoice_number(user_id: str) -> str:
     company = await db.companies.find_one({"user_id": user_id}, {"_id": 0})
     prefix = "INV"
@@ -384,7 +403,7 @@ async def _next_invoice_number(user_id: str) -> str:
     yr = fy.year % 100
     yr_next = (fy.year + 1) % 100
     fy_str = f"{yr:02d}-{yr_next:02d}" if fy.month >= 4 else f"{yr-1:02d}-{yr:02d}"
-    num = f"{prefix}/{fy_str}/{seq:04d}"
+    num = _compose_invoice_number(prefix, fy_str, seq)
     await db.companies.update_one(
         {"user_id": user_id},
         {"$set": {"next_invoice_number": seq + 1}},
@@ -404,7 +423,7 @@ async def _next_invoice_number_for_company(company_id: str, user_id: str) -> str
     yr = fy.year % 100
     yr_next = (fy.year + 1) % 100
     fy_str = f"{yr:02d}-{yr_next:02d}" if fy.month >= 4 else f"{yr-1:02d}-{yr:02d}"
-    num = f"{prefix}/{fy_str}/{seq:04d}"
+    num = _compose_invoice_number(prefix, fy_str, seq)
     await db.companies.update_one(
         {"id": company_id, "user_id": user_id},
         {"$set": {"next_invoice_number": seq + 1}},
