@@ -2,6 +2,15 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter115 · LR Copy Stamps (Original / Duplicate / Triplicate)** (Feb 2026 — awaiting UAT)
+  - **`pdf/lr.py::build_lr_pdf(company, customer, trip, copy="original")`** — new optional `copy` parameter maps to standard Indian carriage labels: `ORIGINAL FOR CONSIGNEE`, `DUPLICATE FOR TRANSPORTER`, `TRIPLICATE FOR CONSIGNOR`.
+  - **Page 1 header** — a subtle emerald-tinted mini badge sits below the "Lorry Receipt · GCN" subtitle in the navy header's right column. 7.5 pt bold uppercase, right-aligned, ~62 mm wide. Does not touch logo / title / GCN meta pills.
+  - **Page 2 mini navy header** — the right-side "GCN No. · Date" line now has a second line rendering the copy label in emerald 7 pt bold. Subtle, professional, unmistakable at a glance.
+  - **Endpoint** `/api/trips/{tid}/lr?copy=original|duplicate|triplicate` — filename suffix `_DUPLICATE.pdf` / `_TRIPLICATE.pdf` when non-original.
+  - **Frontend** `LRSection.jsx` — Copy selector `<select>` right beside the Download LR PDF button with three options (Original · Consignee / Duplicate · Transporter / Triplicate · Consignor). `openTripLrPdf(tid, hint, { copy })` in `utils/pdfDownload.js` sends the `copy` query param.
+  - **Verified**: All 3 sample PDFs generated — `/app/sample_pdfs/iter115_lr_{original|duplicate|triplicate}.pdf` — each 2 pages · ~53 KB · badge text extracts correctly on BOTH pages via pypdf. 15/16 LR-adjacent regression tests pass (1 pre-existing iter73 failure carried from Iter111 test debt — unrelated).
+  - **Not touched**: LR body content, freight / shortage / supplier / invoice logic, auth, 2-page layout lock.
+
 - [x] **Iter114 · Invoice PDF final refinements** (Feb 2026 — awaiting UAT)
   - **1. Invoice-number duplication fix (`VBK/26-27//26-27/0003` → `VBK/26-27/0003`)** — `services.py::_compose_invoice_number()` is a new self-healing helper: strips a trailing slash on the stored `invoice_prefix`, then only appends `/{fy_str}/{seq:04d}` if the prefix does NOT already carry an `NN-NN` FY segment; otherwise appends just `/{seq:04d}`. Both `_next_invoice_number` and `_next_invoice_number_for_company` now route through it. Unit-verified against 6 real prefixes seen in DB.
   - **2. T&C clause 2 generic** — replaced the hard-coded "0.5% for Bitumen … 1% for CRMB / PMB" with: "Shortage or excess shall be accounted for in accordance with the applicable product and customer billing policy; the per-trip allowance is stamped against each line item above." This no longer contradicts the actual Product Master / Customer Custom Allowance engine (whose real allowance is already printed per-line-item on the invoice).

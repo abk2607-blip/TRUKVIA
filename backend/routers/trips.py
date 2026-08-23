@@ -1238,7 +1238,7 @@ async def trip_lr_preview(payload: dict, user=Depends(get_current_user)):
 
 
 @router.get("/trips/{tid}/lr")
-async def trip_lr_pdf(tid: str, user=Depends(get_current_user)):
+async def trip_lr_pdf(tid: str, copy: str = "original", user=Depends(get_current_user)):
     trip = await db.trips.find_one({"id": tid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
     if not trip:
         raise HTTPException(status_code=404, detail="Trip not found")
@@ -1251,11 +1251,12 @@ async def trip_lr_pdf(tid: str, user=Depends(get_current_user)):
     trip_company_id = trip.get("company_id", "")
     company = await db.companies.find_one({"id": trip_company_id, "user_id": user["user_id"]}, {"_id": 0}) if trip_company_id else None
     company = company or await db.companies.find_one({"user_id": user["user_id"], "is_default": True}, {"_id": 0}) or {}
-    pdf_bytes = build_lr_pdf(company, customer, trip)
+    pdf_bytes = build_lr_pdf(company, customer, trip, copy=copy)
+    copy_suffix = f"_{copy.upper()}" if copy and copy != "original" else ""
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'inline; filename="{trip["lr_number"].replace("/", "_")}.pdf"'},
+        headers={"Content-Disposition": f'inline; filename="{trip["lr_number"].replace("/", "_")}{copy_suffix}.pdf"'},
     )
 
 

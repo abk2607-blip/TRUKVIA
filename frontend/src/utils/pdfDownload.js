@@ -22,10 +22,16 @@ async function _openBlob(pdfData, filenameHint) {
   setTimeout(() => URL.revokeObjectURL(url), 90_000);
 }
 
-export async function openTripLrPdf(tripId, filenameHint) {
+export async function openTripLrPdf(tripId, filenameHint, opts = {}) {
   try {
-    const res = await api.get(`/trips/${tripId}/lr`, { responseType: "blob", timeout: 45_000 });
-    await _openBlob(res.data, filenameHint || `LR_${tripId}.pdf`);
+    const copy = (opts.copy || "original").toLowerCase();
+    const res = await api.get(`/trips/${tripId}/lr`, {
+      responseType: "blob",
+      timeout: 45_000,
+      params: { copy },
+    });
+    const suffix = copy !== "original" ? `_${copy.toUpperCase()}` : "";
+    await _openBlob(res.data, filenameHint || `LR_${tripId}${suffix}.pdf`);
   } catch (e) {
     toast.error(errMsg(e, "LR download failed"));
     throw e;

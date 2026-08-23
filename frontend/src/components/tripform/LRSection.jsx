@@ -10,6 +10,7 @@ import { openTripLrPdf, previewLrFromDraft } from "@/utils/pdfDownload";
 
 export default function LRSection({ form, setForm, isEdit, id }) {
   const [busy, setBusy] = useState(""); // "" | "preview" | "download"
+  const [lrCopy, setLrCopy] = useState("original"); // Iter115 · which copy stamp
 
   const runPreview = async () => {
     setBusy("preview");
@@ -20,10 +21,11 @@ export default function LRSection({ form, setForm, isEdit, id }) {
     }
   };
 
-  const runDownload = async () => {
+  const runDownload = async ({ copy = "original" } = {}) => {
     setBusy("download");
     try {
-      await openTripLrPdf(id, `LR_${form.lr_number || id}.pdf`);
+      const suffix = copy !== "original" ? `_${copy.toUpperCase()}` : "";
+      await openTripLrPdf(id, `LR_${form.lr_number || id}${suffix}.pdf`, { copy });
     } finally {
       setBusy("");
     }
@@ -97,16 +99,30 @@ export default function LRSection({ form, setForm, isEdit, id }) {
           Preview LR (before Save)
         </button>
         {isEdit && (
-          <button
-            type="button"
-            data-testid="download-lr-btn"
-            disabled={!!busy}
-            onClick={runDownload}
-            className="inline-flex items-center gap-2 px-4 py-2 text-xs uppercase tracking-wider font-semibold bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 disabled:opacity-50"
-          >
-            {busy === "download" ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
-            Download LR PDF
-          </button>
+          <>
+            <select
+              data-testid="lr-copy-select"
+              value={lrCopy}
+              onChange={(e) => setLrCopy(e.target.value)}
+              disabled={!!busy}
+              className="px-3 py-2 text-xs uppercase tracking-wider font-semibold border border-zinc-950 bg-white text-zinc-950 rounded-sm disabled:opacity-50"
+              title="Choose which copy of the LR to download"
+            >
+              <option value="original">Original · Consignee</option>
+              <option value="duplicate">Duplicate · Transporter</option>
+              <option value="triplicate">Triplicate · Consignor</option>
+            </select>
+            <button
+              type="button"
+              data-testid="download-lr-btn"
+              disabled={!!busy}
+              onClick={() => runDownload({ copy: lrCopy })}
+              className="inline-flex items-center gap-2 px-4 py-2 text-xs uppercase tracking-wider font-semibold bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 disabled:opacity-50"
+            >
+              {busy === "download" ? <Loader2 size={14} className="animate-spin" /> : <FileText size={14} />}
+              Download LR PDF
+            </button>
+          </>
         )}
         <span className="text-[11px] text-zinc-500">
           Preview renders the LR without saving — use it to verify all fields before finalising the trip.

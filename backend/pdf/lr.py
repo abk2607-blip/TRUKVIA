@@ -102,7 +102,17 @@ def _logo_flowable(company: dict, size_mm: float = 18.0):
     return _monogram_badge(company.get("name") or "", size_mm=size_mm)
 
 
-def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
+def build_lr_pdf(company: dict, customer: dict, trip: dict, copy: str = "original") -> bytes:
+    # Iter115 · LR copy stamp. Three copies of the LR are printed for a
+    # standard Indian carriage transaction — one for the consignee, one for
+    # the transporter, one for the consignor. `copy` picks which label the
+    # top-right badge on the navy + mini navy headers renders.
+    _COPY_LABELS = {
+        "original":   "ORIGINAL FOR CONSIGNEE",
+        "duplicate":  "DUPLICATE FOR TRANSPORTER",
+        "triplicate": "TRIPLICATE FOR CONSIGNOR",
+    }
+    copy_label = _COPY_LABELS.get((copy or "original").lower(), _COPY_LABELS["original"])
     buf = BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=A4,
@@ -148,10 +158,23 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
         ("RIGHTPADDING", (0, 0), (0, 0), 8),
     ]))
 
-    # RIGHT: title + subtitle only
+    # RIGHT: title + subtitle + copy-type badge (Iter115)
+    styles.add(ParagraphStyle(name="HCopy", fontName=FB, fontSize=7.5, leading=9,
+                              textColor=_WHITE, alignment=2))
     right_col = [
         Paragraph("GOODS CONSIGNMENT NOTE", styles["HTitle"]),
         Paragraph("<font color='#10B981'>LORRY RECEIPT · GCN</font>", styles["HSub"]),
+        Spacer(1, 3),
+        Table([[Paragraph(copy_label, styles["HCopy"])]], colWidths=[62 * mm],
+              style=TableStyle([
+                  ("BACKGROUND", (0, 0), (-1, -1), _EMERALD_D),
+                  ("BOX", (0, 0), (-1, -1), 0.6, _EMERALD_L),
+                  ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                  ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                  ("TOPPADDING", (0, 0), (-1, -1), 2),
+                  ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+                  ("ALIGN", (0, 0), (-1, -1), "RIGHT"),
+              ])),
     ]
 
     hdr = Table([[left_col, right_col]], colWidths=[128 * mm, 82 * mm])
@@ -455,7 +478,8 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
     ]))
     mini_right = Paragraph(
         f"<font color='#94A3B8' size='9'><b>GCN No.</b> {trip.get('lr_number','—')}   ·   "
-        f"<b>Date:</b> {trip.get('date','')}</font>",
+        f"<b>Date:</b> {trip.get('date','')}</font><br/>"
+        f"<font color='#10B981' size='7'><b>{copy_label}</b></font>",
         styles["HCoAddr"],
     )
     mini_hdr = Table([[mini_left, mini_right]], colWidths=[128 * mm, 82 * mm])
