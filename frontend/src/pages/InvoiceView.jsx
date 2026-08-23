@@ -5,6 +5,7 @@ import { api, API, fmtCurrency, fmtDate } from "@/api";
 import { toast } from "sonner";
 import { ArrowLeft, Download, Printer, Trash2, Plus, MessageCircle, Mail } from "lucide-react";
 import VoiceButton from "@/components/VoiceButton";
+import InvoicePdfPreview from "@/components/InvoicePdfPreview";
 
 export default function InvoiceView() {
   const { id } = useParams();
@@ -125,6 +126,15 @@ export default function InvoiceView() {
           </button>
         </div>
       </header>
+
+      {/* Iter113 · Live PDF preview — shows the SAME PDF the Download button
+          serves, so UAT can visually verify freight / shortage / cust-ref /
+          totals against the exact artifact that will be sent to the customer.
+          Auto-reloads when a payment is recorded (invoice recomputes). */}
+      <InvoicePdfPreview
+        invoiceId={id}
+        refreshKey={`${invoice.updated_at || ""}|${(invoice.payments || []).length}|${invoice.balance_due || 0}`}
+      />
 
       {/* Invoice Paper */}
       <div className="bg-white border border-zinc-950 rounded-sm p-8 print:border-0 print:p-4" data-testid="invoice-paper">

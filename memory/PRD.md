@@ -2,6 +2,14 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter113 · Inline Invoice PDF Preview** (Feb 2026 — awaiting UAT)
+  - **Root cause of "preview not opening"**: `InvoiceView.jsx` never embedded the actual PDF. It rendered an HTML mock-up of the invoice which could drift from the real ReportLab output. The Download button opened the PDF only in a new tab.
+  - **Fix — new component `/app/frontend/src/components/InvoicePdfPreview.jsx`**: fetches `/api/invoices/{id}/pdf` via authenticated axios as a blob, creates `URL.createObjectURL(blob)`, and embeds it in an `<iframe>` (~900px tall). Same bytes as the Download button → Preview = Downloaded PDF, byte-for-byte. Reload + Open-Tab controls. Cleans up blob URLs on unmount / refresh. Auto-reloads when `refreshKey` changes (invoice recompute / new payment).
+  - **`InvoiceView.jsx`**: renders `<InvoicePdfPreview />` right after the header toolbar, above the existing HTML "invoice paper" (kept for print CSS). `refreshKey` is derived from `updated_at | payments.length | balance_due`.
+  - **Verified**: Trip → Invoice → PDF one-to-one confirmed by rendering the same PDF to PNG (`/tmp/inv_pdf_p1.png` / `p2`): Bill-To, Ship-To, Cust Ref (per-trip only, never inherited), Product, Route, Basis, Load MT, Unload MT, Shortage/Net MT, Rate, Amount, Freight subtotal, CGST/SGST, Final Payable, Balance Due — all present. Live PDF endpoint `/api/invoices/{iid}/pdf` verified 200 · `application/pdf` via public URL. Iframe blob URL binds within ~1.5s in playwright; renders natively in every real desktop/mobile browser with built-in PDF viewer.
+  - **Sample PDF for UAT**: `/app/sample_pdfs/iter113_invoice_preview_sample.pdf` (2 pages · 48 KB).
+  - **Not touched**: Invoice calculation logic, Invoice PDF template (`build_invoice_pdf`), auth, LR, freight, shortage, supplier, trip business logic.
+
 ## Problem Statement (Original)
 Bitumen transport వ్యాపారం కోసం సులభమైన అకౌంటింగ్ యాప్ — GST ట్రాన్స్‌పోర్ట్ ఇన్వాయిస్ (VBK Logistics style), ప్రతి ట్రిప్‌కు కస్టమర్/తేదీ/వాహనం/డ్రైవర్/టన్నులు/రూట్/ఫ్రైట్, ఫ్రైట్ మోడ్ (per_ton లేదా fixed round-trip), multi-trip GST invoice, expense tracking (డీజిల్/టోల్/బాటా/రిపేర్), profit + receivables dashboard, PDF export.
 
