@@ -77,6 +77,7 @@ CRITICAL_TESTS=(
   "tests/test_iter108_multi_company_logo_isolation.py"    # Iter108 · Multi-company logo upload + isolation
   "tests/test_iter109_bulk_lr_regenerate.py"              # Iter109 · Bulk LR regenerate + ZIP
   "tests/test_iter111_supplier_freight_and_shortage.py"   # Iter111 · Supplier freight basis + shortage threshold + override + audit
+  "tests/test_iter112_bilingual_lr_tc.py"                 # Iter112 · Bilingual (English + Telugu) LR T&C
 )
 
 # Explicit venv PATH so this runs cleanly from asyncio subprocess (which

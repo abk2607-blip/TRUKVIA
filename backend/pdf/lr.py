@@ -19,7 +19,7 @@ Design language kept from Option B:
 If the company has NOT uploaded a logo, a distinctive emerald monogram badge
 is rendered from the company initials (e.g. "A. KISHORE BABU & SONS" → "AKBS").
 """
-from ._base import _fmt, LR_TERMS_EN, _UNI_FONT, _UNI_FONT_BOLD
+from ._base import _fmt, LR_TERMS_EN, LR_TERMS_TE, _UNI_FONT, _UNI_FONT_BOLD
 from io import BytesIO
 import base64, re
 from reportlab.lib.pagesizes import A4
@@ -472,37 +472,36 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
         ("LINEBELOW", (0, 0), (-1, 0), 2.0, _EMERALD),
     ]))
     story.append(mini_hdr)
-    story.append(Spacer(1, 8))
+    story.append(Spacer(1, 4))
 
-    # T&C title
-    tc_title_content = [
-        Paragraph("TERMS &amp; CONDITIONS · TRANSPORT AND SITE UNLOADING PROTOCOL",
-                  ParagraphStyle(name="TCT", fontName=FB, fontSize=13, leading=15,
-                                 textColor=_NAVY, alignment=1)),
-        Spacer(1, 2),
-        Paragraph("<font color='#64748B'><i>These conditions govern carriage under this "
-                  "Goods Consignment Note and are binding on the consignor, consignee and "
-                  "any authorised representative at the site.</i></font>",
-                  ParagraphStyle(name="TCS", fontName=F, fontSize=8, leading=10,
-                                 textColor=_MUTED, alignment=1)),
-    ]
-    story.append(_margined(tc_title_content[0]))
-    story.append(Spacer(1, 2))
-    story.append(_margined(tc_title_content[2]))
-    story.append(Spacer(1, 8))
+    # ================== PAGE 2 BODY — WRAPPED IN ONE KeepInFrame ==================
+    # Iter112 · Bilingual T&C doubles the clause block (EN + TE), so we now
+    # collect the FULL page-2 body (title, subtitle, Seal callout, numbered
+    # T&C table, Consignee-Ack panel) into ONE KeepInFrame(mode='shrink').
+    # This lets ReportLab measure and scale the stack as a single unit,
+    # guaranteeing the 2-page lock even if a future clause is added.
 
-    # ---- Highlighted SEAL VERIFICATION callout — prominent amber-tinted card
-    # between the T&C title and the numbered clauses. Multi-company safe — no
-    # company name is hard-coded; the clause is worded generically.
+    tc_title = Paragraph(
+        "TERMS &amp; CONDITIONS · TRANSPORT AND SITE UNLOADING PROTOCOL",
+        ParagraphStyle(name="TCT", fontName=FB, fontSize=12, leading=14,
+                       textColor=_NAVY, alignment=1))
+    tc_sub = Paragraph(
+        "<font color='#64748B'><i>These conditions govern carriage under this "
+        "Goods Consignment Note and are binding on the consignor, consignee and "
+        "any authorised representative at the site.</i></font>",
+        ParagraphStyle(name="TCS", fontName=F, fontSize=7.5, leading=9,
+                       textColor=_MUTED, alignment=1))
+
+    # ---- Highlighted SEAL VERIFICATION callout — compressed for Iter112.
     _AMBER      = colors.HexColor("#B45309")
     _AMBER_L    = colors.HexColor("#FEF3C7")
-    seal_body = ParagraphStyle(name="SealBody", fontName=F, fontSize=8.5, leading=11.5,
+    seal_body = ParagraphStyle(name="SealBody", fontName=F, fontSize=7.5, leading=9.5,
                                 textColor=_NAVY)
-    seal_title = ParagraphStyle(name="SealTitle", fontName=FB, fontSize=9, leading=11,
+    seal_title = ParagraphStyle(name="SealTitle", fontName=FB, fontSize=8.5, leading=10,
                                  textColor=_AMBER)
     seal_lines = [
         Paragraph("⚠  IMPORTANT · SEAL VERIFICATION &amp; UNLOADING PROTOCOL", seal_title),
-        Spacer(1, 3),
+        Spacer(1, 2),
         Paragraph(
             "Bitumen, CRMB and PMB are dispatched <b>without</b> refinery / supplier seals. "
             "For Emulsion, LDO, FO and other products where an official loading-facility seal "
@@ -521,35 +520,40 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
     seal_box.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), _AMBER_L),
         ("BOX", (0, 0), (-1, -1), 0.8, _AMBER),
-        ("LEFTPADDING", (0, 0), (-1, -1), 12),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 12),
-        ("TOPPADDING", (0, 0), (-1, -1), 6),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]))
-    story.append(_margined(seal_box))
-    story.append(Spacer(1, 8))
 
     # T&C table — pill-numbered (wider box to fit 2-digit numbers cleanly).
-    tc_body_style = ParagraphStyle(name="TCBody", fontName=F, fontSize=8.3, leading=11,
-                                    textColor=_NAVY, spaceAfter=2)
-    circle_style = ParagraphStyle(name="Circle", fontName=FB, fontSize=8.5, leading=10,
+    tc_body_style = ParagraphStyle(name="TCBody", fontName=F, fontSize=6.6, leading=8.0,
+                                    textColor=_NAVY, spaceAfter=0)
+    tc_body_te_style = ParagraphStyle(name="TCBodyTE", fontName=F, fontSize=5.7, leading=6.8,
+                                       textColor=colors.HexColor("#334155"),
+                                       spaceBefore=0, spaceAfter=0.3)
+    circle_style = ParagraphStyle(name="Circle", fontName=FB, fontSize=8, leading=10,
                                    textColor=_WHITE, alignment=1)
     tc_rows = []
-    for i, t in enumerate(LR_TERMS_EN, start=1):
-        num = Table([[Paragraph(f"<b>{i}</b>", circle_style)]], colWidths=[9 * mm], rowHeights=[7.5 * mm])
+    for i, (t_en, t_te) in enumerate(zip(LR_TERMS_EN, LR_TERMS_TE), start=1):
+        num = Table([[Paragraph(f"<b>{i}</b>", circle_style)]], colWidths=[9 * mm], rowHeights=[7 * mm])
         num.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), _EMERALD_D),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ]))
-        tc_rows.append([num, Paragraph(t, tc_body_style)])
+        clause_block = [
+            Paragraph(t_en, tc_body_style),
+            Paragraph(t_te, tc_body_te_style),
+        ]
+        tc_rows.append([num, clause_block])
 
     tc_tbl = Table(tc_rows, colWidths=[11 * mm, 179 * mm])
     tc_tbl.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("LEFTPADDING", (0, 0), (-1, -1), 0),
         ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-        ("TOPPADDING", (0, 0), (-1, -1), 2.5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
+        ("TOPPADDING", (0, 0), (-1, -1), 0.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0.5),
         ("LINEBELOW", (0, 0), (-1, -1), 0.3, _LINE_L),
     ]))
 
@@ -564,7 +568,7 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
             "&amp; Conditions above.",
             styles["Body"],
         ),
-        Spacer(1, 18),
+        Spacer(1, 14),
         Paragraph(
             "<b>Consignee Signature &amp; Stamp:</b> _________________________________ &nbsp;&nbsp; "
             "<b>Name:</b> _____________________ &nbsp;&nbsp; <b>Date:</b> _____________",
@@ -578,17 +582,31 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict) -> bytes:
         ("LINEBELOW", (0, 0), (-1, -1), 2.4, _EMERALD),
         ("LEFTPADDING", (0, 0), (-1, -1), 10),
         ("RIGHTPADDING", (0, 0), (-1, -1), 10),
-        ("TOPPADDING", (0, 0), (-1, -1), 6),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
     ]))
 
-    # ---- 2-PAGE LOCK: wrap T&C + Ack in a KeepInFrame(mode='shrink') so long
-    # content is compacted down instead of triggering a page-3 break.
-    page2_body_stack = [tc_tbl, Spacer(1, 8), ack_tbl]
-    # Available area on page 2 after the mini header + T&C title: ~230mm tall.
+    # ---- 2-PAGE LOCK: wrap the ENTIRE page-2 body (title + subtitle + seal
+    # callout + T&C table + ack panel) in ONE KeepInFrame(mode='shrink'). This
+    # is what fixes the Iter112 page-3 spillover: shrink now measures the full
+    # stack as one unit, and maxHeight is set to the true available height on
+    # page 2 (A4 297mm - 6mm bottom margin - mini header ~13mm - spacer ~2mm
+    # ≈ 275mm). If content ever exceeds this, ReportLab compresses it in-place
+    # instead of paginating to a 3rd page.
+    page2_body_stack = [
+        tc_title,
+        Spacer(1, 2),
+        tc_sub,
+        Spacer(1, 6),
+        seal_box,
+        Spacer(1, 6),
+        tc_tbl,
+        Spacer(1, 4),
+        ack_tbl,
+    ]
     locked = KeepInFrame(
         maxWidth=190 * mm,
-        maxHeight=230 * mm,
+        maxHeight=275 * mm,
         content=page2_body_stack,
         mode="shrink",   # shrink to fit — guarantees no page 3.
     )

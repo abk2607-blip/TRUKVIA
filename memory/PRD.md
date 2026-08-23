@@ -23,6 +23,14 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
 - Frontend: React 19 + React Router 7 + TanStack Query + Tailwind + Shadcn utilities + Sonner + lucide-react. Bilingual (Telugu + English) via hardcoded labels
 
 
+- [x] **Iter112 · Bilingual LR T&C (Telugu under English)** (Feb 2026 — awaiting UAT · **2-page lock verified**)
+  - **`pdf/_base.py`** — New `LR_TERMS_TE` (15 Telugu translations) parallel to `LR_TERMS_EN`. Assertion at import time enforces 1:1 pairing so a future EN edit cannot silently desynchronise TE.
+  - **`pdf/lr.py`** — Each numbered clause row renders English on top (6.6pt) + Telugu directly below (5.7pt). The WHOLE page-2 body (T&C title + subtitle + Seal-Verification callout + clauses table + Consignee Ack panel) is now wrapped in ONE `KeepInFrame(mode='shrink', maxHeight=275mm)` measured against the true available page-2 height, so shrink scales the full stack as a single unit — this is what fixed the earlier page-3 spillover. Seal callout compacted (7.5pt body, 8.5pt title, 4pt padding) as approved.
+  - **Tests** `test_iter112_bilingual_lr_tc.py` (5/5 ✅ passing): EN/TE 1:1 assertion, every English anchor present in generated PDF, source-level Telugu Unicode block validation, DejaVuSans font embedded (needed for Telugu glyphs), PDF stays ≤2 pages, existing content anchors intact.
+  - **Sample PDF for UAT**: `/app/sample_pdfs/iter112_bilingual_lr.pdf` (regenerated · exactly 2 pages · ~53 KB).
+  - **Not touched**: freight, shortage, invoice, invoice PDF, supplier, Iter105, auth, Iter108 logo behaviour.
+
+
 - [x] **Iter105 Phase B · APPROVED** (Feb 2026) — user verified Simple Revert + Invoice-Safety Block on live UAT scenarios. Revert-with-reason works; invoice-safety block refuses with inline LR display; no partial revert. Regression guards `test_iter105b_policy_change_revert.py` (6/6) added to `scripts/run_regression.sh`.
 - [x] **Iter111 · APPROVED** (Feb 2026) — user verified 7-step supplier calc walkthrough (freight basis / threshold / override / audit / restore). Regression guards `test_iter111_supplier_freight_and_shortage.py` (13/13) added to `scripts/run_regression.sh`.
 - [x] **Iter50 Strict Regression Guard expanded** (Feb 2026) — added iter98 / 102 / 103 / 104b / 105 / 105b / 106 / 106b / 107 / 108 / 109 / 111 suites to `CRITICAL_TESTS` in `scripts/run_regression.sh`. Deploy pipeline now blocks on any regression across the full policy-snapshot / freight / shortage / customer-policy / auth / bulk-LR / supplier stack.
