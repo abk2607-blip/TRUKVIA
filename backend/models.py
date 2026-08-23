@@ -324,6 +324,17 @@ class Trip(BaseModel):
     supplier_advance_entries: List[SupplierAdvanceEntry] = Field(default_factory=list)
     supplier_shortage_deduction: float = 0.0         # Shortage deducted from supplier freight
     supplier_shortage_deduction_override: bool = False  # Iter74 — True when user manually edited; blocks auto-mirror from trip.shortage_amount
+    # Iter111 · Supplier Shortage override audit fields. When the user edits
+    # the calculated supplier_shortage_deduction:
+    #   • supplier_shortage_original_amount holds the last system-computed
+    #     value (kept in sync by services._compute_trip whenever override=False).
+    #   • Reason, actor, timestamp captured mandatorily in trips.py PUT.
+    #   • Restoring the manual value to the system value clears override + reason
+    #     WITHOUT dropping an audit crumb (user rule 6 · no audit noise).
+    supplier_shortage_original_amount: float = 0.0
+    supplier_shortage_override_reason: str = ""
+    supplier_shortage_override_by: str = ""
+    supplier_shortage_override_at: str = ""
     supplier_other_recoveries: float = 0.0
     supplier_other_income: float = 0.0               # Bonus/other add-ons to supplier
     supplier_net_payable: float = 0.0

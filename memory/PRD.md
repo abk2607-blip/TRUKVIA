@@ -56,6 +56,29 @@ Bitumen transport వ్యాపారం కోసం సులభమైన �
   - **Status** — DONE code-side. **Iter106 remains OPEN** pending user's extended live UAT (Power-Cycle + normal daily testing).
 
 
+- [x] **Iter111 · Supplier Freight & Shortage — corrected engine + editable override** (Feb 2026 — awaiting user UAT)
+  - **Gap 1 fixed — Supplier freight now MIRRORS `applied_freight_method`** (`services.py`):
+    - `per_ton_loading`  → uses loading tons
+    - `per_ton_unloading` → uses unloading tons (this was the case the user flagged; was silently using loading before)
+    - `per_ton_higher_of` → uses max(loading, unloading)
+    - `fixed` → supplier_fixed_amount / round-trip
+    - Supplier's own `supplier_rate_per_ton` stays separate from the customer's rate; only the QUANTITY basis is mirrored.
+    - `supplier_quantity` is always derived from the basis so trip-create + policy-change recompute end up consistent (no leftover from earlier compute).
+  - **Gap 2 fixed — "No supplier limit" → FULL deduction** (`services.py`):
+    - `_sup_limit_kg <= 0` no longer mirrors the customer's `shortage_amount`. It now applies the FULL actual shortage × `product_rate_per_mt`, exactly per user rule #4.
+    - `_sup_limit_kg > 0 and _short_kg <= _sup_limit_kg` → **₹0 deduction** (unchanged, correct).
+    - `_sup_limit_kg > 0 and _short_kg > _sup_limit_kg` → FULL actual × `product_rate_per_mt` (unchanged, correct).
+    - `supplier_shortage_original_amount` is now stored on every compute so the UI can offer "restore to auto".
+  - **Manual override with mandatory reason** (`routers/trips.py` PUT + new `Trip` fields):
+    - New Trip fields: `supplier_shortage_original_amount`, `supplier_shortage_override_reason`, `supplier_shortage_override_by`, `supplier_shortage_override_at`.
+    - PUT `/trips/{id}` validates: if `supplier_shortage_deduction_override=True` AND the submitted value differs from the system value → `reason` is mandatory (400 otherwise); `override_by` (user email) + `override_at` (UTC ISO) stamped automatically.
+    - If the submitted value equals the system value → auto-treated as restore to AUTO (override + reason cleared, no audit noise per user rule #6).
+    - If `override=False` → all 3 audit fields cleared belt-and-braces.
+  - **Tests** — `test_iter111_supplier_freight_and_shortage.py` (13/13 pass in isolation): 4 freight-basis cases (loading / unloading / higher-of / fixed), 4 shortage cases (80/100/140 KG + no-limit), 5 override cases (editable, reason mandatory, flows to net_payable, restore-to-auto no noise, full audit metadata).
+  - **Not touched, per user instruction**: customer freight, customer shortage engine, invoice, invoice PDF, Iter105 policy code.
+  - **Status** — DONE, awaiting user UAT on real supplier trips.
+
+
 - [x] **Iter110 · Auth Power-Cycle Cookie Alignment** (Feb 2026 — Bug fix, awaiting user UAT)
   - **Bug**: After OS power-off → power-on, the user landed on a dead Login screen. Two root causes: (a) `AuthContext.jsx` short-circuited to Login whenever `localStorage.session_token` was empty, skipping the `/auth/me` cookie-based recovery; (b) the OAuth callback set the `session_token` cookie with `max_age=7 days` and stored the DB session's `expires_at` as an ISO string for 7 days, but the backend session lifetime was already 30 days with a rolling refresh — so cookies acted as short-lived and the DB TTL index couldn't prune stale rows.
   - **Backend fix (`/app/backend/routers/auth_router.py`)** — On `/auth/session` (OAuth callback), the cookie `max_age` and the DB session `expires_at` are now both `SESSION_LIFETIME_DAYS × 86400` seconds (= 30 days). DB `expires_at` is stored as a native BSON `datetime` (not ISO string) so the TTL index actually prunes stale rows. `created_at` and `last_refreshed_at` are set at login too, so the rolling refresh in `auth.get_current_user` picks up cleanly on the next request.

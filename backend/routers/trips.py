@@ -537,7 +537,9 @@ async def create_trip(payload: Trip, request: Request, user=Depends(get_current_
                 for k in ("freight_amount", "freight_qty_used", "shortage_qty",
                           "excess_qty", "shortage_amount", "excess_amount",
                           "supplier_freight", "supplier_net_payable",
-                          "supplier_shortage_deduction"):
+                          "supplier_shortage_deduction",
+                          "supplier_shortage_original_amount",
+                          "supplier_quantity"):
                     if k in _c:
                         doc[k] = _c[k]
             except Exception as _e:
@@ -622,6 +624,41 @@ async def update_trip(tid: str, payload: Trip, request: Request, user=Depends(ge
     # Iter47 Phase 3: Strict enforcement — supplier vehicle MUST link to a Supplier master record
     if payload.vehicle_type == "supplier":
         await _enforce_supplier_link(payload, user["user_id"], cid)
+    # Iter111 · Supplier Shortage Override validation + audit stamping.
+    # Rules (see test_iter111_supplier_freight_and_shortage.py):
+    #   • If override=True and the submitted value == system-computed value
+    #     → treat as restore-to-auto (clear override + audit fields, no noise).
+    #   • If override=True and the submitted value differs from system value
+    #     → REASON MANDATORY (400 otherwise); stamp actor + timestamp.
+    #   • If override=False → clear audit fields (belt-and-braces).
+    if payload.vehicle_type == "supplier":
+        if payload.supplier_shortage_deduction_override:
+            _tmp = Trip(**payload.model_dump())
+            _tmp.supplier_shortage_deduction_override = False
+            _tmp = _compute_trip(_tmp)
+            _system_val = float(_tmp.supplier_shortage_deduction or 0)
+            _submitted_val = float(payload.supplier_shortage_deduction or 0)
+            if abs(_submitted_val - _system_val) < 0.005:
+                # No actual delta → auto-restore (Rule 6 · no audit noise)
+                payload.supplier_shortage_deduction_override = False
+                payload.supplier_shortage_override_reason = ""
+                payload.supplier_shortage_override_by = ""
+                payload.supplier_shortage_override_at = ""
+            else:
+                if not (payload.supplier_shortage_override_reason or "").strip():
+                    raise HTTPException(
+                        status_code=400,
+                        detail="supplier_shortage_override_reason is required when overriding supplier shortage",
+                    )
+                payload.supplier_shortage_override_by = (
+                    user.get("email") or user.get("user_id") or ""
+                )
+                payload.supplier_shortage_override_at = now_utc().isoformat()
+        else:
+            # Clean state on non-override paths
+            payload.supplier_shortage_override_reason = ""
+            payload.supplier_shortage_override_by = ""
+            payload.supplier_shortage_override_at = ""
     payload = _compute_trip(payload)
     doc = payload.model_dump()
     doc["user_id"] = user["user_id"]

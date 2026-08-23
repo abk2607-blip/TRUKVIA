@@ -195,11 +195,32 @@ def _compute_trip(t: Trip) -> Trip:
             t.supplier_unloading_point = t.to_location or ""
         if not (t.supplier_material or "").strip():
             t.supplier_material = t.load_details or ""
-        if not (t.supplier_quantity or 0) > 0:
-            t.supplier_quantity = float(t.tons or 0)
 
-        # Auto-compute supplier freight from detailed inputs when available
-        sup_qty = t.supplier_quantity if t.supplier_quantity > 0 else t.tons
+        # Iter111 · Supplier Freight — quantity basis now MIRRORS the trip's
+        # frozen `applied_freight_method` snapshot (per_ton_loading /
+        # per_ton_unloading / per_ton_higher_of / fixed). Supplier's own rate
+        # (`supplier_rate_per_ton` / `supplier_fixed_amount`) stays separate
+        # from the customer's rate. `supplier_quantity` is always derived
+        # from the basis so both trip-create and policy-change recompute
+        # end up with a consistent value (an earlier auto-populated qty
+        # from an in-flight compute must never leak forward).
+        _method = (t.applied_freight_method or "per_ton_loading").lower()
+        _loaded = float(t.tons) if (t.tons or 0) > 0 else float(t.loaded_qty or 0)
+        _unloaded = float(t.unloaded_qty or 0)
+        if _method == "per_ton_unloading":
+            _basis_qty = _unloaded
+        elif _method == "per_ton_higher_of":
+            _basis_qty = max(_loaded, _unloaded)
+        else:
+            _basis_qty = _loaded  # per_ton_loading (default) + safety fallback
+
+        t.supplier_quantity = round(_basis_qty, 3)
+        sup_qty = t.supplier_quantity
+        if _method == "fixed":
+            # Fixed customer freight → supplier can still be per-ton (their
+            # rate is separate). If supplier itself is fixed, we honour the
+            # supplier_fixed_amount / round-trip fallback below.
+            pass
         if t.supplier_freight_mode == "per_ton" and t.supplier_rate_per_ton > 0:
             t.supplier_freight = round(sup_qty * t.supplier_rate_per_ton, 2)
         elif t.supplier_freight_mode == "fixed":
@@ -209,21 +230,24 @@ def _compute_trip(t: Trip) -> Trip:
                 t.supplier_freight = round(t.supplier_fixed_amount, 2)
         # else keep manually entered supplier_freight
 
-        # Iter98 · Phase 3 — Central Supplier Shortage Calc (INDEPENDENT of
-        # customer). Uses applied_supplier_shortage_limit_kg (fixed KG only).
-        #   shortage_kg ≤ limit → 0 deduction.
-        #   shortage_kg  > limit → FULL actual shortage × product_rate.
-        # Manual overrides respected via supplier_shortage_deduction_override.
+        # Iter111 · Supplier Shortage — INDEPENDENT of customer policy.
+        # Rules:
+        #   • shortage_kg <= limit_kg           → ZERO deduction
+        #   • shortage_kg  > limit_kg           → FULL actual × product_rate_per_mt
+        #   • limit_kg <= 0 (no limit set)      → FULL actual × product_rate_per_mt
+        #                                         (was: mirror customer; changed
+        #                                          in Iter111 per user rule #4)
+        # `supplier_shortage_original_amount` always holds the system-computed
+        # value so the UI can offer a "restore to auto" affordance.
+        _sup_limit_kg = float(t.applied_supplier_shortage_limit_kg or 0)
+        _short_kg = float(t.shortage_qty or 0) * 1000.0
+        if _sup_limit_kg > 0 and _short_kg <= _sup_limit_kg:
+            _system_calc = 0.0
+        else:
+            _system_calc = round((t.product_rate_per_mt or 0) * float(t.shortage_qty or 0), 2)
+        t.supplier_shortage_original_amount = _system_calc
         if not t.supplier_shortage_deduction_override:
-            _sup_limit_kg = float(t.applied_supplier_shortage_limit_kg or 0)
-            _short_kg = float(t.shortage_qty or 0) * 1000.0
-            if _sup_limit_kg <= 0:
-                # No supplier limit configured → mirror trip.shortage_amount (legacy behaviour, keeps historical trips whole)
-                t.supplier_shortage_deduction = round(float(t.shortage_amount or 0), 2)
-            elif _short_kg <= _sup_limit_kg:
-                t.supplier_shortage_deduction = 0.0
-            else:
-                t.supplier_shortage_deduction = round((t.product_rate_per_mt or 0) * t.shortage_qty, 2)
+            t.supplier_shortage_deduction = _system_calc
 
         # Net payable = freight + supplier_halting − advance − diesel(supplier-side) − customer_diesel(recovered against supplier trip)
         #              − shortage − other_recoveries + other_income
