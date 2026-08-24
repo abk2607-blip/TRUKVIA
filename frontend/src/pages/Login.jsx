@@ -37,11 +37,14 @@ export default function Login() {
         <div className="absolute inset-0 bg-gradient-to-br from-black/60 via-black/30 to-black/70" />
         <div className="relative z-10 h-full flex flex-col justify-between p-10 text-white">
           <div>
-            <div className="text-[11px] uppercase tracking-[0.3em] font-bold opacity-80">Bitumen Transport</div>
-            <h1 className="mt-3 text-5xl font-black tracking-tighter leading-[0.95]">
+            <div className="text-[11px] uppercase tracking-[0.3em] font-bold opacity-90"
+                 style={{ textShadow: "0 1px 3px rgba(0,0,0,0.55)" }}>Bitumen Transport</div>
+            <h1 className="mt-3 text-5xl font-black tracking-tighter leading-[0.95]"
+                style={{ textShadow: "0 2px 8px rgba(0,0,0,0.6), 0 1px 2px rgba(0,0,0,0.7)" }}>
               <span className="telugu">బిటుమెన్</span><br />ట్రాన్స్‌పోర్ట్<br />అకౌంటింగ్.
             </h1>
-            <p className="mt-4 text-sm opacity-80 max-w-sm">
+            <p className="mt-4 text-sm opacity-90 max-w-sm"
+               style={{ textShadow: "0 1px 3px rgba(0,0,0,0.55)" }}>
               GST invoicing, trip logs, expense tracking &amp; receivables — built for road transporters.
             </p>
           </div>

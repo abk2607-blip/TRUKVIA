@@ -2,6 +2,11 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter123 · Login Hero Rebrand — bitumen tanker photo + Telugu heading readability** (Feb 2026 — APPROVED ✅)
+  - Replaced the generic unsplash highway-truck hero with the user's own orange BITUMEN tanker photo. Source PNG (2.5 MB) was resized to 1600 px and re-encoded as progressive JPEG (279 KB, quality 85) at `/app/frontend/public/images/bitumen-tanker-hero.jpg`. `Login.jsx:6` now points at the local asset.
+  - Image, crop and gradient are **locked** — user-approved. Only readability polish applied: added `text-shadow: 0 2px 8px rgba(0,0,0,0.6), 0 1px 2px rgba(0,0,0,0.7)` to the Telugu H1 and lighter shadows to the eyebrow and sub-copy so the "బిటుమెన్ ట్రాన్స్‌పోర్ట్ అకౌంటింగ్" heading pops over the bright-sky region without darkening the photograph.
+  - No backend, PDF, auth, or business logic touched.
+
 - [x] **Iter122b · Regression Guard re-alignment after Iter121 loopback filter** (Feb 2026)
   - **Symptom**: After Iter121 excluded 127.0.0.1 traffic from save_health telemetry, a handful of legacy tests broke because they were calling from localhost and expected the middleware to record their negative-path traffic.
   - **Fix (test-only)**: Added a shared `X-Forwarded-For: 203.0.113.5x` (RFC-5737 doc IP) header to loopback callers in `test_iter50`, `test_iter51`, `test_iter53b`, `test_iter54`, `test_iter57`, `test_iter58` so they simulate ingress-forwarded traffic. In `test_iter53b::test_save_failure_disabled_suppresses_alert`, also (a) re-read alert_config right before the assertion and skip cleanly when a parallel xdist worker mutated the shared toggle back to True, and (b) scope the alert query to `fired_at > cutoff` and `kind != auth_ip_burst` so an unrelated ip-burst alert cannot fail the suppression check. **No backend code touched.**
