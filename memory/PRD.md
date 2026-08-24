@@ -2,6 +2,14 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter119 · Invoice Route column — readability preserved** (Feb 2026 — awaiting UAT)
+  - **Route treated as a "special" column** — `min_font=7.0` (was `4.8`) in `_fit_paragraph`. Short and normal routes now render at full 8 pt base font (no more silly shrink for `MANGALORE → PORUMALLA`). Only routes that genuinely exceed 32 mm at 7 pt allow ReportLab's natural Paragraph wrap to a 2-line compact cell — instead of shrinking to unreadable 4.8 pt.
+  - **Width redistribution** — `_COL_MM` now `[17, 18, 22, 26, 32, 15, 15, 18, 18, 18, 18, 24, 36]`. Vehicle No 20 → 18 (−2), Cust Ref 24 → 22 (−2), Product 28 → 26 (−2); Route 26 → 32 (+6). Total still 277 mm inner. Adjacent columns still comfortable for real-world data.
+  - **Verified with four Route scenarios**: (a) SHORT `K → V` — full font, no shrink; (b) NORMAL `MANGALORE → PORUMALLA` — full font, single line; (c) LONG `Visakhapatnam → Vijayawada` — full font, single line; (d) EXTREME `Visakhapatnam Petroleum Refinery Yard-3 → Vijayawada Bypass Plant-South-Extension` — 7 pt, 2-line wrap inside cell, still readable and does not spill into neighbours.
+  - **Regressions**: 11/11 adjacent invoice tests pass (iter67, iter82, iter107). `Basis` remains absent. All 13 headers still single-line.
+  - **Sample PDF for UAT**: `/app/sample_pdfs/iter119_invoice_route.pdf` (also overwrites `iter113_invoice_preview_sample.pdf`).
+  - **Not touched**: `_compute_trip`, freight / shortage / supplier / invoice calculation, auth, Iter105/106/106b/110/111 approved paths, landscape, English-only, pagination, totals section.
+
 - [x] **Iter118 · Invoice header spacing + Basis column removal** (Feb 2026 — awaiting UAT)
   - **1. Company header spacing** — `Spacer(1, 3)` inserted between `Company Name` and `Address` in `pdf/invoice.py::company_left`. Header stays same height; name and address no longer look crowded.
   - **2. Basis column removed from customer-facing PDF** — 14 → 13 cols. Freight basis (`applied_freight_method`, `freight_qty_used`) stays 100% intact in the Trip record and calculation engine — this is a PRESENTATION-only removal.

@@ -291,8 +291,10 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
     _hdr_style = ParagraphStyle(name="HdrCell", parent=styles["SubLbl"],
                                 fontName=_UNI_FONT_BOLD, fontSize=7.8,
                                 leading=9, textColor=C_HEAD_T, alignment=1)
-    # 277 mm inner width redistributed across 13 columns (was 14 with Basis=22 mm)
-    _COL_MM = [17, 20, 24, 28, 26, 15, 15, 18, 18, 18, 18, 24, 36]
+    # 277 mm inner width. Iter119 · Route is now a "special" column with
+    # dedicated breathing room. Vehicle No 20→18, Cust Ref 24→22 and
+    # Product 28→26 give up 6 mm total; Route grows 26→32 mm accordingly.
+    _COL_MM = [17, 18, 22, 26, 32, 15, 15, 18, 18, 18, 18, 24, 36]
     from reportlab.lib.units import mm as _mm
     _COL_PTS = [w * _mm - 6 for w in _COL_MM]
     hdr = [_fit_paragraph(txt, _hdr_style, _COL_PTS[i], min_font=5.5)
@@ -362,7 +364,7 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
             _fit_paragraph(t.get("vehicle_number", "") or "—", _rb, _COL_PTS[1], min_font=5.0),
             _fit_paragraph(cust_ref or "—", _rt, _COL_PTS[2], min_font=4.8),
             _fit_paragraph(t.get("load_details", "") or "—", _rt, _COL_PTS[3], min_font=4.8),
-            _fit_paragraph(route_html, _rt, _COL_PTS[4], min_font=4.8),
+            _fit_paragraph(route_html, _rt, _COL_PTS[4], min_font=7.0),
             Paragraph(f"{loaded_mt:.3f}", _rn),
             Paragraph(f"{unloaded_mt:.3f}" if unloaded_mt > 0 else "—", _rn),
             _fit_paragraph(_fmt_ind_date(t.get("unloaded_at") or t.get("unload_date")), _rn, _COL_PTS[7], min_font=5.0),
