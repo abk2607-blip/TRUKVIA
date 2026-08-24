@@ -1445,6 +1445,586 @@ async def halting_verify(request: Request, user=Depends(get_current_user),
     }
 
 
+# ==================== Iter124 · Monthly LR Register / Statement ====================
+
+_LR_ACTIONS = ("lr_regenerate", "lr_all_copies_zip", "lr_bulk_regenerate")
+
+
+def _company_code(company: dict) -> str:
+    """Derive a filename-safe company code. Prefer the LR prefix (unique per
+    company, short) else a slug of the company name. Purely presentational;
+    never persisted."""
+    raw = (company.get("lr_prefix") or "").strip() or (company.get("name") or "").strip() or "COMPANY"
+    slug = re.sub(r"[^A-Za-z0-9]+", "_", raw).strip("_").upper()[:24] or "COMPANY"
+    return slug
+
+
+def _derive_allowance_mt(t: dict) -> float:
+    """Iter124 · READ-ONLY mirror of the Iter98/102 customer-shortage allowance
+    formula (services._compute_trip lines 89-105). We compute it here only to
+    display it in the register — the trip document is NEVER modified and no
+    engine is re-run. When the trip has no policy snapshot, allowance is 0."""
+    _cust_limit = float(t.get("applied_customer_shortage_limit") or 0)
+    _cust_type = (t.get("applied_customer_shortage_limit_type") or "pct").lower()
+    _prod_pct = float(t.get("applied_product_shortage_pct") or 0)
+    if _cust_limit <= 0 and _prod_pct > 0:
+        _cust_limit = _prod_pct
+        _cust_type = "pct"
+    if _cust_limit <= 0:
+        return 0.0
+    if _cust_type == "kg":
+        return round(_cust_limit / 1000.0, 3)
+    return round(float(t.get("tons") or 0) * _cust_limit / 100.0, 3)
+
+
+def _lr_copies_label(events: list) -> str:
+    """Represent LR-copy audit history as "<LATEST_ACTION> · N×". Falls back to
+    plain "ORIGINAL" when no additional audit event exists — every trip with
+    an lr_number has by definition been issued at least once. Only Iter122
+    (all-copies ZIP), Iter109 (bulk regenerate) and the single-trip regenerate
+    endpoint write audit rows; the single-copy `/trips/{tid}/lr` GET
+    intentionally does not, per the standing rule to not touch Iter115/122 LR
+    copy logic."""
+    if not events:
+        return "ORIGINAL"
+    latest = max(events, key=lambda e: e.get("timestamp", ""))
+    action_map = {
+        "lr_all_copies_zip": "ZIP",
+        "lr_regenerate": "REGEN",
+        "lr_bulk_regenerate": "BULK",
+    }
+    label = action_map.get(latest.get("action", ""), "COPY")
+    n = len(events)
+    return f"{label} · {n}×" if n > 0 else label
+
+
+def _derive_invoice_status(inv: dict | None) -> str:
+    """Iter124 status derivation: `un_invoiced` when the trip has no invoice;
+    `paid` when amount_paid ≥ total − ₹0.50; `partially_paid` when 0 < paid < total;
+    `unpaid` otherwise."""
+    if not inv:
+        return "un_invoiced"
+    total = float(inv.get("total_amount") or 0)
+    paid = float(inv.get("amount_paid") or 0)
+    if total <= 0.01:
+        return "unpaid"
+    if paid >= total - 0.5:
+        return "paid"
+    if paid > 0:
+        return "partially_paid"
+    return "unpaid"
+
+
+def _month_bounds(month: str) -> tuple:
+    """`YYYY-MM` → (first-day, last-day) ISO strings, inclusive."""
+    from calendar import monthrange
+    y, m = int(month.split("-")[0]), int(month.split("-")[1])
+    last = monthrange(y, m)[1]
+    return f"{y:04d}-{m:02d}-01", f"{y:04d}-{m:02d}-{last:02d}"
+
+
+async def _lr_register_data(
+    request: Request, user: dict, *,
+    start: Optional[str], end: Optional[str], month: Optional[str],
+    customer_id: Optional[str], vehicle_id: Optional[str], driver: Optional[str],
+    product_id: Optional[str], status: Optional[str], invoice_status: Optional[str],
+    q: Optional[str], has_lr: bool = True,
+) -> dict:
+    """SINGLE shared data loader for JSON / XLSX / PDF / in-app view — so all
+    four outputs stay byte-identical. Read-only: no field is written to any
+    Mongo document. Cap 10 000 rows per Iter57 parity."""
+    uid = user["user_id"]
+    cid = await _active_company_id(request, user)
+    await _backfill_to_default(uid)
+
+    if month:
+        _s, _e = _month_bounds(month)
+        start = start or _s
+        end = end or _e
+    if not start:
+        today = datetime.now(timezone.utc).date().isoformat()
+        _s, _e = _month_bounds(today[:7])
+        start = _s
+        end = end or today
+    if not end:
+        end = datetime.now(timezone.utc).date().isoformat()
+
+    company = await db.companies.find_one({"id": cid, "user_id": uid}, {"_id": 0}) or {}
+
+    mongo_q: dict = {"user_id": uid, "company_id": cid, **LIVE_ONLY_FILTER,
+                     "date": {"$gte": start, "$lte": end}}
+    if has_lr:
+        mongo_q["lr_number"] = {"$exists": True, "$ne": ""}
+    if customer_id:
+        mongo_q["customer_id"] = customer_id
+    if vehicle_id:
+        mongo_q["vehicle_id"] = vehicle_id
+    if product_id:
+        mongo_q["product_id"] = product_id
+    if driver:
+        mongo_q["driver_name"] = {"$regex": re.escape(driver), "$options": "i"}
+    if status:
+        st = [s.strip() for s in status.split(",") if s.strip()]
+        if st:
+            mongo_q["status"] = {"$in": st}
+    if q:
+        rx = {"$regex": re.escape(q), "$options": "i"}
+        mongo_q["$or"] = [
+            {"lr_number": rx}, {"vehicle_number": rx}, {"driver_name": rx},
+            {"from_location": rx}, {"to_location": rx},
+            {"customer_reference_number": rx},
+        ]
+
+    trips = await (db.trips
+                   .find(mongo_q, {"_id": 0, "user_id": 0})
+                   .sort([("date", 1), ("lr_number", 1)])
+                   .limit(10000)
+                   .to_list(10000))
+
+    cust_ids  = list({t.get("customer_id") for t in trips if t.get("customer_id")})
+    prod_ids  = list({t.get("product_id")  for t in trips if t.get("product_id")})
+    inv_ids   = list({t.get("invoice_id")  for t in trips if t.get("invoice_id")})
+    trip_ids  = list({t.get("id") for t in trips if t.get("id")})
+
+    customers_by_id, ship_by_customer = {}, {}
+    if cust_ids:
+        for c in await db.customers.find(
+                {"user_id": uid, "id": {"$in": cust_ids}},
+                {"_id": 0, "id": 1, "name": 1, "ship_sites": 1}).to_list(len(cust_ids)):
+            customers_by_id[c["id"]] = c
+            for ss in (c.get("ship_sites") or []):
+                ship_by_customer[(c["id"], ss.get("id", ""))] = ss.get("site_name", "")
+
+    products_by_id = {}
+    if prod_ids:
+        for p in await db.products.find(
+                {"user_id": uid, "id": {"$in": prod_ids}},
+                {"_id": 0, "id": 1, "name": 1}).to_list(len(prod_ids)):
+            products_by_id[p["id"]] = p.get("name", "")
+
+    invoices_by_id = {}
+    if inv_ids:
+        for i in await db.invoices.find(
+                {"user_id": uid, "id": {"$in": inv_ids}},
+                {"_id": 0, "id": 1, "invoice_number": 1, "total_amount": 1, "amount_paid": 1}
+        ).to_list(len(inv_ids)):
+            invoices_by_id[i["id"]] = i
+
+    audit_by_trip: dict = {}
+    if trip_ids:
+        cursor = db.audit_logs.find(
+            {"user_id": uid, "entity_type": "trip",
+             "entity_id": {"$in": trip_ids}, "action": {"$in": list(_LR_ACTIONS)}},
+            {"_id": 0, "entity_id": 1, "action": 1, "timestamp": 1},
+        )
+        async for a in cursor:
+            audit_by_trip.setdefault(a["entity_id"], []).append(a)
+
+    rows = []
+    tot = {"loaded": 0.0, "unloaded": 0.0, "shortage": 0.0, "allowance": 0.0,
+           "net_shortage": 0.0, "freight": 0.0, "shortage_amount": 0.0}
+    for t in trips:
+        cust = customers_by_id.get(t.get("customer_id") or "", {})
+        ship_name = ship_by_customer.get((t.get("customer_id") or "", t.get("ship_site_id") or ""), "")
+        ship_to = ship_name or t.get("to_location") or ""
+        product_name = products_by_id.get(t.get("product_id") or "", "") or t.get("load_details") or ""
+        inv = invoices_by_id.get(t.get("invoice_id") or "")
+        inv_no = (inv or {}).get("invoice_number", "") if inv else ""
+        inv_st = _derive_invoice_status(inv)
+        loaded = float(t.get("loaded_qty") or t.get("tons") or 0)
+        unloaded = float(t.get("unloaded_qty") or 0)
+        shortage = float(t.get("shortage_qty") or 0)
+        allowance = _derive_allowance_mt(t)
+        net_shortage = round(max(shortage - allowance, 0.0), 3)
+        freight = float(t.get("freight_amount") or 0)
+        shortage_amt = float(t.get("shortage_amount") or 0)
+        copies = _lr_copies_label(audit_by_trip.get(t["id"], []))
+        rows.append({
+            "trip_id": t["id"],
+            "lr_number": t.get("lr_number") or "",
+            "lr_date": t.get("date") or "",
+            "customer_reference_number": t.get("customer_reference_number") or "",
+            "from_location": t.get("from_location") or "",
+            "customer_name": cust.get("name", ""),
+            "ship_to": ship_to,
+            "vehicle_number": t.get("vehicle_number") or "",
+            "driver_name": t.get("driver_name") or "",
+            "product": product_name,
+            "loaded_qty": loaded, "unloaded_qty": unloaded,
+            "shortage_qty": shortage, "allowance_qty": allowance,
+            "net_shortage_qty": net_shortage,
+            "freight_amount": freight, "shortage_amount": shortage_amt,
+            "invoice_number": inv_no, "invoice_status": inv_st,
+            "lr_copies": copies,
+            "status": t.get("status") or "pending",
+        })
+        tot["loaded"] += loaded; tot["unloaded"] += unloaded
+        tot["shortage"] += shortage; tot["allowance"] += allowance
+        tot["net_shortage"] += net_shortage; tot["freight"] += freight
+        tot["shortage_amount"] += shortage_amt
+
+    if invoice_status and invoice_status.lower() != "all":
+        wanted = invoice_status.lower()
+        rows = [r for r in rows if r["invoice_status"] == wanted]
+
+    totals = {k: round(v, 3 if k not in ("freight", "shortage_amount") else 2) for k, v in tot.items()}
+    totals["count"] = len(rows)
+
+    return {
+        "company": {
+            "id": cid, "name": company.get("name", ""), "gstin": company.get("gstin", ""),
+            "address": company.get("address", ""), "state": company.get("state", ""),
+            "logo": company.get("logo", ""), "lr_prefix": company.get("lr_prefix", ""),
+            "company_code": _company_code(company),
+        },
+        "start": start, "end": end,
+        "rows": rows, "totals": totals,
+    }
+
+
+def _lr_register_filename(company_code: str, start: str, end: str, ext: str) -> str:
+    """`LR_Register_<CODE>_<YYYY-MM>.<ext>` when the range is exactly one
+    calendar month, else `..._<start>to<end>.<ext>`."""
+    from calendar import monthrange
+    try:
+        if start[:7] == end[:7] and start.endswith("-01"):
+            y, m = int(start[:4]), int(start[5:7])
+            if end == f"{y:04d}-{m:02d}-{monthrange(y, m)[1]:02d}":
+                return f"LR_Register_{company_code}_{start[:7]}.{ext}"
+    except Exception:
+        pass
+    return f"LR_Register_{company_code}_{start}to{end}.{ext}"
+
+
+@router.get("/reports/lr-register")
+async def lr_register_json(
+    request: Request,
+    start: Optional[str] = None, end: Optional[str] = None, month: Optional[str] = None,
+    customer_id: Optional[str] = None, vehicle_id: Optional[str] = None,
+    driver: Optional[str] = None, product_id: Optional[str] = None,
+    status: Optional[str] = None, invoice_status: Optional[str] = None,
+    q: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    """Iter124 · Monthly LR Register — JSON payload driving the in-app view.
+    Company-scoped, read-only. Freight/shortage values are the already-stored
+    trip values (Iter98/102/107 engine output) — not recomputed here."""
+    return await _lr_register_data(
+        request, user, start=start, end=end, month=month,
+        customer_id=customer_id, vehicle_id=vehicle_id, driver=driver,
+        product_id=product_id, status=status, invoice_status=invoice_status, q=q,
+    )
+
+
+@router.get("/reports/lr-register.xlsx")
+async def lr_register_xlsx(
+    request: Request,
+    start: Optional[str] = None, end: Optional[str] = None, month: Optional[str] = None,
+    customer_id: Optional[str] = None, vehicle_id: Optional[str] = None,
+    driver: Optional[str] = None, product_id: Optional[str] = None,
+    status: Optional[str] = None, invoice_status: Optional[str] = None,
+    q: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    data = await _lr_register_data(
+        request, user, start=start, end=end, month=month,
+        customer_id=customer_id, vehicle_id=vehicle_id, driver=driver,
+        product_id=product_id, status=status, invoice_status=invoice_status, q=q,
+    )
+    co = data["company"]; rows = data["rows"]; tot = data["totals"]
+    start_iso, end_iso = data["start"], data["end"]
+
+    wb = openpyxl.Workbook(); ws = wb.active
+    ws.title = f"LR Register {start_iso[:7]}"[:31]
+
+    hdr_font = Font(name="Calibri", bold=True, color="FFFFFF")
+    hdr_fill = PatternFill("solid", fgColor="0F172A")
+    band = PatternFill("solid", fgColor="F1F5F9")
+    total_fill = PatternFill("solid", fgColor="FEF3C7")
+    thin = Side(border_style="thin", color="CBD5E1")
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    ws.cell(row=1, column=1, value=f"{co['name']}   ·   GSTIN {co['gstin'] or '—'}").font = Font(bold=True, size=13)
+    ws.cell(row=2, column=1, value=(
+        f"Monthly LR Register — {start_iso} to {end_iso}   ·   "
+        f"{tot['count']} LRs   ·   generated {datetime.now(timezone.utc).astimezone().strftime('%d-%b-%Y %H:%M')}"
+    )).font = Font(italic=True, color="475569")
+
+    headers = [
+        "LR #", "LR Date", "Cust Ref #", "From", "Consignee", "Ship-To",
+        "Vehicle #", "Driver", "Product",
+        "Loading Qty (MT)", "Unloading Qty (MT)",
+        "Actual Shortage (MT)", "Allowance (MT)", "Net Shortage (MT)",
+        "Shortage ₹", "Freight ₹",
+        "Invoice #", "Invoice Status", "LR Copies",
+    ]
+    for col, h in enumerate(headers, 1):
+        c = ws.cell(row=4, column=col, value=h)
+        c.font = hdr_font; c.fill = hdr_fill; c.border = border
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    ws.freeze_panes = "A5"
+
+    for i, r in enumerate(rows, start=5):
+        line = [
+            r["lr_number"], r["lr_date"], r["customer_reference_number"],
+            r["from_location"], r["customer_name"], r["ship_to"],
+            r["vehicle_number"], r["driver_name"], r["product"],
+            r["loaded_qty"], r["unloaded_qty"],
+            r["shortage_qty"], r["allowance_qty"], r["net_shortage_qty"],
+            r["shortage_amount"], r["freight_amount"],
+            r["invoice_number"], r["invoice_status"], r["lr_copies"],
+        ]
+        for col, v in enumerate(line, 1):
+            c = ws.cell(row=i, column=col, value=v)
+            c.border = border
+            if i % 2 == 0:
+                c.fill = band
+            if col in (10, 11, 12, 13, 14):
+                c.number_format = "#,##0.000"
+            elif col in (15, 16):
+                c.number_format = '#,##0.00" ₹"'
+            c.alignment = Alignment(vertical="center", wrap_text=True)
+
+    if rows:
+        tr = 5 + len(rows)
+        ws.cell(row=tr, column=1, value="TOTAL")
+        for col in range(1, len(headers) + 1):
+            cc = ws.cell(row=tr, column=col)
+            cc.fill = total_fill; cc.border = border; cc.font = Font(bold=True)
+        ws.cell(row=tr, column=10, value=round(tot["loaded"], 3)).number_format = "#,##0.000"
+        ws.cell(row=tr, column=11, value=round(tot["unloaded"], 3)).number_format = "#,##0.000"
+        ws.cell(row=tr, column=12, value=round(tot["shortage"], 3)).number_format = "#,##0.000"
+        ws.cell(row=tr, column=13, value=round(tot["allowance"], 3)).number_format = "#,##0.000"
+        ws.cell(row=tr, column=14, value=round(tot["net_shortage"], 3)).number_format = "#,##0.000"
+        ws.cell(row=tr, column=15, value=round(tot["shortage_amount"], 2)).number_format = '#,##0.00" ₹"'
+        ws.cell(row=tr, column=16, value=round(tot["freight"], 2)).number_format = '#,##0.00" ₹"'
+        for col in range(1, len(headers) + 1):
+            ws.cell(row=tr, column=col).font = Font(bold=True)
+
+    widths = [14, 11, 12, 18, 24, 22, 12, 14, 20,
+              12, 12, 12, 12, 12, 12, 12, 14, 13, 14]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.row_dimensions[4].height = 32
+
+    buf = io.BytesIO(); wb.save(buf); buf.seek(0)
+    fname = _lr_register_filename(co["company_code"], start_iso, end_iso, "xlsx")
+    try:
+        await _log_audit(user, "report", "lr_register_export",
+                         entity_id=co.get("id", ""), entity_ref=fname,
+                         changes={"format": "xlsx", "rows": tot["count"],
+                                  "period": f"{start_iso}→{end_iso}"})
+    except Exception:
+        pass
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.get("/reports/lr-register.pdf")
+async def lr_register_pdf(
+    request: Request,
+    start: Optional[str] = None, end: Optional[str] = None, month: Optional[str] = None,
+    customer_id: Optional[str] = None, vehicle_id: Optional[str] = None,
+    driver: Optional[str] = None, product_id: Optional[str] = None,
+    status: Optional[str] = None, invoice_status: Optional[str] = None,
+    q: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT, TA_CENTER
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle
+    from reportlab.lib import colors
+    from reportlab.lib.units import mm
+    from pdf._base import _UNI_FONT, _UNI_FONT_BOLD
+    from io import BytesIO as _BIO
+
+    data = await _lr_register_data(
+        request, user, start=start, end=end, month=month,
+        customer_id=customer_id, vehicle_id=vehicle_id, driver=driver,
+        product_id=product_id, status=status, invoice_status=invoice_status, q=q,
+    )
+    co = data["company"]; rows = data["rows"]; tot = data["totals"]
+    start_iso, end_iso = data["start"], data["end"]
+
+    PALETTE = {
+        "ink": colors.HexColor("#0f172a"), "sub": colors.HexColor("#475569"),
+        "line": colors.HexColor("#cbd5e1"), "zebra": colors.HexColor("#f8fafc"),
+        "gold": colors.HexColor("#fef3c7"), "gold_ink": colors.HexColor("#78350f"),
+    }
+
+    logo_bytes = None
+    raw_logo = co.get("logo") or ""
+    if raw_logo and "," in raw_logo and raw_logo.strip().lower().startswith("data:image"):
+        try:
+            logo_bytes = base64.b64decode(raw_logo.split(",", 1)[1])
+        except Exception:
+            logo_bytes = None
+
+    def _fmt_date(iso: str) -> str:
+        if not iso: return ""
+        try:
+            y, m, d = iso.split("-")
+            months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+            return f"{int(d):02d}-{months[int(m)-1]}-{y}"
+        except Exception:
+            return iso
+
+    def _rup(v):
+        try: return f"₹\u00a0{float(v or 0):,.0f}"
+        except Exception: return "₹\u00a00"
+    def _mt(v):
+        try: return f"{float(v or 0):,.2f}"
+        except Exception: return "0.00"
+
+    def _page(canvas, doc_):
+        canvas.saveState()
+        page_w, page_h = doc_.pagesize
+        m_l, m_r, m_top, m_bot = 10*mm, 10*mm, 12*mm, 10*mm
+        canvas.setStrokeColor(PALETTE["line"]); canvas.setLineWidth(0.5)
+        text_x = m_l
+        if logo_bytes:
+            try:
+                canvas.drawImage(_BIO(logo_bytes), m_l, page_h - m_top - 16*mm,
+                                 width=20*mm, height=16*mm, preserveAspectRatio=True, mask="auto")
+                text_x = m_l + 22*mm
+            except Exception:
+                pass
+        canvas.setFont(_UNI_FONT_BOLD, 12); canvas.setFillColor(PALETTE["ink"])
+        canvas.drawString(text_x, page_h - m_top - 5*mm, (co["name"] or "Company")[:80])
+        canvas.setFont(_UNI_FONT, 8); canvas.setFillColor(PALETTE["sub"])
+        canvas.drawString(text_x, page_h - m_top - 10*mm,
+                          f"GSTIN {co['gstin'] or '—'}  ·  {(co.get('address','') or '')[:80]}")
+        canvas.setFont(_UNI_FONT_BOLD, 10); canvas.setFillColor(PALETTE["ink"])
+        canvas.drawRightString(page_w - m_r, page_h - m_top - 5*mm, "MONTHLY LR REGISTER")
+        canvas.setFont(_UNI_FONT, 8); canvas.setFillColor(PALETTE["sub"])
+        canvas.drawRightString(page_w - m_r, page_h - m_top - 10*mm,
+                               f"Period: {_fmt_date(start_iso)} — {_fmt_date(end_iso)}  ·  {tot['count']} LRs")
+        canvas.line(m_l, page_h - m_top - 13*mm, page_w - m_r, page_h - m_top - 13*mm)
+        canvas.setFont(_UNI_FONT, 7); canvas.setFillColor(PALETTE["sub"])
+        canvas.drawString(m_l, m_bot,
+                          f"Generated {datetime.now(timezone.utc).astimezone().strftime('%d-%b-%Y %H:%M')}"
+                          f"  ·  {(co['name'] or '')[:60]}  ·  Confidential")
+        canvas.drawRightString(page_w - m_r, m_bot, f"Page {doc_.page}")
+        canvas.restoreState()
+
+    buf = _BIO()
+    doc = SimpleDocTemplate(
+        buf, pagesize=landscape(A4),
+        leftMargin=10*mm, rightMargin=10*mm, topMargin=26*mm, bottomMargin=14*mm,
+        title=f"LR Register {start_iso[:7]}", author=co["name"] or "Bitumen Transport",
+    )
+
+    col_widths_mm = [22, 20, 18, 24, 32, 30, 18, 20, 22, 12, 12, 12, 12, 12, 18, 20, 18, 18]
+    col_widths = [w * mm for w in col_widths_mm]
+
+    hdr_h = ParagraphStyle("hdr", fontName=_UNI_FONT_BOLD, fontSize=7.5,
+                           leading=9, alignment=TA_CENTER, textColor=colors.white)
+    cell_h = ParagraphStyle("cell", fontName=_UNI_FONT, fontSize=7.5,
+                            leading=9, alignment=TA_LEFT, textColor=PALETTE["ink"])
+
+    def _wrap(v, size=7.5):
+        return Paragraph(str(v or "").replace("&", "&amp;").replace("<", "&lt;"),
+                         ParagraphStyle("w", fontName=_UNI_FONT, fontSize=size,
+                                        leading=9, alignment=TA_LEFT, textColor=PALETTE["ink"]))
+
+    hdrs = [Paragraph(x, hdr_h) for x in [
+        "LR #", "LR Date", "Cust Ref #", "From", "Consignee",
+        "Ship-To", "Vehicle #", "Driver", "Product",
+        "Load MT", "Unload MT", "Sh MT", "Allow MT", "Net MT",
+        "Freight ₹", "Invoice #", "Inv Status", "LR Copies",
+    ]]
+    table_data = [hdrs]
+
+    for r in rows:
+        table_data.append([
+            _wrap(r["lr_number"]),
+            _wrap(_fmt_date(r["lr_date"])),
+            _wrap(r["customer_reference_number"]),
+            _wrap(r["from_location"]),
+            _wrap(r["customer_name"]),
+            _wrap(r["ship_to"]),
+            _wrap(r["vehicle_number"]),
+            _wrap(r["driver_name"]),
+            _wrap(r["product"]),
+            _mt(r["loaded_qty"]), _mt(r["unloaded_qty"]),
+            _mt(r["shortage_qty"]), _mt(r["allowance_qty"]), _mt(r["net_shortage_qty"]),
+            _rup(r["freight_amount"]),
+            _wrap(r["invoice_number"] or "—"),
+            _wrap(r["invoice_status"].replace("_", " ").title()),
+            _wrap(r["lr_copies"], size=7),
+        ])
+
+    if rows:
+        table_data.append([
+            Paragraph("<b>TOTAL</b>",
+                      ParagraphStyle("t", fontName=_UNI_FONT_BOLD, fontSize=8, leading=10,
+                                     textColor=PALETTE["gold_ink"])),
+            "", "", "", "", "", "", "", "",
+            _mt(tot["loaded"]), _mt(tot["unloaded"]),
+            _mt(tot["shortage"]), _mt(tot["allowance"]), _mt(tot["net_shortage"]),
+            _rup(tot["freight"]),
+            "", "", "",
+        ])
+
+    story = []
+    if not rows:
+        story.append(Paragraph(
+            f"<font color='#64748b'>No LRs issued in this period "
+            f"({_fmt_date(start_iso)} — {_fmt_date(end_iso)}). "
+            f"Try widening the date range or clearing filters.</font>",
+            ParagraphStyle("empty", fontName=_UNI_FONT, fontSize=10, leading=14, alignment=TA_CENTER),
+        ))
+    else:
+        tbl = Table(table_data, colWidths=col_widths, repeatRows=1)
+        tstyle = [
+            ("BACKGROUND", (0, 0), (-1, 0), PALETTE["ink"]),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), _UNI_FONT_BOLD),
+            ("FONTSIZE", (0, 0), (-1, 0), 7.5),
+            ("ALIGN", (9, 1), (14, -1), "RIGHT"),
+            ("ALIGN", (0, 0), (-1, 0), "CENTER"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("GRID", (0, 0), (-1, -1), 0.3, PALETTE["line"]),
+            ("FONTSIZE", (0, 1), (-1, -2), 7.5),
+            ("FONTNAME", (0, 1), (-1, -2), _UNI_FONT),
+            ("BACKGROUND", (0, -1), (-1, -1), PALETTE["gold"]),
+            ("FONTNAME", (0, -1), (-1, -1), _UNI_FONT_BOLD),
+            ("FONTSIZE", (0, -1), (-1, -1), 8),
+            ("LINEABOVE", (0, -1), (-1, -1), 1.2, PALETTE["ink"]),
+        ]
+        for i in range(1, len(table_data) - 1):
+            if i % 2 == 0:
+                tstyle.append(("BACKGROUND", (0, i), (-1, i), PALETTE["zebra"]))
+        tbl.setStyle(TableStyle(tstyle))
+        story.append(tbl)
+    doc.build(story, onFirstPage=_page, onLaterPages=_page)
+    pdf_bytes = buf.getvalue()
+
+    fname = _lr_register_filename(co["company_code"], start_iso, end_iso, "pdf")
+    try:
+        await _log_audit(user, "report", "lr_register_export",
+                         entity_id=co.get("id", ""), entity_ref=fname,
+                         changes={"format": "pdf", "rows": tot["count"],
+                                  "period": f"{start_iso}→{end_iso}"})
+    except Exception:
+        pass
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+
+
 def _public_base_url(request):
     """Return the public HTTPS base URL for building share links."""
     url = os.environ.get("REACT_APP_BACKEND_URL") or os.environ.get("PUBLIC_BASE_URL")

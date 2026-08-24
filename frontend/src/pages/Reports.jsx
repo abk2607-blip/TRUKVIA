@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { NavLink, Routes, Route, Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api, API, fmtCurrency, fmtDate } from "@/api";
-import { FileText, TrendingUp, Scale, Download, Landmark, Handshake, Clock, MessageCircle, Truck, Printer } from "lucide-react";
+import { FileText, TrendingUp, Scale, Download, Landmark, Handshake, Clock, MessageCircle, Truck, Printer, ClipboardList } from "lucide-react";
 import HaltingReport from "@/pages/HaltingReport";
 
 const tabs = [
@@ -10,6 +10,7 @@ const tabs = [
   { to: "pl", te: "లాభ-నష్టం", en: "P&L", icon: TrendingUp, testid: "tab-pl" },
   { to: "supplier-pl", te: "సప్లయర్ P&L", en: "Supplier P&L", icon: Handshake, testid: "tab-supplier-pl" },
   { to: "supplier-statement", te: "సప్లయర్ స్టేట్‌మెంట్", en: "Supplier Statement", icon: Truck, testid: "tab-supplier-statement" },
+  { to: "lr-register", te: "LR రిజిస్టర్", en: "LR Register", icon: ClipboardList, testid: "tab-lr-register" },
   { to: "halting", te: "హాల్టింగ్", en: "Halting", icon: Clock, testid: "tab-halting" },
   { to: "balance-sheet", te: "బ్యాలెన్స్ షీట్", en: "Balance Sheet", icon: Scale, testid: "tab-balance-sheet" },
   { to: "gstr1", te: "GSTR-1", en: "GSTR-1", icon: Landmark, testid: "tab-gstr1" },
@@ -50,6 +51,7 @@ export default function Reports() {
         <Route path="pl" element={<PLReport />} />
         <Route path="supplier-pl" element={<SupplierPLReport />} />
         <Route path="supplier-statement" element={<SupplierStatementReport />} />
+        <Route path="lr-register" element={<LRRegisterReport />} />
         <Route path="halting" element={<HaltingReport />} />
         <Route path="balance-sheet" element={<BalanceSheetReport />} />
         <Route path="gstr1" element={<GSTR1Report />} />
@@ -950,6 +952,211 @@ function BalanceSheetReport() {
           <div className="md:col-span-2 text-xs text-zinc-500 italic">{data.note}</div>
         </div>
       )}
+    </div>
+  );
+}
+
+/* ------------------ Iter124 · LR Register ------------------ */
+function LRRegisterReport() {
+  const today = new Date();
+  const _fmt = (d) => d.toISOString().slice(0, 10);
+  const monthStart = _fmt(new Date(today.getFullYear(), today.getMonth(), 1));
+  const monthEnd = _fmt(today);
+  const [start, setStart] = useState(monthStart);
+  const [end, setEnd] = useState(monthEnd);
+  const [customerId, setCustomerId] = useState("");
+  const [driver, setDriver] = useState("");
+  const [invoiceStatus, setInvoiceStatus] = useState("all");
+  const [q, setQ] = useState("");
+  const [full, setFull] = useState(false);
+
+  const { data: customersResp } = useQuery({
+    queryKey: ["customers-list-lr-reg"],
+    queryFn: async () => (await api.get("/customers", { params: { limit: 500 } })).data,
+  });
+  const customers = Array.isArray(customersResp) ? customersResp : (customersResp?.items || []);
+
+  const params = { start, end };
+  if (customerId) params.customer_id = customerId;
+  if (driver) params.driver = driver;
+  if (invoiceStatus && invoiceStatus !== "all") params.invoice_status = invoiceStatus;
+  if (q) params.q = q;
+
+  const { data, isFetching, refetch } = useQuery({
+    queryKey: ["lr-register", start, end, customerId, driver, invoiceStatus, q],
+    queryFn: async () => (await api.get("/reports/lr-register", { params })).data,
+    keepPreviousData: true,
+  });
+
+  const setThisMonth = () => {
+    setStart(_fmt(new Date(today.getFullYear(), today.getMonth(), 1))); setEnd(_fmt(today));
+  };
+  const setLastMonth = () => {
+    const y = today.getMonth() === 0 ? today.getFullYear() - 1 : today.getFullYear();
+    const m = today.getMonth() === 0 ? 11 : today.getMonth() - 1;
+    setStart(_fmt(new Date(y, m, 1))); setEnd(_fmt(new Date(y, m + 1, 0)));
+  };
+
+  const _download = async (ext) => {
+    const resp = await api.get(`/reports/lr-register.${ext}`, {
+      params, responseType: "blob", timeout: 90_000,
+    });
+    const mime = ext === "xlsx"
+      ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+      : "application/pdf";
+    const url = URL.createObjectURL(new Blob([resp.data], { type: mime }));
+    const a = document.createElement("a"); a.href = url;
+    const dispo = resp.headers?.["content-disposition"] || "";
+    const m = /filename="([^"]+)"/.exec(dispo);
+    a.download = m ? m[1] : `LR_Register.${ext}`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    const { toast } = await import("sonner");
+    toast.success(`${ext.toUpperCase()} downloaded`);
+  };
+
+  const rows = data?.rows || [];
+  const tot = data?.totals || {};
+  const co = data?.company || {};
+
+  return (
+    <div className="space-y-4" data-testid="lr-register-tab">
+      <div className="border border-zinc-200 bg-white rounded-sm p-4 grid grid-cols-1 md:grid-cols-6 gap-3">
+        <FieldWrap label="Start">
+          <input data-testid="lrreg-start" type="date" value={start} onChange={(e) => setStart(e.target.value)} className={ic} />
+        </FieldWrap>
+        <FieldWrap label="End">
+          <input data-testid="lrreg-end" type="date" value={end} onChange={(e) => setEnd(e.target.value)} className={ic} />
+        </FieldWrap>
+        <FieldWrap label="Customer">
+          <select data-testid="lrreg-customer" value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={ic}>
+            <option value="">All</option>
+            {customers.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+        </FieldWrap>
+        <FieldWrap label="Driver contains">
+          <input data-testid="lrreg-driver" type="text" value={driver} onChange={(e) => setDriver(e.target.value)} className={ic} placeholder="e.g. Ravi" />
+        </FieldWrap>
+        <FieldWrap label="Invoice Status">
+          <select data-testid="lrreg-invstatus" value={invoiceStatus} onChange={(e) => setInvoiceStatus(e.target.value)} className={ic}>
+            <option value="all">All</option>
+            <option value="un_invoiced">Un-invoiced</option>
+            <option value="unpaid">Unpaid</option>
+            <option value="partially_paid">Partially paid</option>
+            <option value="paid">Paid</option>
+          </select>
+        </FieldWrap>
+        <FieldWrap label="Search">
+          <input data-testid="lrreg-q" type="text" value={q} onChange={(e) => setQ(e.target.value)} className={ic} placeholder="LR / vehicle / driver / ref" />
+        </FieldWrap>
+        <div className="md:col-span-6 flex flex-wrap gap-2 pt-1">
+          <button data-testid="lrreg-this-month" onClick={setThisMonth} className="px-3 py-1.5 text-[11px] uppercase tracking-wider border border-zinc-300 rounded-sm hover:bg-zinc-100">This month</button>
+          <button data-testid="lrreg-last-month" onClick={setLastMonth} className="px-3 py-1.5 text-[11px] uppercase tracking-wider border border-zinc-300 rounded-sm hover:bg-zinc-100">Last month</button>
+          <label className="inline-flex items-center gap-2 px-3 py-1.5 text-[11px] uppercase tracking-wider border border-zinc-300 rounded-sm">
+            <input data-testid="lrreg-full-toggle" type="checkbox" checked={full} onChange={(e) => setFull(e.target.checked)} className="w-3 h-3" />
+            Full view
+          </label>
+          <div className="grow" />
+          <button data-testid="lrreg-refresh" onClick={() => refetch()} disabled={isFetching} className="px-3 py-1.5 text-[11px] uppercase tracking-wider bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 disabled:opacity-50">
+            {isFetching ? "Loading…" : "Refresh"}
+          </button>
+          <button data-testid="lr-register-xlsx" onClick={() => _download("xlsx")} className="inline-flex items-center gap-2 px-3 py-1.5 text-[11px] uppercase tracking-wider border border-emerald-600 text-emerald-700 rounded-sm hover:bg-emerald-600 hover:text-white">
+            <Download size={12} /> Excel
+          </button>
+          <button data-testid="lr-register-pdf" onClick={() => _download("pdf")} className="inline-flex items-center gap-2 px-3 py-1.5 text-[11px] uppercase tracking-wider border border-rose-600 text-rose-700 rounded-sm hover:bg-rose-600 hover:text-white">
+            <Printer size={12} /> PDF
+          </button>
+        </div>
+      </div>
+
+      {co?.name && (
+        <div className="border border-zinc-200 bg-white rounded-sm px-4 py-3 flex flex-wrap items-center gap-4 text-xs">
+          <div><span className="font-bold text-zinc-950">{co.name}</span> · GSTIN {co.gstin || "—"}</div>
+          <div className="text-zinc-500">Period {start} — {end}</div>
+          <div className="text-zinc-500">Company Code <span className="font-mono">{co.company_code}</span></div>
+          <div className="text-zinc-500">LRs <span className="font-mono">{tot.count || 0}</span></div>
+        </div>
+      )}
+
+      <div className="border border-zinc-200 bg-white rounded-sm overflow-x-auto" data-testid="lr-register-table">
+        <table className="w-full text-xs">
+          <thead className="bg-zinc-950 text-white sticky top-0">
+            <tr>
+              <th className="px-2 py-2 text-left">LR #</th>
+              <th className="px-2 py-2 text-left">Date</th>
+              <th className="px-2 py-2 text-left">Cust Ref #</th>
+              <th className="px-2 py-2 text-left">From</th>
+              <th className="px-2 py-2 text-left">Consignee</th>
+              <th className="px-2 py-2 text-left">Ship-To</th>
+              <th className="px-2 py-2 text-left">Vehicle</th>
+              <th className="px-2 py-2 text-left">Driver</th>
+              <th className="px-2 py-2 text-left">Product</th>
+              <th className="px-2 py-2 text-right">Load MT</th>
+              <th className="px-2 py-2 text-right">Unload MT</th>
+              <th className="px-2 py-2 text-right">Shortage MT</th>
+              <th className="px-2 py-2 text-right">Allow MT</th>
+              <th className="px-2 py-2 text-right">Net MT</th>
+              {full && <th className="px-2 py-2 text-right">Shortage ₹</th>}
+              <th className="px-2 py-2 text-right">Freight ₹</th>
+              <th className="px-2 py-2 text-left">Invoice #</th>
+              <th className="px-2 py-2 text-left">Inv Status</th>
+              <th className="px-2 py-2 text-left">LR Copies</th>
+            </tr>
+          </thead>
+          <tbody className="font-mono">
+            {rows.length === 0 && (
+              <tr><td colSpan={full ? 19 : 18} className="text-center italic text-zinc-500 py-8">
+                No LRs issued in this period. Try widening the date range or clearing filters.
+              </td></tr>
+            )}
+            {rows.map((r, i) => (
+              <tr key={r.trip_id} className={i % 2 === 0 ? "bg-zinc-50" : ""} data-testid={`lrreg-row-${r.trip_id}`}>
+                <td className="px-2 py-1 font-bold text-indigo-800">{r.lr_number}</td>
+                <td className="px-2 py-1">{fmtDate(r.lr_date)}</td>
+                <td className="px-2 py-1">{r.customer_reference_number || "—"}</td>
+                <td className="px-2 py-1">{r.from_location}</td>
+                <td className="px-2 py-1">{r.customer_name}</td>
+                <td className="px-2 py-1">{r.ship_to}</td>
+                <td className="px-2 py-1">{r.vehicle_number}</td>
+                <td className="px-2 py-1">{r.driver_name || "—"}</td>
+                <td className="px-2 py-1">{r.product || "—"}</td>
+                <td className="px-2 py-1 text-right">{Number(r.loaded_qty).toFixed(2)}</td>
+                <td className="px-2 py-1 text-right">{Number(r.unloaded_qty).toFixed(2)}</td>
+                <td className="px-2 py-1 text-right">{Number(r.shortage_qty).toFixed(3)}</td>
+                <td className="px-2 py-1 text-right">{Number(r.allowance_qty).toFixed(3)}</td>
+                <td className="px-2 py-1 text-right">{Number(r.net_shortage_qty).toFixed(3)}</td>
+                {full && <td className="px-2 py-1 text-right">{fmtCurrency(r.shortage_amount)}</td>}
+                <td className="px-2 py-1 text-right">{fmtCurrency(r.freight_amount)}</td>
+                <td className="px-2 py-1">{r.invoice_number || "—"}</td>
+                <td className="px-2 py-1">
+                  <span className={`px-1.5 py-0.5 rounded-sm text-[10px] uppercase tracking-wider ${
+                    r.invoice_status === "paid" ? "bg-emerald-100 text-emerald-800"
+                    : r.invoice_status === "partially_paid" ? "bg-amber-100 text-amber-800"
+                    : r.invoice_status === "unpaid" ? "bg-rose-100 text-rose-800"
+                    : "bg-zinc-100 text-zinc-600"
+                  }`}>{r.invoice_status.replace("_", " ")}</span>
+                </td>
+                <td className="px-2 py-1 text-[10px] uppercase tracking-wider text-zinc-600">{r.lr_copies}</td>
+              </tr>
+            ))}
+          </tbody>
+          {rows.length > 0 && (
+            <tfoot className="bg-amber-50 border-t-2 border-zinc-950 font-bold">
+              <tr>
+                <td className="px-2 py-2" colSpan={9}>TOTAL · {tot.count} LR{tot.count === 1 ? "" : "s"}</td>
+                <td className="px-2 py-2 text-right">{Number(tot.loaded || 0).toFixed(2)}</td>
+                <td className="px-2 py-2 text-right">{Number(tot.unloaded || 0).toFixed(2)}</td>
+                <td className="px-2 py-2 text-right">{Number(tot.shortage || 0).toFixed(3)}</td>
+                <td className="px-2 py-2 text-right">{Number(tot.allowance || 0).toFixed(3)}</td>
+                <td className="px-2 py-2 text-right">{Number(tot.net_shortage || 0).toFixed(3)}</td>
+                {full && <td className="px-2 py-2 text-right">{fmtCurrency(tot.shortage_amount || 0)}</td>}
+                <td className="px-2 py-2 text-right">{fmtCurrency(tot.freight || 0)}</td>
+                <td colSpan={3}></td>
+              </tr>
+            </tfoot>
+          )}
+        </table>
+      </div>
     </div>
   );
 }

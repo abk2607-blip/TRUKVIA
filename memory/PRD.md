@@ -2,6 +2,22 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter124 · Monthly LR Register / Statement Export** (Feb 2026 — awaiting UAT)
+  - **What ships**
+    - 3 new endpoints (`GET /api/reports/lr-register` JSON · `.xlsx` · `.pdf`) all fed by ONE shared read-only loader `_lr_register_data()`, so JSON / XLSX / PDF / in-app view stay byte-identical.
+    - New Reports tab **LR Register** (`data-testid="tab-lr-register"`) with filters (Start · End · This-Month / Last-Month shortcuts · Customer · Driver · Invoice-Status · Search · Full-view toggle), sticky-header table, totals footer, and inline Excel + PDF download buttons.
+    - Canonical layout matches user spec exactly: LR # · LR Date · Cust Ref # · From · Consignee · Ship-To · Vehicle # · Driver · Product · Loading MT · Unloading MT · Actual Shortage MT · Allowance MT · Net Shortage MT · Freight ₹ · Invoice # · Invoice Status · LR Copies. **Full-view** adds Shortage ₹ column only (no duplicate Cust Ref).
+    - Filename rule: `LR_Register_<CODE>_<YYYY-MM>.{xlsx,pdf}` for month-aligned ranges, `LR_Register_<CODE>_<start>to<end>.{xlsx,pdf}` for custom ranges. Company code = `lr_prefix` else slug of `company.name`.
+  - **Read-only guarantees**
+    - `_derive_allowance_mt()` and `_derive_invoice_status()` MIRROR the Iter98/102/107 and Iter118 formulas without touching them; trip docs never mutated. `test_read_only_no_business_field_mutation` verifies byte-identical trip fields before/after JSON+XLSX+PDF calls.
+    - Ship-To fallback: `customer.ship_sites[ship_site_id].site_name` → else `trip.to_location`. Consistent across all four outputs. Verified by `test_ship_to_falls_back_to_to_location`.
+    - LR Copies label: `ORIGINAL` when no audit history; `ZIP · N×`, `REGEN · N×`, `BULK · N×` when Iter122/regenerate/Iter109 audit events exist.
+    - Cap 10 000 rows per request (Iter57 parity). Batched denormalisation (customers · products · invoices · audit_logs) with `$in` — no N+1.
+    - Multi-company scoping via `_active_company_id(request, user)`; `company_id` query param not exposed.
+  - **Not touched**: `_compute_trip`, supplier freight/shortage engine, invoice PDF, LR PDF, `/trips/{tid}/lr` single-copy, `/trips/{tid}/lr/all-copies`, auth stability paths, Iter121 loopback filter, Iter123 login hero.
+  - **Tests** — `tests/test_iter124_lr_register.py` — 7 assertions covering JSON shape · XLSX headers + workbook parse · PDF magic bytes + filename · invoice-status filter · Ship-To fallback · read-only invariance · empty-period behaviour. **All 7 pass in 21.98 s.**
+  - **UAT artefacts**: `/app/sample_pdfs/iter124_lr_register_2028-11.{xlsx,pdf}` + live tab at `Reports → LR Register`.
+
 - [x] **Iter123 · Login Hero Rebrand — bitumen tanker photo + Telugu heading readability** (Feb 2026 — APPROVED ✅)
   - Replaced the generic unsplash highway-truck hero with the user's own orange BITUMEN tanker photo. Source PNG (2.5 MB) was resized to 1600 px and re-encoded as progressive JPEG (279 KB, quality 85) at `/app/frontend/public/images/bitumen-tanker-hero.jpg`. `Login.jsx:6` now points at the local asset.
   - Image, crop and gradient are **locked** — user-approved. Only readability polish applied: added `text-shadow: 0 2px 8px rgba(0,0,0,0.6), 0 1px 2px rgba(0,0,0,0.7)` to the Telugu H1 and lighter shadows to the eyebrow and sub-copy so the "బిటుమెన్ ట్రాన్స్‌పోర్ట్ అకౌంటింగ్" heading pops over the bright-sky region without darkening the photograph.
