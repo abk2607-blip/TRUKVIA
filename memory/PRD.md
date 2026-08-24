@@ -2,6 +2,15 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter118 · Invoice header spacing + Basis column removal** (Feb 2026 — awaiting UAT)
+  - **1. Company header spacing** — `Spacer(1, 3)` inserted between `Company Name` and `Address` in `pdf/invoice.py::company_left`. Header stays same height; name and address no longer look crowded.
+  - **2. Basis column removed from customer-facing PDF** — 14 → 13 cols. Freight basis (`applied_freight_method`, `freight_qty_used`) stays 100% intact in the Trip record and calculation engine — this is a PRESENTATION-only removal.
+  - **3. Freed width redistributed** — new mm widths `[17, 20, 24, 28, 26, 15, 15, 18, 18, 18, 18, 24, 36]`. Product +6, Cust Ref +2, Rate +2, Unload Date / Actual / Allowance / Net Short +1 each — realistic long values now fit cleanly single-line. Header font bumped 7.6 → 7.8 pt for the same reason.
+  - **4. Sub-row spans updated** — `Halting / Diesel / Advance / Shortage / Excess` sub-rows now span cols 0..11, amount in col 12 (matches the 13-col table).
+  - **Verified**: `Basis / Per Ton (Loading) / Per Ton (Unloading)` all absent from extracted PDF text. All 13 headers single-line. 11/11 adjacent invoice regressions pass (iter67, iter82, iter107).
+  - **Sample PDF for UAT**: `/app/sample_pdfs/iter118_invoice_final.pdf` (also overwrites `iter113_invoice_preview_sample.pdf`).
+  - **Not touched**: `_compute_trip`, freight / shortage / supplier / invoice calculation logic, auth, Iter105/106/106b/110/111 approved code paths, landscape, English-only, pagination behaviour, totals section, shortage-allowance explanation.
+
 - [x] **Iter117 · Invoice final UI refinement — alignment + Indian date format** (Feb 2026 — awaiting UAT)
   - **1. Bill-To vertical spacing** — inserted `Spacer(1, 3/4)` between Name → Address → GSTIN → State/Phone in `pdf/invoice.py::bill_lines`. Header stays same height, but Name no longer visually collides with Address; GSTIN/State line has breathing room.
   - **2. Indian date format app-wide** — new backend helper `_fmt_ind_date(v)` in `pdf/_base.py` and frontend mirror `formatIndDate(v)` in `utils/date.js`. Renders as `23-Aug-2026`. Applied on Invoice PDF (Invoice Date + every Trip Date + Unload Date) and LR PDF (Date-of-Issue pill on p1 header + mini navy header on p2). Storage & API unchanged (still ISO `YYYY-MM-DD`). Frontend util is ready for the Trips / Invoices / Customers screen rollout after PDF UAT sign-off.

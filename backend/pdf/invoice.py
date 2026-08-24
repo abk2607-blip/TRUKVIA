@@ -125,6 +125,7 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
 
     company_left = [Paragraph(f"<font size='14'><b>{company_name}</b></font>", styles["Body"])]
     if company.get("address"):
+        company_left.append(Spacer(1, 3))
         company_left.append(Paragraph(company["address"], styles["BodyMut"]))
     if contact_line:
         company_left.append(Paragraph(contact_line, styles["BodyMut"]))
@@ -274,22 +275,24 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
     story.append(party_tbl)
     story.append(Spacer(1, 5))
 
-    # ================== 3. TRIP LINE ITEMS (14 cols · single-line auto-fit) ==================
-    # Iter117 · Column order locked to the user's approved contract:
-    #   Date | Vehicle | Cust Ref | Product | Route | Basis | Load MT |
-    #   Unload MT | Unload Date | Actual Short | Allowance | Net Short |
-    #   Rate | Amount.  Headers AND body cells are auto-shrunk PER CELL
-    #   via `_fit_paragraph` so nothing wraps.
+    # ================== 3. TRIP LINE ITEMS (13 cols · Basis removed in Iter118) ==================
+    # Iter118 · Column order — Basis column removed from the customer-facing
+    # PDF (freight basis stays fully intact in the Trip record + backend
+    # calculation; this is a PRESENTATION-only removal). The freed 22 mm is
+    # redistributed across Product / Route / Load / Unload / Unload-Date /
+    # Actual / Allowance / Net / Rate / Amount so the visible billing
+    # columns get better horizontal breathing room.
     hdr_labels = [
-        "Date", "Vehicle No", "Cust Ref", "Product", "Route", "Basis",
+        "Date", "Vehicle No", "Cust Ref", "Product", "Route",
         "Load MT", "Unload MT", "Unload Date",
         "Actual Short", "Allowance", "Net Short",
         "Rate", "Amount (\u20B9)",
     ]
     _hdr_style = ParagraphStyle(name="HdrCell", parent=styles["SubLbl"],
-                                fontName=_UNI_FONT_BOLD, fontSize=7.6,
+                                fontName=_UNI_FONT_BOLD, fontSize=7.8,
                                 leading=9, textColor=C_HEAD_T, alignment=1)
-    _COL_MM = [17, 20, 22, 22, 22, 22, 14, 14, 17, 17, 17, 17, 22, 34]
+    # 277 mm inner width redistributed across 13 columns (was 14 with Basis=22 mm)
+    _COL_MM = [17, 20, 24, 28, 26, 15, 15, 18, 18, 18, 18, 24, 36]
     from reportlab.lib.units import mm as _mm
     _COL_PTS = [w * _mm - 6 for w in _COL_MM]
     hdr = [_fit_paragraph(txt, _hdr_style, _COL_PTS[i], min_font=5.5)
@@ -360,19 +363,18 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
             _fit_paragraph(cust_ref or "—", _rt, _COL_PTS[2], min_font=4.8),
             _fit_paragraph(t.get("load_details", "") or "—", _rt, _COL_PTS[3], min_font=4.8),
             _fit_paragraph(route_html, _rt, _COL_PTS[4], min_font=4.8),
-            _fit_paragraph(basis_html, _rt, _COL_PTS[5], min_font=4.8),
             Paragraph(f"{loaded_mt:.3f}", _rn),
             Paragraph(f"{unloaded_mt:.3f}" if unloaded_mt > 0 else "—", _rn),
-            _fit_paragraph(_fmt_ind_date(t.get("unloaded_at") or t.get("unload_date")), _rn, _COL_PTS[8], min_font=5.0),
+            _fit_paragraph(_fmt_ind_date(t.get("unloaded_at") or t.get("unload_date")), _rn, _COL_PTS[7], min_font=5.0),
             Paragraph(actual_short_cell, _rn),
             Paragraph(allow_cell, _rn),
             Paragraph(net_short_cell, _rn),
-            _fit_paragraph(rate_html, styles["RowRate"], _COL_PTS[12], min_font=5.5),
-            Paragraph(f"₹ {_fmt(t.get('freight_amount', 0))}", styles["RowAmt"]),
+            _fit_paragraph(rate_html, styles["RowRate"], _COL_PTS[11], min_font=5.5),
+            Paragraph(f"\u20B9 {_fmt(t.get('freight_amount', 0))}", styles["RowAmt"]),
         ])
 
         # ---- Sub-rows (Halting / Diesel / Advance / Shortage / Excess) ----
-        # Iter117 · 14 slots — label spans cols 0-12, amount lives in col 13.
+        # Iter118 · 13 slots — label spans cols 0..11, amount lives in col 12.
         def _add_sub(label, amt_str, remark=""):
             if remark:
                 from xml.sax.saxutils import escape as _xesc
@@ -381,7 +383,7 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
                     styles["SubLbl"])
             else:
                 lbl = Paragraph(f"↳ {label}", styles["SubLbl"])
-            rows.append([lbl] + [""] * 12 + [Paragraph(amt_str, styles["AmtSub"])])
+            rows.append([lbl] + [""] * 11 + [Paragraph(amt_str, styles["AmtSub"])])
             sub_row_indices.append(len(rows) - 1)
 
         if float(t.get("halting_amount", 0) or 0) > 0:
@@ -506,7 +508,7 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
                 lbl = "Add: Excess"
             _add_sub(lbl, f"₹ {_fmt(excess_amt)}", remark=t.get("excess_remarks", "") or "")
 
-    # Iter117 · 14-col landscape widths (mm) — match _COL_MM used by _fit_paragraph.
+    # Iter118 · 13-col landscape widths (mm) — match _COL_MM used by _fit_paragraph.
     col_widths = [w * mm for w in _COL_MM]
     items_tbl = Table(rows, colWidths=col_widths, repeatRows=1)
     _style = [
@@ -523,8 +525,8 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
         ("LINEABOVE", (0, 0), (-1, 0), 0.4, C_LINE),
         ("BOX",       (0, 0), (-1, -1), 0.6, C_LINE_D),
         ("ALIGN", (0, 1), (0, -1), "CENTER"),   # Date
-        ("ALIGN", (6, 1), (11, -1), "CENTER"),  # Load / Unload / UnloadDate / Actual / Allow / Net
-        ("ALIGN", (13, 1), (13, -1), "RIGHT"),  # Amount
+        ("ALIGN", (5, 1), (10, -1), "CENTER"),  # Load / Unload / UnloadDate / Actual / Allow / Net
+        ("ALIGN", (12, 1), (12, -1), "RIGHT"),  # Amount
     ]
     for r in range(1, len(rows)):
         if r in sub_row_indices:
@@ -532,8 +534,8 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
         if (r % 2) == 0:
             _style.append(("BACKGROUND", (0, r), (-1, r), C_ROW_B))
     for r in sub_row_indices:
-        # Sub-row: label spans cols 0..12, amount in col 13
-        _style.append(("SPAN", (0, r), (12, r)))
+        # Iter118 sub-row: label spans cols 0..11, amount in col 12
+        _style.append(("SPAN", (0, r), (11, r)))
         _style.append(("BACKGROUND", (0, r), (-1, r), C_SUB_BG))
         _style.append(("TEXTCOLOR", (0, r), (-1, r), C_SUB_TX))
         _style.append(("TOPPADDING", (0, r), (-1, r), 3))
