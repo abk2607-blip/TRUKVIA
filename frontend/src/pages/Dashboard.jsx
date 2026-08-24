@@ -402,6 +402,16 @@ function SaveHealthTile() {
               <span className="font-bold">{authFailures}</span>
               <span className="text-[9px] opacity-60">›</span>
             </button>
+            <span className="opacity-40">·</span>
+            <a
+              data-testid="deploy-guard-trend-link"
+              href="/admin/deploy-history"
+              className="flex items-center gap-1 hover:underline focus:outline-none focus:underline"
+              title="Open the 30-day Deploy Guard trend"
+            >
+              <span className="opacity-70 uppercase tracking-wider">Trend</span>
+              <span className="text-[9px] opacity-60">›</span>
+            </a>
           </div>
           {/* Iter57 P3 — 24h sparkline (Iter58 P3: clickable buckets) */}
           {spark && (

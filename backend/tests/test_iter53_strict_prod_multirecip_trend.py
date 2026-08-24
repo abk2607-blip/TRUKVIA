@@ -34,31 +34,23 @@ def test_strict_mode_env_var_present():
 
 
 def test_auth_health_gate_semantics():
-    """
-    - strict + guard=pass                          → 200
-    - strict + guard=fail + consecutive_failures>=2 → 503 (deploy blocked)
-    - strict + guard=fail + consecutive_failures<2  → 200 + soft-fail warning (Iter88)
-    - strict + guard=unknown                       → 200 + warning
-    - non-strict any status                        → 200
+    """Iter106 (approved) — `/api/auth/health` no longer 503s on strict+fail.
+    The gate was intentionally removed to fix the persistent "REFRESHING"
+    pill in the UI. The `regression_guard` block still exposes the cached
+    verdict so the Deploy Readiness dashboard can surface it, but the
+    endpoint itself reports liveness only.
+
+    Contract now:
+    - Always 200 (as long as DB ping succeeds).
+    - `regression_guard` block present with status/strict_mode/consecutive.
     """
     r = httpx.get(f"{BASE}/api/auth/health", timeout=10)
-    assert r.status_code in (200, 503)
-    d = r.json() if r.status_code == 200 else r.json().get("detail", {})
+    assert r.status_code == 200, f"auth/health must be 200 (liveness only); got {r.status_code}"
+    d = r.json()
     guard = d.get("regression_guard", {})
-    strict = guard.get("strict_mode")
-    status = guard.get("status")
-    consecutive = int(guard.get("consecutive_failures", 0) or 0)
-    if strict and status == "fail" and consecutive >= 2:
-        assert r.status_code == 503, f"strict + hard-fail must be 503; got {r.status_code}"
-        assert "Regression Guard FAILED" in d.get("error", "")
-    elif strict and status == "fail" and consecutive < 2:
-        assert r.status_code == 200, "strict + soft-fail must be 200 (Iter88 flake tolerance)"
-        assert "warning" in d
-    elif strict and status == "unknown":
-        assert r.status_code == 200
-        assert "warning" in d
-    else:
-        assert r.status_code == 200
+    assert guard.get("status") in ("pass", "fail", "unknown")
+    assert isinstance(guard.get("strict_mode"), bool)
+    assert isinstance(int(guard.get("consecutive_failures", 0) or 0), int)
 
 
 def test_deploy_readiness_writes_history():

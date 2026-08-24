@@ -25,22 +25,29 @@ def test_expenditure_drill_down_returns_trip_rows():
     day = ((ts // (20 * 12)) % 27) + 1
     date = f"{y}-{m:02d}-{day:02d}"
     marker = f"ITER43-{uuid.uuid4().hex[:6]}"
+    # Iter120 · Use a UNIQUE expenditure type per run so re-invocations (e.g.
+    # the isolated CI job racing with the hourly background regression tick)
+    # cannot double-count against the same {date, type} pair. This is the
+    # root cause of the recurring `assert 700.0 == 350.0` — every prior run
+    # left an orphan trip with the same random date + generic `Parking`
+    # bucket.
+    exp_type = f"Parking-{uuid.uuid4().hex[:6]}"
     requests.post(f"{API}/trips", headers=HEADERS, json={
         "customer_id": cid, "date": date,
         "vehicle_number": f"AP99IT43{uuid.uuid4().hex[:4].upper()}",
         "tons": 10, "freight_mode": "per_ton", "rate_per_ton": 1000,
         "from_location": "A", "to_location": "B",
         "other_expenditures": [
-            {"id": "d1", "date": date, "type": "Parking", "amount": 200, "remarks": marker},
-            {"id": "d2", "date": date, "type": "Parking", "amount": 150, "remarks": ""},
-            {"id": "d3", "date": date, "type": "Toll", "amount": 500, "remarks": "Ignored"},
+            {"id": "d1", "date": date, "type": exp_type, "amount": 200, "remarks": marker},
+            {"id": "d2", "date": date, "type": exp_type, "amount": 150, "remarks": ""},
+            {"id": "d3", "date": date, "type": "Toll",  "amount": 500, "remarks": "Ignored"},
         ],
     })
     r = requests.get(f"{API}/dashboard/expenditure-detail", headers=HEADERS,
-                     params={"type": "Parking", "start": date, "end": date})
+                     params={"type": exp_type, "start": date, "end": date})
     assert r.status_code == 200
     d = r.json()
-    assert d["type"] == "Parking"
+    assert d["type"] == exp_type
     assert d["total"] == 350.0
     assert d["count"] == 2
     # Marker remark preserved

@@ -42,37 +42,27 @@ def test_auth_health_contains_regression_guard_block():
 
 
 def test_auth_health_returns_meaningful_state():
-    """Iter53 — Regardless of strict mode, /api/auth/health must return the
-    regression_guard block with status + strict_mode + checked_at fields.
-    - strict_mode=false, any guard → 200
-    - strict_mode=true,  guard=pass → 200
-    - strict_mode=true,  guard=fail + consecutive_failures >= 2 → 503
-      (Iter88 grace period — a single fail returns 200 with a `warning`
-      because well-known flakes self-heal on retry.)
-    - strict_mode=true,  guard=unknown → 200 with warning (grace period on boot)
+    """Iter106 (approved) — /api/auth/health now reports liveness ONLY. The
+    deploy-guard gating that used to return 503 was intentionally removed
+    because it caused the persistent "REFRESHING" pill in the UI when the
+    guard was in its Iter88 soft-fail grace window. The `regression_guard`
+    block still surfaces the cached verdict (status + strict_mode +
+    consecutive_failures + checked_at) for the Deploy Readiness dashboard,
+    but it can no longer 503 the app.
+
+    Contract:
+    - Always returns 200 as long as the DB ping succeeds.
+    - `regression_guard.status` ∈ {pass, fail, unknown}.
+    - `regression_guard.strict_mode` is a boolean.
+    - `regression_guard.consecutive_failures` is an int.
     """
     r = httpx.get(f"{BASE}/api/auth/health", timeout=10)
-    assert r.status_code in (200, 503)
-    d = r.json() if r.status_code == 200 else r.json().get("detail", {})
+    assert r.status_code == 200, f"auth/health must be 200 (liveness only); got {r.status_code}"
+    d = r.json()
     guard = d.get("regression_guard", {})
-    strict = guard.get("strict_mode")
-    status = guard.get("status")
-    consecutive = int(guard.get("consecutive_failures", 0) or 0)
-    # 503 only when strict + guard=fail + >=2 consecutive failures (Iter88).
-    if r.status_code == 503:
-        assert strict is True, "503 must only happen in strict mode"
-        assert status == "fail", "503 must only happen when guard=fail"
-        assert consecutive >= 2, "503 must only happen after >=2 consecutive fails"
-    else:
-        # 200 accepted for: non-strict OR pass OR unknown OR strict+fail
-        # inside the Iter88 grace window (consecutive_failures < 2).
-        assert status in ("pass", "fail", "unknown")
-        if strict is True and status == "fail":
-            assert consecutive < 2, (
-                f"strict+fail returned 200 despite consecutive={consecutive} — 503 gate leaked"
-            )
-            # In the grace window, the payload must at least surface a warning
-            assert "warning" in d, "soft-fail must expose a `warning` message"
+    assert guard.get("status") in ("pass", "fail", "unknown")
+    assert isinstance(guard.get("strict_mode"), bool)
+    assert isinstance(int(guard.get("consecutive_failures", 0) or 0), int)
 
 
 def test_deploy_md_documents_three_layers():
