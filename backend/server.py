@@ -308,80 +308,92 @@ async def save_health_sparkline(hours: int = 24, buckets: int = 24):
 import asyncio as _asyncio
 import subprocess as _subprocess
 
+# Iter116 · Single-flight lock so the hourly background tick and any
+# on-demand `_once` trigger cannot spawn parallel pytest instances that
+# trample each other's output (previous root cause of the recurring
+# 503 "regression suite timed out" chip).
+_regression_lock = _asyncio.Lock()
+
 
 async def _run_regression_background():
     """Runs the pytest regression suite in a subprocess and stores the result
-    in `db.deploy_status`. Executes ~30s after backend startup + then hourly."""
+    in `db.deploy_status`. Executes ~30s after backend startup + then hourly.
+
+    Iter116 · Serialised via _regression_lock so only ONE regression run can
+    be in flight at any time — earlier the on-demand endpoint could race
+    with the hourly background tick, spawning two parallel pytest instances
+    that trampled each other's output and marked the guard as timed-out."""
     await _asyncio.sleep(30)
     while True:
-        started = _dt.now(_tz.utc)
-        try:
-            env = {**os.environ, "PATH": "/root/.venv/bin:" + os.environ.get("PATH", "/usr/bin:/bin")}
-            proc = await _asyncio.create_subprocess_exec(
-                "bash", "/app/backend/scripts/run_regression.sh",
-                stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.STDOUT,
-                cwd="/app/backend", env=env,
-            )
+        async with _regression_lock:
+            started = _dt.now(_tz.utc)
             try:
-                stdout, _ = await _asyncio.wait_for(proc.communicate(), timeout=600)
-                rc = proc.returncode
-                out = (stdout or b"").decode(errors="replace")[-4000:]
-            except _asyncio.TimeoutError:
-                proc.kill()
-                rc, out = 124, "regression suite timed out (>600s)"
-            elapsed = (_dt.now(_tz.utc) - started).total_seconds()
-            # Iter52 — Don't mark interrupted subprocesses (SIGTERM=-15/SIGKILL=-9)
-            # as regression failures. Those happen on backend restarts and should
-            # not trigger strict-mode 503s.
-            if rc in (-15, -9, -2) and elapsed < 60:
-                logger.info(f"Deploy guard subprocess interrupted (rc={rc}, elapsed={elapsed:.1f}s) — status unchanged")
-                await _asyncio.sleep(60 * 60)
-                continue
-            await db.deploy_status.update_one(
-                {"_id": "current"},
-                {"$set": {
-                    "status": "pass" if rc == 0 else "fail",
-                    "exit_code": rc,
-                    "elapsed_s": round(elapsed, 1),
-                    "output_tail": out[-2000:],
-                    "checked_at": _dt.now(_tz.utc).isoformat(),
-                    "next_check_at": (_dt.now(_tz.utc) + _td(hours=1)).isoformat(),
-                }, "$inc": {
-                    # Iter88 — Track consecutive failures so strict-mode 503 only trips
-                    # after two back-to-back fails (flaky tests self-heal on retry).
-                    "consecutive_failures": 1 if rc != 0 else 0,
-                }} if rc != 0 else {"$set": {
-                    "status": "pass",
-                    "exit_code": rc,
-                    "elapsed_s": round(elapsed, 1),
-                    "output_tail": out[-2000:],
-                    "checked_at": _dt.now(_tz.utc).isoformat(),
-                    "next_check_at": (_dt.now(_tz.utc) + _td(hours=1)).isoformat(),
-                    "consecutive_failures": 0,
-                }},
-                upsert=True,
-            )
-            # Iter52 — Also append to history collection (bounded to last 100)
-            try:
-                await db.deploy_status_history.insert_one({
-                    "checked_at": _dt.now(_tz.utc).isoformat(),
-                    "status": "pass" if rc == 0 else "fail",
-                    "exit_code": rc,
-                    "elapsed_s": round(elapsed, 1),
-                    "output_tail": out[-500:],
-                    "failed_tests": _extract_failed_tests(out),
-                })
-                # Keep only the latest 100 rows
-                count = await db.deploy_status_history.count_documents({})
-                if count > 100:
-                    to_del = await db.deploy_status_history.find({}, {"_id": 1}).sort("checked_at", 1).limit(count - 100).to_list(count)
-                    if to_del:
-                        await db.deploy_status_history.delete_many({"_id": {"$in": [d["_id"] for d in to_del]}})
+                env = {**os.environ, "PATH": "/root/.venv/bin:" + os.environ.get("PATH", "/usr/bin:/bin")}
+                proc = await _asyncio.create_subprocess_exec(
+                    "bash", "/app/backend/scripts/run_regression.sh",
+                    stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.STDOUT,
+                    cwd="/app/backend", env=env,
+                )
+                try:
+                    stdout, _ = await _asyncio.wait_for(proc.communicate(), timeout=1500)
+                    rc = proc.returncode
+                    out = (stdout or b"").decode(errors="replace")[-4000:]
+                except _asyncio.TimeoutError:
+                    proc.kill()
+                    rc, out = 124, "regression suite timed out (>1500s)"
+                elapsed = (_dt.now(_tz.utc) - started).total_seconds()
+                # Iter52 — Don't mark interrupted subprocesses (SIGTERM=-15/SIGKILL=-9)
+                # as regression failures. Those happen on backend restarts and should
+                # not trigger strict-mode 503s.
+                if rc in (-15, -9, -2) and elapsed < 60:
+                    logger.info(f"Deploy guard subprocess interrupted (rc={rc}, elapsed={elapsed:.1f}s) — status unchanged")
+                    await _asyncio.sleep(60 * 60)
+                    continue
+                await db.deploy_status.update_one(
+                    {"_id": "current"},
+                    {"$set": {
+                        "status": "pass" if rc == 0 else "fail",
+                        "exit_code": rc,
+                        "elapsed_s": round(elapsed, 1),
+                        "output_tail": out[-2000:],
+                        "checked_at": _dt.now(_tz.utc).isoformat(),
+                        "next_check_at": (_dt.now(_tz.utc) + _td(hours=1)).isoformat(),
+                    }, "$inc": {
+                        # Iter88 — Track consecutive failures so strict-mode 503 only trips
+                        # after two back-to-back fails (flaky tests self-heal on retry).
+                        "consecutive_failures": 1 if rc != 0 else 0,
+                    }} if rc != 0 else {"$set": {
+                        "status": "pass",
+                        "exit_code": rc,
+                        "elapsed_s": round(elapsed, 1),
+                        "output_tail": out[-2000:],
+                        "checked_at": _dt.now(_tz.utc).isoformat(),
+                        "next_check_at": (_dt.now(_tz.utc) + _td(hours=1)).isoformat(),
+                        "consecutive_failures": 0,
+                    }},
+                    upsert=True,
+                )
+                # Iter52 — Also append to history collection (bounded to last 100)
+                try:
+                    await db.deploy_status_history.insert_one({
+                        "checked_at": _dt.now(_tz.utc).isoformat(),
+                        "status": "pass" if rc == 0 else "fail",
+                        "exit_code": rc,
+                        "elapsed_s": round(elapsed, 1),
+                        "output_tail": out[-500:],
+                        "failed_tests": _extract_failed_tests(out),
+                    })
+                    # Keep only the latest 100 rows
+                    count = await db.deploy_status_history.count_documents({})
+                    if count > 100:
+                        to_del = await db.deploy_status_history.find({}, {"_id": 1}).sort("checked_at", 1).limit(count - 100).to_list(count)
+                        if to_del:
+                            await db.deploy_status_history.delete_many({"_id": {"$in": [d["_id"] for d in to_del]}})
+                except Exception as e:
+                    logger.warning(f"Deploy history write failed: {e}")
+                logger.info(f"Deploy guard check: rc={rc}, elapsed={elapsed:.1f}s")
             except Exception as e:
-                logger.warning(f"Deploy history write failed: {e}")
-            logger.info(f"Deploy guard check: rc={rc}, elapsed={elapsed:.1f}s")
-        except Exception as e:
-            logger.warning(f"Regression guard failed to run: {e}")
+                logger.warning(f"Regression guard failed to run: {e}")
         # Hourly recheck
         await _asyncio.sleep(60 * 60)
 
@@ -455,44 +467,47 @@ async def deploy_readiness_run_now():
     # Fire-and-forget — the watcher's next hourly tick will refresh anyway,
     # but we schedule an immediate run.
     async def _once():
-        started_at = _dt.now(_tz.utc)
-        try:
-            env = {**os.environ, "PATH": "/root/.venv/bin:" + os.environ.get("PATH", "/usr/bin:/bin")}
-            proc = await _asyncio.create_subprocess_exec(
-                "bash", "/app/backend/scripts/run_regression.sh",
-                stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.STDOUT,
-                cwd="/app/backend", env=env,
-            )
-            stdout, _ = await _asyncio.wait_for(proc.communicate(), timeout=600)
-            rc = proc.returncode
-            out = (stdout or b"").decode(errors="replace")[-2000:]
-            elapsed = (_dt.now(_tz.utc) - started_at).total_seconds()
-            await db.deploy_status.update_one(
-                {"_id": "current"},
-                {"$set": {
-                    "status": "pass" if rc == 0 else "fail",
-                    "exit_code": rc,
-                    "elapsed_s": round(elapsed, 1),
-                    "output_tail": out,
-                    "checked_at": _dt.now(_tz.utc).isoformat(),
-                }},
-                upsert=True,
-            )
-            # Iter52 — Also append to history
+        # Iter116 · Reuse the single-flight lock so on-demand and hourly
+        # background runs cannot spawn parallel pytest instances.
+        async with _regression_lock:
+            started_at = _dt.now(_tz.utc)
             try:
-                await db.deploy_status_history.insert_one({
-                    "checked_at": _dt.now(_tz.utc).isoformat(),
-                    "status": "pass" if rc == 0 else "fail",
-                    "exit_code": rc,
-                    "elapsed_s": round(elapsed, 1),
-                    "output_tail": out[-500:],
-                    "failed_tests": _extract_failed_tests(out),
-                    "triggered_by": "manual",
-                })
-            except Exception:
-                pass
-        except Exception as e:
-            logger.warning(f"On-demand deploy check failed: {e}")
+                env = {**os.environ, "PATH": "/root/.venv/bin:" + os.environ.get("PATH", "/usr/bin:/bin")}
+                proc = await _asyncio.create_subprocess_exec(
+                    "bash", "/app/backend/scripts/run_regression.sh",
+                    stdout=_asyncio.subprocess.PIPE, stderr=_asyncio.subprocess.STDOUT,
+                    cwd="/app/backend", env=env,
+                )
+                stdout, _ = await _asyncio.wait_for(proc.communicate(), timeout=1500)
+                rc = proc.returncode
+                out = (stdout or b"").decode(errors="replace")[-2000:]
+                elapsed = (_dt.now(_tz.utc) - started_at).total_seconds()
+                await db.deploy_status.update_one(
+                    {"_id": "current"},
+                    {"$set": {
+                        "status": "pass" if rc == 0 else "fail",
+                        "exit_code": rc,
+                        "elapsed_s": round(elapsed, 1),
+                        "output_tail": out,
+                        "checked_at": _dt.now(_tz.utc).isoformat(),
+                    }},
+                    upsert=True,
+                )
+                # Iter52 — Also append to history
+                try:
+                    await db.deploy_status_history.insert_one({
+                        "checked_at": _dt.now(_tz.utc).isoformat(),
+                        "status": "pass" if rc == 0 else "fail",
+                        "exit_code": rc,
+                        "elapsed_s": round(elapsed, 1),
+                        "output_tail": out[-500:],
+                        "failed_tests": _extract_failed_tests(out),
+                        "triggered_by": "manual",
+                    })
+                except Exception:
+                    pass
+            except Exception as e:
+                logger.warning(f"On-demand deploy check failed: {e}")
     _asyncio.create_task(_once())
     return {"triggered": True, "message": "Regression run scheduled. Poll /api/admin/deploy-readiness in ~30s."}
 

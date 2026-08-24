@@ -79,8 +79,6 @@ CRITICAL_TESTS=(
   "tests/test_iter111_supplier_freight_and_shortage.py"   # Iter111 · Supplier freight basis + shortage threshold + override + audit
 )
 
-# Explicit venv PATH so this runs cleanly from asyncio subprocess (which
-# doesn't inherit the shell's activated venv)
 export PATH="/root/.venv/bin:$PATH"
 
 if ! python -m pytest --version >/dev/null 2>&1 && ! python3 -m pytest --version >/dev/null 2>&1; then
@@ -89,30 +87,40 @@ if ! python -m pytest --version >/dev/null 2>&1 && ! python3 -m pytest --version
 fi
 PYBIN=$(command -v python || command -v python3)
 
-FAILED=()
+# Iter116 · Batch runner. Previously this loop invoked `pytest {file}` once
+# per file, incurring ~2s of pytest startup × 49 files ≈ 100 s of pure
+# startup overhead on top of the actual test time — which pushed the total
+# past the 600 s deploy-guard timeout even though individual files were
+# fast. Running all critical files in a SINGLE pytest invocation lets
+# pytest-xdist (configured in pytest.ini as `-n 2 --dist loadscope`)
+# parallelise across the files with a single startup, cutting total wall
+# time to well under the 600 s cap. The exit code is preserved so the
+# deploy guard sees `fail` on any failure.
+#
+# Filter the declared list to files that actually exist (some Iter42-49
+# suites may have been retired). Preserves the "skipping missing" note.
+EXISTING=()
 for t in "${CRITICAL_TESTS[@]}"; do
   if [[ ! -f "$t" ]]; then
     echo -e "${YELLOW}⚠ Skipping missing test file: $t${NC}"
-    continue
-  fi
-  echo -e "${YELLOW}▶ Running $t${NC}"
-  if $PYBIN -m pytest "$t" --tb=short -q 2>&1 | tee /tmp/reg_last.log | tail -5; then
-    echo -e "${GREEN}  ✓ $t passed${NC}"
   else
-    echo -e "${RED}  ✗ $t FAILED${NC}"
-    FAILED+=("$t")
+    EXISTING+=("$t")
   fi
-  echo
 done
 
-echo "──────────────────────────────────────────"
-if [[ ${#FAILED[@]} -eq 0 ]]; then
+echo -e "${YELLOW}▶ Running ${#EXISTING[@]} critical suites in a single pytest invocation (xdist × 2 workers)${NC}"
+echo
+
+if $PYBIN -m pytest "${EXISTING[@]}" --tb=short -q 2>&1 | tee /tmp/reg_last.log | tail -30; then
+  echo
+  echo "──────────────────────────────────────────"
   echo -e "${GREEN}✓ Regression Guard PASSED — safe to deploy.${NC}"
   exit 0
 else
+  echo
+  echo "──────────────────────────────────────────"
   echo -e "${RED}✗ Regression Guard BLOCKED deployment.${NC}"
-  echo -e "${RED}Failing suites:${NC}"
-  for f in "${FAILED[@]}"; do echo -e "${RED}  - $f${NC}"; done
+  echo -e "${RED}See /tmp/reg_last.log or the tail above for the failing suite(s).${NC}"
   echo
   echo "Read the pytest output above, fix the code, then rerun this script."
   exit 1

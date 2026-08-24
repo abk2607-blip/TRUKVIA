@@ -60,6 +60,23 @@ def test_supplier_freight_per_ton_auto_computes():
 
 
 def test_supplier_freight_per_ton_uses_supplier_quantity_when_set():
+    """Iter111 realignment · Server-derived supplier quantity (basis mirror).
+
+    ORIGINAL Iter73 contract (retired): a user-supplied `supplier_quantity`
+    took precedence over `tons` for supplier freight computation.
+
+    APPROVED Iter111 contract (this test locks it in):
+        Supplier Freight quantity MIRRORS the trip's `applied_freight_method`
+        snapshot (per_ton_loading / per_ton_unloading / per_ton_higher_of /
+        fixed). The server DERIVES `supplier_quantity` from that basis and
+        ignores any user-supplied value on the payload — so supplier billing
+        stays consistent with the customer-side freight computation. A stale
+        `supplier_quantity` from an in-flight compute cannot leak forward.
+
+    The test scenario here (default `applied_freight_method = per_ton_loading`,
+    tons=15, no `unloaded_qty`) MUST resolve to a derived basis of 15.0 MT
+    even when the payload asks for `supplier_quantity=12.5`.
+    """
     cs = _companies()
     h = {**HDR, "X-Company-Id": cs[0]["id"]}
     c = _cust(h); s = _sup(h)
@@ -69,11 +86,20 @@ def test_supplier_freight_per_ton_uses_supplier_quantity_when_set():
         "vehicle_type": "supplier", "supplier_id": s["id"],
         "tons": 15.0,
         "freight_mode": "per_ton", "rate_per_ton": 1200,
-        "supplier_quantity": 12.5,          # <-- takes precedence over tons
+        "supplier_quantity": 12.5,          # user hint — Iter111 ignores it
         "supplier_freight_mode": "per_ton",
         "supplier_rate_per_ton": 900,
     }, timeout=30).json()
-    assert trip["supplier_freight"] == 12.5 * 900
+    # Iter111 · applied_freight_method defaults to per_ton_loading → basis=tons
+    assert trip["supplier_quantity"] == 15.0, (
+        f"Iter111: supplier_quantity must be server-derived from the applied "
+        f"basis (per_ton_loading → loaded tons = 15.0), not the user's 12.5. "
+        f"Got {trip['supplier_quantity']}"
+    )
+    assert trip["supplier_freight"] == 15.0 * 900, (
+        f"Iter111: supplier_freight = derived basis × supplier_rate_per_ton "
+        f"= 15.0 × 900. Got {trip['supplier_freight']}"
+    )
 
 
 def test_supplier_freight_fixed_mode():

@@ -209,20 +209,37 @@ def test_case5_multi_trip_cumulative_supplier_balance():
 def test_manual_override_blocks_auto_mirror():
     """When user manually edits the supplier_shortage_deduction field, the
     override flag must prevent the backend from silently reverting on next
-    save. Historical accounting stays intact."""
+    save. Historical accounting stays intact.
+
+    Iter111 realignment · The endpoint now requires
+    `supplier_shortage_override_reason` to be non-empty when a manual
+    override actually changes the value (see Iter111 test
+    `test_override_edit_flips_auto_to_manual_and_requires_reason`). The PUT
+    payload must therefore include the reason — this is a test-payload
+    contract update, NOT a change to the Iter111 approved calculation or
+    validation logic.
+    """
     cs = _companies()
     h = {**HDR, "X-Company-Id": cs[0]["id"]}
     c = _cust(h); s = _sup(h)
     trip = _mk_trip(h, c["id"], s["id"], tons=28.0, unloaded=27.85, product_rate=80000)
     trip_shortage = trip["shortage_amount"]
 
-    # User manually sets a different deduction (say, negotiated with supplier)
-    upd = httpx.put(f"{BASE}/api/trips/{trip['id']}", json={
+    # User manually sets a different deduction (say, negotiated with supplier).
+    # Iter111 · supplier_shortage_override_reason is mandatory on value change.
+    r = httpx.put(f"{BASE}/api/trips/{trip['id']}", json={
         **trip,
         "supplier_shortage_deduction": trip_shortage * 0.5,
         "supplier_shortage_deduction_override": True,
-    }, headers=h, timeout=30).json()
+        "supplier_shortage_override_reason": "Negotiated write-down with supplier",
+    }, headers=h, timeout=30)
+    assert r.status_code == 200, f"PUT failed: {r.status_code} {r.text}"
+    upd = r.json()
     assert upd["supplier_shortage_deduction"] == round(trip_shortage * 0.5, 2), \
         "manual override must persist"
     assert upd["shortage_amount"] == trip["shortage_amount"], \
         "trip's own shortage_amount is unchanged by supplier override"
+    # Iter111 · Actor + timestamp + reason must be stamped
+    assert upd["supplier_shortage_override_reason"] == "Negotiated write-down with supplier"
+    assert upd.get("supplier_shortage_override_by"), "override_by must be stamped"
+    assert upd.get("supplier_shortage_override_at"), "override_at must be stamped"
