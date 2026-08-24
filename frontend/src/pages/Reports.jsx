@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { NavLink, Routes, Route, Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api, API, fmtCurrency, fmtDate } from "@/api";
@@ -31,7 +31,8 @@ export default function Reports() {
         {tabs.map((t) => (
           <NavLink
             key={t.to}
-            to={t.to}
+            to={`/reports/${t.to}`}
+            end
             data-testid={t.testid}
             className={({ isActive }) =>
               `inline-flex items-center gap-2 px-4 py-2 text-sm font-semibold border-b-2 -mb-px ${
@@ -969,6 +970,20 @@ function LRRegisterReport() {
   const [invoiceStatus, setInvoiceStatus] = useState("all");
   const [q, setQ] = useState("");
   const [full, setFull] = useState(false);
+  const [activeCol, setActiveCol] = useState(null);   // Iter124b · column highlight
+  const tableWrapRef = useRef(null);
+
+  // Clear column highlight when the user clicks outside the table.
+  useEffect(() => {
+    if (activeCol == null) return;
+    const onDocClick = (e) => {
+      if (tableWrapRef.current && !tableWrapRef.current.contains(e.target)) {
+        setActiveCol(null);
+      }
+    };
+    document.addEventListener("mousedown", onDocClick);
+    return () => document.removeEventListener("mousedown", onDocClick);
+  }, [activeCol]);
 
   const { data: customersResp } = useQuery({
     queryKey: ["customers-list-lr-reg"],
@@ -1069,66 +1084,130 @@ function LRRegisterReport() {
         </div>
       </div>
 
-      {co?.name && (
-        <div className="border border-zinc-200 bg-white rounded-sm px-4 py-3 flex flex-wrap items-center gap-4 text-xs">
-          <div><span className="font-bold text-zinc-950">{co.name}</span> · GSTIN {co.gstin || "—"}</div>
-          <div className="text-zinc-500">Period {start} — {end}</div>
-          <div className="text-zinc-500">Company Code <span className="font-mono">{co.company_code}</span></div>
-          <div className="text-zinc-500">LRs <span className="font-mono">{tot.count || 0}</span></div>
+      {/* Iter124b — Always-visible period + active-filter chip banner */}
+      <div className="border border-zinc-200 bg-white rounded-sm px-4 py-3 flex flex-wrap items-center gap-3 text-xs">
+        {co?.name ? (
+          <div><span className="font-bold text-zinc-950">{co.name}</span> · GSTIN {co.gstin || "—"} · Code <span className="font-mono">{co.company_code}</span></div>
+        ) : (
+          <div className="text-zinc-500 italic">Loading company…</div>
+        )}
+        <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-zinc-100 border border-zinc-200 rounded-sm">
+          <span className="text-[10px] uppercase tracking-wider text-zinc-500">Period</span>
+          <span className="font-mono text-zinc-900">{start}</span>
+          <span className="text-zinc-400">→</span>
+          <span className="font-mono text-zinc-900">{end}</span>
         </div>
-      )}
+        {customerId && (
+          <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 border border-indigo-200 rounded-sm">
+            <span className="text-[10px] uppercase tracking-wider text-indigo-500">Customer</span>
+            <span className="text-indigo-900">{customers.find(c => c.id === customerId)?.name || customerId}</span>
+            <button data-testid="chip-clear-customer" onClick={() => setCustomerId("")} className="ml-1 text-indigo-400 hover:text-indigo-900">×</button>
+          </div>
+        )}
+        {driver && (
+          <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 border border-indigo-200 rounded-sm">
+            <span className="text-[10px] uppercase tracking-wider text-indigo-500">Driver</span>
+            <span className="text-indigo-900">{driver}</span>
+            <button data-testid="chip-clear-driver" onClick={() => setDriver("")} className="ml-1 text-indigo-400 hover:text-indigo-900">×</button>
+          </div>
+        )}
+        {invoiceStatus !== "all" && (
+          <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 border border-indigo-200 rounded-sm">
+            <span className="text-[10px] uppercase tracking-wider text-indigo-500">Invoice</span>
+            <span className="text-indigo-900">{invoiceStatus.replace("_", " ")}</span>
+            <button data-testid="chip-clear-invoice-status" onClick={() => setInvoiceStatus("all")} className="ml-1 text-indigo-400 hover:text-indigo-900">×</button>
+          </div>
+        )}
+        {q && (
+          <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 border border-indigo-200 rounded-sm">
+            <span className="text-[10px] uppercase tracking-wider text-indigo-500">Search</span>
+            <span className="text-indigo-900">"{q}"</span>
+            <button data-testid="chip-clear-q" onClick={() => setQ("")} className="ml-1 text-indigo-400 hover:text-indigo-900">×</button>
+          </div>
+        )}
+        {(customerId || driver || invoiceStatus !== "all" || q) && (
+          <button data-testid="lrreg-clear-filters" onClick={() => { setCustomerId(""); setDriver(""); setInvoiceStatus("all"); setQ(""); }} className="text-[10px] uppercase tracking-wider text-rose-600 hover:text-rose-800">
+            Clear filters
+          </button>
+        )}
+        <div className="grow" />
+        <div className="text-zinc-500">
+          {isFetching ? <span className="italic">Loading…</span> :
+            <>Showing <span className="font-mono text-zinc-900">{tot.count || 0}</span> LR{tot.count === 1 ? "" : "s"}</>}
+        </div>
+      </div>
 
-      <div className="border border-zinc-200 bg-white rounded-sm overflow-x-auto" data-testid="lr-register-table">
+      <div ref={tableWrapRef} className="border border-zinc-200 bg-white rounded-sm overflow-x-auto" data-testid="lr-register-table" onClick={(e) => {
+        const cell = e.target.closest("[data-col]");
+        if (cell) setActiveCol(cell.getAttribute("data-col"));
+      }}>
         <table className="w-full text-xs">
           <thead className="bg-zinc-950 text-white sticky top-0">
             <tr>
-              <th className="px-2 py-2 text-left">LR #</th>
-              <th className="px-2 py-2 text-left">Date</th>
-              <th className="px-2 py-2 text-left">Cust Ref #</th>
-              <th className="px-2 py-2 text-left">From</th>
-              <th className="px-2 py-2 text-left">Consignee</th>
-              <th className="px-2 py-2 text-left">Ship-To</th>
-              <th className="px-2 py-2 text-left">Vehicle</th>
-              <th className="px-2 py-2 text-left">Driver</th>
-              <th className="px-2 py-2 text-left">Product</th>
-              <th className="px-2 py-2 text-right">Load MT</th>
-              <th className="px-2 py-2 text-right">Unload MT</th>
-              <th className="px-2 py-2 text-right">Shortage MT</th>
-              <th className="px-2 py-2 text-right">Allow MT</th>
-              <th className="px-2 py-2 text-right">Net MT</th>
-              {full && <th className="px-2 py-2 text-right">Shortage ₹</th>}
-              <th className="px-2 py-2 text-right">Freight ₹</th>
-              <th className="px-2 py-2 text-left">Invoice #</th>
-              <th className="px-2 py-2 text-left">Inv Status</th>
-              <th className="px-2 py-2 text-left">LR Copies</th>
+              {[
+                { k: "lr_number",    label: "LR #",         align: "text-left" },
+                { k: "lr_date",      label: "Date",         align: "text-left" },
+                { k: "cust_ref",     label: "Cust Ref #",   align: "text-left" },
+                { k: "from",         label: "From",         align: "text-left" },
+                { k: "consignee",    label: "Consignee",    align: "text-left" },
+                { k: "ship_to",      label: "Ship-To",      align: "text-left" },
+                { k: "vehicle",      label: "Vehicle",      align: "text-left" },
+                { k: "driver",       label: "Driver",       align: "text-left" },
+                { k: "product",      label: "Product",      align: "text-left" },
+                { k: "loaded",       label: "Load MT",      align: "text-right" },
+                { k: "unloaded",     label: "Unload MT",    align: "text-right" },
+                { k: "shortage",     label: "Shortage MT",  align: "text-right" },
+                { k: "allowance",    label: "Allow MT",     align: "text-right" },
+                { k: "net_shortage", label: "Net MT",       align: "text-right" },
+                ...(full ? [{ k: "shortage_amount", label: "Shortage ₹", align: "text-right" }] : []),
+                { k: "freight",        label: "Freight ₹",    align: "text-right" },
+                { k: "invoice_number", label: "Invoice #",    align: "text-left" },
+                { k: "invoice_status", label: "Inv Status",   align: "text-left" },
+                { k: "lr_copies",      label: "LR Copies",    align: "text-left" },
+              ].map((h) => (
+                <th key={h.k}
+                    data-col={h.k}
+                    data-testid={`lrreg-th-${h.k}`}
+                    className={`px-2 py-2 cursor-pointer select-none ${h.align} ${activeCol === h.k ? "bg-indigo-600 ring-1 ring-indigo-300" : ""}`}>
+                  {h.label}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody className="font-mono">
-            {rows.length === 0 && (
+            {rows.length === 0 && !isFetching && (
               <tr><td colSpan={full ? 19 : 18} className="text-center italic text-zinc-500 py-8">
                 No LRs issued in this period. Try widening the date range or clearing filters.
               </td></tr>
             )}
-            {rows.map((r, i) => (
-              <tr key={r.trip_id} className={i % 2 === 0 ? "bg-zinc-50" : ""} data-testid={`lrreg-row-${r.trip_id}`}>
-                <td className="px-2 py-1 font-bold text-indigo-800">{r.lr_number}</td>
-                <td className="px-2 py-1">{fmtDate(r.lr_date)}</td>
-                <td className="px-2 py-1">{r.customer_reference_number || "—"}</td>
-                <td className="px-2 py-1">{r.from_location}</td>
-                <td className="px-2 py-1">{r.customer_name}</td>
-                <td className="px-2 py-1">{r.ship_to}</td>
-                <td className="px-2 py-1">{r.vehicle_number}</td>
-                <td className="px-2 py-1">{r.driver_name || "—"}</td>
-                <td className="px-2 py-1">{r.product || "—"}</td>
-                <td className="px-2 py-1 text-right">{Number(r.loaded_qty).toFixed(2)}</td>
-                <td className="px-2 py-1 text-right">{Number(r.unloaded_qty).toFixed(2)}</td>
-                <td className="px-2 py-1 text-right">{Number(r.shortage_qty).toFixed(3)}</td>
-                <td className="px-2 py-1 text-right">{Number(r.allowance_qty).toFixed(3)}</td>
-                <td className="px-2 py-1 text-right">{Number(r.net_shortage_qty).toFixed(3)}</td>
-                {full && <td className="px-2 py-1 text-right">{fmtCurrency(r.shortage_amount)}</td>}
-                <td className="px-2 py-1 text-right">{fmtCurrency(r.freight_amount)}</td>
-                <td className="px-2 py-1">{r.invoice_number || "—"}</td>
-                <td className="px-2 py-1">
+            {rows.length === 0 && isFetching && (
+              <tr><td colSpan={full ? 19 : 18} className="text-center italic text-zinc-400 py-8">
+                Loading LR Register…
+              </td></tr>
+            )}
+            {rows.map((r, i) => {
+              const zebra = i % 2 === 0 ? "bg-zinc-50" : "";
+              const hl = (k) => activeCol === k ? "bg-indigo-50 ring-1 ring-indigo-200" : "";
+              return (
+              <tr key={r.trip_id} className={zebra} data-testid={`lrreg-row-${r.trip_id}`}>
+                <td data-col="lr_number" className={`px-2 py-1 font-bold text-indigo-800 ${hl("lr_number")}`}>{r.lr_number}</td>
+                <td data-col="lr_date" className={`px-2 py-1 ${hl("lr_date")}`}>{fmtDate(r.lr_date)}</td>
+                <td data-col="cust_ref" className={`px-2 py-1 ${hl("cust_ref")}`}>{r.customer_reference_number || "—"}</td>
+                <td data-col="from" className={`px-2 py-1 ${hl("from")}`}>{r.from_location}</td>
+                <td data-col="consignee" className={`px-2 py-1 ${hl("consignee")}`}>{r.customer_name}</td>
+                <td data-col="ship_to" className={`px-2 py-1 ${hl("ship_to")}`}>{r.ship_to}</td>
+                <td data-col="vehicle" className={`px-2 py-1 ${hl("vehicle")}`}>{r.vehicle_number}</td>
+                <td data-col="driver" className={`px-2 py-1 ${hl("driver")}`}>{r.driver_name || "—"}</td>
+                <td data-col="product" className={`px-2 py-1 ${hl("product")}`}>{r.product || "—"}</td>
+                <td data-col="loaded" className={`px-2 py-1 text-right ${hl("loaded")}`}>{Number(r.loaded_qty).toFixed(2)}</td>
+                <td data-col="unloaded" className={`px-2 py-1 text-right ${hl("unloaded")}`}>{Number(r.unloaded_qty).toFixed(2)}</td>
+                <td data-col="shortage" className={`px-2 py-1 text-right ${hl("shortage")}`}>{Number(r.shortage_qty).toFixed(3)}</td>
+                <td data-col="allowance" className={`px-2 py-1 text-right ${hl("allowance")}`}>{Number(r.allowance_qty).toFixed(3)}</td>
+                <td data-col="net_shortage" className={`px-2 py-1 text-right ${hl("net_shortage")}`}>{Number(r.net_shortage_qty).toFixed(3)}</td>
+                {full && <td data-col="shortage_amount" className={`px-2 py-1 text-right ${hl("shortage_amount")}`}>{fmtCurrency(r.shortage_amount)}</td>}
+                <td data-col="freight" className={`px-2 py-1 text-right ${hl("freight")}`}>{fmtCurrency(r.freight_amount)}</td>
+                <td data-col="invoice_number" className={`px-2 py-1 ${hl("invoice_number")}`}>{r.invoice_number || "—"}</td>
+                <td data-col="invoice_status" className={`px-2 py-1 ${hl("invoice_status")}`}>
                   <span className={`px-1.5 py-0.5 rounded-sm text-[10px] uppercase tracking-wider ${
                     r.invoice_status === "paid" ? "bg-emerald-100 text-emerald-800"
                     : r.invoice_status === "partially_paid" ? "bg-amber-100 text-amber-800"
@@ -1136,9 +1215,9 @@ function LRRegisterReport() {
                     : "bg-zinc-100 text-zinc-600"
                   }`}>{r.invoice_status.replace("_", " ")}</span>
                 </td>
-                <td className="px-2 py-1 text-[10px] uppercase tracking-wider text-zinc-600">{r.lr_copies}</td>
+                <td data-col="lr_copies" className={`px-2 py-1 text-[10px] uppercase tracking-wider text-zinc-600 ${hl("lr_copies")}`}>{r.lr_copies}</td>
               </tr>
-            ))}
+            );})}
           </tbody>
           {rows.length > 0 && (
             <tfoot className="bg-amber-50 border-t-2 border-zinc-950 font-bold">

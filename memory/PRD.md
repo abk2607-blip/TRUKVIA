@@ -2,6 +2,13 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter124b · LR Register UX fixes — route fix + always-visible period/filters + column highlight** (Feb 2026)
+  - **Root cause of "blank tab"** — Reports tabs used `NavLink to="lr-register"` (relative). Once the user had visited any other tab, React Router v6 resolved the click relative to the current URL, giving nested paths like `/reports/ledger/supplier-pl/lr-register`. That URL didn't match any inner `Route`, so the tab body was empty. **Not** an API or filter bug.
+  - **Fix (1-line)** — `NavLink to={\`/reports/${t.to}\`}` with `end` prop. All tabs now resolve to the correct `/reports/<name>` regardless of where the user came from.
+  - **Initial-state clarity** — Always-visible chip banner above the table showing Company + GSTIN + Company Code + Period (Start → End) + active-filter chips (Customer / Driver / Invoice Status / Search), each with an inline "×" clear button plus a global "Clear filters" link. Loading state shows "Loading LR Register…" italic row.
+  - **Column highlight UX** — Click a header or any cell → whole column gets `bg-indigo-50 ring-1 ring-indigo-200` (subtle) and the header goes indigo-600. Clicking outside the table clears the highlight. All 18 (or 19 with Full view) columns wired up via `data-col` attribute + one delegated onClick on the table wrapper. `data-testid` on every header: `lrreg-th-lr_number`, `-lr_date`, `-cust_ref`, `-from`, `-consignee`, `-ship_to`, `-vehicle`, `-driver`, `-product`, `-loaded`, `-unloaded`, `-shortage`, `-allowance`, `-net_shortage`, `-shortage_amount` (Full only), `-freight`, `-invoice_number`, `-invoice_status`, `-lr_copies`.
+  - **Zero data-loader changes** — All 7 Iter124 pytest assertions still pass (21.4 s). Backend endpoints, freight / shortage / supplier / invoice / LR / auth / policy / save-health untouched.
+
 - [x] **Iter124 · Monthly LR Register / Statement Export** (Feb 2026 — awaiting UAT)
   - **What ships**
     - 3 new endpoints (`GET /api/reports/lr-register` JSON · `.xlsx` · `.pdf`) all fed by ONE shared read-only loader `_lr_register_data()`, so JSON / XLSX / PDF / in-app view stay byte-identical.
