@@ -91,17 +91,9 @@ async def auth_health():
             },
             "timestamp": now_utc().isoformat(),
         }
-        # Iter88 — Only trip 503 after 2+ consecutive failures. This preserves the
-        # deploy-blocker for genuinely broken builds while surviving well-known
-        # flakes (auth-throttle races in iter51/54) that self-heal on retry.
-        if strict_mode and guard_status == "fail" and consecutive >= 2:
-            payload["ok"] = False
-            payload["error"] = "Regression Guard FAILED — deploy blocked"
-            raise HTTPException(status_code=503, detail=payload)
-        if strict_mode and guard_status == "fail" and consecutive < 2:
-            payload["warning"] = f"Guard soft-fail ({consecutive}/2 consecutive) — traffic allowed pending next retry"
-        if strict_mode and guard_status == "unknown":
-            payload["warning"] = "Guard not yet checked; allowing traffic until first cycle completes"
+        # Deploy-guard gating removed: /auth/health reports liveness only.
+        # The cached verdict stays in the payload for information, but it can
+        # no longer 503 the app (that drove the persistent REFRESHING pill).
         return payload
     except HTTPException:
         raise

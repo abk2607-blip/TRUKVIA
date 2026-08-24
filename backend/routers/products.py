@@ -30,7 +30,7 @@ router = APIRouter(prefix="/api")
 async def list_products(request: Request, user=Depends(get_current_user)):
     cid = await _active_company_id(request, user)
     await _backfill_to_default(user["user_id"])
-    docs = await db.products.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(1000)
+    docs = await db.products.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(None)
     return docs
 
 @router.post("/products")

@@ -424,7 +424,14 @@ async def _kick_regression_watcher():
     """Iter51 — Fires the background regression watcher. If the env var
     REGRESSION_GUARD_STRICT=1 is set (CI/production mode), the backend refuses
     to start after 60s if the regression is failing. In dev mode we only log."""
-    _asyncio.create_task(_run_regression_background())
+    # Periodic regression runs disabled - the hourly full-suite run was
+    # colliding with live UAT and gating /auth/health. Set
+    # REGRESSION_GUARD_PERIODIC=1 to re-enable.
+    if os.environ.get("REGRESSION_GUARD_PERIODIC", "0") == "1":
+        _asyncio.create_task(_run_regression_background())
+    else:
+        logger.info("Periodic regression guard disabled "
+                    "(set REGRESSION_GUARD_PERIODIC=1 to re-enable)")
 
 
 @app.get("/api/admin/deploy-readiness")

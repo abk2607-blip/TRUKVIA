@@ -19,7 +19,7 @@ Design language kept from Option B:
 If the company has NOT uploaded a logo, a distinctive emerald monogram badge
 is rendered from the company initials (e.g. "A. KISHORE BABU & SONS" → "AKBS").
 """
-from ._base import _fmt, LR_TERMS_EN, _UNI_FONT, _UNI_FONT_BOLD
+from ._base import _fmt, LR_TERMS_EN, _UNI_FONT, _UNI_FONT_BOLD, _fmt_ind_date
 from io import BytesIO
 import base64, re
 from reportlab.lib.pagesizes import A4
@@ -209,7 +209,7 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict, copy: str = "origina
 
     pills_row = Table([[
         _pill("GCN NUMBER", trip.get("lr_number") or "—"),
-        _pill("DATE OF ISSUE", trip.get("date") or "—"),
+        _pill("DATE OF ISSUE", _fmt_ind_date(trip.get("date"))),
         _pill("TIME", trip.get("lr_time") or "—"),
     ]], colWidths=[63 * mm, 63 * mm, 63 * mm])
     pills_row.setStyle(TableStyle([
@@ -478,7 +478,7 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict, copy: str = "origina
     ]))
     mini_right = Paragraph(
         f"<font color='#94A3B8' size='9'><b>GCN No.</b> {trip.get('lr_number','—')}   ·   "
-        f"<b>Date:</b> {trip.get('date','')}</font><br/>"
+        f"<b>Date:</b> {_fmt_ind_date(trip.get('date'))}</font><br/>"
         f"<font color='#10B981' size='7'><b>{copy_label}</b></font>",
         styles["HCoAddr"],
     )

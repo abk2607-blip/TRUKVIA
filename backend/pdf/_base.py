@@ -37,6 +37,54 @@ except Exception:
     _UNI_FONT_BOLD = "Helvetica-Bold"
 
 
+def _fmt_ind_date(v) -> str:
+    """Iter117 · Render an ISO-ish date/datetime as `23-Aug-2026` for
+    Indian display convention. Used across LR / Invoice / Ledger PDFs and
+    mirrored on the frontend via `utils/date.formatIndDate`. Presentation
+    only — never touches storage.
+    """
+    if not v:
+        return "—"
+    try:
+        from datetime import datetime as _dt
+        s = str(v)
+        if "T" in s:
+            s = s.split("T", 1)[0]
+        parts = s.split("-")
+        if len(parts) >= 3 and len(parts[0]) == 4:
+            d = _dt(int(parts[0]), int(parts[1]), int(parts[2][:2]))
+            return d.strftime("%d-%b-%Y")
+        return s
+    except Exception:
+        return str(v)
+
+
+def _fit_paragraph(text: str, style, max_width_pts: float, min_font: float = 5.5):
+    """Iter117 · Auto-shrink a single-line paragraph so the entire string
+    fits inside `max_width_pts` without wrapping. Steps the font size down
+    from `style.fontSize` to `min_font` in 0.5-pt steps. Used by the
+    Invoice trip-table so long Cust Ref / Product / Route / Basis values
+    stay on ONE line without a global shrink.
+    """
+    from reportlab.pdfbase.pdfmetrics import stringWidth
+    import re as _re
+    plain = _re.sub(r"<[^>]+>", "", text or "")
+    fs = float(style.fontSize)
+    while fs > min_font:
+        if stringWidth(plain, style.fontName, fs) <= max_width_pts:
+            break
+        fs -= 0.5
+    if abs(fs - style.fontSize) < 0.01:
+        return Paragraph(text, style)
+    shrunk = ParagraphStyle(
+        name=f"{style.name}Fit{int(fs*10)}",
+        parent=style,
+        fontSize=fs,
+        leading=max(fs + 1.2, 6.5),
+    )
+    return Paragraph(text, shrunk)
+
+
 def _fmt(n):
     try:
         return f"{float(n):,.2f}"

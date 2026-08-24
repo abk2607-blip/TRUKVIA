@@ -20,6 +20,12 @@
 
 set -euo pipefail
 
+# Single-flight lock: the hourly in-process watcher, the on-demand endpoint and
+# manual shell runs all pass through here; without it they spawn parallel pytest
+# instances that trample each other's results.
+exec 200>/tmp/regression.lock
+flock -w 600 200 || { echo "regression: could not acquire lock within 600s"; exit 3; }
+
 RED="\033[0;31m"; GREEN="\033[0;32m"; YELLOW="\033[1;33m"; NC="\033[0m"
 
 cd "$(dirname "$0")/.."   # → /app/backend

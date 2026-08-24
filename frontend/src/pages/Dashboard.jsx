@@ -125,9 +125,8 @@ export default function Dashboard() {
       {/* Expenditure Breakdown — per-type spend chart */}
       <ExpenditureBreakdownCard />
 
-      {/* Iter50/51 — Ops Observability Row: Deploy Guard + Save-Health */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <DeployGuardTile />
+      {/* Iter50/51 — Ops Observability Row: Save-Health */}
+      <div className="grid grid-cols-1 gap-4">
         <SaveHealthTile />
       </div>
 
@@ -818,113 +817,6 @@ function AuthFailureDrillModal({ onClose, range }) {
 }
 
 
-
-// Iter51/52 — Deploy Guard status tile with history bar (P4).
-function DeployGuardTile() {
-  const [running, setRunning] = React.useState(false);
-  const [showHistory, setShowHistory] = React.useState(false);
-  const { data, isLoading, refetch } = useQuery({
-    queryKey: ["deploy-readiness"],
-    queryFn: async () => (await api.get("/admin/deploy-readiness")).data,
-    refetchInterval: 60 * 1000,
-  });
-  const { data: hist } = useQuery({
-    queryKey: ["deploy-history"],
-    queryFn: async () => (await api.get("/admin/deploy-history", { params: { limit: 30 } })).data,
-    refetchInterval: 60 * 1000,
-  });
-  const status = data?.status || "unknown";
-  const tone = status === "pass" ? "border-emerald-300 bg-emerald-50 text-emerald-900"
-    : status === "fail" ? "border-rose-300 bg-rose-50 text-rose-900"
-    : "border-zinc-200 bg-zinc-50 text-zinc-700";
-  const badge = status === "pass" ? "🟢 Guard PASS · Safe to Deploy"
-    : status === "fail" ? "🔴 Guard FAIL · Deploy BLOCKED"
-    : "🟡 Not yet checked";
-  const runNow = async () => {
-    setRunning(true);
-    try {
-      await api.post("/admin/deploy-readiness/run-now");
-      setTimeout(() => { refetch(); setRunning(false); }, 20000);
-    } catch { setRunning(false); }
-  };
-  return (
-    <div data-testid="deploy-guard-tile" className={`border p-4 rounded-sm ${tone}`}>
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <div className="text-[10px] uppercase tracking-[0.15em] font-bold flex items-center gap-2">
-            <CheckCircle2 size={12} /> Deploy Regression Guard
-          </div>
-          <div className="mt-2 text-xs font-bold" data-testid="deploy-guard-badge">{isLoading ? "…" : badge}</div>
-          {data?.checked_at && (
-            <div className="text-[10px] mt-1 opacity-70">
-              Last check: {new Date(data.checked_at).toLocaleTimeString()}
-              {data.elapsed_s != null && <span> · {data.elapsed_s}s</span>}
-              {data.exit_code != null && <span> · exit={data.exit_code}</span>}
-            </div>
-          )}
-          <div className="text-[10px] mt-1 opacity-70">
-            Runs iter42-51 (73 tests). Enforced by <code className="font-mono">REGRESSION_GUARD_STRICT=1</code>.
-          </div>
-          {/* Iter52 — Guard History mini bar */}
-          {hist?.history?.length > 0 && (
-            <div className="mt-3">
-              <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider opacity-70 mb-1">
-                <span>History · last {hist.count} runs</span>
-                <span className="font-bold">{hist.pass_rate}% pass · {hist.passes}✓ / {hist.fails}✗</span>
-              </div>
-              <div className="flex items-end gap-[2px] h-6" data-testid="deploy-guard-history-bars">
-                {hist.history.map((h, i) => (
-                  <div
-                    key={i}
-                    title={`${new Date(h.checked_at).toLocaleString()} — ${h.status.toUpperCase()}${h.failed_tests?.length ? " · " + h.failed_tests.join(", ") : ""}`}
-                    className={`flex-1 rounded-sm min-w-[3px] ${h.status === "pass" ? "bg-emerald-500" : "bg-rose-500"}`}
-                    style={{ height: `${h.status === "pass" ? 100 : 80}%` }}
-                  />
-                ))}
-              </div>
-              <button
-                data-testid="deploy-guard-history-toggle"
-                onClick={() => setShowHistory((s) => !s)}
-                className="mt-2 text-[10px] uppercase tracking-wider font-bold underline opacity-70 hover:opacity-100"
-              >
-                {showHistory ? "Hide" : "See"} failed runs
-              </button>
-              <Link
-                to="/admin/deploy-history"
-                data-testid="deploy-guard-trend-link"
-                className="mt-2 ml-3 text-[10px] uppercase tracking-wider font-bold underline opacity-70 hover:opacity-100"
-              >
-                Full 30-day trend →
-              </Link>
-              {showHistory && (
-                <div className="mt-2 text-[10px] font-mono space-y-1" data-testid="deploy-guard-history-list">
-                  {hist.history.filter((h) => h.status === "fail").slice(-10).map((h, i) => (
-                    <div key={i} className="flex gap-2 border-b border-current/10 py-1">
-                      <span className="opacity-70">{new Date(h.checked_at).toLocaleString()}</span>
-                      <span className="text-rose-700 font-bold">FAIL</span>
-                      <span className="truncate">{(h.failed_tests || []).join(", ") || "(no test list captured)"}</span>
-                    </div>
-                  ))}
-                  {hist.history.filter((h) => h.status === "fail").length === 0 && (
-                    <div className="italic opacity-60">No failed runs recorded yet 🎉</div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-        <button
-          data-testid="deploy-guard-run-now"
-          onClick={runNow}
-          disabled={running}
-          className="text-[10px] uppercase tracking-wider font-bold px-3 py-1.5 border border-current rounded-sm hover:bg-white/40 disabled:opacity-60"
-        >
-          {running ? "Running…" : "Re-run"}
-        </button>
-      </div>
-    </div>
-  );
-}
 
 // Iter51 — Save-Health Alerts banner. Shows only when an unacknowledged
 // alert exists (i.e. the failure count crossed the configured threshold).

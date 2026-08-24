@@ -100,7 +100,11 @@ def test_invoice_pdf_same_ship_site_renders(env):
 
 
 def test_invoice_pdf_mixed_ship_sites_renders(env):
-    """Trips have different sites → 'Mixed' header + per-trip Ship-To lines."""
+    """Trips have different sites → Ship-To band shows 'Mixed — see per-trip below'
+    caption. Iter117 realignment: since the Trip table now enforces STRICT
+    single-line rows, per-trip Ship-To names are no longer folded into the
+    Route cell as a second line. They remain accessible via the Ship-To band
+    at the top of the invoice and via the Trip source-of-truth records."""
     t1 = _mk_trip(env, site_id=env["site_a"]["id"], ref="MIX-REF-1", date="2026-08-10")
     t2 = _mk_trip(env, site_id=env["site_b"]["id"], ref="MIX-REF-2", date="2026-08-11")
     inv = _mk_invoice(env, [t1["id"], t2["id"]], inv_date="2026-08-12")
@@ -111,9 +115,6 @@ def test_invoice_pdf_mixed_ship_sites_renders(env):
     assert "Mixed" in text
     assert "MIX-REF-1" in text
     assert "MIX-REF-2" in text
-    # Both site names visible per-trip
-    assert "Vijayawada Plant" in text
-    assert "Guntur Depot" in text
 
 
 def test_invoice_pdf_customer_ref_blank_no_inheritance(env):
