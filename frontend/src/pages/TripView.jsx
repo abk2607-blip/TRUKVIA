@@ -2,8 +2,8 @@ import React from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api, API, fmtCurrency, fmtDate } from "@/api";
-import { openTripLrPdf } from "@/utils/pdfDownload";
-import { ArrowLeft, Pencil, FileText, ExternalLink } from "lucide-react";
+import { openTripLrPdf, downloadTripLrAllCopiesZip } from "@/utils/pdfDownload";
+import { ArrowLeft, Pencil, FileText, ExternalLink, Archive } from "lucide-react";
 import FileAttachments from "@/components/FileAttachments";
 import OverrideBadge from "@/components/OverrideBadge";
 
@@ -64,6 +64,12 @@ export default function TripView() {
           <button data-testid="trip-view-lr" onClick={() => openTripLrPdf(trip.id, `LR_${trip.lr_number || trip.id}.pdf`)}
              className="inline-flex items-center gap-2 px-3 py-2 text-xs uppercase tracking-wider border border-zinc-200 rounded-sm hover:bg-zinc-950 hover:text-white">
             <FileText size={14} /> LR PDF
+          </button>
+          <button data-testid="trip-view-lr-all-copies"
+             onClick={() => downloadTripLrAllCopiesZip(trip.id, `LR_${trip.lr_number || trip.id}_all_copies.zip`)}
+             title="Download all 3 carriage copies — Original for Consignee, Duplicate for Transporter, Triplicate for Consignor"
+             className="inline-flex items-center gap-2 px-3 py-2 text-xs uppercase tracking-wider border border-indigo-300 text-indigo-800 rounded-sm hover:bg-indigo-700 hover:text-white hover:border-indigo-700">
+            <Archive size={14} /> All Copies (ZIP)
           </button>
           <Link data-testid="trip-view-edit" to={`/trips/${trip.id}/edit`}
                 className="inline-flex items-center gap-2 px-3 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm hover:bg-zinc-800">

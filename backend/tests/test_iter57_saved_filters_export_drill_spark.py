@@ -154,8 +154,13 @@ def test_export_company_isolation():
 
 def test_auth_failures_endpoint_shape():
     # Trigger a fresh auth failure so there's at least one row to drill into
+    # Iter121 · loopback traffic is filtered out of save_health; supply XFF so
+    # this test-generated failure lands in the drill-down like a real ingress hit.
     httpx.get(f"{BASE}/api/auth/me",
-              headers={"Authorization": f"Bearer iter57_drill_bogus_{uuid.uuid4().hex[:6]}"},
+              headers={
+                  "Authorization": f"Bearer iter57_drill_bogus_{uuid.uuid4().hex[:6]}",
+                  "X-Forwarded-For": "203.0.113.57",
+              },
               timeout=15)
     import time; time.sleep(0.5)
     r = httpx.get(f"{BASE}/api/admin/save-health/auth-failures", params={"hours": 24, "limit": 20}, timeout=30)

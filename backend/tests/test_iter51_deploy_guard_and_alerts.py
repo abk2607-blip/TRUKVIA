@@ -24,6 +24,10 @@ from dotenv import load_dotenv
 load_dotenv("/app/backend/.env")
 
 BASE = os.environ.get("BACKEND_URL_INTERNAL", "http://localhost:8001")
+# Iter121 · Loopback (127.0.0.1) traffic is filtered out of save_health telemetry.
+# Pytest runs on the same pod need an XFF header to look like external ingress
+# traffic; otherwise middleware inserts get skipped.
+XFF = {"X-Forwarded-For": "203.0.113.51"}
 
 
 def test_deploy_readiness_endpoint_shape():
@@ -130,7 +134,7 @@ def test_alert_fires_when_threshold_crossed():
               timeout=10)
     # Trigger 3 failures
     for _ in range(3):
-        httpx.post(f"{BASE}/api/customers", headers=h, json={}, timeout=10)
+        httpx.post(f"{BASE}/api/customers", headers={**h, **XFF}, json={}, timeout=10)
     # Give the fire-and-forget task a moment
     for _ in range(15):
         time.sleep(0.3)
@@ -170,7 +174,7 @@ def test_alert_acknowledgement():
     h = {**HDR, "X-Company-Id": cid}
     httpx.put(f"{BASE}/api/admin/save-health/alert-config",
               json={"threshold": 1, "window_hours": 1, "cooldown_min": 5, "enabled": True}, timeout=10)
-    httpx.post(f"{BASE}/api/customers", headers=h, json={}, timeout=10)
+    httpx.post(f"{BASE}/api/customers", headers={**h, **XFF}, json={}, timeout=10)
     time.sleep(1.5)
     all_alerts = httpx.get(f"{BASE}/api/admin/save-health/alerts", params={"limit": 5}, timeout=10).json()["alerts"]
     assert all_alerts, "no alert to ack"
@@ -202,7 +206,7 @@ def test_alert_cooldown_prevents_spam():
     httpx.put(f"{BASE}/api/admin/save-health/alert-config",
               json={"threshold": 1, "window_hours": 1, "cooldown_min": 30, "enabled": True}, timeout=10)
     for _ in range(3):
-        httpx.post(f"{BASE}/api/customers", headers=h, json={}, timeout=10)
+        httpx.post(f"{BASE}/api/customers", headers={**h, **XFF}, json={}, timeout=10)
         time.sleep(0.3)
     time.sleep(2)
     alerts = httpx.get(f"{BASE}/api/admin/save-health/alerts", params={"limit": 10}, timeout=10).json()["alerts"]

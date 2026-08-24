@@ -76,19 +76,38 @@ def test_save_failure_disabled_suppresses_alert():
                                                 {"$set": {"acknowledged": True}})
         c.close()
     asyncio.run(_clean())
+    from datetime import datetime, timezone
     httpx.put(f"{BASE}/api/admin/save-health/alert-config",
               json={"threshold": 1, "window_hours": 1, "cooldown_min": 5, "enabled": True,
                     "alert_types": {"save_failure": False, "login_failure": True,
                                     "deployment_failure": True, "trip_save_failure": True, "invoice_save_failure": True},
                     "email_recipients": ["bitumentra@gmail.com"], "channels": ["email"]}, timeout=10)
+    cutoff = datetime.now(timezone.utc).isoformat()
     h = _h()
+    # Iter121 · loopback filtered from save_health — supply XFF so the failures
+    # actually get counted toward the threshold. The point of this test is that
+    # save_failure=False must suppress the alert even when the threshold IS breached.
+    ext = {**h, "X-Forwarded-For": "203.0.113.53"}
     for _ in range(3):
-        httpx.post(f"{BASE}/api/customers", headers=h, json={}, timeout=10)
+        httpx.post(f"{BASE}/api/customers", headers=ext, json={}, timeout=10)
         time.sleep(0.2)
     time.sleep(1.5)
-    # Filter to unacknowledged only — pre-existing acknowledged alerts are ignored
-    alerts = httpx.get(f"{BASE}/api/admin/save-health/alerts?unacknowledged_only=true&limit=5", timeout=10).json()["alerts"]
-    assert not alerts, f"alert fired despite save_failure=False: {alerts}"
+    # Iter122 · Under pytest-xdist, an adjacent worker (e.g. test_iter51 or
+    # test_iter58) may write back alert_types.save_failure=True before we check.
+    # Since alert_config is a global singleton, if a parallel worker re-enabled
+    # save_failure we cannot make our assertion meaningfully — skip cleanly.
+    # Also filter to save_failure alerts fired after our cutoff; auth_ip_burst
+    # is a distinct alert kind and fires independently of the save_failure toggle.
+    cfg_now = httpx.get(f"{BASE}/api/admin/save-health/alert-config", timeout=10).json()
+    at = (cfg_now or {}).get("alert_types") or {}
+    if at.get("save_failure") is not False:
+        import pytest
+        pytest.skip("parallel xdist worker mutated alert_config.save_failure — cannot assert suppression")
+    alerts = httpx.get(f"{BASE}/api/admin/save-health/alerts?unacknowledged_only=true&limit=20", timeout=10).json()["alerts"]
+    sf_after = [a for a in alerts
+                if a.get("kind") != "auth_ip_burst"
+                and (a.get("fired_at") or "") > cutoff]
+    assert not sf_after, f"save_failure alert fired despite save_failure=False: {sf_after}"
     # Restore
     httpx.put(f"{BASE}/api/admin/save-health/alert-config",
               json={"threshold": 20, "alert_types": {"save_failure": True, "login_failure": True,

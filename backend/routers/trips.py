@@ -1260,6 +1260,56 @@ async def trip_lr_pdf(tid: str, copy: str = "original", user=Depends(get_current
     )
 
 
+@router.get("/trips/{tid}/lr/all-copies")
+async def trip_lr_all_copies_zip(tid: str, user=Depends(get_current_user)):
+    """Iter122 · All-Copies ZIP — one download, three carriage copies.
+
+    Uses the same already-approved `build_lr_pdf` renderer that Iter115 blessed
+    (Original for Consignee · Duplicate for Transporter · Triplicate for
+    Consignor). Trip data is read-only for this endpoint — no freight, no
+    shortage, no supplier, no invoice logic is touched. Only side-effect is
+    the standard "assign lr_number if missing" pattern used by the existing
+    single-copy /lr endpoint (kept identical for parity).
+    """
+    import zipfile
+    trip = await db.trips.find_one({"id": tid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+    if not trip.get("lr_number"):
+        lr_num = await _next_lr_number(user["user_id"], trip.get("company_id", ""))
+        await db.trips.update_one({"id": tid, "user_id": user["user_id"]}, {"$set": {"lr_number": lr_num}})
+        trip["lr_number"] = lr_num
+    customer = await db.customers.find_one({"id": trip["customer_id"], "user_id": user["user_id"]}, {"_id": 0}) or {}
+    trip_company_id = trip.get("company_id", "")
+    company = await db.companies.find_one({"id": trip_company_id, "user_id": user["user_id"]}, {"_id": 0}) if trip_company_id else None
+    company = company or await db.companies.find_one({"user_id": user["user_id"], "is_default": True}, {"_id": 0}) or {}
+
+    base = (trip["lr_number"] or tid[:8]).replace("/", "_")
+    zbuf = io.BytesIO()
+    with zipfile.ZipFile(zbuf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for copy_key, suffix in (("original", "ORIGINAL"), ("duplicate", "DUPLICATE"), ("triplicate", "TRIPLICATE")):
+            pdf_bytes = build_lr_pdf(company, customer, trip, copy=copy_key)
+            zf.writestr(f"{base}_{suffix}.pdf", pdf_bytes)
+
+    try:
+        await db.audit_logs.insert_one({
+            "user_id": user["user_id"], "company_id": trip.get("company_id", ""),
+            "action": "lr_all_copies_zip", "entity_type": "trip", "entity_id": tid,
+            "entity_name": trip.get("lr_number") or tid[:8],
+            "timestamp": now_utc().isoformat(),
+            "actor_email": user.get("email"),
+            "detail": {"copies": ["original", "duplicate", "triplicate"]},
+        })
+    except Exception:
+        pass
+
+    zbuf.seek(0)
+    return StreamingResponse(
+        zbuf, media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="LR_{base}_all_copies.zip"'},
+    )
+
+
 @router.post("/trips/{tid}/regenerate-lr")
 async def regenerate_trip_lr(tid: str, user=Depends(get_current_user)):
     """Iter109 · Regenerate LR PDF from the current approved Trip data. This

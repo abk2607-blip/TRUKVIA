@@ -1,10 +1,10 @@
 import React from "react";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { api, API, fmtCurrency, fmtDate } from "@/api";
-import { openTripLrPdf } from "@/utils/pdfDownload";
+import { openTripLrPdf, downloadTripLrAllCopiesZip } from "@/utils/pdfDownload";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
-import { Plus, CheckCircle2, Clock, Download, FileText, Trash2, Eye, Pencil, Copy, Share2, Search, X, ChevronLeft, ChevronRight, Bookmark, BookmarkPlus, FileWarning } from "lucide-react";
+import { Plus, CheckCircle2, Clock, Download, FileText, Trash2, Eye, Pencil, Copy, Share2, Search, X, ChevronLeft, ChevronRight, Bookmark, BookmarkPlus, FileWarning, Archive } from "lucide-react";
 import SearchableSelect from "@/components/SearchableSelect";
 
 const downloadEwayBill = async (tripId) => {
@@ -781,6 +781,12 @@ export default function Trips() {
                       <Link data-testid={`view-trip-${t.id}`} to={`/trips/${t.id}/view`} className="p-1.5 border border-zinc-200 rounded-sm text-zinc-600 hover:bg-zinc-950 hover:text-white transition" title="View details"><Eye size={12} /></Link>
                       <Link data-testid={`edit-trip-${t.id}`} to={`/trips/${t.id}/edit`} className={`p-1.5 border rounded-sm hover:bg-zinc-950 hover:text-white transition ${t.status === "invoiced" ? "border-amber-300 text-amber-700" : "border-zinc-200 text-zinc-600"}`} title={t.status === "invoiced" ? "Edit (invoice will recalc)" : "Edit"}><Pencil size={12} /></Link>
                       <button data-testid={`lr-${t.id}`} onClick={() => openTripLrPdf(t.id, `LR_${t.lr_number || t.id}.pdf`)} className="p-1.5 border border-indigo-200 rounded-sm text-indigo-700 hover:bg-indigo-600 hover:text-white transition" title="LR PDF"><FileText size={12} /></button>
+                      <button
+                        data-testid={`lr-all-copies-${t.id}`}
+                        onClick={() => downloadTripLrAllCopiesZip(t.id, `LR_${t.lr_number || t.id}_all_copies.zip`)}
+                        className="p-1.5 border border-indigo-300 rounded-sm text-indigo-800 hover:bg-indigo-700 hover:text-white transition"
+                        title="All Copies (ZIP) — Original / Duplicate / Triplicate"
+                      ><Archive size={12} /></button>
                       <button
                         data-testid={`regenerate-lr-${t.id}`}
                         onClick={async () => {

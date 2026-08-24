@@ -20,6 +20,13 @@ load_dotenv("/app/backend/.env")
 BASE = os.environ.get("BACKEND_URL_INTERNAL", "http://localhost:8001")
 TOKEN = "test_session_bitumen_2026"
 HDR = {"Authorization": f"Bearer {TOKEN}"}
+# Iter121 · The save_health middleware now excludes loopback (127.0.0.1) traffic
+# from telemetry — pytest runs on the same pod would otherwise pollute the tile
+# with test-generated failures. To exercise the middleware from a pytest run we
+# must pretend to be behind the Kubernetes ingress by supplying X-Forwarded-For
+# with a public IP (RFC-5737 documentation range). This is a TEST-ONLY concern;
+# real ingress traffic already carries XFF automatically.
+HDR_EXT = {**HDR, "X-Forwarded-For": "203.0.113.50"}
 
 
 def _cid():
@@ -41,7 +48,7 @@ def test_save_health_captures_write_failure():
     import asyncio, motor.motor_asyncio, os
     from dotenv import load_dotenv
     load_dotenv("/app/backend/.env")
-    h = {**HDR, "X-Company-Id": _cid()}
+    h = {**HDR_EXT, "X-Company-Id": _cid()}
     since_iso = datetime.now(timezone.utc).isoformat()
     r = httpx.post(f"{BASE}/api/customers", headers=h, json={}, timeout=10)
     assert r.status_code >= 400

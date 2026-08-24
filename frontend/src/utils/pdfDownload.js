@@ -38,6 +38,30 @@ export async function openTripLrPdf(tripId, filenameHint, opts = {}) {
   }
 }
 
+// Iter122 — Download a ZIP containing all three LR carriage copies
+// (Original / Duplicate / Triplicate). Uses the same Bearer-token pattern as
+// openTripLrPdf so the auth header rides along.
+export async function downloadTripLrAllCopiesZip(tripId, filenameHint) {
+  try {
+    const res = await api.get(`/trips/${tripId}/lr/all-copies`, {
+      responseType: "blob",
+      timeout: 60_000,
+    });
+    const url = URL.createObjectURL(new Blob([res.data], { type: "application/zip" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filenameHint || `LR_${tripId}_all_copies.zip`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 90_000);
+    toast.success("All 3 LR copies downloaded (Original · Duplicate · Triplicate)");
+  } catch (e) {
+    toast.error(errMsg(e, "LR All-Copies ZIP download failed"));
+    throw e;
+  }
+}
+
 export async function previewLrFromDraft(tripDraft) {
   try {
     const res = await api.post("/trips/lr/preview", tripDraft, {

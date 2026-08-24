@@ -190,10 +190,15 @@ def test_auth_ip_burst_fires_and_is_pii_safe():
         await db.save_health_alerts.delete_many({"kind": "auth_ip_burst"})
         c.close()
     asyncio.run(_clear())
-    # Fire 25 bad-token requests
+    # Fire 25 bad-token requests. Iter121 · loopback is filtered from save_health,
+    # so pytest must supply X-Forwarded-For (mimicking Kubernetes ingress) to be
+    # counted toward the auth_ip_burst alert.
     for _ in range(25):
         httpx.get(f"{BASE}/api/auth/me",
-                  headers={"Authorization": f"Bearer iter58_burst_{uuid.uuid4().hex[:6]}"},
+                  headers={
+                      "Authorization": f"Bearer iter58_burst_{uuid.uuid4().hex[:6]}",
+                      "X-Forwarded-For": "203.0.113.58",
+                  },
                   timeout=60)
     # Give the fire-and-forget task time to write alert
     for _ in range(10):

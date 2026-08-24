@@ -24,6 +24,11 @@ load_dotenv("/app/backend/.env")
 BASE = os.environ.get("BACKEND_URL_INTERNAL", "http://localhost:8001")
 TOKEN = "test_session_bitumen_2026"
 HDR = {"Authorization": f"Bearer {TOKEN}"}
+# Iter121 · Loopback (127.0.0.1) telemetry is filtered from save_health. Pytest
+# calls from the same pod must supply an XFF header (mimicking Kubernetes ingress)
+# so the middleware treats them as external traffic and records the events.
+XFF = {"X-Forwarded-For": "203.0.113.52"}
+HDR_EXT = {**HDR, **XFF}
 
 
 def _cid():
@@ -51,7 +56,7 @@ async def _count_recent(kind: str, path_prefix: str, since_iso: str) -> int:
 def test_invalid_token_401_is_logged_as_auth_failure():
     since = datetime.now(timezone.utc).isoformat()
     r = httpx.get(f"{BASE}/api/auth/me",
-                  headers={"Authorization": "Bearer definitely_not_a_valid_token_xyz"},
+                  headers={"Authorization": "Bearer definitely_not_a_valid_token_xyz", **XFF},
                   timeout=30)
     assert r.status_code == 401
     time.sleep(0.5)  # middleware writes after response
@@ -61,7 +66,7 @@ def test_invalid_token_401_is_logged_as_auth_failure():
 
 def test_missing_token_401_is_logged_as_auth_failure():
     since = datetime.now(timezone.utc).isoformat()
-    r = httpx.get(f"{BASE}/api/auth/me", timeout=30)  # no Authorization header
+    r = httpx.get(f"{BASE}/api/auth/me", headers=XFF, timeout=30)  # no Authorization header
     assert r.status_code == 401
     time.sleep(0.5)
     n = asyncio.run(_count_recent("auth_failure", "/api/auth/", since))
@@ -102,7 +107,7 @@ def test_post_failure_still_tagged_as_save_failure():
     """Regression — /api/customers POST with invalid payload must still be
     tagged 'save_failure', not 'auth_failure', even after Iter54 change."""
     since = datetime.now(timezone.utc).isoformat()
-    r = httpx.post(f"{BASE}/api/customers", headers=_h(), json={}, timeout=30)
+    r = httpx.post(f"{BASE}/api/customers", headers={**_h(), **XFF}, json={}, timeout=30)
     assert r.status_code >= 400
     time.sleep(0.5)
     save_n = asyncio.run(_count_recent("save_failure", "/api/customers", since))
