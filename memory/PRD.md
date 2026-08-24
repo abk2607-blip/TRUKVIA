@@ -2,6 +2,19 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter121 · Save Health — exclude loopback (127.0.0.1) telemetry** (Feb 2026)
+  - **Root cause (from Iter121 investigation)**: `_save_health_middleware` was faithfully recording every 4xx from any caller, so the on-pod pytest regression suite (running `bash scripts/run_regression.sh` from inside the pod, ip=`127.0.0.1`) contributed **99.0 % of the 6,924 alerts** the user saw on the Save Health tile. The remaining 1.0 % (72 rows) came from Emergent's Google-Cloud smoke-test probes, also deliberate. **Zero real browser sessions** hit a 4xx.
+  - **Fix (monitoring-only, 6 lines in `server.py`)**: In `_save_health_middleware`, after resolving the source IP, short-circuit and return the response if `ip in ("127.0.0.1", "::1", "localhost")`. Applied to NEW events only — historical rows preserved so the user can audit them.
+  - **Dashboard note**: One-line italic tooltip added under the Save Health tile (`Dashboard.jsx:436`, `data-testid="save-health-loopback-note"`): *"Internal loopback traffic (127.0.0.1) from the on-pod pytest / regression guard is excluded so this tile reflects real operational failures only."*
+  - **Verified** (with backend restarted):
+    - Loopback probe (3× `GET /api/auth/me` + 3× `POST /api/customers` + 3× `POST /api/trips` from `curl localhost`) → **0 rows** inserted.
+    - External probe (2× `GET /api/auth/me` + 2× `POST /api/customers` with `X-Forwarded-For: 203.0.113.42`) → **4 rows** inserted, all correctly tagged `ip=203.0.113.42`.
+    - `/api/auth/health` → HTTP 200, `regression_guard.consecutive_failures = 0`.
+    - Regression Guard remains fully independent — `bash scripts/run_regression.sh` still passes 345/1skip/0 and writes to `deploy_status`; no test-suite logic changed.
+    - Alert threshold unchanged (still `20 failures / 1 h`), monitoring still enabled, historical 24 h counter still visible for audit.
+  - **Untouched**: `_compute_trip`, supplier freight/shortage engine, auth (`get_current_user`, `/auth/me`, `/auth/session`), invoice PDF, LR PDF, Iter106/106b/110 auth stability paths, Iter111 supplier freight & shortage, deploy-readiness endpoints, alert config schema, save_health TTL index. No business logic touched.
+
+
 - [x] **Iter120 · Regression Guard fully green — stale auth/health tests realigned** (Feb 2026)
   - **Root cause**: Two tests — `test_iter52_strict_mode_alerts_history.py::test_auth_health_returns_meaningful_state` and `test_iter53_strict_prod_multirecip_trend.py::test_auth_health_gate_semantics` — still asserted the pre-Iter106 contract (`/api/auth/health` returns 503 on `strict + fail + consecutive≥2`, plus a `warning` field on soft-fail). In Iter106 that gating was intentionally removed (comment in `routers/auth_router.py:94`: *"Deploy-guard gating removed: /auth/health reports liveness only … it can no longer 503 the app (that drove the persistent REFRESHING pill)."*). The endpoint now always returns 200 as long as the DB ping works, and surfaces the cached guard verdict for informational display only. Iter45 was **not** the failure — it passes cleanly; the earlier hand-off misread the batch report.
   - **Fix (test-only)**: Rewrote both test bodies to assert the current Iter106 contract — `status_code == 200`, `regression_guard` block present with `status ∈ {pass, fail, unknown}`, `strict_mode` boolean, `consecutive_failures` int. **No backend code touched.** No changes to `_compute_trip`, supplier freight/shortage engine, invoice PDF, LR PDF, or auth.

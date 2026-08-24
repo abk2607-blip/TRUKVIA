@@ -140,6 +140,15 @@ async def _save_health_middleware(request: _FReq, call_next):
             # tokens or payloads — keep this row PII-safe.
             xff = request.headers.get("x-forwarded-for") or ""
             ip = xff.split(",")[0].strip() if xff else (request.client.host if request.client else "")
+            # Iter121 — Exclude loopback (127.0.0.1 / ::1) from Save Health
+            # accounting. The on-pod pytest regression suite and the hourly
+            # deploy-guard hit /api/auth/me and negative-path POSTs from
+            # localhost; those are test telemetry, not real business
+            # failures. External (ingress-forwarded) traffic still flows
+            # through untouched — XFF-carried public IPs are recorded as
+            # before. Applied to NEW events only; historical rows preserved.
+            if ip in ("127.0.0.1", "::1", "localhost"):
+                return response
             await db.save_health.insert_one({
                 "ts": _dt.now(_tz.utc),
                 "ts_iso": _dt.now(_tz.utc).isoformat(),

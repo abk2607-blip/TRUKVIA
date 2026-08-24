@@ -433,7 +433,7 @@ function SaveHealthTile() {
             </div>
           )}
           <div className="text-[10px] mt-1 opacity-70">
-            Write requests (POST/PUT/PATCH/DELETE) returning HTTP ≥ 400 across all collections, plus 401/403 on <code className="font-mono">/api/auth/*</code>.
+            Write requests (POST/PUT/PATCH/DELETE) returning HTTP ≥ 400 across all collections, plus 401/403 on <code className="font-mono">/api/auth/*</code>. <span data-testid="save-health-loopback-note" className="italic opacity-80">Internal loopback traffic (127.0.0.1) from the on-pod pytest / regression guard is excluded so this tile reflects real operational failures only.</span>
             {cfg && (
               <span className="ml-1">
                 Alert threshold: <b>{cfg.threshold}</b> / {cfg.window_hours}h
