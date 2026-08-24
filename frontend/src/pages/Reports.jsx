@@ -1039,9 +1039,11 @@ function LRRegisterReport() {
       <div className="border border-zinc-200 bg-white rounded-sm p-4 grid grid-cols-1 md:grid-cols-6 gap-3">
         <FieldWrap label="Start">
           <input data-testid="lrreg-start" type="date" value={start} onChange={(e) => setStart(e.target.value)} className={ic} />
+          <div className="mt-1 text-[10px] uppercase tracking-wider font-mono text-zinc-500" data-testid="lrreg-start-display">{fmtDate(start) || "—"}</div>
         </FieldWrap>
         <FieldWrap label="End">
           <input data-testid="lrreg-end" type="date" value={end} onChange={(e) => setEnd(e.target.value)} className={ic} />
+          <div className="mt-1 text-[10px] uppercase tracking-wider font-mono text-zinc-500" data-testid="lrreg-end-display">{fmtDate(end) || "—"}</div>
         </FieldWrap>
         <FieldWrap label="Customer">
           <select data-testid="lrreg-customer" value={customerId} onChange={(e) => setCustomerId(e.target.value)} className={ic}>
@@ -1093,9 +1095,9 @@ function LRRegisterReport() {
         )}
         <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-zinc-100 border border-zinc-200 rounded-sm">
           <span className="text-[10px] uppercase tracking-wider text-zinc-500">Period</span>
-          <span className="font-mono text-zinc-900">{start}</span>
+          <span className="font-mono text-zinc-900">{fmtDate(start)}</span>
           <span className="text-zinc-400">→</span>
-          <span className="font-mono text-zinc-900">{end}</span>
+          <span className="font-mono text-zinc-900">{fmtDate(end)}</span>
         </div>
         {customerId && (
           <div className="inline-flex items-center gap-1 px-2 py-0.5 bg-indigo-50 border border-indigo-200 rounded-sm">
@@ -1137,37 +1139,38 @@ function LRRegisterReport() {
         </div>
       </div>
 
-      <div ref={tableWrapRef} className="border border-zinc-200 bg-white rounded-sm overflow-x-auto" data-testid="lr-register-table" onClick={(e) => {
+      <div ref={tableWrapRef} className="border border-zinc-200 bg-white rounded-sm overflow-auto max-h-[70vh]" data-testid="lr-register-table" onClick={(e) => {
         const cell = e.target.closest("[data-col]");
         if (cell) setActiveCol(cell.getAttribute("data-col"));
       }}>
-        <table className="w-full text-xs">
-          <thead className="bg-zinc-950 text-white sticky top-0">
+        <table className="text-xs" style={{ borderCollapse: "separate", borderSpacing: 0, minWidth: "2100px" }}>
+          <thead className="bg-zinc-950 text-white sticky top-0 z-10">
             <tr>
               {[
-                { k: "lr_number",    label: "LR #",         align: "text-left" },
-                { k: "lr_date",      label: "Date",         align: "text-left" },
-                { k: "cust_ref",     label: "Cust Ref #",   align: "text-left" },
-                { k: "from",         label: "From",         align: "text-left" },
-                { k: "consignee",    label: "Consignee",    align: "text-left" },
-                { k: "ship_to",      label: "Ship-To",      align: "text-left" },
-                { k: "vehicle",      label: "Vehicle",      align: "text-left" },
-                { k: "driver",       label: "Driver",       align: "text-left" },
-                { k: "product",      label: "Product",      align: "text-left" },
-                { k: "loaded",       label: "Load MT",      align: "text-right" },
-                { k: "unloaded",     label: "Unload MT",    align: "text-right" },
-                { k: "shortage",     label: "Shortage MT",  align: "text-right" },
-                { k: "allowance",    label: "Allow MT",     align: "text-right" },
-                { k: "net_shortage", label: "Net MT",       align: "text-right" },
-                ...(full ? [{ k: "shortage_amount", label: "Shortage ₹", align: "text-right" }] : []),
-                { k: "freight",        label: "Freight ₹",    align: "text-right" },
-                { k: "invoice_number", label: "Invoice #",    align: "text-left" },
-                { k: "invoice_status", label: "Inv Status",   align: "text-left" },
-                { k: "lr_copies",      label: "LR Copies",    align: "text-left" },
+                { k: "lr_number",    label: "LR #",         align: "text-left",  w: 110, nowrap: true },
+                { k: "lr_date",      label: "Date",         align: "text-left",  w: 108, nowrap: true },
+                { k: "cust_ref",     label: "Cust Ref #",   align: "text-left",  w: 120, nowrap: true },
+                { k: "from",         label: "From",         align: "text-left",  w: 130 },
+                { k: "consignee",    label: "Consignee",    align: "text-left",  w: 200 },
+                { k: "ship_to",      label: "Ship-To",      align: "text-left",  w: 170 },
+                { k: "vehicle",      label: "Vehicle",      align: "text-left",  w: 120, nowrap: true },
+                { k: "driver",       label: "Driver",       align: "text-left",  w: 140 },
+                { k: "product",      label: "Product",      align: "text-left",  w: 170 },
+                { k: "loaded",       label: "Load MT",      align: "text-right", w: 80,  nowrap: true },
+                { k: "unloaded",     label: "Unload MT",    align: "text-right", w: 84,  nowrap: true },
+                { k: "shortage",     label: "Shortage MT",  align: "text-right", w: 96,  nowrap: true },
+                { k: "allowance",    label: "Allow MT",     align: "text-right", w: 80,  nowrap: true },
+                { k: "net_shortage", label: "Net MT",       align: "text-right", w: 80,  nowrap: true },
+                ...(full ? [{ k: "shortage_amount", label: "Shortage ₹", align: "text-right", w: 105, nowrap: true }] : []),
+                { k: "freight",        label: "Freight ₹",    align: "text-right", w: 105, nowrap: true },
+                { k: "invoice_number", label: "Invoice #",    align: "text-left",  w: 140, nowrap: true },
+                { k: "invoice_status", label: "Inv Status",   align: "text-left",  w: 120, nowrap: true },
+                { k: "lr_copies",      label: "LR Copies",    align: "text-left",  w: 118, nowrap: true },
               ].map((h) => (
                 <th key={h.k}
                     data-col={h.k}
                     data-testid={`lrreg-th-${h.k}`}
+                    style={{ minWidth: h.w, width: h.w }}
                     className={`px-2 py-2 cursor-pointer select-none ${h.align} ${activeCol === h.k ? "bg-indigo-600 ring-1 ring-indigo-300" : ""}`}>
                   {h.label}
                 </th>
@@ -1188,26 +1191,27 @@ function LRRegisterReport() {
             {rows.map((r, i) => {
               const zebra = i % 2 === 0 ? "bg-zinc-50" : "";
               const hl = (k) => activeCol === k ? "bg-indigo-50 ring-1 ring-indigo-200" : "";
+              const NW = "whitespace-nowrap";
               return (
               <tr key={r.trip_id} className={zebra} data-testid={`lrreg-row-${r.trip_id}`}>
-                <td data-col="lr_number" className={`px-2 py-1 font-bold text-indigo-800 ${hl("lr_number")}`}>{r.lr_number}</td>
-                <td data-col="lr_date" className={`px-2 py-1 ${hl("lr_date")}`}>{fmtDate(r.lr_date)}</td>
-                <td data-col="cust_ref" className={`px-2 py-1 ${hl("cust_ref")}`}>{r.customer_reference_number || "—"}</td>
-                <td data-col="from" className={`px-2 py-1 ${hl("from")}`}>{r.from_location}</td>
-                <td data-col="consignee" className={`px-2 py-1 ${hl("consignee")}`}>{r.customer_name}</td>
-                <td data-col="ship_to" className={`px-2 py-1 ${hl("ship_to")}`}>{r.ship_to}</td>
-                <td data-col="vehicle" className={`px-2 py-1 ${hl("vehicle")}`}>{r.vehicle_number}</td>
-                <td data-col="driver" className={`px-2 py-1 ${hl("driver")}`}>{r.driver_name || "—"}</td>
-                <td data-col="product" className={`px-2 py-1 ${hl("product")}`}>{r.product || "—"}</td>
-                <td data-col="loaded" className={`px-2 py-1 text-right ${hl("loaded")}`}>{Number(r.loaded_qty).toFixed(2)}</td>
-                <td data-col="unloaded" className={`px-2 py-1 text-right ${hl("unloaded")}`}>{Number(r.unloaded_qty).toFixed(2)}</td>
-                <td data-col="shortage" className={`px-2 py-1 text-right ${hl("shortage")}`}>{Number(r.shortage_qty).toFixed(3)}</td>
-                <td data-col="allowance" className={`px-2 py-1 text-right ${hl("allowance")}`}>{Number(r.allowance_qty).toFixed(3)}</td>
-                <td data-col="net_shortage" className={`px-2 py-1 text-right ${hl("net_shortage")}`}>{Number(r.net_shortage_qty).toFixed(3)}</td>
-                {full && <td data-col="shortage_amount" className={`px-2 py-1 text-right ${hl("shortage_amount")}`}>{fmtCurrency(r.shortage_amount)}</td>}
-                <td data-col="freight" className={`px-2 py-1 text-right ${hl("freight")}`}>{fmtCurrency(r.freight_amount)}</td>
-                <td data-col="invoice_number" className={`px-2 py-1 ${hl("invoice_number")}`}>{r.invoice_number || "—"}</td>
-                <td data-col="invoice_status" className={`px-2 py-1 ${hl("invoice_status")}`}>
+                <td data-col="lr_number" className={`px-2 py-1 font-bold text-indigo-800 ${NW} ${hl("lr_number")}`}>{r.lr_number}</td>
+                <td data-col="lr_date" className={`px-2 py-1 ${NW} ${hl("lr_date")}`}>{fmtDate(r.lr_date)}</td>
+                <td data-col="cust_ref" className={`px-2 py-1 ${NW} ${hl("cust_ref")}`}>{r.customer_reference_number || "—"}</td>
+                <td data-col="from" className={`px-2 py-1 break-words ${hl("from")}`}>{r.from_location}</td>
+                <td data-col="consignee" className={`px-2 py-1 break-words ${hl("consignee")}`}>{r.customer_name}</td>
+                <td data-col="ship_to" className={`px-2 py-1 break-words ${hl("ship_to")}`}>{r.ship_to}</td>
+                <td data-col="vehicle" className={`px-2 py-1 ${NW} ${hl("vehicle")}`}>{r.vehicle_number}</td>
+                <td data-col="driver" className={`px-2 py-1 break-words ${hl("driver")}`}>{r.driver_name || "—"}</td>
+                <td data-col="product" className={`px-2 py-1 break-words ${hl("product")}`}>{r.product || "—"}</td>
+                <td data-col="loaded" className={`px-2 py-1 text-right ${NW} ${hl("loaded")}`}>{Number(r.loaded_qty).toFixed(2)}</td>
+                <td data-col="unloaded" className={`px-2 py-1 text-right ${NW} ${hl("unloaded")}`}>{Number(r.unloaded_qty).toFixed(2)}</td>
+                <td data-col="shortage" className={`px-2 py-1 text-right ${NW} ${hl("shortage")}`}>{Number(r.shortage_qty).toFixed(3)}</td>
+                <td data-col="allowance" className={`px-2 py-1 text-right ${NW} ${hl("allowance")}`}>{Number(r.allowance_qty).toFixed(3)}</td>
+                <td data-col="net_shortage" className={`px-2 py-1 text-right ${NW} ${hl("net_shortage")}`}>{Number(r.net_shortage_qty).toFixed(3)}</td>
+                {full && <td data-col="shortage_amount" className={`px-2 py-1 text-right ${NW} ${hl("shortage_amount")}`}>{fmtCurrency(r.shortage_amount)}</td>}
+                <td data-col="freight" className={`px-2 py-1 text-right ${NW} ${hl("freight")}`}>{fmtCurrency(r.freight_amount)}</td>
+                <td data-col="invoice_number" className={`px-2 py-1 ${NW} ${hl("invoice_number")}`}>{r.invoice_number || "—"}</td>
+                <td data-col="invoice_status" className={`px-2 py-1 ${NW} ${hl("invoice_status")}`}>
                   <span className={`px-1.5 py-0.5 rounded-sm text-[10px] uppercase tracking-wider ${
                     r.invoice_status === "paid" ? "bg-emerald-100 text-emerald-800"
                     : r.invoice_status === "partially_paid" ? "bg-amber-100 text-amber-800"
@@ -1215,7 +1219,7 @@ function LRRegisterReport() {
                     : "bg-zinc-100 text-zinc-600"
                   }`}>{r.invoice_status.replace("_", " ")}</span>
                 </td>
-                <td data-col="lr_copies" className={`px-2 py-1 text-[10px] uppercase tracking-wider text-zinc-600 ${hl("lr_copies")}`}>{r.lr_copies}</td>
+                <td data-col="lr_copies" className={`px-2 py-1 text-[10px] uppercase tracking-wider text-zinc-600 ${NW} ${hl("lr_copies")}`}>{r.lr_copies}</td>
               </tr>
             );})}
           </tbody>

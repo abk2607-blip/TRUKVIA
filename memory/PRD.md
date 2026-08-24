@@ -2,6 +2,13 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter124c · LR Register live UI refinement — Indian dates + width + horizontal scroll** (Feb 2026)
+  - **Indian date format everywhere** — filter inputs keep native `<input type="date">` (accessible / universal) with the required Indian format shown as `dd-Mmm-yyyy` in a mono label directly below each input (`lrreg-start-display`, `lrreg-end-display`). Chip banner Period now uses `fmtDate(start) → fmtDate(end)`. Date column already used `fmtDate` but is now also `whitespace-nowrap` with explicit 108 px width so `01 Aug 2026` never wraps.
+  - **Column widths** — every `<th>` and `<td>` gets an explicit `minWidth`/`width` in px. Table total minimum width forced to **2100 px** so on any typical 1920 px viewport it forces the parent to scroll horizontally (nothing clipped, nothing squeezed). Compact columns: LR #, Date, Cust Ref, Vehicle, all numeric MT columns, Freight ₹, Invoice #, Inv Status, LR Copies get `whitespace-nowrap`. Long text columns (`From`, `Consignee`, `Ship-To`, `Driver`, `Product`) get wider slots (130–200 px) and wrap gracefully.
+  - **Sticky header + vertical scroll** — outer wrapper now `overflow-auto max-h-[70vh]`, header uses `sticky top-0 z-10`. Both axes scroll cleanly; header stays aligned with body.
+  - **Column highlight preserved after horizontal scroll** — verified in screenshot 4 (Inv Status highlighted post-scroll). Click-outside still clears via the existing document-level mousedown handler.
+  - **Zero data-loader change** — `_lr_register_data`, backend PDFs, XLSX, freight/shortage/supplier/invoice/LR/policy/auth logic all untouched. Iter124 pytest 7/7 pass in 18.05 s.
+
 - [x] **Iter124b · LR Register UX fixes — route fix + always-visible period/filters + column highlight** (Feb 2026)
   - **Root cause of "blank tab"** — Reports tabs used `NavLink to="lr-register"` (relative). Once the user had visited any other tab, React Router v6 resolved the click relative to the current URL, giving nested paths like `/reports/ledger/supplier-pl/lr-register`. That URL didn't match any inner `Route`, so the tab body was empty. **Not** an API or filter bug.
   - **Fix (1-line)** — `NavLink to={\`/reports/${t.to}\`}` with `end` prop. All tabs now resolve to the correct `/reports/<name>` regardless of where the user came from.
