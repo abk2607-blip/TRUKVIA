@@ -1,7 +1,7 @@
 import React from "react";
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import { api, API, fmtCurrency, fmtDate } from "@/api";
-import { openTripLrPdf, downloadTripLrAllCopiesZip } from "@/utils/pdfDownload";
+import { openTripLrPdf, downloadTripLrAllCopiesZip, downloadBulkAllCopiesZip } from "@/utils/pdfDownload";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { Plus, CheckCircle2, Clock, Download, FileText, Trash2, Eye, Pencil, Copy, Share2, Search, X, ChevronLeft, ChevronRight, Bookmark, BookmarkPlus, FileWarning, Archive } from "lucide-react";
@@ -34,6 +34,9 @@ export default function Trips() {
 
   // Iter56 — Server-side filter / search / pagination state
   const [filters, setFilters] = React.useState(EMPTY_FILTERS);
+  const [bulkZipOpen, setBulkZipOpen] = React.useState(false);
+  const [bulkZipBusy, setBulkZipBusy] = React.useState(false);
+  const [bulkZipReport, setBulkZipReport] = React.useState(null);
   const [qDraft, setQDraft] = React.useState(""); // uncommitted free-text
   const [showHaltingOnly, setShowHaltingOnly] = React.useState(false);
   const [showMissingCustRef, setShowMissingCustRef] = React.useState(false); // Iter84
@@ -595,6 +598,18 @@ export default function Trips() {
           </button>
           <button
             type="button"
+            data-testid="bulk-all-copies-zip-btn"
+            onClick={() => setBulkZipOpen(true)}
+            disabled={selected.size > 200}
+            title={selected.size > 200
+              ? `Max 200 trips per bulk request (you selected ${selected.size}). Please narrow the selection.`
+              : `Package Original + Duplicate + Triplicate LR copies for ${selected.size} selected trip${selected.size===1?'':'s'} into one ZIP`}
+            className="px-3 py-1.5 text-[10px] uppercase tracking-wider font-bold bg-indigo-700 text-white rounded-sm hover:bg-indigo-800 disabled:opacity-40 disabled:cursor-not-allowed inline-flex items-center gap-1"
+          >
+            <Archive size={12} /> All Copies ZIP · {selected.size}
+          </button>
+          <button
+            type="button"
             data-testid="bulk-delete-btn"
             onClick={runBulkDelete}
             disabled={bulkDelete.isPending}
@@ -610,6 +625,77 @@ export default function Trips() {
           >
             <X size={12} /> Clear
           </button>
+        </div>
+      )}
+
+      {/* Iter125 · Bulk All-Copies ZIP confirmation modal */}
+      {bulkZipOpen && (
+        <div data-testid="bulk-all-copies-modal" className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4" onClick={() => !bulkZipBusy && setBulkZipOpen(false)}>
+          <div className="bg-white rounded-sm max-w-lg w-full p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+            {!bulkZipReport ? (
+              <>
+                <div className="flex items-center gap-2 mb-3">
+                  <Archive size={18} className="text-indigo-700" />
+                  <h3 className="text-lg font-bold">Bulk All-Copies ZIP</h3>
+                </div>
+                <p className="text-sm text-zinc-600 mb-4">
+                  About to package <span className="font-bold text-zinc-950">{selected.size}</span> trip{selected.size===1?'':'s'} × <span className="font-bold text-zinc-950">3</span> carriage copies = <span className="font-bold text-indigo-700">{selected.size * 3}</span> PDFs.
+                </p>
+                <div className="bg-zinc-50 border border-zinc-200 rounded-sm p-3 text-xs space-y-1 mb-4">
+                  <div>Estimated ZIP size: <span className="font-mono">~{Math.round(selected.size * 3 * 52 / 1024 * 10) / 10} MB</span></div>
+                  <div>Each trip → folder <span className="font-mono text-zinc-700">LR_&lt;lr_number&gt;/</span> containing 3 PDFs</div>
+                  <div>A <span className="font-mono">_manifest.txt</span> lists included + skipped trips with reasons</div>
+                  <div>Skip reasons: <span className="text-zinc-500">wrong_company · missing_customer · not_found · deleted</span></div>
+                  {selected.size > 200 && (
+                    <div className="text-rose-700 font-bold">⚠ Max 200 trips per request — please narrow the selection.</div>
+                  )}
+                </div>
+                <div className="flex gap-2 justify-end">
+                  <button data-testid="bulk-all-copies-cancel" onClick={() => setBulkZipOpen(false)} disabled={bulkZipBusy} className="px-4 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm hover:bg-zinc-100 disabled:opacity-40">Cancel</button>
+                  <button
+                    data-testid="bulk-all-copies-confirm"
+                    disabled={bulkZipBusy || selected.size === 0 || selected.size > 200}
+                    onClick={async () => {
+                      setBulkZipBusy(true);
+                      try {
+                        const trip_ids = Array.from(selected);
+                        const rep = await downloadBulkAllCopiesZip({ trip_ids });
+                        setBulkZipReport(rep);
+                        toast.success(`Downloaded — Included ${rep.included} · Skipped ${rep.skipped}`);
+                      } catch (_e) {
+                        // toast already surfaced by helper
+                      } finally { setBulkZipBusy(false); }
+                    }}
+                    className="px-4 py-2 text-xs uppercase tracking-wider font-bold bg-indigo-700 text-white rounded-sm hover:bg-indigo-800 disabled:opacity-40 inline-flex items-center gap-2"
+                  >
+                    {bulkZipBusy ? "Packaging…" : (<><Archive size={12} /> Confirm &amp; Download</>)}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="flex items-center gap-2 mb-3">
+                  <CheckCircle2 size={18} className="text-emerald-600" />
+                  <h3 className="text-lg font-bold">All-Copies ZIP downloaded</h3>
+                </div>
+                <div className="text-sm space-y-1 mb-4">
+                  <div>File: <span className="font-mono text-zinc-800">{bulkZipReport.filename}</span></div>
+                  <div>Included: <span className="font-bold text-emerald-700" data-testid="bulk-zip-included">{bulkZipReport.included}</span> trip{bulkZipReport.included===1?'':'s'} · <span className="font-mono">{bulkZipReport.pdfs}</span> PDFs</div>
+                  <div>Skipped: <span className={`font-bold ${bulkZipReport.skipped > 0 ? "text-amber-700" : "text-zinc-500"}`} data-testid="bulk-zip-skipped">{bulkZipReport.skipped}</span></div>
+                  {bulkZipReport.skipped > 0 && bulkZipReport.reasons && bulkZipReport.reasons !== "none" && (
+                    <div className="mt-2 bg-amber-50 border border-amber-200 rounded-sm p-2 text-xs">
+                      <div className="font-bold text-amber-900 mb-1">Skipped reasons:</div>
+                      <div className="font-mono text-amber-800" data-testid="bulk-zip-reasons">{bulkZipReport.reasons}</div>
+                      <div className="mt-1 text-[10px] text-amber-700 italic">See _manifest.txt inside the ZIP for the full list.</div>
+                    </div>
+                  )}
+                </div>
+                <div className="flex justify-end">
+                  <button data-testid="bulk-all-copies-close" onClick={() => { setBulkZipOpen(false); setBulkZipReport(null); }} className="px-4 py-2 text-xs uppercase tracking-wider font-bold bg-zinc-950 text-white rounded-sm hover:bg-zinc-800">Close</button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
 

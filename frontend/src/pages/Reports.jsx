@@ -2,8 +2,9 @@ import React, { useState, useEffect, useRef } from "react";
 import { NavLink, Routes, Route, Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api, API, fmtCurrency, fmtDate } from "@/api";
-import { FileText, TrendingUp, Scale, Download, Landmark, Handshake, Clock, MessageCircle, Truck, Printer, ClipboardList } from "lucide-react";
+import { FileText, TrendingUp, Scale, Download, Landmark, Handshake, Clock, MessageCircle, Truck, Printer, ClipboardList, Archive, CheckCircle2 } from "lucide-react";
 import HaltingReport from "@/pages/HaltingReport";
+import { downloadBulkAllCopiesZip } from "@/utils/pdfDownload";
 
 const tabs = [
   { to: "ledger", te: "లెడ్జర్", en: "Ledger", icon: FileText, testid: "tab-ledger" },
@@ -971,6 +972,9 @@ function LRRegisterReport() {
   const [q, setQ] = useState("");
   const [full, setFull] = useState(false);
   const [activeCol, setActiveCol] = useState(null);   // Iter124b · column highlight
+  const [bulkZipOpen, setBulkZipOpen] = useState(false);
+  const [bulkZipBusy, setBulkZipBusy] = useState(false);
+  const [bulkZipReport, setBulkZipReport] = useState(null);
   const tableWrapRef = useRef(null);
 
   // Clear column highlight when the user clicks outside the table.
@@ -1082,6 +1086,9 @@ function LRRegisterReport() {
           </button>
           <button data-testid="lr-register-pdf" onClick={() => _download("pdf")} className="inline-flex items-center gap-2 px-3 py-1.5 text-[11px] uppercase tracking-wider border border-rose-600 text-rose-700 rounded-sm hover:bg-rose-600 hover:text-white">
             <Printer size={12} /> PDF
+          </button>
+          <button data-testid="lrreg-all-copies-zip" onClick={() => setBulkZipOpen(true)} className="inline-flex items-center gap-2 px-3 py-1.5 text-[11px] uppercase tracking-wider border border-indigo-700 text-indigo-800 rounded-sm hover:bg-indigo-700 hover:text-white">
+            <Archive size={12} /> All Copies ZIP
           </button>
         </div>
       </div>

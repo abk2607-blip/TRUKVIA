@@ -1423,6 +1423,289 @@ async def bulk_regenerate_lr(payload: dict, user=Depends(get_current_user)):
     )
 
 
+LIVE_ONLY_FILTER = {"$or": [{"deleted_at": {"$exists": False}}, {"deleted_at": None}]}
+
+
+# ==================== Iter125 · Bulk All-Copies ZIP ====================
+
+_ITER125_MAX_TRIPS = 200
+_ITER125_SKIP_REASONS = ("wrong_company", "missing_customer", "not_found", "deleted")
+
+
+def _iter125_bulk_filename(company_code: str, start: Optional[str], end: Optional[str], n: int) -> str:
+    """Iter125 filename rule (parallels Iter124 LR Register):
+      - Explicit selection      → `LR_Bulk_All_Copies_<CODE>_<today>_<N>_trips.zip`
+      - Month-aligned range     → `LR_Bulk_All_Copies_<CODE>_<YYYY-MM>_<N>_trips.zip`
+      - Custom range            → `LR_Bulk_All_Copies_<CODE>_<start>to<end>_<N>_trips.zip`
+    """
+    if start and end:
+        try:
+            from calendar import monthrange
+            if start[:7] == end[:7] and start.endswith("-01"):
+                y, m = int(start[:4]), int(start[5:7])
+                if end == f"{y:04d}-{m:02d}-{monthrange(y, m)[1]:02d}":
+                    return f"LR_Bulk_All_Copies_{company_code}_{start[:7]}_{n}_trips.zip"
+        except Exception:
+            pass
+        return f"LR_Bulk_All_Copies_{company_code}_{start}to{end}_{n}_trips.zip"
+    today = datetime.now(timezone.utc).date().isoformat()
+    return f"LR_Bulk_All_Copies_{company_code}_{today}_{n}_trips.zip"
+
+
+@router.post("/trips/bulk-all-copies-zip")
+async def trips_bulk_all_copies_zip(payload: dict, request: Request, user=Depends(get_current_user)):
+    """Iter125 · Bulk All-Copies ZIP — extends Iter122's single-trip All-Copies
+    concept to a set of trips (explicit selection OR a date/customer filter).
+
+    Body accepts EITHER:
+      {"trip_ids": ["trip_a", "trip_b", ...]}                # explicit
+    OR
+      {"start": "YYYY-MM-DD", "end": "YYYY-MM-DD",           # filter (same
+       "customer_id": ..., "vehicle_id": ..., "driver": ...,   # keys as Iter124
+       "product_id": ..., "invoice_status": ..., "q": ...}     # LR Register)
+
+    Explicit `trip_ids` wins when both are supplied.
+
+    Contract:
+      - Uses the SAME Iter115/122-approved `build_lr_pdf(company, customer, trip, copy=…)` renderer.
+      - Only side-effect on trip docs: `lr_number` back-fill when missing
+        (bit-for-bit parity with Iter122 single-trip endpoint and Iter109 bulk
+        regenerate). NO writes to freight/shortage/supplier/invoice fields.
+      - Active-company isolation via `_active_company_id(request, user)`.
+      - Cap at 200 trips per request.
+      - Skipped trips reported in `X-Iter125-Skipped`, `X-Iter125-Reasons`,
+        response header AND the `_manifest.txt` file inside the ZIP.
+      - Existing single-trip endpoint `GET /trips/{tid}/lr/all-copies` is
+        UNTOUCHED — this endpoint lives at a different path.
+    """
+    import zipfile
+    uid = user["user_id"]
+    cid = await _active_company_id(request, user)
+    await _backfill_to_default(uid)
+
+    trip_ids_input = payload.get("trip_ids") or []
+    filter_mode = not trip_ids_input
+
+    # ---- Resolve candidate trip IDs -------------------------------------
+    candidate_trips: list = []
+    resolved_start = payload.get("start")
+    resolved_end = payload.get("end")
+    if trip_ids_input:
+        if not isinstance(trip_ids_input, list):
+            raise HTTPException(status_code=400, detail="trip_ids must be a list")
+        if len(trip_ids_input) > _ITER125_MAX_TRIPS:
+            raise HTTPException(status_code=400, detail=(
+                f"Max {_ITER125_MAX_TRIPS} trips per bulk All-Copies request. "
+                f"Please narrow your date range or split into batches."
+            ))
+        # We deliberately include soft-deleted / wrong-company here so we can
+        # report them in the manifest with a proper reason instead of a bare 404.
+        rows = await db.trips.find(
+            {"id": {"$in": trip_ids_input}, "user_id": uid},
+            {"_id": 0, "user_id": 0},
+        ).to_list(len(trip_ids_input))
+        candidate_trips = rows
+    else:
+        # Filter mode — parallel to Iter124 LR Register query builder
+        q_filter: dict = {"user_id": uid, "company_id": cid, **LIVE_ONLY_FILTER}
+        if resolved_start and resolved_end:
+            q_filter["date"] = {"$gte": resolved_start, "$lte": resolved_end}
+        elif resolved_start:
+            q_filter["date"] = {"$gte": resolved_start}
+        elif resolved_end:
+            q_filter["date"] = {"$lte": resolved_end}
+        else:
+            raise HTTPException(status_code=400, detail="Provide either trip_ids or a date/customer filter.")
+        if payload.get("customer_id"):
+            q_filter["customer_id"] = payload["customer_id"]
+        if payload.get("vehicle_id"):
+            q_filter["vehicle_id"] = payload["vehicle_id"]
+        if payload.get("product_id"):
+            q_filter["product_id"] = payload["product_id"]
+        if payload.get("driver"):
+            q_filter["driver_name"] = {"$regex": re.escape(payload["driver"]), "$options": "i"}
+        if payload.get("q"):
+            rx = {"$regex": re.escape(payload["q"]), "$options": "i"}
+            q_filter["$or"] = [
+                {"lr_number": rx}, {"vehicle_number": rx}, {"driver_name": rx},
+                {"from_location": rx}, {"to_location": rx},
+                {"customer_reference_number": rx},
+            ]
+        candidate_trips = await (db.trips
+                                 .find(q_filter, {"_id": 0, "user_id": 0})
+                                 .sort([("date", 1), ("lr_number", 1)])
+                                 .limit(_ITER125_MAX_TRIPS + 1)
+                                 .to_list(_ITER125_MAX_TRIPS + 1))
+        if len(candidate_trips) > _ITER125_MAX_TRIPS:
+            raise HTTPException(status_code=400, detail=(
+                f"Filter matches more than {_ITER125_MAX_TRIPS} trips. "
+                f"Please narrow your date range or split into batches."
+            ))
+
+    # ---- Classify: included vs skipped ----------------------------------
+    included: list = []
+    skipped: list = []      # [{trip_id, lr_number, reason}]
+    found_ids = {t["id"] for t in candidate_trips}
+    for tid in trip_ids_input:
+        if tid not in found_ids:
+            skipped.append({"trip_id": tid, "lr_number": "", "reason": "not_found"})
+    for t in candidate_trips:
+        if t.get("deleted_at") or t.get("is_deleted"):
+            skipped.append({"trip_id": t["id"], "lr_number": t.get("lr_number", ""), "reason": "deleted"})
+            continue
+        if t.get("company_id") and t.get("company_id") != cid:
+            skipped.append({"trip_id": t["id"], "lr_number": t.get("lr_number", ""), "reason": "wrong_company"})
+            continue
+        included.append(t)
+
+    # Pre-load customer & company for included trips
+    cust_ids = list({t.get("customer_id", "") for t in included if t.get("customer_id")})
+    customers_by_id = {}
+    if cust_ids:
+        for c in await db.customers.find(
+                {"user_id": uid, "id": {"$in": cust_ids}}, {"_id": 0}
+        ).to_list(len(cust_ids)):
+            customers_by_id[c["id"]] = c
+    company_ids = list({t.get("company_id", "") for t in included if t.get("company_id")})
+    companies_by_id = {}
+    if company_ids:
+        for co in await db.companies.find(
+                {"user_id": uid, "id": {"$in": company_ids}}, {"_id": 0}
+        ).to_list(len(company_ids)):
+            companies_by_id[co["id"]] = co
+    default_company = await db.companies.find_one(
+        {"user_id": uid, "is_default": True}, {"_id": 0}) or {}
+
+    still_included: list = []
+    for t in included:
+        cust = customers_by_id.get(t.get("customer_id", ""))
+        if not cust:
+            skipped.append({"trip_id": t["id"], "lr_number": t.get("lr_number", ""), "reason": "missing_customer"})
+            continue
+        still_included.append((t, cust))
+    included = still_included
+
+    if not included:
+        # Nothing eligible — spare the user an empty ZIP.
+        reasons_summary = ",".join(sorted(f"{r}:{sum(1 for s in skipped if s['reason']==r)}"
+                                          for r in {s['reason'] for s in skipped})) or "no_matches:1"
+        raise HTTPException(status_code=400, detail={
+            "message": "No eligible trips to package.",
+            "skipped": skipped, "reasons_summary": reasons_summary,
+        })
+
+    # ---- Build the ZIP --------------------------------------------------
+    active_company = await db.companies.find_one(
+        {"id": cid, "user_id": uid}, {"_id": 0}) or default_company or {}
+    from routers.reports import _company_code as _iter124_company_code  # reuse
+    company_code = _iter124_company_code(active_company)
+
+    zbuf = io.BytesIO()
+    now_iso = now_utc().isoformat()
+    used_folders: set = set()
+    generated_pdfs = 0
+    with zipfile.ZipFile(zbuf, "w", zipfile.ZIP_DEFLATED) as zf:
+        for t, cust in included:
+            # Back-fill LR number if missing — Iter122/109 parity
+            if not t.get("lr_number"):
+                lr_num = await _next_lr_number(uid, t.get("company_id", ""))
+                await db.trips.update_one(
+                    {"id": t["id"], "user_id": uid}, {"$set": {"lr_number": lr_num}}
+                )
+                t["lr_number"] = lr_num
+            trip_company = companies_by_id.get(t.get("company_id", "")) or active_company or default_company
+            base = (t["lr_number"] or t["id"][:8]).replace("/", "_")
+            folder = f"LR_{base}"
+            # De-dupe folder names if two trips somehow share an lr_number
+            uniq = folder; i = 1
+            while uniq in used_folders:
+                i += 1
+                uniq = f"{folder}_{i}"
+            used_folders.add(uniq)
+            for copy_key, suffix in (("original", "ORIGINAL"),
+                                     ("duplicate", "DUPLICATE"),
+                                     ("triplicate", "TRIPLICATE")):
+                pdf_bytes = build_lr_pdf(trip_company, cust, t, copy=copy_key)
+                zf.writestr(f"{uniq}/LR_{base}_{suffix}.pdf", pdf_bytes)
+                generated_pdfs += 1
+
+        # ---- _manifest.txt (audit-friendly plain text) ------------------
+        actor = user.get("email") or user.get("user_id") or "unknown"
+        lines: list = [
+            "Bulk All-Copies ZIP · Iter125",
+            f"Company     : {active_company.get('name','')} (Code {company_code})",
+            f"Requested at: {now_iso}",
+            f"User        : {actor}",
+            f"Mode        : {'filter' if filter_mode else 'selection'}",
+        ]
+        if resolved_start or resolved_end:
+            lines.append(f"Period      : {resolved_start or '—'} → {resolved_end or '—'}")
+        lines += [
+            f"Trips found : {len(included) + len(skipped)}",
+            f"Included    : {len(included)}",
+            f"Skipped     : {len(skipped)}",
+            f"Total PDFs  : {generated_pdfs}",
+            "",
+            f"INCLUDED ({len(included)}):",
+        ]
+        for idx, (t, cust) in enumerate(included, 1):
+            lines.append(
+                f"  {idx:3d}. {t.get('lr_number','—'):<20}  {t.get('date','')}  "
+                f"cust={cust.get('name','')[:24]:<24}  veh={t.get('vehicle_number','')[:14]:<14}  "
+                f"ORIGINAL+DUPLICATE+TRIPLICATE"
+            )
+        if skipped:
+            lines += ["", f"SKIPPED ({len(skipped)}):"]
+            for s in skipped:
+                lines.append(f"  · {s['trip_id'][:24]:<24}  lr={s.get('lr_number','') or '—':<18}  reason={s['reason']}")
+        else:
+            lines += ["", "SKIPPED (0): none"]
+        zf.writestr("_manifest.txt", "\n".join(lines))
+
+    # ---- Audit log (single row per bulk request) -------------------------
+    try:
+        reason_counts: dict = {}
+        for s in skipped:
+            reason_counts[s["reason"]] = reason_counts.get(s["reason"], 0) + 1
+        await db.audit_logs.insert_one({
+            "user_id": uid, "company_id": cid,
+            "action": "lr_all_copies_zip", "entity_type": "trip",
+            "entity_id": ",".join([t["id"] for (t, _c) in included[:50]]),
+            "entity_name": f"{len(included)} trips (bulk)",
+            "timestamp": now_iso, "actor_email": user.get("email"),
+            "detail": {
+                "source": "bulk",
+                "included": len(included), "skipped": len(skipped),
+                "skip_reasons": reason_counts,
+                "trip_ids": [t["id"] for (t, _c) in included[:_ITER125_MAX_TRIPS]],
+                "filename": _iter125_bulk_filename(company_code, resolved_start, resolved_end, len(included)),
+                "period": {"start": resolved_start, "end": resolved_end},
+                "generated_pdfs": generated_pdfs,
+            },
+        })
+    except Exception:
+        pass
+
+    fname = _iter125_bulk_filename(company_code, resolved_start, resolved_end, len(included))
+    reason_hdr = ",".join(f"{k}:{v}" for k, v in
+                          sorted((reason_counts if 'reason_counts' in dir() else {}).items())) or "none"
+
+    zbuf.seek(0)
+    return StreamingResponse(
+        zbuf, media_type="application/zip",
+        headers={
+            "Content-Disposition": f'attachment; filename="{fname}"',
+            "X-Iter125-Included": str(len(included)),
+            "X-Iter125-Skipped":  str(len(skipped)),
+            "X-Iter125-Reasons":  reason_hdr,
+            "X-Iter125-PDFs":     str(generated_pdfs),
+            "Access-Control-Expose-Headers": "Content-Disposition,X-Iter125-Included,X-Iter125-Skipped,X-Iter125-Reasons,X-Iter125-PDFs",
+        },
+    )
+
+
+
+
 @router.post("/trips/{tid}/share-lr")
 async def share_lr_whatsapp(tid: str, request: Request, user=Depends(get_current_user)):
     """Generate the LR PDF, upload to object storage, return a public URL + WhatsApp-ready text.
