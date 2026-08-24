@@ -3,8 +3,7 @@ import { useAuth } from "@/context/AuthContext";
 import { Navigate } from "react-router-dom";
 import { Truck, ShieldCheck, FileText, IndianRupee, Loader2, RefreshCw, WifiOff } from "lucide-react";
 
-const HERO_IMG =
-  "https://images.unsplash.com/photo-1591768793355-74d04bb6608f?crop=entropy&cs=srgb&fm=jpg&w=1600&q=85";
+const HERO_IMG = "/images/bitumen-tanker-hero.jpg";
 
 export default function Login() {
   const { user, loading, authError, retryBootstrap } = useAuth();
@@ -34,8 +33,8 @@ export default function Login() {
     <div className="min-h-screen grid md:grid-cols-2 bg-white" data-testid="login-page">
       {/* Left hero */}
       <div className="relative hidden md:block overflow-hidden grain">
-        <img src={HERO_IMG} alt="Highway transport truck" className="absolute inset-0 w-full h-full object-cover" />
-        <div className="absolute inset-0 bg-gradient-to-br from-black/70 via-black/40 to-black/60" />
+        <img src={HERO_IMG} alt="Bitumen tanker on Indian highway" className="absolute inset-0 w-full h-full object-cover" />
+        <div className="absolute inset-0 bg-gradient-to-br from-black/60 via-black/30 to-black/70" />
         <div className="relative z-10 h-full flex flex-col justify-between p-10 text-white">
           <div>
             <div className="text-[11px] uppercase tracking-[0.3em] font-bold opacity-80">Bitumen Transport</div>
