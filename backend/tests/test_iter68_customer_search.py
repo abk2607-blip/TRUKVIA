@@ -69,7 +69,7 @@ def test_search_by_name_phone_gstin_and_code():
     ha = {**HDR, "X-Company-Id": cs[0]["id"]}
     name = f"{UNIQUE}_Reddy_Traders"
     phone = f"9{uuid.uuid4().int % 10**9:09d}"
-    gstin = "37" + "ABCDE1234F1Z" + str(uuid.uuid4().int % 10)
+    gstin = "37" + uuid.uuid4().hex[:13].upper()
     code = f"CUST-{UNIQUE}"
     _mkcust(ha, name, phone=phone, gstin=gstin, customer_code=code)
 

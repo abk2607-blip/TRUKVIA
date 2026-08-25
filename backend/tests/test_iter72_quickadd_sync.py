@@ -24,13 +24,13 @@ def _companies():
 
 
 def _new_customer(h):
-    return httpx.post(f"{BASE}/api/customers", json={"name": f"{UNIQUE}_Cust"}, headers=h, timeout=15).json()
+    return httpx.post(f"{BASE}/api/customers", json={"name": f"{UNIQUE}_Cust_{uuid.uuid4().hex[:6]}"}, headers=h, timeout=15).json()
 
 
 def _new_supplier(h):
     return httpx.post(
         f"{BASE}/api/suppliers",
-        json={"name": f"{UNIQUE}_Sup", "mobile": "9990001111", "gst_in": "37XX1234A1Z5", "state": "Andhra Pradesh"},
+        json={"name": f"{UNIQUE}_Sup_{uuid.uuid4().hex[:6]}", "mobile": f"9{uuid.uuid4().int % 10**9:09d}", "state": "Andhra Pradesh"},
         headers=h, timeout=15,
     ).json()
 

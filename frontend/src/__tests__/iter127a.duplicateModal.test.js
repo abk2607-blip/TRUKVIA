@@ -76,3 +76,20 @@ test("parseVehicleDuplicateResponse returns null when duplicate flag absent", ()
   expect(parseVehicleDuplicateResponse({ id: "veh_1", vehicle_number: "AP27TT6008" })).toBeNull();
   expect(parseVehicleDuplicateResponse(null)).toBeNull();
 });
+
+// Iter127a UAT · Existing-customer name-match warning shape.
+test("parseDuplicateError extracts customer NAME 409 payload (soft-block)", () => {
+  const err = { response: { status: 409, data: {
+    detail: "Customer already exists.",
+    detail_raw: {
+      detail: "Customer already exists.", code: "duplicate_master",
+      matched_field: "name",
+      existing: { id: "cust_v", name: "VIKRAMADITYA ENTERPRISES", gstin: "", phone: "9199990000" },
+    },
+  } } };
+  const out = parseDuplicateError(err);
+  expect(out).toBeTruthy();
+  expect(out.matchedField).toBe("name");
+  expect(out.existing.id).toBe("cust_v");
+  expect(out.existing.name).toBe("VIKRAMADITYA ENTERPRISES");
+});

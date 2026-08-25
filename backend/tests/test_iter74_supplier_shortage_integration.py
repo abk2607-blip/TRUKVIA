@@ -27,7 +27,7 @@ def _companies():
 
 
 def _cust(h):
-    return httpx.post(f"{BASE}/api/customers", json={"name": f"{UNIQUE}_C"}, headers=h, timeout=15).json()
+    return httpx.post(f"{BASE}/api/customers", json={"name": f"{UNIQUE}_C_{uuid.uuid4().hex[:6]}"}, headers=h, timeout=15).json()
 
 
 def _sup(h):

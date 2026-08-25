@@ -26,7 +26,7 @@ const MESSAGES = {
   customer: {
     gstin:   "A customer with this GSTIN already exists.",
     pan:     "A customer with this PAN already exists.",
-    name:    "A customer with a similar name already exists.",
+    name:    "A customer with this name already exists. Please verify whether this is the same company with a different state GST registration.",
     phone:   "A customer with this phone number already exists.",
     default: "A customer with these details already exists.",
   },
@@ -43,9 +43,10 @@ const MESSAGES = {
   },
 };
 
-export default function DuplicateMasterModal({ open, entity, existing, matchedField, onOpenExisting, onCancel }) {
+export default function DuplicateMasterModal({ open, entity, existing, matchedField, onOpenExisting, onCancel, onContinueCreate, headerLabel }) {
   if (!open || !existing) return null;
   const title = TITLES[entity] || "Record Already Exists";
+  const label = headerLabel || (onContinueCreate ? "Possible Duplicate" : "Duplicate Detected");
   const message =
     (MESSAGES[entity] || {})[matchedField] ||
     (MESSAGES[entity] || {}).default ||
@@ -57,6 +58,7 @@ export default function DuplicateMasterModal({ open, entity, existing, matchedFi
     rows.push([entity === "supplier" ? "Supplier Name" : "Customer Name", existing.name]);
   }
   if (existing.gstin) rows.push(["GSTIN", existing.gstin]);
+  if (existing.state) rows.push(["State", existing.state]);
   if (existing.phone && entity !== "vehicle") rows.push(["Phone", existing.phone]);
 
   return (
@@ -67,7 +69,7 @@ export default function DuplicateMasterModal({ open, entity, existing, matchedFi
       <div className="bg-white w-full max-w-md border border-zinc-950 rounded-sm">
         <div className="px-5 py-3 border-b border-zinc-200">
           <div className="text-[10px] uppercase tracking-wider font-bold text-amber-700">
-            Duplicate Detected
+            {label}
           </div>
           <h3 className="mt-0.5 font-bold text-lg" data-testid="iter127a-duplicate-title">{title}</h3>
         </div>
@@ -93,6 +95,16 @@ export default function DuplicateMasterModal({ open, entity, existing, matchedFi
           >
             Cancel
           </button>
+          {onContinueCreate && (
+            <button
+              type="button"
+              onClick={() => onContinueCreate(existing)}
+              data-testid="iter127a-duplicate-continue-create"
+              className="px-4 py-2 text-xs uppercase tracking-wider border border-amber-700 text-amber-800 rounded-sm hover:bg-amber-50"
+            >
+              Continue Creating
+            </button>
+          )}
           <button
             type="button"
             onClick={() => onOpenExisting?.(existing)}

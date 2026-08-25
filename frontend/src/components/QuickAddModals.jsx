@@ -30,7 +30,10 @@ export function QuickAddCustomer({ prefillName = "", onCreated, onClose }) {
   const [f, setF] = useState({ name: prefillName, phone: "", gstin: "", state: "", address: "", pincode: "" });
   const [dup, setDup] = useState(null);
   const m = useMutation({
-    mutationFn: async () => (await api.post("/customers", f)).data,
+    mutationFn: async (opts = {}) => {
+      const headers = opts.confirmName ? { "X-Confirm-Name-Match": "allow" } : {};
+      return (await api.post("/customers", f, { headers })).data;
+    },
     onSuccess: async (d) => {
       toast.success("Customer added");
       await qc.refetchQueries({ queryKey: ["customers"] });

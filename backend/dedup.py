@@ -70,12 +70,17 @@ def norm_phone(v) -> str:
 
 def existing_summary(row: dict, gstin_key: str = "gstin") -> dict:
     """Compact JSON payload the frontend uses to power the
-    'Open existing / Cancel' modal. Never leaks internals like _id or
-    user_id."""
+    'Open existing / Cancel / Continue Creating' modal. Never leaks
+    internals like _id or user_id.
+
+    Iter127a UAT clarification (Feb 2026) · `state` is included so the
+    UI can help users tell apart legitimate multi-state GST registrations
+    of the same legal entity (e.g. MEGHA ENGINEERING in TG vs AP)."""
     return {
         "id": row.get("id"),
         "name": row.get("name") or row.get("vehicle_number") or "",
         "gstin": row.get(gstin_key) or "",
+        "state": row.get("state") or "",
         "phone": row.get("phone") or row.get("mobile") or "",
         "vehicle_number": row.get("vehicle_number") or "",
     }

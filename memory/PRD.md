@@ -2,6 +2,47 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter127a-UAT-fix v3 · Multi-state GST warning + green regression** (Feb 2026 — backend, frontend UX, tests)
+  - **User's real-world clarification (this session)**: Large customers (e.g. MEGHA ENGINEERING) hold SEPARATE GST registrations per state. Same normalised name must NOT hard-block — only warn — while GSTIN/PAN remain hard-blocks. Hard rules unchanged: same GSTIN → 409, same PAN → 409, same normalised vehicle_number → existing-vehicle protection.
+  - **Backend contract change** (`dedup.py :: existing_summary`): the 409 `duplicate_master.existing` payload now carries `state` alongside `id`/`name`/`gstin`/`phone`/`vehicle_number` so the modal can render the multi-state disambiguation row (Telangana vs Andhra Pradesh, etc.). No matching-rule change — customer name still soft-blocks (409, bypassable via `X-Confirm-Name-Match: allow`), customer GSTIN/PAN still hard-block (Owner/Admin override + reason).
+  - **Frontend UX** (`DuplicateMasterModal.jsx`):
+    - Customer name message updated to: `A customer with this name already exists. Please verify whether this is the same company with a different state GST registration.` — matches the user's exact requested copy.
+    - New **State** row rendered between GSTIN and Phone whenever `existing.state` is present, so the user can immediately see the existing row's state before clicking `Open Existing` / `Continue Creating` / `Cancel`.
+    - Header label falls back correctly when `onContinueCreate` is passed (soft) vs not passed (hard). Lint blockers on `onContinueCreate` + `headerLabel` (missing prop declaration) fixed.
+  - **New UAT test suite** `tests/test_iter127a_multistate_gst.py` (6 cases, all green):
+    1. Same name + same GSTIN → hard 409 (`matched_field=gstin`, existing.state present).
+    2. Same name + different GSTIN + different state → 409 (`matched_field=name`), bypassable via `X-Confirm-Name-Match: allow`.
+    3. Same name across two ACTIVE companies → both 200 (company isolation trumps name rule).
+    4. Similar (not exact) normalised name → 200 (soft suggestion only).
+    5. Same PAN (no GSTIN either side) → hard 409 (`matched_field=pan`).
+    6. 409 `existing` payload contract check — must include `id`/`name`/`gstin`/`state`/`phone`.
+    Wired into `scripts/run_regression.sh` as the 54th critical suite.
+  - **Regression fixture hygiene** (root cause of the previous session's red suite): every hardcoded name/GSTIN that could collide with the new Iter127a rules has been made unique per pytest process:
+    - `test_iter50_save_health_and_regression_guard.py` — `"IT50Success"` → `f"IT50Success_{uuid4().hex[:8]}"` + added `import uuid`.
+    - `test_iter73_supplier_freight_lr_perf.py`, `test_iter74_supplier_shortage_integration.py` — `_cust()` helper now appends a fresh `uuid4().hex[:6]` per call.
+    - `test_iter72_quickadd_sync.py` — `_new_customer` / `_new_supplier` helpers append fresh uuid per call; supplier mobile also randomised to avoid soft-hint noise; dropped the invalid hardcoded gst_in shim.
+    - `test_iter36_customer_history.py`, `test_iter39_customer_receipts.py` — fixture customer name now includes a per-process `_FIXTURE_NAME` uuid so re-runs don't collide with a prior run's fixture row that was hidden by the fixture-regex filter.
+    - `test_iter68_customer_search.py` — GSTIN generator moved from `"37" + str(uuid4().int % 10)` (only 10 possible values → collided with prior-run rows in the demo tenant) to `"37" + uuid4().hex[:13].upper()` (~10⁴⁷ variants).
+  - **Regression Guard**: `bash scripts/run_regression.sh` → **375 passed, 1 skipped, 0 failed** in 580.95 s (54 critical suites via pytest-xdist × 2 workers). 100 % green.
+  - **Untouched surface**: freight / shortage / invoice / LR / policy / supplier / halting logic · Iter126a Bucket-A retry · Iter126b idempotency middleware · Iter126c form-draft preservation (still pending user's live UAT) · auth · Iter105 policy workflow · DB partial-unique indexes.
+
+
+- [x] **Iter127a-UAT · Customer name-match soft-block warning** (Feb 2026 — frontend + backend, GSTIN/PAN rules unchanged)
+  - **Trigger**: creating a Customer with a name whose normalised form (`norm_name`: lowercase → strip `.,-/&()` → drop `pvt|ltd|llp|inc|co|and|&` suffixes → collapse whitespace) already exists in the SAME `(user_id, active company_id)` scope.
+  - **Backend** (`routers/customers.py`): the existing hard-409 block now includes a NAME branch scoped to the same tenant, deliberately BYPASSABLE via a lightweight header `X-Confirm-Name-Match: allow` (no `X-Duplicate-Override-Reason`, no Owner/Admin role gate — this is a soft-block, not a hard-block). GSTIN and PAN blocks still require the full Owner/Admin override + reason. Response shape reuses the existing `duplicate_master` envelope with `matched_field: "name"` so the frontend parser needed zero changes.
+  - **Frontend UX**:
+    - `DuplicateMasterModal.jsx` — when `entity="customer"` + `matchedField="name"`, the header label reads `Existing Match` and the title reads `Existing Customer Found` (vs `Duplicate Detected` / `Customer Already Exists` for GSTIN). Message: `A customer with this name already exists in this company.`
+    - Third button `Continue Creating` is rendered **only** when the parent passes an `onContinueCreate` callback — GSTIN/PAN/Vehicle continue to show just Cancel + Open Existing.
+    - `Customers.jsx` + `QuickAddModals.jsx :: QuickAddCustomer` both pass an `onContinueCreate` that resends the mutation with `{ headers: { "X-Confirm-Name-Match": "allow" } }` via the existing api.js request interceptor. The form's typed values are preserved end-to-end (mutation body unchanged).
+    - Cancel keeps every field intact so the user can edit and retry.
+    - Test-ids: `iter127a-duplicate-continue-create` (new), plus the previously-locked set.
+  - **Locked matrix unchanged elsewhere**: GSTIN → hard 409 (Owner/Admin override + reason) · PAN → hard 409 (same) · Vehicle number → Iter72 idempotent 200 + `duplicate: true` flag · Supplier GSTIN/PAN/name → hard 409 · Supplier mobile → soft-hint only · Customer phone → soft-hint only. Nothing about matching rules, `*_norm` fields, DB partial-unique indexes, backfill migration or admin listing changed.
+  - **Tests added / updated**:
+    - `test_iter127a_master_dedup.py` — new `test_customer_exact_name_match_returns_409_bypassable_by_header`, new `test_customer_name_match_isolated_across_companies`. Existing tests (`test_customer_similar_name_or_shared_phone_is_NOT_blocked`, `test_cross_company_isolation_customer`, `test_owner_can_override_customer_gstin_duplicate_with_reason`) updated to use `uuid.uuid4()` per call and 10-digit numeric phones so cross-run collisions can't shadow soft-hint checks. **11 / 11 pass in 1.23 s.**
+    - `iter127a.duplicateModal.test.js` — new `parseDuplicateError extracts customer NAME 409 payload (soft-block)`. Full frontend suite **94 / 94 pass in 0.7 s** (up from 93).
+  - **Untouched**: freight / shortage / supplier / LR / invoice / policy calculation code · Iter105 · Iter111 · Iter126a Bucket-A retry · Iter126b idempotency middleware · Iter126c form-draft preservation (still pending your live UAT) · auth · save-health.
+
+
 - [x] **Iter127a-UAT-fix v2 · Customer duplicate modal parser now reads `detail_raw`** (Feb 2026 — frontend-only)
   - **Live bug reproduced from user's video**: Customer create with an existing GSTIN → backend correctly returned `409 {detail: {code: "duplicate_master", …}}` → **raw JSON error toast** appeared instead of DuplicateMasterModal.
   - **Root cause**: `/app/frontend/src/api.js` response interceptor (Iter102 error-normalisation) flattens `err.response.data.detail` from the structured dict `{code:"duplicate_master", existing:{…}}` into a plain user-friendly string before any onError handler runs. It stashes the original dict in `err.response.data.detail_raw`. `parseDuplicateError` was reading only `.detail` → saw a string → returned `null` → the mutation's `onError` fell through to the generic `toast.error(...)`. Same interceptor also affected Supplier / Vehicle duplicate parsing.

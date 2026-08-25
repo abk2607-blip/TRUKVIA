@@ -222,6 +222,17 @@ async def create_customer(payload: Customer, request: Request, user=Depends(get_
             if hit:
                 raise HTTPException(status_code=409, detail=hard_conflict_response("pan", "Customer", hit))
 
+        # Iter127a UAT · Customer NAME match — SOFT-BLOCK (409 bypassable via
+        # `X-Confirm-Name-Match: allow` header, no role gate, no reason). The
+        # UI opens the same DuplicateMasterModal with a 3rd button "Continue
+        # Creating" that resends the POST with the confirm header, letting
+        # legitimate branches / namesakes proceed.
+        confirm_name = (request.headers.get("X-Confirm-Name-Match") or "").strip().lower()
+        if name_n and confirm_name != "allow":
+            hit = await db.customers.find_one({**scope, "name_norm": name_n}, {"_id": 0, "user_id": 0})
+            if hit:
+                raise HTTPException(status_code=409, detail=hard_conflict_response("name", "Customer", hit))
+
     # SOFT matches (name / phone) — attached to response, never block.
     soft: list[dict] = []
     if name_n:

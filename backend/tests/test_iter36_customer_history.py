@@ -1,5 +1,6 @@
 """Iter36 — Customer Transaction History (unified ledger + statement PDF + WhatsApp)."""
 import os
+import uuid
 import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/")
@@ -7,13 +8,17 @@ API = f"{BASE_URL}/api"
 TOKEN = "test_session_bitumen_2026"
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
+# Iter127a — each pytest process gets its own fixture customer so the
+# customer-name duplicate rule can't 409 across parallel workers.
+_FIXTURE_NAME = f"TEST_Iter36_Hist_{uuid.uuid4().hex[:6]}"
+
 
 def _get_or_create_customer():
     r = requests.get(f"{API}/customers", headers=HEADERS)
     for c in r.json():
-        if c.get("name") == "TEST_Iter36_Hist":
+        if c.get("name") == _FIXTURE_NAME:
             return c["id"]
-    return requests.post(f"{API}/customers", headers=HEADERS, json={"name": "TEST_Iter36_Hist", "state": "Andhra Pradesh", "gstin": "37AAACC1234A1Z5"}).json()["id"]
+    return requests.post(f"{API}/customers", headers=HEADERS, json={"name": _FIXTURE_NAME, "state": "Andhra Pradesh"}).json()["id"]
 
 
 def test_customer_transactions_returns_summary_and_txns():

@@ -10,6 +10,7 @@ Covers:
 """
 import os
 import time
+import uuid
 import asyncio
 import pytest
 import httpx
@@ -90,7 +91,7 @@ def test_save_health_ignores_successful_writes():
     h = {**HDR, "X-Company-Id": _cid()}
     before = httpx.get(f"{BASE}/api/admin/save-health?hours=1", timeout=10).json()["total_failures"]
     # Create a valid customer
-    r = httpx.post(f"{BASE}/api/customers", headers=h, json={"name": "IT50Success"}, timeout=10)
+    r = httpx.post(f"{BASE}/api/customers", headers=h, json={"name": f"IT50Success_{uuid.uuid4().hex[:8]}"}, timeout=10)
     assert r.status_code == 200
     time.sleep(0.4)
     after = httpx.get(f"{BASE}/api/admin/save-health?hours=1", timeout=10).json()["total_failures"]

@@ -87,6 +87,7 @@ CRITICAL_TESTS=(
   "tests/test_iter126b_idempotency.py"                    # Iter126b · Bucket-B Idempotency-Key middleware (24h replay + single-flight)
   "tests/test_iter126b_frontend_wiring.py"                # Iter126b · Frontend Idempotency-Key wiring + double-click Save protection
   "tests/test_iter127a_master_dedup.py"                   # Iter127a · Duplicate master prevention (customer/vehicle/supplier + override + admin listing)
+  "tests/test_iter127a_multistate_gst.py"                 # Iter127a UAT · Multi-state GST warning (soft-block name, hard-block gstin/pan) + Continue Creating
 )
 
 export PATH="/root/.venv/bin:$PATH"

@@ -71,22 +71,63 @@ def test_customer_pan_duplicate_only_when_gstin_absent():
 
 
 def test_customer_similar_name_or_shared_phone_is_NOT_blocked():
-    """Legitimate businesses with similar names / shared phones must NOT
-    be hard-blocked. Response is 200 with a `soft_matches` hint."""
     name = f"AKB & Sons {uuid.uuid4().hex[:5]}"
-    phone = f"9{uuid.uuid4().hex[:9].upper()}"
+    phone = "98" + str(uuid.uuid4().int)[:8]  # 10 numeric digits
     r1 = requests.post(f"{API}/customers", headers=HDR, json={
         "name": name, "phone": phone,
     }, timeout=15)
     assert r1.status_code == 200
-    # Second create — similar name, shared phone, no GSTIN/PAN.
     r2 = requests.post(f"{API}/customers", headers=HDR, json={
-        "name": name.upper(), "phone": phone,
+        "name": f"{name} Branch-B", "phone": phone,
     }, timeout=15)
     assert r2.status_code == 200, r2.text
     soft = r2.json().get("soft_matches") or []
-    fields = {s["matched_field"] for s in soft}
-    assert "name" in fields or "phone" in fields, soft
+    assert any(s["matched_field"] == "phone" for s in soft), (phone, soft)
+
+
+def test_customer_exact_name_match_returns_409_bypassable_by_header():
+    """Iter127a UAT · Existing-name warning (soft-block, no role needed).
+
+    First create → 200. Second create with the SAME normalised name
+    (different casing / punctuation) → 409 matched_field=name. The user
+    can bypass by resending with `X-Confirm-Name-Match: allow` — no reason,
+    no Owner/Admin role required."""
+    name = f"VIKRAMADITYA ENT {uuid.uuid4().hex[:6].upper()}"
+    r1 = requests.post(f"{API}/customers", headers=HDR, json={"name": name}, timeout=15)
+    assert r1.status_code == 200, r1.text
+
+    # Different casing + punctuation → same name_norm → 409.
+    r2 = requests.post(f"{API}/customers", headers=HDR,
+                       json={"name": name.lower().replace(" ", ".  ")}, timeout=15)
+    assert r2.status_code == 409, r2.text
+    detail = r2.json()["detail"]
+    assert detail["code"] == "duplicate_master"
+    assert detail["matched_field"] == "name"
+    assert detail["existing"]["id"] == r1.json()["id"]
+
+    # Bypass with header — no reason, no role gate.
+    r3 = requests.post(f"{API}/customers",
+                       headers={**HDR, "X-Confirm-Name-Match": "allow"},
+                       json={"name": name}, timeout=15)
+    assert r3.status_code == 200, r3.text
+    assert r3.json()["id"] != r1.json()["id"]
+
+
+def test_customer_name_match_isolated_across_companies():
+    companies = requests.get(f"{API}/companies", headers=HDR, timeout=10).json()
+    companies = companies.get("items", companies) if isinstance(companies, dict) else companies
+    if len(companies) < 2:
+        import pytest as _pt
+        _pt.skip("need at least 2 companies")
+    name = f"ACME LOGISTICS {uuid.uuid4().hex[:6].upper()}"
+    r1 = requests.post(f"{API}/customers",
+                       headers={**HDR, "X-Company-Id": companies[0]["id"]},
+                       json={"name": name}, timeout=15)
+    assert r1.status_code == 200
+    r2 = requests.post(f"{API}/customers",
+                       headers={**HDR, "X-Company-Id": companies[1]["id"]},
+                       json={"name": name}, timeout=15)
+    assert r2.status_code == 200, r2.text  # different company → no name collision
 
 
 def test_cross_company_isolation_customer():
@@ -101,11 +142,11 @@ def test_cross_company_isolation_customer():
 
     gstin = _mk_gstin()
     r1 = requests.post(f"{API}/customers", headers=from_hdr,
-                       json={"name": "IsoA", "gstin": gstin}, timeout=15)
+                       json={"name": f"IsoA-{uuid.uuid4().hex[:8]}", "gstin": gstin}, timeout=15)
     assert r1.status_code == 200
     r2 = requests.post(f"{API}/customers",
                        headers={**from_hdr, "X-Company-Id": co2},
-                       json={"name": "IsoB", "gstin": gstin}, timeout=15)
+                       json={"name": f"IsoB-{uuid.uuid4().hex[:8]}", "gstin": gstin}, timeout=15)
     assert r2.status_code == 200, r2.text  # different company scope
 
 
@@ -170,20 +211,20 @@ def test_supplier_shared_mobile_is_soft_not_blocked():
 def test_owner_can_override_customer_gstin_duplicate_with_reason():
     gstin = _mk_gstin()
     r1 = requests.post(f"{API}/customers", headers=HDR,
-                       json={"name": "OrigCust", "gstin": gstin}, timeout=15)
+                       json={"name": f"OrigCust-{uuid.uuid4().hex[:8]}", "gstin": gstin}, timeout=15)
     assert r1.status_code == 200
 
     # Missing reason → 409 stays.
     r = requests.post(f"{API}/customers",
                       headers={**HDR, "X-Duplicate-Override": "allow"},
-                      json={"name": "OverCust", "gstin": gstin}, timeout=15)
+                      json={"name": f"OverCust-{uuid.uuid4().hex[:8]}", "gstin": gstin}, timeout=15)
     assert r.status_code == 409
 
     # Reason present + Owner (demo user is owner) → 200.
     r = requests.post(f"{API}/customers",
                       headers={**HDR, "X-Duplicate-Override": "allow",
                                "X-Duplicate-Override-Reason": "Branch office - manual verified"},
-                      json={"name": "OverCust", "gstin": gstin},
+                      json={"name": f"OverCust-{uuid.uuid4().hex[:8]}", "gstin": gstin},
                       timeout=15)
     assert r.status_code == 200, r.text
     assert r.json()["id"] != r1.json()["id"]

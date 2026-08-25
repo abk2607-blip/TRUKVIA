@@ -60,11 +60,12 @@ export default function Customers() {
   const hasMore = data?.has_more ?? false;
 
   const save = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (opts = {}) => {
+      const headers = opts.confirmName ? { "X-Confirm-Name-Match": "allow" } : {};
       if (editing) {
-        return (await api.put(`/customers/${editing.id}`, { ...editing, ...form })).data;
+        return (await api.put(`/customers/${editing.id}`, { ...editing, ...form }, { headers })).data;
       }
-      return (await api.post("/customers", form)).data;
+      return (await api.post("/customers", form, { headers })).data;
     },
     onSuccess: () => {
       toast.success(editing ? "Customer updated" : "Customer created");
@@ -566,6 +567,7 @@ export default function Customers() {
           existing={dup.existing} matchedField={dup.matchedField}
           onCancel={() => setDup(null)}
           onOpenExisting={(ex) => { setDup(null); setOpen(false); setEditing(null); setForm(EMPTY); openEdit({ ...EMPTY, ...ex }); }}
+          onContinueCreate={dup.matchedField === "name" ? () => { setDup(null); save.mutate({ confirmName: true }); } : undefined}
         />
       )}
     </div>
