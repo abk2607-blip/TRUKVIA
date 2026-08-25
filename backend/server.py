@@ -896,8 +896,15 @@ async def test_alert():
 
 @app.on_event("startup")
 async def startup_event():
+    # Iter126a — init_storage() is a synchronous function in storage_client.py
+    # (returns str). The previous `await init_storage()` raised TypeError on
+    # every boot ("object str can't be used in 'await' expression") — swallowed
+    # as a warning but left _storage_key un-primed at boot. Fix: call it
+    # synchronously; run_in_executor keeps the startup loop non-blocking.
     try:
-        await init_storage()
+        import asyncio as _asyncio
+        loop = _asyncio.get_event_loop()
+        await loop.run_in_executor(None, init_storage)
         logger.info("Object storage initialized")
     except Exception as e:
         logger.warning(f"Object storage init failed: {e}")

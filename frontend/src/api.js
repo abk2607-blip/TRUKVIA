@@ -87,6 +87,45 @@ function _flattenDetail(d) {
   return String(d);
 }
 
+// Iter126a — Bucket A retry policy (Write-Path Resilience, Phase 1).
+// See docs: /app/memory/PRD.md → Iter126 Endpoint Safety Matrix.
+// Only retry endpoints that are naturally idempotent (safe for the server to
+// receive twice with the same body). Bucket B (create/payment/upload) needs
+// Idempotency-Key — handled in Iter126b. Bucket C never auto-retries.
+//
+// Rules
+//   - Method GET / HEAD / OPTIONS  → always retry
+//   - Method PUT / PATCH / DELETE  → always retry (REST idempotent contract)
+//   - Method POST                  → only retry if URL matches BUCKET_A_POST
+//   - Retry only on: network error (no response) OR 502 / 503 / 504
+//   - Max 2 attempts after the first (total 3 tries) with backoff 500ms, 1500ms
+const BUCKET_A_POST = [
+  /\/companies\/[^/]+\/set-default$/,
+  /\/auth\/logout$/,
+  /\/trips\/lr\/preview$/,
+  /\/trips\/bulk-invoice-preflight$/,
+  /\/policy-changes\/preview$/,
+  /\/vehicles\/bulk-import\/preview$/,
+];
+const RETRY_DELAYS_MS = [500, 1500];
+
+function _isBucketA(cfg) {
+  const method = (cfg?.method || "get").toLowerCase();
+  if (method === "get" || method === "head" || method === "options") return true;
+  if (method === "put" || method === "patch" || method === "delete") return true;
+  if (method === "post") {
+    const url = cfg?.url || "";
+    return BUCKET_A_POST.some((rx) => rx.test(url));
+  }
+  return false;
+}
+
+function _isTransient(err) {
+  if (!err?.response) return true; // network error / timeout / DNS
+  const s = err.response.status;
+  return s === 502 || s === 503 || s === 504;
+}
+
 api.interceptors.response.use(
   (r) => r,
   async (err) => {
@@ -95,6 +134,21 @@ api.interceptors.response.use(
       const url = (err?.config?.url || "");
       const detail = err?.response?.data?.detail || err?.response?.data?.detail_raw;
       const detailStr = typeof detail === "string" ? detail.toLowerCase() : "";
+
+      // Iter126a — Transient retry for Bucket A endpoints.
+      if (err?.config && _isBucketA(err.config) && _isTransient(err)) {
+        err.config._retryCount = err.config._retryCount || 0;
+        if (err.config._retryCount < RETRY_DELAYS_MS.length) {
+          const delay = RETRY_DELAYS_MS[err.config._retryCount];
+          err.config._retryCount += 1;
+          await new Promise((r) => setTimeout(r, delay));
+          try {
+            return await api.request(err.config);
+          } catch (retryErr) {
+            err = retryErr;
+          }
+        }
+      }
       // Iter102 — Hardened sign-out trigger.
       // Only clear the token when the server EXPLICITLY confirms the session
       // is dead — never on a generic 401, and never before a one-shot retry
