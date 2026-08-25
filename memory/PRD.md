@@ -2,6 +2,22 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter127a-UAT-fix v2 · Customer duplicate modal parser now reads `detail_raw`** (Feb 2026 — frontend-only)
+  - **Live bug reproduced from user's video**: Customer create with an existing GSTIN → backend correctly returned `409 {detail: {code: "duplicate_master", …}}` → **raw JSON error toast** appeared instead of DuplicateMasterModal.
+  - **Root cause**: `/app/frontend/src/api.js` response interceptor (Iter102 error-normalisation) flattens `err.response.data.detail` from the structured dict `{code:"duplicate_master", existing:{…}}` into a plain user-friendly string before any onError handler runs. It stashes the original dict in `err.response.data.detail_raw`. `parseDuplicateError` was reading only `.detail` → saw a string → returned `null` → the mutation's `onError` fell through to the generic `toast.error(...)`. Same interceptor also affected Supplier / Vehicle duplicate parsing.
+  - **Fix (1 line + docstring)** in `/app/frontend/src/components/DuplicateMasterModal.jsx :: parseDuplicateError`:
+    ```js
+    const detail = (data.detail_raw !== undefined) ? data.detail_raw : data.detail;
+    ```
+    Prefer `detail_raw` (structured dict); fall back to `detail` for callers not going through the api.js interceptor (jest test path). All existing tests continue to pass.
+  - **New regression tests** (`src/__tests__/iter127a.duplicateModal.test.js`):
+    1. `parseDuplicateError reads detail_raw after Iter102 flattening` — exact live payload shape reproduced.
+    2. `parseDuplicateError still ignores real 400/422/500 after flattening` — plain 400 with string `detail`/`detail_raw` returns null so generic toast still fires.
+    Total Iter127a jest tests: **10 / 10 pass in 1.7 s** (up from 8).
+  - **Wiring untouched** — same 6 call sites (Customers, Suppliers, Vehicles, QuickAddCustomer, QuickAddVehicle, QuickAddSupplier) automatically pick up the fix through the shared parser. No component-level edit needed. Full Customer form AND QuickAddCustomer both go through the same `parseDuplicateError(err)` path.
+  - **Untouched surface**: backend `dedup.py`, matching rules, DB unique indexes, admin listing, override flow, Iter126a Bucket-A retry, Iter126b idempotency middleware, Iter126c form-draft preservation, freight / shortage / invoice / LR / policy logic. **Frontend-only, one-line change** to the parser.
+
+
 - [ ] **Backlog · Vehicle QuickAdd partial-match soft suggestion** (Feb 2026 — logged during Iter127a UAT, NOT yet approved to build)
   - **Observation** (from live UAT): typing `2112` in the Vehicle picker surfaces the existing `AP39UK2112` in the search results but also offers `+ Add New Vehicle 2112`. User could accidentally create a stub row when the existing full-number vehicle was intended.
   - **Not a bug** — Iter127a's normalisation is `vehicle_number_norm = strip(whitespace/hyphens/dots) + upper`. `2112` and `AP39UK2112` are genuinely different canonical numbers, so the backend correctly allows the create. Partial-substring matching must **never** become a hard duplicate block (would prevent legitimate short vehicle numbers, plate-suffix reuse across states, etc.).

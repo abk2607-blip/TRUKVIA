@@ -110,12 +110,20 @@ export default function DuplicateMasterModal({ open, entity, existing, matchedFi
 // ─── Parsers ────────────────────────────────────────────────────────────────
 // Given an axios error object, returns { existing, matchedField } if it's a
 // backend Iter127a 409 duplicate_master response — else null. Never throws.
+//
+// Iter127a-UAT-fix v2: the Iter102 response interceptor in `api.js` runs
+// BEFORE this parser and flattens `err.response.data.detail` from the
+// structured dict `{code:"duplicate_master", existing:{…}}` down to a plain
+// user-friendly string, moving the original dict to `detail_raw`. Read
+// `detail_raw` first so we still see the structured payload; fall back to
+// `detail` for callers that don't wear the api.js interceptor (jest tests).
 export function parseDuplicateError(err) {
   try {
     const status = err?.response?.status;
     if (status !== 409) return null;
-    const detail = err?.response?.data?.detail;
-    // FastAPI serialises HTTPException(detail=dict) as { detail: {...} }.
+    const data = err?.response?.data;
+    if (!data) return null;
+    const detail = (data.detail_raw !== undefined) ? data.detail_raw : data.detail;
     if (!detail || typeof detail !== "object") return null;
     if (detail.code !== "duplicate_master") return null;
     return { existing: detail.existing || {}, matchedField: detail.matched_field || "" };
