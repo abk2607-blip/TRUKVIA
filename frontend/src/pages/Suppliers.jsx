@@ -5,6 +5,7 @@ import { api, fmtCurrency } from "@/api";
 import { toast } from "sonner";
 import { Handshake, Plus, Users, Truck, Wallet, FileText, AlertCircle, TrendingUp, Download, Printer, MessageCircle, Trash2, X, Edit3, Search } from "lucide-react";
 import SearchableSelect from "@/components/SearchableSelect";
+import DuplicateMasterModal, { parseDuplicateError } from "@/components/DuplicateMasterModal";
 
 const inputCls = "w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none bg-white";
 const labelCls = "text-[10px] uppercase font-bold text-zinc-500 tracking-wider mb-1 block";
@@ -240,8 +241,14 @@ function SupplierForm() {
       qc.invalidateQueries({ queryKey: ["suppliers"] });
       nav("../list");
     },
-    onError: (e) => toast.error(e?.response?.data?.detail || "Save failed"),
+    onError: (e) => {
+      const parsed = parseDuplicateError(e);
+      if (parsed) { setDup(parsed); return; }
+      toast.error(typeof e?.response?.data?.detail === "string" ? e.response.data.detail : "Save failed");
+    },
   });
+  // Iter127a UAT — user-facing duplicate modal state.
+  const [dup, setDup] = useState(null);
 
   const F = (k, label, opts = {}) => (
     <div>
@@ -416,6 +423,14 @@ function SupplierForm() {
           {save.isPending ? "Saving…" : (sid ? "Update" : "Create")}
         </button>
       </div>
+      {dup && (
+        <DuplicateMasterModal
+          open entity="supplier"
+          existing={dup.existing} matchedField={dup.matchedField}
+          onCancel={() => setDup(null)}
+          onOpenExisting={(ex) => { setDup(null); nav(`../edit/${ex.id}`); }}
+        />
+      )}
     </form>
   );
 }

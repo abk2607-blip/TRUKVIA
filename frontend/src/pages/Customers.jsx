@@ -7,6 +7,7 @@ import { Plus, Pencil, Trash2, X, FileText, MapPin, Search, Loader2 } from "luci
 import { StateSelect } from "@/lib/states";
 import ShipSitesModal from "@/components/ShipSitesModal";
 import PolicyChangeDialog from "@/components/PolicyChangeDialog";
+import DuplicateMasterModal, { parseDuplicateError } from "@/components/DuplicateMasterModal";
 
 const EMPTY = {
   name: "", address: "", phone: "", gstin: "", pan: "", state: "",
@@ -23,6 +24,8 @@ export default function Customers() {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY);
   const [shipCust, setShipCust] = useState(null);
+  // Iter127a UAT — user-facing duplicate modal state.
+  const [dup, setDup] = useState(null); // { existing, matchedField } | null
   // Iter105 — Policy Change Workflow. When editing a customer and the
   // freight method / shortage config differ from the DB, hold the pending
   // save in this state and let PolicyChangeDialog decide whether the master
@@ -70,7 +73,11 @@ export default function Customers() {
       qc.invalidateQueries({ queryKey: ["dashboard"] });
       setOpen(false); setEditing(null); setForm(EMPTY);
     },
-    onError: (e) => toast.error(e?.response?.data?.detail || "Failed to save"),
+    onError: (e) => {
+      const d = parseDuplicateError(e);
+      if (d) { setDup(d); return; }
+      toast.error(typeof e?.response?.data?.detail === "string" ? e.response.data.detail : "Failed to save");
+    },
   });
 
   // Iter105 — Detect a policy change on submit. If the customer's freight
@@ -551,6 +558,14 @@ export default function Customers() {
               navRR(`/customers/history/${editIdFromUrl}`, { replace: true });
             }
           }}
+        />
+      )}
+      {dup && (
+        <DuplicateMasterModal
+          open entity="customer"
+          existing={dup.existing} matchedField={dup.matchedField}
+          onCancel={() => setDup(null)}
+          onOpenExisting={(ex) => { setDup(null); setOpen(false); setEditing(null); setForm(EMPTY); openEdit({ ...EMPTY, ...ex }); }}
         />
       )}
     </div>

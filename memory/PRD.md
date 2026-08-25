@@ -2,6 +2,34 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter127a-UAT-fix · Frontend duplicate-master modal UX** (Feb 2026 — Frontend-only, no backend touch)
+  - **Fix**: Replaced the raw JSON `409 { code:"duplicate_master", ... }` error toast with a clean, user-facing modal on Customer / Supplier / Vehicle create flows. Vehicle also shows the same modal for the Iter72 idempotent `200 { duplicate: true, ... }` response so the "silent-reuse" behaviour no longer confuses staff.
+  - **New shared component** `/app/frontend/src/components/DuplicateMasterModal.jsx` — one modal serves all three entities. Entity-specific title / message / detail rows are picked via a lookup keyed on `matched_field` (gstin / pan / name / phone / vehicle_number / mobile). Exports two pure parsers: `parseDuplicateError(err)` for axios 409, `parseVehicleDuplicateResponse(data)` for the 200 `duplicate:true` body. Both return `null` cleanly on non-duplicate inputs so callers can chain the check inside their existing onError / onSuccess handlers.
+  - **Wired into 6 call sites**:
+    - `pages/Customers.jsx` — save mutation onError → 409 duplicate → modal → "Open Existing" closes the create dialog and calls `openEdit({ ...EMPTY, ...existing })`.
+    - `pages/Suppliers.jsx :: SupplierForm` — onError → modal → "Open Existing" navigates to `../edit/{id}` via the existing React Router path.
+    - `pages/Vehicles.jsx` — onSuccess intercepts `duplicate: true` before showing the "Vehicle added" toast; onError catches 409; both route through the same modal → "Open Existing" opens the existing row for edit.
+    - `components/QuickAddModals.jsx` — QuickAddCustomer, QuickAddVehicle, QuickAddSupplier all follow the same pattern; "Open Existing" invokes `onCreated?.(existing)` so the parent form (Trip / Invoice) auto-selects the existing record and the QuickAdd closes cleanly.
+  - **What the user now sees on 409 duplicate GSTIN**:
+    ```
+    ┌──────────────────────────────────────────┐
+    │  Duplicate Detected                       │
+    │  Customer Already Exists                  │
+    │  A customer with this GSTIN already exists.│
+    │  ┌────────────────────────────┐          │
+    │  │ Customer Name  MEGHA…       │          │
+    │  │ GSTIN          36AABCM…     │          │
+    │  │ Phone          98xxxxxxxx   │          │
+    │  └────────────────────────────┘          │
+    │             [Cancel] [Open Existing]      │
+    └──────────────────────────────────────────┘
+    ```
+    Zero JSON / status codes / internal `code` / `matched_field` visible to the user.
+  - **Test-ids for QA**: `iter127a-duplicate-modal`, `iter127a-duplicate-modal-{entity}`, `iter127a-duplicate-title`, `iter127a-duplicate-message`, `iter127a-duplicate-details`, `iter127a-duplicate-open-existing`, `iter127a-duplicate-cancel`.
+  - **Tests** — new `src/__tests__/iter127a.duplicateModal.test.js` (8 jest tests) validating both parsers across happy path + every non-duplicate edge case (500, non-`duplicate_master` code, string detail, missing response, null input, missing `duplicate` flag). Full frontend suite: **jest 91/91 pass in 1.3 s**. Backend pytest Iter127a + Iter72 = **16/16 pass** unchanged.
+  - **Zero backend / rule / index / migration change** — Iter127a matching rules, DB unique indexes, admin listing endpoint, override behaviour and Iter126a/b/c are all bit-for-bit identical. `parseDuplicateError` reads the exact 409 payload shape the backend already emits.
+
+
 - [x] **Iter127a · Master duplicate prevention (Customer / Vehicle / Supplier)** (Feb 2026 — LOCKED ✅)
   - **Scope**: `POST /api/customers`, `POST /api/vehicles`, `POST /api/suppliers`. Scoping is ALWAYS per `(user_id, active company_id)` — cross-tenant / cross-company namespaces never collide.
   - **Locked matching rules**:

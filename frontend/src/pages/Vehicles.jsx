@@ -7,6 +7,9 @@ import FileAttachments from "@/components/FileAttachments";
 import { StateSelect } from "@/lib/states";
 import SearchableSelect from "@/components/SearchableSelect";
 import { QuickAddSupplier } from "@/components/QuickAddModals";
+import DuplicateMasterModal, {
+  parseDuplicateError, parseVehicleDuplicateResponse,
+} from "@/components/DuplicateMasterModal";
 
 const EMPTY = {
   vehicle_number: "", vehicle_type: "own", is_active: true,
@@ -76,6 +79,8 @@ export default function Vehicles() {
     onError: (e) => toast.error(e?.response?.data?.detail || "Failed"),
   });
 
+  // Iter127a UAT — user-facing duplicate modal state.
+  const [dup, setDup] = useState(null);
   const save = useMutation({
     mutationFn: async () => {
       const payload = { ...form, capacity_tons: Number(form.capacity_tons) };
@@ -83,13 +88,22 @@ export default function Vehicles() {
         ? (await api.put(`/vehicles/${editing.id}`, { ...editing, ...payload })).data
         : (await api.post("/vehicles", payload)).data;
     },
-    onSuccess: () => {
+    onSuccess: (d) => {
+      // Iter72 keeps idempotent 200 for vehicles — but Iter127a marks
+      // duplicate hits with duplicate:true. Surface a clean modal instead of
+      // silently reusing the existing vehicle.
+      const vd = !editing && parseVehicleDuplicateResponse(d);
+      if (vd) { setDup(vd); return; }
       toast.success(editing ? "Vehicle updated" : "Vehicle added");
       qc.invalidateQueries({ queryKey: ["vehicles"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });
       setOpen(false); setEditing(null); setForm(EMPTY);
     },
-    onError: (e) => toast.error(e?.response?.data?.detail || "Failed"),
+    onError: (e) => {
+      const parsed = parseDuplicateError(e);
+      if (parsed) { setDup(parsed); return; }
+      toast.error(typeof e?.response?.data?.detail === "string" ? e.response.data.detail : "Failed");
+    },
   });
 
   const del = useMutation({
@@ -640,6 +654,14 @@ export default function Vehicles() {
             }));
           }}
           onClose={() => setShowQaSupplier(false)}
+        />
+      )}
+      {dup && (
+        <DuplicateMasterModal
+          open entity="vehicle"
+          existing={dup.existing} matchedField={dup.matchedField}
+          onCancel={() => setDup(null)}
+          onOpenExisting={(ex) => { setDup(null); setOpen(false); setEditing(null); setForm(EMPTY); openEdit({ ...EMPTY, ...ex }); }}
         />
       )}
     </div>

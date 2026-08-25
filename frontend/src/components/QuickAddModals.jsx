@@ -4,6 +4,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { X, Plus } from "lucide-react";
 import SearchableSelect from "@/components/SearchableSelect";
+import DuplicateMasterModal, {
+  parseDuplicateError, parseVehicleDuplicateResponse,
+} from "@/components/DuplicateMasterModal";
 
 const ic = "w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none bg-white";
 const lbl = "text-[10px] font-bold uppercase tracking-wider text-zinc-500";
@@ -25,6 +28,7 @@ function ModalShell({ title, onClose, children, testId }) {
 export function QuickAddCustomer({ prefillName = "", onCreated, onClose }) {
   const qc = useQueryClient();
   const [f, setF] = useState({ name: prefillName, phone: "", gstin: "", state: "", address: "", pincode: "" });
+  const [dup, setDup] = useState(null);
   const m = useMutation({
     mutationFn: async () => (await api.post("/customers", f)).data,
     onSuccess: async (d) => {
@@ -35,7 +39,11 @@ export function QuickAddCustomer({ prefillName = "", onCreated, onClose }) {
       onCreated?.(d);
       onClose?.();
     },
-    onError: (e) => toast.error(e?.response?.data?.detail || "Failed"),
+    onError: (e) => {
+      const parsed = parseDuplicateError(e);
+      if (parsed) { setDup(parsed); return; }
+      toast.error(typeof e?.response?.data?.detail === "string" ? e.response.data.detail : "Failed");
+    },
   });
   return (
     <ModalShell title="Quick Add — Customer" onClose={onClose} testId="quickadd-customer-modal">
@@ -109,15 +117,22 @@ export function QuickAddVehicle({ prefillNumber = "", onCreated, onClose }) {
     queryFn: async () => (await api.get("/suppliers")).data,
   });
   const [showQaSupplier, setShowQaSupplier] = useState(false);
+  const [dup, setDup] = useState(null);
   const m = useMutation({
     mutationFn: async () => (await api.post("/vehicles", { ...f, capacity_tons: Number(f.capacity_tons || 0) })).data,
     onSuccess: async (d) => {
+      const vd = parseVehicleDuplicateResponse(d);
+      if (vd) { setDup(vd); return; }
       toast.success("Vehicle added");
       await qc.refetchQueries({ queryKey: ["vehicles"] });
       onCreated?.(d);
       onClose?.();
     },
-    onError: (e) => toast.error(e?.response?.data?.detail || "Failed"),
+    onError: (e) => {
+      const parsed = parseDuplicateError(e);
+      if (parsed) { setDup(parsed); return; }
+      toast.error(typeof e?.response?.data?.detail === "string" ? e.response.data.detail : "Failed");
+    },
   });
   return (
     <ModalShell title="Quick Add — Vehicle" onClose={onClose} testId="quickadd-vehicle-modal">
@@ -179,6 +194,14 @@ export function QuickAddVehicle({ prefillNumber = "", onCreated, onClose }) {
           <button type="submit" data-testid="qa-veh-save" disabled={m.isPending || (f.vehicle_type === "supplier" && !f.supplier_id)} className="px-4 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm disabled:opacity-50">{m.isPending ? "Saving…" : "Save Vehicle"}</button>
         </div>
       </form>
+      {dup && (
+        <DuplicateMasterModal
+          open entity="vehicle"
+          existing={dup.existing} matchedField={dup.matchedField}
+          onCancel={() => setDup(null)}
+          onOpenExisting={(ex) => { setDup(null); onCreated?.(ex); onClose?.(); }}
+        />
+      )}
       {showQaSupplier && (
         <QuickAddSupplier
           onCreated={(s) => setF((x) => ({ ...x, supplier_id: s.id, supplier_name: s.name, supplier_mobile: s.mobile || "" }))}
@@ -231,6 +254,7 @@ export function QuickAddSupplier({ prefillName = "", onCreated, onClose }) {
     address: "",
     is_active: true,
   });
+  const [dup, setDup] = useState(null);
   const m = useMutation({
     mutationFn: async () => (await api.post("/suppliers", f)).data,
     onSuccess: async (d) => {
@@ -240,7 +264,11 @@ export function QuickAddSupplier({ prefillName = "", onCreated, onClose }) {
       onCreated?.(d);
       onClose?.();
     },
-    onError: (e) => toast.error(e?.response?.data?.detail || "Failed"),
+    onError: (e) => {
+      const parsed = parseDuplicateError(e);
+      if (parsed) { setDup(parsed); return; }
+      toast.error(typeof e?.response?.data?.detail === "string" ? e.response.data.detail : "Failed");
+    },
   });
   return (
     <ModalShell title="Quick Add — Supplier" onClose={onClose} testId="quickadd-supplier-modal">
@@ -260,6 +288,14 @@ export function QuickAddSupplier({ prefillName = "", onCreated, onClose }) {
           <button type="submit" data-testid="qa-sup-save" disabled={m.isPending} className="px-4 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm disabled:opacity-50">{m.isPending ? "Saving…" : "Save Supplier"}</button>
         </div>
       </form>
+      {dup && (
+        <DuplicateMasterModal
+          open entity="supplier"
+          existing={dup.existing} matchedField={dup.matchedField}
+          onCancel={() => setDup(null)}
+          onOpenExisting={(ex) => { setDup(null); onCreated?.(ex); onClose?.(); }}
+        />
+      )}
     </ModalShell>
   );
 }
