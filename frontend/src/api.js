@@ -60,6 +60,21 @@ api.interceptors.request.use((cfg) => {
       cfg.headers = cfg.headers || {};
       if (!cfg.headers["X-Company-Id"]) cfg.headers["X-Company-Id"] = cid;
     }
+    // Iter126b — Auto-attach Idempotency-Key for Bucket-B POSTs.
+    // The key is generated ONCE per logical request. Retries via the
+    // response interceptor (Iter126a Bucket-A retry OR one-shot /auth/me
+    // relaunch) re-use `err.config`, which already carries this header —
+    // so the same UUID is sent to the server for every retry, letting the
+    // backend replay the ORIGINAL result instead of creating a duplicate.
+    // The guard `!cfg.headers["Idempotency-Key"]` is critical: it prevents
+    // a fresh key from being minted on retry, and also lets a caller pass
+    // an explicit key when they need cross-tab or persistent dedup.
+    if (_isBucketBPost(cfg)) {
+      cfg.headers = cfg.headers || {};
+      if (!cfg.headers["Idempotency-Key"]) {
+        cfg.headers["Idempotency-Key"] = _newUuid();
+      }
+    }
   } catch {}
   return cfg;
 });
@@ -87,13 +102,16 @@ function _flattenDetail(d) {
   return String(d);
 }
 
-// Iter126a — Bucket A retry policy (Write-Path Resilience, Phase 1).
-// See docs: /app/memory/PRD.md → Iter126 Endpoint Safety Matrix.
-// Only retry endpoints that are naturally idempotent (safe for the server to
-// receive twice with the same body). Bucket B (create/payment/upload) needs
-// Idempotency-Key — handled in Iter126b. Bucket C never auto-retries.
+// Iter126 — Endpoint Safety Matrix. See docs: /app/memory/PRD.md.
 //
-// Rules
+// Bucket A → naturally idempotent → auto-retry on transient 5xx (Iter126a)
+// Bucket B → creates / payments / uploads / LR-regenerate → attach an
+//            Idempotency-Key so duplicate button-clicks / silent retries
+//            never create duplicate rows (Iter126b, this section).
+// Bucket C → never auto-retry, never send a key (LLM cost calls, comms,
+//            bulk mutations, auth handshakes).
+//
+// Retry rules (Bucket A)
 //   - Method GET / HEAD / OPTIONS  → always retry
 //   - Method PUT / PATCH / DELETE  → always retry (REST idempotent contract)
 //   - Method POST                  → only retry if URL matches BUCKET_A_POST
@@ -107,6 +125,55 @@ const BUCKET_A_POST = [
   /\/policy-changes\/preview$/,
   /\/vehicles\/bulk-import\/preview$/,
 ];
+
+// Iter126b — Bucket-B POST whitelist (MUST mirror
+// /app/backend/idempotency.py :: BUCKET_B_PATTERNS). Paths here have NO
+// `/api` prefix because axios `baseURL` already resolves to `${host}/api`.
+export const BUCKET_B_POST = [
+  // top-level creates
+  /^\/trips$/,
+  /^\/companies$/,
+  /^\/customers$/,
+  /^\/suppliers$/,
+  /^\/drivers$/,
+  /^\/vehicles$/,
+  /^\/invoices$/,
+  /^\/products$/,
+  /^\/parties$/,
+  /^\/team$/,
+  /^\/templates$/,
+  /^\/fuel$/,
+  /^\/expenditure-types$/,
+  /^\/saved-trip-filters$/,
+  /^\/driver-shortage-policies$/,
+  // sub-resource creates
+  /^\/customers\/[^/]+\/ship-sites$/,
+  /^\/customers\/[^/]+\/add-payment$/,
+  /^\/suppliers\/[^/]+\/payments$/,
+  /^\/invoices\/[^/]+\/payments$/,
+  /^\/drivers\/[^/]+\/ledger$/,
+  /^\/drivers\/[^/]+\/ledger\/post-monthly-salary$/,
+  /^\/drivers\/[^/]+\/ledger\/settle$/,
+  /^\/drivers\/[^/]+\/salary-masters$/,
+  /^\/trips\/[^/]+\/supplier-diesel$/,
+  /^\/trips\/[^/]+\/supplier-advance$/,
+  /^\/trips\/[^/]+\/field-override$/,
+  /^\/trips\/[^/]+\/duplicate$/,
+  /^\/trips\/from-template\/[^/]+$/,
+  /^\/trips\/quick-repeat\/[^/]+$/,
+  // uploads
+  /^\/files\/upload$/,
+  /^\/files\/bulk-upload$/,
+  /^\/company\/logo$/,
+  // bulk imports
+  /^\/trips\/import$/,
+  /^\/vehicles\/bulk-import$/,
+  // A→B LR regenerate moves
+  /^\/trips\/[^/]+\/regenerate-lr$/,
+  /^\/trips\/bulk-regenerate-lr$/,
+  /^\/trips\/bulk-all-copies-zip$/,
+];
+
 const RETRY_DELAYS_MS = [500, 1500];
 
 function _isBucketA(cfg) {
@@ -118,6 +185,33 @@ function _isBucketA(cfg) {
     return BUCKET_A_POST.some((rx) => rx.test(url));
   }
   return false;
+}
+
+export function _isBucketBPost(cfg) {
+  if ((cfg?.method || "").toLowerCase() !== "post") return false;
+  const url = cfg?.url || "";
+  return BUCKET_B_POST.some((rx) => rx.test(url));
+}
+
+// RFC-4122 v4 UUID. `crypto.randomUUID` in modern browsers/Node ≥19; a
+// getRandomValues-backed fallback covers older Safari. Never falls back to
+// `Math.random` — a weak key would silently break per-request uniqueness.
+function _newUuid() {
+  try {
+    if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+    if (typeof crypto !== "undefined" && crypto.getRandomValues) {
+      const b = new Uint8Array(16);
+      crypto.getRandomValues(b);
+      b[6] = (b[6] & 0x0f) | 0x40;
+      b[8] = (b[8] & 0x3f) | 0x80;
+      const h = [...b].map((x) => x.toString(16).padStart(2, "0")).join("");
+      return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+    }
+  } catch {}
+  // Last-resort — timestamp + counter. Not RFC compliant but still unique
+  // enough to prevent duplicate-Save within a session. Only reached if the
+  // Web Crypto API is entirely missing.
+  return `ts-${Date.now()}-${(_newUuid._n = (_newUuid._n || 0) + 1)}`;
 }
 
 function _isTransient(err) {

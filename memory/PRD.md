@@ -2,6 +2,19 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter126b (frontend wiring) · Auto-attach Idempotency-Key on Bucket-B POSTs** (Feb 2026 — LOCKED ✅)
+  - **Contract**: `frontend/src/api.js` request interceptor auto-mints an RFC-4122 v4 UUID (`crypto.randomUUID()` with a `getRandomValues` fallback) and attaches it as the `Idempotency-Key` header on every Bucket-B POST. A single logical request gets ONE key — retries triggered by Iter126a's response interceptor re-use `err.config`, whose header is already populated, so the guard `if (!cfg.headers["Idempotency-Key"])` never mints a fresh UUID on retry.
+  - **Guarantees verified end-to-end**:
+    1. Bucket-B POST → header present. (`api.iter126b.test.js`)
+    2. Retry with same axios cfg → same key. (jest same-cfg reuse test)
+    3. GET / HEAD / OPTIONS / PUT / PATCH / DELETE → no header. (12-row parametrised test)
+    4. Bucket-A read-only POSTs (`/trips/lr/preview`, `/trips/bulk-invoice-preflight`, `/policy-changes/preview`, `/vehicles/bulk-import/preview`, `/companies/{cid}/set-default`, `/auth/logout`) → no header.
+    5. Bucket-C POSTs (share endpoints, all AI, `bulk-delete`, `policy-changes/{apply,revert}`, `/auth/session`, `/auth/demo-login`) → no header.
+    6. Two rapid Save clicks reusing the same key (`test_double_click_save_with_frontend_key_creates_one_row`) → exactly ONE Trip row, second response replayed with `x-idempotent-replay: 1`.
+  - **Whitelist mirror**: `BUCKET_B_POST` in `frontend/src/api.js` (37 patterns, no `/api` prefix) is compared literal-by-literal against `BUCKET_B_PATTERNS` in `backend/idempotency.py` (37 patterns, with `/api` prefix) — `test_frontend_bucket_b_mirrors_backend_bucket_b` fails the build on any drift.
+  - **New tests wired into regression guard**: `tests/test_iter126b_idempotency.py` (7) + `tests/test_iter126b_frontend_wiring.py` (3). Frontend jest suite (`api.iter126b.test.js` — 46 assertions) can be run via `CI=true yarn test --testPathPattern=iter126b --watchAll=false` and is stable in the jsdom env with an injected `crypto.randomUUID` shim.
+  - **Unchanged surface**: no business-logic change, no auth touch, no PRD data-model change. `_isBucketBPost` / `BUCKET_B_POST` / `_newUuid` are exported ONLY so tests can import them — production code paths remain the response interceptor + request interceptor already in place.
+
 - [x] **Iter126b · Bucket-B Idempotency-Key middleware — 24 h replay + single-flight** (Feb 2026 — LOCKED ✅)
   - **Guarantee**: For every Bucket-B POST that carries an `Idempotency-Key` header, the middleware executes the underlying handler **exactly once** per `(user_id, active company_id, method, path, key)` tuple within a 24 h window. Any retry with the same tuple returns the ORIGINAL status code + body + preserved headers verbatim (marked with `x-idempotent-replay: 1`). No duplicate Trip / Customer / Supplier / Invoice / Payment / Ledger / Upload row is ever created.
   - **Single-flight**: concurrent duplicates race on `insert_one({_id: hash(tuple), status: in_progress})` — the loser polls (150 ms cadence, 30 s ceiling) until the leader completes, then replays.
