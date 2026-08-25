@@ -2,7 +2,9 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
-- [x] **Iter125 · Bulk All-Copies ZIP — selection OR filter mode** (Feb 2026 — awaiting UAT)
+- [x] **Iter125 · Bulk All-Copies ZIP — selection OR filter mode** (Feb 2026 — APPROVED ✅ · LOCKED)
+  - **User UAT verdict**: Multi-selection works, confirmation modal accurate, ZIP downloads with expected filename, folder-per-LR structure verified, copy labels consistent with Iter115/122, `_manifest.txt` correct, LR Register filtered flow works, single-trip All-Copies unchanged, invalid-trip handling clear.
+  - **DO NOT MODIFY** the endpoint (`POST /api/trips/bulk-all-copies-zip`), the folder-per-LR ZIP structure, the `_manifest.txt` format, the confirmation modal, or the Trips-list / LR-Register buttons without explicit user request.
   - **New endpoint** `POST /api/trips/bulk-all-copies-zip` accepts either `{"trip_ids": [...]}` or `{"start", "end", ...LR-Register-filters}`. Returns one ZIP with **folder-per-LR structure** (`LR_<lr_number>/{ORIGINAL,DUPLICATE,TRIPLICATE}.pdf`) plus a top-level `_manifest.txt` listing included + skipped trips with reasons + timestamp + total copy count.
   - **Response headers** `X-Iter125-Included`, `X-Iter125-Skipped`, `X-Iter125-Reasons`, `X-Iter125-PDFs` — exposed via CORS. The frontend uses these to show a post-download modal with Included / Skipped counts and reasons WITHOUT opening the ZIP.
   - **Safety invariants**: Uses ONLY Iter115/122-approved `build_lr_pdf(company, customer, trip, copy=...)`. Only side-effect on trip docs is `lr_number` back-fill when missing (Iter122/109 parity). Active-company isolation via `_active_company_id`. Cap = **200 trips**. Skip reasons: `wrong_company · missing_customer · not_found · deleted`. Empty result → 400 (no empty ZIP ever produced).
