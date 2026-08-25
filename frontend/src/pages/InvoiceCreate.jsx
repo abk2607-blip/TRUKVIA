@@ -1,11 +1,15 @@
-import React, { useState, useMemo, useCallback } from "react";
+import React, { useState, useMemo, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { api, fmtCurrency, fmtDate } from "@/api";
+import { api, fmtCurrency, fmtDate, getActiveCompanyId } from "@/api";
 import { toast } from "sonner";
 import { ArrowLeft } from "lucide-react";
 import VoiceButton from "@/components/VoiceButton";
 import AsyncSearchableSelect from "@/components/AsyncSearchableSelect";
+// Iter126c — Form Preservation
+import { useFormDraft } from "@/hooks/useFormDraft";
+import DraftRestoreBanner from "@/components/DraftRestoreBanner";
+import { useAuth } from "@/context/AuthContext";
 
 export default function InvoiceCreate() {
   const nav = useNavigate();
@@ -16,6 +20,36 @@ export default function InvoiceCreate() {
   const [hsnSac, setHsnSac] = useState("996791");
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState("");
+
+  // Iter126c — Draft preservation. InvoiceCreate is Phase 1 scope. The
+  // sanitised buffer that is written includes ONLY the six controlled
+  // fields below (customer_id, invoice_date, hsn_sac, rcm, notes, and the
+  // selected trip-id map). Nothing sensitive touches sessionStorage.
+  const invoiceForm = useMemo(
+    () => ({ customerId, selected, rcm, hsnSac, invoiceDate, notes }),
+    [customerId, selected, rcm, hsnSac, invoiceDate, notes],
+  );
+  const _setInvoiceForm = useCallback((updater) => {
+    // The hook calls `setForm(prev => ({ ...prev, ...draft.form }))` on
+    // Restore. Split the merged object back into the individual pieces of
+    // React state that own each field.
+    const next = typeof updater === "function" ? updater(invoiceForm) : updater;
+    if (Object.prototype.hasOwnProperty.call(next, "customerId")) setCustomerId(next.customerId || "");
+    if (Object.prototype.hasOwnProperty.call(next, "selected")) setSelected(next.selected || {});
+    if (Object.prototype.hasOwnProperty.call(next, "rcm")) setRcm(Boolean(next.rcm));
+    if (Object.prototype.hasOwnProperty.call(next, "hsnSac")) setHsnSac(next.hsnSac || "996791");
+    if (Object.prototype.hasOwnProperty.call(next, "invoiceDate")) setInvoiceDate(next.invoiceDate || new Date().toISOString().slice(0, 10));
+    if (Object.prototype.hasOwnProperty.call(next, "notes")) setNotes(next.notes || "");
+  }, [invoiceForm]);
+  const { user } = useAuth();
+  const draft = useFormDraft({
+    route: "/invoices/new",
+    form: invoiceForm,
+    setForm: _setInvoiceForm,
+    userId: user && user.user_id,
+    companyId: getActiveCompanyId(),
+  });
+  const idemKeyRef = useRef(null);
 
   const { data: customers = [] } = useQuery({ queryKey: ["customers"], queryFn: async () => (await api.get("/customers")).data });
   const { data: company } = useQuery({ queryKey: ["company"], queryFn: async () => (await api.get("/company")).data });
@@ -92,10 +126,12 @@ export default function InvoiceCreate() {
       gst_type: gstType,
       rcm,
       notes,
-    })).data,
+    }, { headers: idemKeyRef.current ? { "Idempotency-Key": idemKeyRef.current } : {} })).data,
     onSuccess: (data) => {
       toast.success("Invoice created");
       qc.invalidateQueries();
+      try { draft.clearOnSuccess(); } catch {}
+      idemKeyRef.current = null;
       nav(`/invoices/${data.id}`);
     },
     onError: (e) => toast.error(e?.response?.data?.detail || "Failed"),
@@ -113,6 +149,7 @@ export default function InvoiceCreate() {
 
   return (
     <div className="space-y-6" data-testid="invoice-create-page">
+      <DraftRestoreBanner draft={draft} />
       <header className="flex items-center gap-3 border-b border-zinc-200 pb-4">
         <button onClick={() => nav(-1)} className="p-2 border border-zinc-200 rounded-sm"><ArrowLeft size={16} /></button>
         <div className="flex-1">
@@ -280,7 +317,7 @@ export default function InvoiceCreate() {
           </div>
 
           <div className="mt-4 flex justify-end">
-            <button data-testid="create-invoice-btn" disabled={!canSubmit || create.isPending} onClick={() => create.mutate()} className="px-6 py-3 text-xs uppercase tracking-wider font-semibold bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 disabled:opacity-50">
+            <button data-testid="create-invoice-btn" disabled={!canSubmit || create.isPending} onClick={() => { idemKeyRef.current = draft.getKeyForSave(); create.mutate(); }} className="px-6 py-3 text-xs uppercase tracking-wider font-semibold bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 disabled:opacity-50">
               {create.isPending ? "Creating..." : "Create Invoice"}
             </button>
           </div>

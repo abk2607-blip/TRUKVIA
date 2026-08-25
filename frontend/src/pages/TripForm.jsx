@@ -1,6 +1,6 @@
 // Iter55 — TripForm refactor. Pure component extraction; state, mutations,
 // computations, useEffects, and API calls preserved EXACTLY as before.
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useState, useRef } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api";
@@ -8,6 +8,10 @@ import { toast } from "sonner";
 import { ArrowLeft } from "lucide-react";
 import FileAttachments from "@/components/FileAttachments";
 import VoiceTripButton from "@/components/VoiceTripButton";
+import DraftRestoreBanner from "@/components/DraftRestoreBanner";
+import { useFormDraft } from "@/hooks/useFormDraft";
+import { useAuth } from "@/context/AuthContext";
+import { getActiveCompanyId } from "@/api";
 import {
   QuickAddCustomer,
   QuickAddDriver,
@@ -54,6 +58,22 @@ export default function TripForm() {
   // across dialog re-opens so users don't have to retype if they cancel & retry.
   const [overrideDialog, setOverrideDialog] = useState({ open: false, list: [] });
   const [capturedReasons, setCapturedReasons] = useState({}); // { field: reason }
+
+  // Iter126c — Draft preservation (Trip form). Protects `/trips/new` and
+  // `/trips/:id/edit`. The hook auto-saves the sanitised form buffer to
+  // sessionStorage every 800 ms, shows a sticky restore banner when a
+  // draft is found on mount, and manages the Iter126b Idempotency-Key so
+  // retries of the same intent reuse the same UUID while a fresh Save
+  // after a material change rotates it.
+  const { user } = useAuth();
+  const draft = useFormDraft({
+    route: isEdit ? "/trips/:id/edit" : "/trips/new",
+    recordId: id || "",
+    form, setForm,
+    userId: user && user.user_id,
+    companyId: getActiveCompanyId(),
+  });
+  const idemKeyRef = useRef(null);
 
   const { data: trip } = useQuery({
     queryKey: ["trip", id],
@@ -177,8 +197,8 @@ export default function TripForm() {
         )),
       };
       const saved = isEdit
-        ? (await api.put(`/trips/${id}`, payload)).data
-        : (await api.post("/trips", payload)).data;
+        ? (await api.put(`/trips/${id}`, payload, { headers: idemKeyRef.current ? { "Idempotency-Key": idemKeyRef.current } : {} })).data
+        : (await api.post("/trips", payload, { headers: idemKeyRef.current ? { "Idempotency-Key": idemKeyRef.current } : {} })).data;
       // Iter100 — After the trip persists, log each captured override reason
       // to the audit trail. Failures here are non-blocking (trip save is the
       // primary contract) but surfaced via toast.
@@ -208,6 +228,9 @@ export default function TripForm() {
       qc.invalidateQueries({ queryKey: ["dashboard"] });
       setCapturedReasons({});
       setOverrideDialog({ open: false, list: [] });
+      // Iter126c — clear the preserved draft ONLY after a confirmed Save.
+      try { draft.clearOnSuccess(); } catch {}
+      idemKeyRef.current = null;
       nav("/trips");
     },
     onError: (e) => toast.error(e?.response?.data?.detail || "Failed"),
@@ -584,6 +607,11 @@ export default function TripForm() {
       return;
     }
     setOverrideDialog({ open: false, list: overrides });
+    // Iter126c — bind an Idempotency-Key to this Save intent. If the form
+    // has NOT materially changed since the previous fire, the same key is
+    // returned — the Iter126b backend replay cache then guarantees no
+    // duplicate row on transient-5xx retries.
+    idemKeyRef.current = draft.getKeyForSave();
     save.mutate();
   };
 
@@ -612,6 +640,7 @@ export default function TripForm() {
       </header>
 
       <form onSubmit={handleFormSubmit} className="space-y-6">
+        <DraftRestoreBanner draft={draft} />
         {!isEdit && templates.length > 0 && (
           <div data-testid="template-picker" className="border border-emerald-300 bg-emerald-50 rounded-sm p-4 flex flex-col sm:flex-row sm:items-center gap-3">
             <div className="text-sm text-emerald-900 flex-1">
@@ -838,6 +867,8 @@ export default function TripForm() {
           }));
           setOverrideDialog({ open: false, list: withReasons });
           // Kick off save now that every override has a justification.
+          // Iter126c — bind the draft's Idempotency-Key to this Save fire.
+          idemKeyRef.current = draft.getKeyForSave();
           save.mutate();
         }}
       />

@@ -232,6 +232,12 @@ export const AuthProvider = ({ children }) => {
 
   const logout = async () => {
     try { await api.post("/auth/logout"); } catch {}
+    // Iter126c — wipe any preserved form drafts so the next user on the
+    // same tab never sees the previous user's buffer.
+    try {
+      const { wipeAllDrafts } = await import("@/lib/formDraft");
+      wipeAllDrafts();
+    } catch {}
     try {
       localStorage.removeItem("session_token");
       localStorage.removeItem(USER_KEY);

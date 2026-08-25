@@ -2,6 +2,26 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter126c · Form-draft preservation (Phase 1 — Trip & Invoice forms)** (Feb 2026 — LOCKED ✅)
+  - **Contract**: A user typing into `/trips/new`, `/trips/:id/edit`, or `/invoices/new` gets their in-flight buffer auto-saved to `sessionStorage` every 800 ms (debounced). If the tab reloads / the backend restarts / the network drops mid-Save, a sticky (no auto-dismiss) "💾 Unsaved draft found" banner appears on next mount — Restore merges the buffer back, Discard deletes it. On successful Save the draft is deleted synchronously BEFORE navigation.
+  - **Scope**:
+    | Route | Component | Testid |
+    |---|---|---|
+    | `/trips/new` | `TripForm.jsx` | `trip-form-page` + `iter126c-restore-banner` |
+    | `/trips/:id/edit` | `TripForm.jsx` (same) | same, plus `#{tripId}` in the draft key |
+    | `/invoices/new` | `InvoiceCreate.jsx` | `invoice-create-page` + `iter126c-restore-banner` |
+    Trip-detail modals (Supplier Diesel / Supplier Advance / Field Override) are DEFERRED to a future phase per user instruction.
+  - **Sanitisation** (`/app/frontend/src/lib/formDraft.js :: SENSITIVE_KEY_PATTERNS`): every key matching these regexes is dropped before write — `password`, `otp` / `_otp`, `session*`, `token*`, `secret*`, `api[_-]?key`, `photo` / `photo_data_url` / `image_data_url` / `signature*`, `cvv`, `card_number`, `bank_account*`, `upi_*`, `cheque_*`, `ref_no`, `ifsc`, `account_no`. Base64 `data:` values on ANY key are wiped. Strings > 2 KB truncated. Files/Blobs replaced with `<file: name>` placeholder.
+  - **Draft identity**: `iter126c:draft:v1:<route[#recordId]>:<company_id>:<user_id>` → per user, per active company, per form (edits keyed by record id).
+  - **Idempotency-Key binding (Iter126b compose)**: the draft owns ONE UUID. Retry after 502/503 uses the SAME key (backend replays original success). A material change to the sanitised form buffer rotates the key (`chooseSaveKey` compares SHA vs `saved_sha`). TripForm/InvoiceCreate pass this bound key explicitly via `{ headers: { "Idempotency-Key": … } }` — the api.js request interceptor honours the pre-set header via its existing guard `if (!cfg.headers["Idempotency-Key"])`.
+  - **Lifecycle**: mount → probe → sticky banner if a draft exists → user picks Restore or Discard → autosave starts once decided → Save fires with bound key → 200/replay ⇒ `clearOnSuccess()` deletes the row → nav. 4xx keeps draft (fix payload). 5xx keeps draft (retry). Stale (> 24 h) → silently discarded. Logout → `wipeAllDrafts()` deletes every `iter126c:draft:` row before redirecting to `/`.
+  - **Zero backend change** — pure client feature riding on Iter126b's replay cache. No new routes, no schema change, no middleware.
+  - **Tests**:
+    - **Jest** `src/__tests__/iter126c.formDraft.test.js` — **37/37 pass in 0.813 s** (sanitisation parametrised over 21 sensitive keys, base64 strip, 2 KB truncation, nested/cycle safety, File placeholder, key composition, save/load/clear, stale expiry, wipeAll only touches iter126c keys, chooseSaveKey rotation vs. reuse, humanAge formatting).
+    - **Playwright** `frontend/playwright/iter126c_form_preservation.spec.js` — **6/6 pass in 31.5 s** in real Chromium: reload+restore returns fields, mocked 502 leaves draft intact, Discard survives reload as absent, User A draft never surfaces for demo user, Company X draft doesn't leak into empty-company session, `wipeAllDrafts` clears every draft. Config at `frontend/playwright.config.js`, base URL configurable via `PW_BASE_URL` (defaults to preview; falls back to `http://localhost:3000` inside the pod).
+    - **Full regression**: **358 passed, 1 skipped, 0 failed in 544.66 s** — GREEN. (Iter126c adds zero backend tests since there is no backend surface to guard.)
+  - **Untouched**: Iter102–125 (freight, LR, shortage, supplier, invoice, policy) · Iter106/106b/110 auth · Iter120 regression guard · Iter121 loopback · Iter126a Bucket-A retry · Iter126b idempotency middleware.
+
 - [x] **Iter126b (frontend wiring) · Auto-attach Idempotency-Key on Bucket-B POSTs** (Feb 2026 — LOCKED ✅)
   - **Contract**: `frontend/src/api.js` request interceptor auto-mints an RFC-4122 v4 UUID (`crypto.randomUUID()` with a `getRandomValues` fallback) and attaches it as the `Idempotency-Key` header on every Bucket-B POST. A single logical request gets ONE key — retries triggered by Iter126a's response interceptor re-use `err.config`, whose header is already populated, so the guard `if (!cfg.headers["Idempotency-Key"])` never mints a fresh UUID on retry.
   - **Guarantees verified end-to-end**:
