@@ -2,6 +2,19 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [ ] **Backlog · Vehicle QuickAdd partial-match soft suggestion** (Feb 2026 — logged during Iter127a UAT, NOT yet approved to build)
+  - **Observation** (from live UAT): typing `2112` in the Vehicle picker surfaces the existing `AP39UK2112` in the search results but also offers `+ Add New Vehicle 2112`. User could accidentally create a stub row when the existing full-number vehicle was intended.
+  - **Not a bug** — Iter127a's normalisation is `vehicle_number_norm = strip(whitespace/hyphens/dots) + upper`. `2112` and `AP39UK2112` are genuinely different canonical numbers, so the backend correctly allows the create. Partial-substring matching must **never** become a hard duplicate block (would prevent legitimate short vehicle numbers, plate-suffix reuse across states, etc.).
+  - **Proposed enhancement (deferred, unapproved)**: when the QuickAddVehicle input contains ≥ 3 chars AND at least one existing vehicle_number contains the input as a substring, render a subtle non-blocking hint above the Save button:
+    ```
+    ℹ Existing vehicle(s) match your search — select an existing vehicle if applicable.
+    <chip: AP39UK2112>   <chip: AP39UK2112A>
+    ```
+    Clicking a chip fills the form via the same `onCreated(existing)` path used by the Iter127a modal. Save stays enabled — the user can still create the new vehicle intentionally.
+  - **Explicitly out of scope**: promoting partial-match to a hard 409 · fuzzy / Levenshtein matching · changing `vehicle_number_norm` semantics · touching Iter127a rules or DB indexes.
+  - **Status**: LOGGED ONLY — do not implement until user explicitly approves. No files touched today.
+
+
 - [x] **Iter127a-UAT-fix · Frontend duplicate-master modal UX** (Feb 2026 — Frontend-only, no backend touch)
   - **Fix**: Replaced the raw JSON `409 { code:"duplicate_master", ... }` error toast with a clean, user-facing modal on Customer / Supplier / Vehicle create flows. Vehicle also shows the same modal for the Iter72 idempotent `200 { duplicate: true, ... }` response so the "silent-reuse" behaviour no longer confuses staff.
   - **New shared component** `/app/frontend/src/components/DuplicateMasterModal.jsx` — one modal serves all three entities. Entity-specific title / message / detail rows are picked via a lookup keyed on `matched_field` (gstin / pan / name / phone / vehicle_number / mobile). Exports two pure parsers: `parseDuplicateError(err)` for axios 409, `parseVehicleDuplicateResponse(data)` for the 200 `duplicate:true` body. Both return `null` cleanly on non-duplicate inputs so callers can chain the check inside their existing onError / onSuccess handlers.
