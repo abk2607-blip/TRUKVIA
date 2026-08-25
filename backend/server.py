@@ -14,6 +14,7 @@ from dotenv import load_dotenv
 
 from db import client, db
 from storage_client import init_storage, APP_NAME
+from idempotency import idempotency_middleware, ensure_indexes as ensure_idempotency_indexes
 
 # Router modules
 from routers import (
@@ -115,6 +116,17 @@ def _extract_collection(path: str) -> str:
         return "other"
     key = m.group(1)
     return _COLLECTION_MAP.get(key, key)
+
+
+@app.middleware("http")
+async def _idempotency_middleware(request: _FReq, call_next):
+    # Iter126b — Bucket-B replay protection. Added AFTER save_health so it
+    # wraps as the outer middleware: request flows Idempotency → SaveHealth →
+    # route; response flows route → SaveHealth → Idempotency. Replays skip
+    # the route (no duplicate mutation) but the Idempotency layer returns
+    # the ORIGINAL status/body so save_health metrics stay accurate for the
+    # ORIGINAL request (already logged the first time).
+    return await idempotency_middleware(request, call_next)
 
 
 @app.middleware("http")
@@ -908,6 +920,12 @@ async def startup_event():
         logger.info("Object storage initialized")
     except Exception as e:
         logger.warning(f"Object storage init failed: {e}")
+    # Iter126b — 24h TTL index on idempotency_keys.created_at.
+    try:
+        await ensure_idempotency_indexes()
+        logger.info("Idempotency TTL index ensured (24h replay window)")
+    except Exception as e:
+        logger.warning(f"Idempotency index setup failed: {e}")
     try:
         from scheduler import start_scheduler
         start_scheduler()

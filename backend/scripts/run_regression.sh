@@ -84,6 +84,7 @@ CRITICAL_TESTS=(
   "tests/test_iter109_bulk_lr_regenerate.py"              # Iter109 · Bulk LR regenerate + ZIP
   "tests/test_iter111_supplier_freight_and_shortage.py"   # Iter111 · Supplier freight basis + shortage threshold + override + audit
   "tests/test_iter126a_storage_startup.py"                # Iter126a · Object storage init must stay sync (no `await init_storage()`)
+  "tests/test_iter126b_idempotency.py"                    # Iter126b · Bucket-B Idempotency-Key middleware (24h replay + single-flight)
 )
 
 export PATH="/root/.venv/bin:$PATH"
