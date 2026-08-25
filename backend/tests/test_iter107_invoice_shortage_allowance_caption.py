@@ -47,7 +47,7 @@ def test_product_master_allowance_caption_on_invoice_pdf():
         "name": f"IT107_ProdA_{tag}", "default_shortage_allowance_pct": 0.5,
     }, timeout=T).json()
     cust = httpx.post(f"{API}/customers", headers=H, json={
-        "name": f"IT107_CustA_{tag}", "state": "AP", "gstin": "37ABCDE1234F1Z5",
+        "name": f"IT107_CustA_{tag}", "state": "AP", "gstin": f"37AB{uuid.uuid4().hex[:9].upper()}Z1"[:15],
         "shortage_config": {"limit": 0, "limit_type": "pct",
                              "method": "net_shortage", "active": True},
     }, timeout=T).json()

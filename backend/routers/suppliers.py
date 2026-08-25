@@ -69,24 +69,68 @@ async def list_suppliers(
 async def create_supplier(payload: Supplier, request: Request, user=Depends(get_current_user)):
     uid = user["user_id"]
     cid = await _active_company_id(request, user)
+    from dedup import (
+        norm_gstin, norm_pan, norm_name, norm_phone,
+        hard_conflict_response, soft_match_entry,
+        read_override_request, is_override_authorised,
+    )
     doc = payload.model_dump()
     doc["user_id"] = uid
     doc["company_id"] = cid
     doc["created_by"] = uid
     doc["created_at"] = now_utc().isoformat()
-    # Duplicate name check (per company)
-    existing = await db.suppliers.find_one({
-        "user_id": uid, "company_id": cid,
-        "name": {"$regex": f"^{doc['name'].strip()}$", "$options": "i"},
-    })
-    if existing:
-        raise HTTPException(status_code=409, detail=f"Supplier '{doc['name']}' already exists")
+
+    # ---- Iter127a · Duplicate protection ---- #
+    override_req, override_reason = read_override_request(request, doc)
+    if override_req and not is_override_authorised(user):
+        raise HTTPException(status_code=403, detail="Duplicate override requires Owner or Admin role.")
+
+    gstin_n = norm_gstin(doc.get("gst_in"))
+    pan_n   = norm_pan(doc.get("pan"))
+    name_n  = norm_name(doc.get("name"))
+    mob_n   = norm_phone(doc.get("mobile"))
+    scope = {"user_id": uid, "company_id": cid, "is_active": {"$ne": False}}
+
+    if not override_req:
+        if gstin_n:
+            hit = await db.suppliers.find_one({**scope, "gstin_norm": gstin_n}, {"_id": 0, "user_id": 0})
+            if hit:
+                raise HTTPException(status_code=409, detail=hard_conflict_response("gstin", "Supplier", hit, gstin_key="gst_in"))
+        if pan_n and not gstin_n:
+            hit = await db.suppliers.find_one(
+                {**scope, "pan_norm": pan_n, "$or": [{"gstin_norm": ""}, {"gstin_norm": {"$exists": False}}]},
+                {"_id": 0, "user_id": 0},
+            )
+            if hit:
+                raise HTTPException(status_code=409, detail=hard_conflict_response("pan", "Supplier", hit, gstin_key="gst_in"))
+        if name_n:
+            hit = await db.suppliers.find_one({**scope, "name_norm": name_n}, {"_id": 0, "user_id": 0})
+            if hit:
+                raise HTTPException(status_code=409, detail=hard_conflict_response("name", "Supplier", hit, gstin_key="gst_in"))
+
+    # SOFT — mobile suggestion only.
+    soft: list[dict] = []
+    if mob_n:
+        async for hit in db.suppliers.find({**scope, "mobile_norm": mob_n}, {"_id": 0, "user_id": 0}).limit(3):
+            soft.append(soft_match_entry("mobile", hit, gstin_key="gst_in"))
+
+    doc["gstin_norm"]  = gstin_n
+    doc["pan_norm"]    = pan_n
+    doc["name_norm"]   = name_n
+    doc["mobile_norm"] = mob_n
+    doc.pop("duplicate_override_reason", None)
+
     await db.suppliers.insert_one(doc)
     try:
-        await _log_audit({"user_id": uid, "company_id": cid}, "supplier", "create", doc["id"], doc.get("name", ""), "", {})
+        action = "duplicate_override" if override_req else "create"
+        await _log_audit({"user_id": uid, "company_id": cid}, "supplier", action, doc["id"],
+                         doc.get("name", ""), override_reason if override_req else "",
+                         {"gstin": gstin_n, "pan": pan_n})
     except Exception:
         pass
     doc.pop("_id", None); doc.pop("user_id", None)
+    if soft:
+        doc["soft_matches"] = soft
     return doc
 
 

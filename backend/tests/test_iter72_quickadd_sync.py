@@ -70,9 +70,14 @@ def test_vehicle_dedup_by_number_within_company():
     h = {**HDR, "X-Company-Id": cs[0]["id"]}
     vn = f"AP{uuid.uuid4().hex[:8].upper()}"
     v1 = httpx.post(f"{BASE}/api/vehicles", json={"vehicle_number": vn, "vehicle_type": "own"}, headers=h, timeout=15).json()
-    v2 = httpx.post(f"{BASE}/api/vehicles", json={"vehicle_number": vn.lower(), "vehicle_type": "own"}, headers=h, timeout=15).json()
+    # Iter127a — Vehicle keeps Iter72 idempotent data behaviour (returns the
+    # existing row) but now flags the response as an explicit duplicate.
+    r2 = httpx.post(f"{BASE}/api/vehicles", json={"vehicle_number": vn.lower(), "vehicle_type": "own"}, headers=h, timeout=15)
+    v2 = r2.json()
     assert v1["id"] == v2["id"], "duplicate vehicle_number must return existing id"
     assert v2["vehicle_number"] == vn, "vehicle_number must be normalised to upper-case"
+    assert v2.get("duplicate") is True
+    assert v2.get("matched_field") == "vehicle_number"
 
 
 def test_vehicle_supplier_id_required_for_supplier_type():

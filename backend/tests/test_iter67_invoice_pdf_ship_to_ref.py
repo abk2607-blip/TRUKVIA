@@ -31,7 +31,7 @@ def env():
     ha = _h(cs[0]["id"])
     cust = httpx.post(f"{BASE}/api/customers", headers=ha, json={
         "name": f"IT67_C_{UNIQUE}", "phone": "9110000067", "state": "Andhra Pradesh",
-        "gstin": "37ABCDE1234F1Z5", "pincode": "521228",
+        "gstin": f"37AB{uuid.uuid4().hex[:9].upper()}Z1"[:15], "pincode": "521228",
     }, timeout=60).json()
     veh = httpx.post(f"{BASE}/api/vehicles", headers=ha, json={
         "vehicle_number": f"AP67A{UNIQUE[:5]}", "vehicle_type": "own",

@@ -15,6 +15,7 @@ from dotenv import load_dotenv
 from db import client, db
 from storage_client import init_storage, APP_NAME
 from idempotency import idempotency_middleware, ensure_indexes as ensure_idempotency_indexes
+from routers.dedup_admin import router as dedup_admin_router, ensure_dedup_indexes_and_backfill
 
 # Router modules
 from routers import (
@@ -79,6 +80,9 @@ for r in (
     driver_ledger_r, policy_changes_r,
 ):
     app.include_router(r.router)
+
+# Iter127a — Duplicate-master admin listing (read-only).
+app.include_router(dedup_admin_router)
 
 
 # ---------------------------------------------------------------------------
@@ -926,6 +930,11 @@ async def startup_event():
         logger.info("Idempotency TTL index ensured (24h replay window)")
     except Exception as e:
         logger.warning(f"Idempotency index setup failed: {e}")
+    # Iter127a — Backfill *_norm fields + partial unique indexes on masters.
+    try:
+        await ensure_dedup_indexes_and_backfill()
+    except Exception as e:
+        logger.warning(f"Iter127a dedup backfill failed: {e}")
     try:
         from scheduler import start_scheduler
         start_scheduler()

@@ -1,5 +1,6 @@
 """Iter45 Phase 1 — Supplier Management Module (master + payments + ledger)."""
 import os
+import uuid
 import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/")
@@ -22,7 +23,7 @@ def test_supplier_crud_end_to_end():
     # Create
     r = requests.post(f"{API}/suppliers", headers=HEADERS, json={
         "name": name, "contact_person": "Test Person", "mobile": "9999900001",
-        "gst_in": "37AABC1234A1Z1", "pan": "ABCPD1234E",
+        "gst_in": f"37AAB{uuid.uuid4().hex[:8].upper()}A1Z"[:15], "pan": "ABCPD1234E",
         "opening_balance": 5000, "opening_balance_type": "payable",
     })
     assert r.status_code == 200

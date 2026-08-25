@@ -35,7 +35,7 @@ def env():
     # Create a supplier in A
     sup = httpx.post(f"{BASE}/api/suppliers", headers=ha, json={
         "name": f"IT63_SUP_{UNIQUE}", "mobile": "9990000063", "state": "Andhra Pradesh",
-        "gst_in": "37ABCDE1234F1Z5", "opening_balance": 0.0, "is_active": True,
+        "gst_in": f"37AB{uuid.uuid4().hex[:9].upper()}Z1"[:15], "opening_balance": 0.0, "is_active": True,
     }, timeout=60).json()
     return {"cid_a": cid_a, "cid_b": cid_b, "ha": ha, "sup": sup}
 
@@ -43,7 +43,7 @@ def env():
 def test_vehicle_is_active_default_true(env):
     ha = env["ha"]
     v = httpx.post(f"{BASE}/api/vehicles", headers=ha, json={
-        "vehicle_number": f"AP63A{UNIQUE[-6:]}", "vehicle_type": "own",
+        "vehicle_number": f"AP63A{uuid.uuid4().hex[:8].upper()}", "vehicle_type": "own",
     }, timeout=60).json()
     assert v.get("is_active") is True
 
@@ -51,7 +51,7 @@ def test_vehicle_is_active_default_true(env):
 def test_vehicle_is_active_false_persists(env):
     ha = env["ha"]
     v = httpx.post(f"{BASE}/api/vehicles", headers=ha, json={
-        "vehicle_number": f"AP63B{UNIQUE[-6:]}", "vehicle_type": "own",
+        "vehicle_number": f"AP63B{uuid.uuid4().hex[:8].upper()}", "vehicle_type": "own",
         "is_active": False,
     }, timeout=60).json()
     assert v.get("is_active") is False
@@ -63,10 +63,10 @@ def test_active_only_filter_hides_inactive(env):
     ha = env["ha"]
     # Create one active + one inactive
     v_active = httpx.post(f"{BASE}/api/vehicles", headers=ha, json={
-        "vehicle_number": f"AP63C{UNIQUE[-6:]}", "vehicle_type": "own", "is_active": True,
+        "vehicle_number": f"AP63C{uuid.uuid4().hex[:8].upper()}", "vehicle_type": "own", "is_active": True,
     }, timeout=60).json()
     v_inactive = httpx.post(f"{BASE}/api/vehicles", headers=ha, json={
-        "vehicle_number": f"AP63D{UNIQUE[-6:]}", "vehicle_type": "own", "is_active": False,
+        "vehicle_number": f"AP63D{uuid.uuid4().hex[:8].upper()}", "vehicle_type": "own", "is_active": False,
     }, timeout=60).json()
     all_ids = {v["id"] for v in httpx.get(f"{BASE}/api/vehicles", headers=ha, timeout=60).json()}
     active_only_ids = {v["id"] for v in httpx.get(f"{BASE}/api/vehicles", headers=ha,
@@ -80,7 +80,7 @@ def test_supplier_id_link_preserved(env):
     ha = env["ha"]
     sup = env["sup"]
     v = httpx.post(f"{BASE}/api/vehicles", headers=ha, json={
-        "vehicle_number": f"AP63E{UNIQUE[-6:]}", "vehicle_type": "supplier",
+        "vehicle_number": f"AP63E{uuid.uuid4().hex[:8].upper()}", "vehicle_type": "supplier",
         "supplier_id": sup["id"], "supplier_name": sup["name"],
         "supplier_mobile": sup["mobile"], "supplier_gstin": sup["gst_in"],
     }, timeout=60).json()
@@ -100,7 +100,7 @@ def test_multi_company_isolation_vehicles(env):
     ha = env["ha"]
     hb = _h(env["cid_b"])
     v = httpx.post(f"{BASE}/api/vehicles", headers=ha, json={
-        "vehicle_number": f"AP63F{UNIQUE[-6:]}", "vehicle_type": "own",
+        "vehicle_number": f"AP63F{uuid.uuid4().hex[:8].upper()}", "vehicle_type": "own",
     }, timeout=60).json()
     ids_a = {x["id"] for x in httpx.get(f"{BASE}/api/vehicles", headers=ha, timeout=60).json()}
     ids_b = {x["id"] for x in httpx.get(f"{BASE}/api/vehicles", headers=hb, timeout=60).json()}

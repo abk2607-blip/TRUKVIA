@@ -26,10 +26,10 @@ def env():
     ha = _h(cid_a)
     sup = httpx.post(f"{BASE}/api/suppliers", headers=ha, json={
         "name": f"IT64_SUP_{UNIQUE}", "mobile": "9998880064",
-        "state": "Andhra Pradesh", "gst_in": "37ABCDE1234F1Z5",
+        "state": "Andhra Pradesh", "gst_in": f"37AB{uuid.uuid4().hex[:9].upper()}Z1"[:15],
     }, timeout=60).json()
     veh = httpx.post(f"{BASE}/api/vehicles", headers=ha, json={
-        "vehicle_number": f"AP64A{UNIQUE[-6:]}", "vehicle_type": "supplier",
+        "vehicle_number": f"AP64A{uuid.uuid4().hex[:8].upper()}", "vehicle_type": "supplier",
         "supplier_id": sup["id"], "supplier_name": sup["name"],
         "capacity_tons": 30.0,
     }, timeout=60).json()
@@ -77,7 +77,7 @@ def test_supplier_trip_chip_figures_match_server(env):
 def test_status_change_requires_reason(env):
     ha = env["ha"]
     v = httpx.post(f"{BASE}/api/vehicles", headers=ha, json={
-        "vehicle_number": f"AP64B{UNIQUE[-6:]}", "vehicle_type": "own",
+        "vehicle_number": f"AP64B{uuid.uuid4().hex[:8].upper()}", "vehicle_type": "own",
     }, timeout=60).json()
     # Missing reason
     bad = httpx.patch(f"{BASE}/api/vehicles/{v['id']}/status", headers=ha, json={
@@ -93,7 +93,7 @@ def test_status_change_requires_reason(env):
 def test_deactivate_reactivate_creates_immutable_audit(env):
     ha = env["ha"]
     v = httpx.post(f"{BASE}/api/vehicles", headers=ha, json={
-        "vehicle_number": f"AP64C{UNIQUE[-6:]}", "vehicle_type": "own",
+        "vehicle_number": f"AP64C{uuid.uuid4().hex[:8].upper()}", "vehicle_type": "own",
     }, timeout=60).json()
     # Deactivate
     r1 = httpx.patch(f"{BASE}/api/vehicles/{v['id']}/status", headers=ha, json={
@@ -189,7 +189,7 @@ def test_status_audit_and_import_multi_company_isolation(env):
     hb = _h(env["cid_b"])
     # Deactivate a vehicle in A
     v = httpx.post(f"{BASE}/api/vehicles", headers=ha, json={
-        "vehicle_number": f"AP64F{UNIQUE[-6:]}", "vehicle_type": "own",
+        "vehicle_number": f"AP64F{uuid.uuid4().hex[:8].upper()}", "vehicle_type": "own",
     }, timeout=60).json()
     httpx.patch(f"{BASE}/api/vehicles/{v['id']}/status", headers=ha, json={
         "is_active": False, "reason": "isolation test",

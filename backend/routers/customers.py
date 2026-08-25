@@ -187,13 +187,74 @@ async def list_customers(
 @router.post("/customers")
 async def create_customer(payload: Customer, request: Request, user=Depends(get_current_user)):
     cid = await _active_company_id(request, user)
-    doc = payload.model_dump()
-    doc["user_id"] = user["user_id"]
-    doc["company_id"] = cid
-    await db.customers.insert_one(doc)
-    doc.pop("user_id", None)
-    doc.pop("_id", None)
-    return doc
+    from dedup import (
+        norm_gstin, norm_pan, norm_name, norm_phone,
+        hard_conflict_response, soft_match_entry,
+        read_override_request, is_override_authorised, ALLOWED_OVERRIDE_ROLES,
+    )
+    body = payload.model_dump()
+
+    # ---- Iter127a · Duplicate protection ---- #
+    override_req, override_reason = read_override_request(request, body)
+    if override_req and not is_override_authorised(user):
+        raise HTTPException(status_code=403, detail=(
+            "Duplicate override requires Owner or Admin role."
+        ))
+
+    gstin_n = norm_gstin(body.get("gstin"))
+    pan_n   = norm_pan(body.get("pan"))
+    name_n  = norm_name(body.get("name"))
+    phone_n = norm_phone(body.get("phone"))
+    scope = {"user_id": user["user_id"], "company_id": cid, "is_deleted": {"$ne": True}}
+
+    if not override_req:
+        # HARD — GSTIN
+        if gstin_n:
+            hit = await db.customers.find_one({**scope, "gstin_norm": gstin_n}, {"_id": 0, "user_id": 0})
+            if hit:
+                raise HTTPException(status_code=409, detail=hard_conflict_response("gstin", "Customer", hit))
+        # HARD — PAN (only when both sides have no GSTIN)
+        if pan_n and not gstin_n:
+            hit = await db.customers.find_one(
+                {**scope, "pan_norm": pan_n, "$or": [{"gstin_norm": ""}, {"gstin_norm": {"$exists": False}}]},
+                {"_id": 0, "user_id": 0},
+            )
+            if hit:
+                raise HTTPException(status_code=409, detail=hard_conflict_response("pan", "Customer", hit))
+
+    # SOFT matches (name / phone) — attached to response, never block.
+    soft: list[dict] = []
+    if name_n:
+        async for hit in db.customers.find({**scope, "name_norm": name_n}, {"_id": 0, "user_id": 0}).limit(3):
+            soft.append(soft_match_entry("name", hit))
+    if phone_n:
+        async for hit in db.customers.find({**scope, "phone_norm": phone_n}, {"_id": 0, "user_id": 0}).limit(3):
+            soft.append(soft_match_entry("phone", hit))
+
+    body["user_id"]      = user["user_id"]
+    body["company_id"]   = cid
+    body["gstin_norm"]   = gstin_n
+    body["pan_norm"]     = pan_n
+    body["name_norm"]    = name_n
+    body["phone_norm"]   = phone_n
+    body["is_deleted"]   = False
+    body.pop("duplicate_override_reason", None)
+    await db.customers.insert_one(body)
+
+    if override_req:
+        try:
+            await _log_audit(
+                {"user_id": user["user_id"], "company_id": cid},
+                "customer", "duplicate_override", body.get("id", ""), body.get("name", ""),
+                override_reason, {"gstin": gstin_n, "pan": pan_n},
+            )
+        except Exception:
+            pass
+
+    body.pop("user_id", None); body.pop("_id", None)
+    if soft:
+        body["soft_matches"] = soft
+    return body
 
 @router.put("/customers/{cid}")
 async def update_customer(cid: str, payload: Customer, request: Request, user=Depends(get_current_user)):

@@ -2,7 +2,27 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
-- [x] **Iter126c · Form-draft preservation (Phase 1 — Trip & Invoice forms)** (Feb 2026 — LOCKED ✅)
+- [x] **Iter127a · Master duplicate prevention (Customer / Vehicle / Supplier)** (Feb 2026 — LOCKED ✅)
+  - **Scope**: `POST /api/customers`, `POST /api/vehicles`, `POST /api/suppliers`. Scoping is ALWAYS per `(user_id, active company_id)` — cross-tenant / cross-company namespaces never collide.
+  - **Locked matching rules**:
+    - **Customer** — GSTIN normalised exact match → **hard 409**. PAN normalised exact match (only when GSTIN is empty on the new payload) → **hard 409**. Name normalised match & phone last-10-digits match → **SOFT** (`soft_matches` on 200 response — never blocks). Deliberately conservative to avoid blocking legitimate businesses with shared office numbers or similar trade names.
+    - **Vehicle** — normalised `vehicle_number` exact match → **DATA behaviour unchanged from Iter72 (returns existing row, 200)** per user directive; every duplicate hit now flagged explicitly with `duplicate: true` + `matched_field: "vehicle_number"` so QuickAdd can toast the user instead of silently reusing.
+    - **Supplier** — GSTIN & PAN (PAN only when GSTIN empty) → **hard 409**. Normalised name → **hard 409**. Mobile → **SOFT**.
+  - **Normalisers** in `/app/backend/dedup.py`: GSTIN (upper + strip, must be len 15), PAN (upper + strip, must be len 10), vehicle_number (upper + strip whitespace/hyphens/dots), name (lower + strip punctuation + drop `pvt|private|ltd|limited|llp|inc|company|co|and|&` suffixes + collapse whitespace), phone (last 10 digits).
+  - **Authorised override**: `X-Duplicate-Override: allow` + `X-Duplicate-Override-Reason: <≥6 chars>` headers. Owner + Admin roles only — Accountant / staff → 403. Every override write emits an `audit_logs` row `action="duplicate_override"` with reason + gstin/pan payload.
+  - **DB indexes** (partial, per-tenant, background): `customers.iter127a_cust_gstin_uniq` on `(user_id, company_id, gstin_norm)`, `suppliers.iter127a_sup_gstin_uniq` on `(user_id, company_id, gstin_norm)`, `vehicles.iter127a_veh_norm_uniq` on `(user_id, company_id, vehicle_number_norm)`. All `partialFilterExpression: {*_norm: {$ne: ""}}`. If pre-existing duplicates prevent an index creation the specific index is skipped with a WARNING log; runtime 409 still catches new writes.
+  - **Backfill**: idempotent startup migration `/app/backend/routers/dedup_admin.py :: ensure_dedup_indexes_and_backfill()` populates `*_norm` shadow fields on every existing row once, guarded by `migration_flags._id="iter127a_dedup_backfill_v1"`.
+  - **Read-only admin listing**: `GET /api/admin/iter127-duplicates` returns collision groups per collection (`customers_gstin`, `vehicles_number`, `suppliers_gstin`, `suppliers_name`) — up to 200 per group, up to 20 ids each. **Never merges, never mutates.** Snapshot at lock time: `customers_gstin: 29 groups · vehicles_number: 151 · suppliers_gstin: 1 · suppliers_name: 0` (legacy dupes accumulated across regression runs, visible for manual review).
+  - **409 response shape**: `{ "detail": { "detail": "Customer already exists.", "code": "duplicate_master", "matched_field": "gstin"|"pan"|"name"|"vehicle_number", "existing": {id, name, gstin, phone, vehicle_number} } }`.
+  - **Interaction with Iter126b**: 4xx bodies (including 409) ARE cached by the idempotency middleware — a retry replays the same 409 without re-hitting the master collection.
+  - **Untouched**: Iter102–125 business logic · Iter106/106b/110 auth · Iter120 regression guard · Iter121 loopback · Iter126a Bucket-A retry · Iter126b idempotency middleware · Iter126c form-draft preservation (still pending live UAT).
+  - **Tests** — `tests/test_iter127a_master_dedup.py` (9 tests, all pass) + Iter72 vehicle-dedup updated to assert new `duplicate: true` marker. Full Regression: **367 passed · 1 skipped · 0 failed · 576.29 s** — GREEN. Wired into `scripts/run_regression.sh`.
+  - **Test-env hygiene fixes (no business logic touched)**:
+    - `tests/test_iter45/63/64/66/67/107` had hardcoded GSTINs like `"37ABCDE1234F1Z5"` that collided across regression re-runs; now use `uuid.uuid4().hex[:9]` per call. `iter63` & `iter64` also switched `UNIQUE[-6:]` (6 hex of entropy) → fresh `uuid.uuid4().hex[:8]` per vehicle create so > 20K accumulated rows can't shadow a freshly-inserted vehicle.
+    - `routers/vehicles.py :: list_vehicles` and `_validate_import_rows` both switched from natural insert-order `to_list(20000)` → `sort("_id", -1).to_list(20000)` — newest 20K captured. Tenants under the cap see zero behavioural change.
+
+
+- [x] **Iter126c · Form-draft preservation (Phase 1 — Trip & Invoice forms)** (Feb 2026 — LOCKED ✅ — pending user's live UAT)
   - **Contract**: A user typing into `/trips/new`, `/trips/:id/edit`, or `/invoices/new` gets their in-flight buffer auto-saved to `sessionStorage` every 800 ms (debounced). If the tab reloads / the backend restarts / the network drops mid-Save, a sticky (no auto-dismiss) "💾 Unsaved draft found" banner appears on next mount — Restore merges the buffer back, Discard deletes it. On successful Save the draft is deleted synchronously BEFORE navigation.
   - **Scope**:
     | Route | Component | Testid |

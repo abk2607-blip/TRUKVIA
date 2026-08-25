@@ -86,6 +86,7 @@ CRITICAL_TESTS=(
   "tests/test_iter126a_storage_startup.py"                # Iter126a · Object storage init must stay sync (no `await init_storage()`)
   "tests/test_iter126b_idempotency.py"                    # Iter126b · Bucket-B Idempotency-Key middleware (24h replay + single-flight)
   "tests/test_iter126b_frontend_wiring.py"                # Iter126b · Frontend Idempotency-Key wiring + double-click Save protection
+  "tests/test_iter127a_master_dedup.py"                   # Iter127a · Duplicate master prevention (customer/vehicle/supplier + override + admin listing)
 )
 
 export PATH="/root/.venv/bin:$PATH"

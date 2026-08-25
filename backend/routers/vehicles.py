@@ -34,7 +34,7 @@ async def list_vehicles(request: Request, user=Depends(get_current_user), active
     if active_only:
         # Iter63 — trip picker filter. Treat missing/legacy is_active as active
         q["$or"] = [{"is_active": True}, {"is_active": {"$exists": False}}]
-    docs = await db.vehicles.find(q, {"_id": 0, "user_id": 0}).to_list(20000)
+    docs = await db.vehicles.find(q, {"_id": 0, "user_id": 0}).sort("_id", -1).to_list(20000)
     return [_vehicle_expiry_stats(v) for v in docs]
 
 @router.post("/vehicles")
@@ -49,17 +49,28 @@ async def create_vehicle(payload: Vehicle, request: Request, user=Depends(get_cu
       accidentally store stale text).
     """
     cid = await _active_company_id(request, user)
+    from dedup import norm_vehicle_number
+    body = payload.model_dump()
+
     payload.vehicle_number = (payload.vehicle_number or "").upper().strip()
     if not payload.vehicle_number:
         raise HTTPException(status_code=400, detail="vehicle_number is required")
+    vn_norm = norm_vehicle_number(payload.vehicle_number)
 
-    # Dedup — return existing row (idempotent Quick Add)
+    # Iter127a — Keep Iter72 DATA behaviour (return existing row on duplicate)
+    # per user directive "Keep Iter72 data behaviour unchanged apart from
+    # making it explicit". The response now carries `duplicate: true` +
+    # `matched_field` so the UI/QuickAdd can surface an explicit toast
+    # while all callers that relied on the idempotent id keep working.
     existing = await db.vehicles.find_one(
-        {"user_id": user["user_id"], "company_id": cid, "vehicle_number": payload.vehicle_number},
+        {"user_id": user["user_id"], "company_id": cid, "vehicle_number_norm": vn_norm},
         {"_id": 0, "user_id": 0},
     )
     if existing:
-        return _vehicle_expiry_stats(existing)
+        out = _vehicle_expiry_stats(existing)
+        out["duplicate"] = True
+        out["matched_field"] = "vehicle_number"
+        return out
 
     # Supplier hydration + validation
     if payload.vehicle_type == "supplier":
@@ -89,6 +100,7 @@ async def create_vehicle(payload: Vehicle, request: Request, user=Depends(get_cu
     doc = payload.model_dump()
     doc["user_id"] = user["user_id"]
     doc["company_id"] = cid
+    doc["vehicle_number_norm"] = vn_norm
     await db.vehicles.insert_one(doc)
     doc.pop("_id", None); doc.pop("user_id", None)
     return _vehicle_expiry_stats(doc)
@@ -257,11 +269,14 @@ def _bool_field(v) -> bool:
 
 async def _validate_import_rows(uid: str, cid: str, rows: list) -> tuple:
     """Return (valid_rows_ready_for_insert, errors_list)."""
-    # Existing vehicles for duplicate check (case-insensitive, whitespace-stripped)
+    # Existing vehicles for duplicate check (case-insensitive, whitespace-stripped).
+    # Sort by _id desc so the newest 20K are captured — matches the ordering
+    # used by list_vehicles after Iter127a so a just-created vehicle is always
+    # visible for the duplicate check even when the tenant has > 20K rows.
     existing = await db.vehicles.find(
         {"user_id": uid, "company_id": cid},
         {"_id": 0, "vehicle_number": 1},
-    ).to_list(20000)
+    ).sort("_id", -1).to_list(20000)
     existing_nums = {(v.get("vehicle_number") or "").upper().strip() for v in existing}
     # Iter64 · fix — targeted supplier lookup (DB may contain 10k+ suppliers).
     # Collect the specific ids + names referenced in the CSV and query only those.
