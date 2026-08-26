@@ -23,7 +23,16 @@
 //                       material change, reuses on retry)
 //   .clearOnSuccess()   erases the draft key & clears local state
 //
-import { useCallback, useEffect, useRef, useState } from "react";
+// Iter126c-UAT-fix (Feb 2026) · MEANINGFULLY-DIRTY GATE.
+// A draft is written ONLY after the sanitised form buffer diverges from the
+// untouched mount baseline. Blank New Trip → no draft. Untouched Invoice
+// (customer_id="", selected={}, rcm=true, hsnSac="996791", invoiceDate=today,
+// notes="") → no draft. As soon as the user picks a customer, edits notes,
+// toggles rcm, adds a trip line, etc. the sha changes and autosave kicks in.
+// This eliminates the "Unsaved draft found — from 3 seconds ago" ghost banner
+// that appeared on a freshly-mounted form with no user input.
+//
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   buildDraftKey, loadDraft, saveDraft, clearDraft,
   humanAge, sanitizeDraft, draftSha, chooseSaveKey,
@@ -46,6 +55,16 @@ export function useFormDraft({
   const debounceRef = useRef(null);
   const boundKeyRef = useRef({ key: null, sha: null });
 
+  // Iter126c-UAT-fix · Baseline sha captured on FIRST render. This is the
+  // sha of the untouched mount state (EMPTY form, default policy values,
+  // auto-populated date, empty strings — everything the user did NOT touch).
+  // We compare every candidate autosave against this baseline and skip the
+  // write when they match, so blank forms never persist a draft.
+  const baselineShaRef = useRef(null);
+  if (baselineShaRef.current === null && form) {
+    baselineShaRef.current = draftSha(sanitizeDraft(form));
+  }
+
   // -------- on-mount: probe for an existing draft --------
   useEffect(() => {
     if (!enabled) return;
@@ -66,6 +85,14 @@ export function useFormDraft({
     debounceRef.current = setTimeout(() => {
       const cleaned = sanitizeDraft(form);
       const sha = draftSha(cleaned);
+
+      // Iter126c-UAT-fix · Meaningfully-dirty gate. If the current sha
+      // matches the untouched-mount baseline AND no draft exists yet, the
+      // user hasn't provided any meaningful input — do NOT persist. This
+      // is what prevented "blank New Trip" from showing a ghost restore
+      // banner after reload.
+      if (!existingDraft && sha === baselineShaRef.current) return;
+
       // Skip write when nothing meaningful changed since the last flush.
       const prev = existingDraft && existingDraft.sha;
       if (prev === sha) return;
@@ -123,5 +150,6 @@ export function useFormDraft({
     // internals — exposed only for tests
     _key: compositeKey,
     _draft: existingDraft,
+    _baselineSha: baselineShaRef.current,
   };
 }

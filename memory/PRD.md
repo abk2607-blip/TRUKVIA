@@ -2,6 +2,47 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter126c-UAT-fix · Meaningfully-Dirty draft gate** (Feb 2026 — P0 draft-ghost bug)
+  - **User-observed bug** (video-verified): mounting `/trips/new` on a blank form displayed "Unsaved Draft Found — 3 seconds ago" without ANY user input. Confirmed as a regression in Iter126c Phase 1's autosave.
+  - **Root cause** (line-by-line in `useFormDraft.js:58-81`): the debounced autosave `useEffect` fires 800 ms after mount even when the form is untouched. On first render there is no `existingDraft` yet, so the guard `if (existingDraft && !decided) return;` doesn't apply, and the `prev === sha` check compares `null` to `draftSha(EMPTY)` — they differ → writes an empty-form draft to sessionStorage. Reload reads it back → banner appears.
+  - **Fix — one-line semantic gate + baseline capture**:
+    - Capture `baselineShaRef = draftSha(sanitizeDraft(form))` once on the very first non-null render.
+    - In the autosave callback, add: `if (!existingDraft && sha === baselineShaRef.current) return;` — skip the write when the sanitised form is byte-identical to the untouched-mount snapshot AND no draft exists yet.
+    - Exposed `_baselineSha` on the hook's return value so tests can lock the contract.
+    - Zero changes to: sensitive-field regex, Iter126b Idempotency-Key rotation, sanitize/sha/loadDraft/saveDraft primitives, restore/discard/clearOnSuccess API.
+  - **New contract locked**: draft is written ONLY after the sanitised sha diverges from the untouched-mount baseline. Auto-populated date, default `rcm=true`, default `hsnSac="996791"`, empty strings, empty `{}`/`[]` collections — NONE of these will ever trigger a draft on their own.
+  - **Tests** `src/__tests__/iter126c.meaningfullyDirty.test.js` — 15 pure-JS assertions (no @testing-library dep), all green:
+    - Untouched Trip form → stable baseline sha → gate closed → no sessionStorage entry.
+    - Untouched Invoice form (customer_id="", selected={}, rcm=true, hsnSac="996791", invoiceDate=today, notes="") → gate closed.
+    - Picking a customer / driver / vehicle / entering notes / loading qty / unloading qty / freight rate → sha diverges → gate opens → draft persists.
+    - Toggling `rcm` on the untouched Invoice form → gate opens (first meaningful edit).
+    - Object-identity mutations (`{...initial}`) with same values → gate stays closed.
+    - Setting a field to its same value → gate stays closed.
+    - Baseline is idempotent across re-renders.
+  - All 3 frontend test files pass: `silentRestartToast.test.js` (15/15) · `iter126c.formDraft.test.js` (35/35) · `iter126c.meaningfullyDirty.test.js` (15/15) = **65/65**.
+- [ ] **Iter126c UAT still PENDING user LOCK** — after staff hard-refresh, the ghost banner must not appear on `/trips/new` or `/invoices/new` for untouched forms. The recovery flow (meaningful edit → reload → banner) is unchanged and still green.
+- [ ] **P0 "REFRESHING…" trigger — CONCLUSIVELY IDENTIFIED via diagnostic beacon** (Feb 2026 — awaiting user's fix approval):
+  - **Beacon evidence (12 rows captured across 4 h of live UAT)**:
+    - 8 `cleared` events. **Every single one landed 12–25 s after a supervisord full-pod restart** (correlated timestamps: 12:24:01/10 vs restart 12:23:45 · 13:46:18 vs 13:46:02 · 14:25:45/48 vs 14:25:33 · 15:49:38/47/48 vs 15:49:29). **No `restart_shown` rows** because those beacons fire DURING the outage window and are dropped along with the backend.
+    - `probe_result` for the RESUMPTION probe was 200 in 623-693 ms every time → backend was healthy on the very next successful probe.
+    - `client_build_id` matched `server current_build_id (1787737812)` on all rows except the very first (baseline race) → **stale bundle ruled OUT**.
+    - `page_visibility` was BOTH `visible` and `hidden` across the events → **background-tab throttling ruled OUT** as sole cause.
+    - Only 1 `http_5xx` and 1 `abort` and 1 `network` across 500 probes → no hidden 5xx source in the app.
+  - **Restart cadence today (post-fix window)**: 5 full-pod restarts (12:23, 13:45, 14:25, 15:49, latest) + 1 backend-only restart at 09:50. That's every ~1-2 h from the Emergent Preview platform — outside our control.
+  - **Why the 4-fail toast trips despite our v1 hardening**: uvicorn boots in 1-2 s, but the FastAPI application startup runs fixture-purge + `ensure_dedup_indexes_and_backfill` + auth-session bootstrap + Iter49 null-coerce backfill — total cold-start of 15-30 s. That exceeds `4 fails × 6 s = 24 s` on unlucky ticks, tripping the pill.
+  - **The RCA answer to each of the 7 items the user asked for**:
+    1. Exact timestamp of last event: `2026-08-26 15:49:38 UTC` (server_ts=1787752178).
+    2. 4 preceding probe rows: dropped during pod outage (beacon POST failed alongside the backend). Server-side access log shows a ~15 s gap in successful health responses centred on the restart.
+    3. Backend/platform restart at that time: **YES** — `supervisord started with pid 80` at 15:49:28.
+    4. Client bundle stale: **NO** — build_id matched server.
+    5. Save request affected: **YES** during the 15-30 s window (Iter126b idempotency + Iter126c draft protect against data loss).
+    6. Trigger category: **A — platform pod restart** combined with the app's 15-30 s cold-start.
+    7. Diagnostic instrumentation stays live per user's instruction (do not remove until fully resolved).
+  - **Smallest permanent fix proposals (READ-ONLY — not implemented yet)**:
+    a. **App-startup lazy-init**: defer `ensure_dedup_indexes_and_backfill`, Iter49 null-coerce backfill, and fixture-purge onto a background task after `startup_complete`. Health endpoint becomes reachable in ~2 s instead of ~15-30 s, well under the toast's 24 s threshold. Preserves ALL business logic. Est. ~15 credits.
+    b. **Alternative**: keep the toast threshold at 4 but make the toast's `probeHealth` treat network errors during a specific "just after page load" grace window (first 10 s) with a friendlier UX. Doesn't fix cold-start, doesn't hide the symptom — just shows "Backend starting…" during the platform-owned window. ~10 credits.
+    c. **Best combined**: (a) + (b). App becomes essentially invisible-to-users during platform pod cycles. ~20 credits.
+
 - [x] **Iter127b-UAT-fix v2 · Silent-Restart TEMPORARY DIAGNOSTIC INSTRUMENTATION** (Feb 2026 — Option C, user-approved) 🚧 **P0 STILL OPEN — instrumentation-only pass, no RCA-verified fix yet**
   - **Why**: After Iter127b-UAT-fix v1, staff still reported "REFRESHING…" during live UAT. Live-log RCA showed FIVE full-pod restarts today (external Emergent Preview schedule, ~every 2-4 h) plus the possibility of stale in-memory bundles in tabs opened before 07:47. Zero 5xx in the post-fix log window, so the trigger is currently invisible to server-side logs. User approved (Option C) a temporary read-only instrumentation to catch the exact 4-in-a-row failure trigger the next time it happens.
   - **Backend — new router `/app/backend/routers/diagnostics.py`** (mounted in `server.py` alongside `dedup_admin_router`):
