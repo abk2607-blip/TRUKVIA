@@ -2,6 +2,32 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter127b-UAT-fix · "REFRESHING…" stability triple-fix** (Feb 2026 — P0 UAT unblocker, user-approved Option B)
+  - **RCA** (evidence-based, from live pod logs): Staff UAT was intermittently blocked by the "REFRESHING…" pill because (i) `/etc/supervisor/conf.d/supervisord.conf` ran the backend with `uvicorn --reload`, so every backend file edit fired a WatchFiles reload → 5-15 s of downtime → 3,098 `/api/auth/health` 503s recorded in `backend.out.log`; (ii) `auth_router.py :: auth_health` wrapped its entire body in a single try/except and 503'd on ANY auxiliary lookup failure (`index_information`, `deploy_status`, demo-session peek) — not just on real DB outage; (iii) `SilentRestartToast` flipped the pill after only 2 consecutive fails (~12 s), well inside a normal reload window, and used `fetch()` with no timeout so a hung TCP connect during shutdown stretched to browser-default 30 s.
+  - **Fix 1 — SilentRestartToast hardening** (`/app/frontend/src/components/SilentRestartToast.jsx`):
+    - Fail threshold **2 → 4** (≈24 s continuous failure before pill appears).
+    - **4 s AbortController timeout per probe** — hung TCP connect during shutdown can no longer stretch a single failure past 4 s.
+    - **Backoff ramp** on failures: 6 s → 8 s → 12 s → 15 s cap (avoids hammering a restarting backend and prevents false-positive streak accumulation).
+    - **Pure exported helpers** `probeHealth() / nextState() / nextWaitMs()` so the polling contract is unit-testable without `@testing-library/react`.
+    - Toast remains a passive visibility indicator — does NOT gate Save operations.
+  - **Fix 2 — `/api/auth/health` hardening** (`/app/backend/routers/auth_router.py`):
+    - DB `ping()` is the ONLY signal that decides 200 vs 503 (load-balancer contract preserved).
+    - Auxiliary lookups (`user_sessions.index_information`, demo-session peek, `deploy_status.find_one`) each wrapped in individual `try/except: pass`. A transient aux failure surfaces as a `null` field in the payload — it never 503s the endpoint.
+    - Response contract unchanged — same 7 top-level keys, same `regression_guard` sub-shape. Verified by targeted contract test + source-level guardrail test.
+  - **Fix 3 — Preview supervisor config** (`/etc/supervisor/conf.d/supervisord.conf`):
+    - Removed `--reload --reload-exclude tests/* --reload-exclude __pycache__/* --reload-exclude scripts/* --reload-exclude *.log --reload-exclude *.pdf --reload-exclude *.pyc` from the backend uvicorn command.
+    - Preview now behaves like production. Every intentional backend code change requires an explicit `sudo supervisorctl restart backend`. During staff UAT windows, no restarts are performed.
+    - Confirmed via `ps -eo pid,etime,cmd` — the new uvicorn process runs with only `--host 0.0.0.0 --port 8001 --workers 1` and no reloader is present.
+  - **UAT discipline going forward**: no edits to `/app/backend/**` while staff is actively performing live UAT without informing the user first. Development/build → controlled restart → verification → staff UAT is now a mandatory separation for the Preview environment.
+  - **Post-fix stability evidence** (see finish summary for full report): backend PID 2371 · uptime continuous · **80 / 80 external `/api/auth/health` probes returned 200 across two independent windows (0 × 503, 0 × 502, 0 × 504, 0 × timeout)** · zero WatchFiles reload events since the controlled restart · sub-1.5 s response time.
+  - **Tests added** (targeted, not full regression per user instruction):
+    - Backend `tests/test_iter127b_health_endpoint_hardening.py` — 4 cases (200-shape contract, sub-1.5 s response, 20-probe burst all-200, source-level guardrail that exactly one 503 branch survives) → **4 / 4 pass in 1.04 s**.
+    - Backend `tests/test_iter106_auth_stability_fixes.py` (session/demo/ttl subset) → **5 / 5 pass in 1.09 s**.
+    - Frontend `src/__tests__/silentRestartToast.test.js` — 15 pure-JS unit cases (threshold constants, `nextWaitMs` ramp, `nextState` streak transitions, `probeHealth` 2xx/5xx/reject/abort) → **15 / 15 pass in 0.98 s**.
+  - **Approved logic left explicitly UNTOUCHED**: Iter127a duplicate rules (backend `dedup.py`, `routers/customers.py`, `routers/suppliers.py`, `routers/vehicles.py`) · Iter126a Bucket-A retry · Iter126b idempotency middleware · Iter126c form-draft preservation · freight / shortage / supplier / invoice / LR / policy / halting logic · Save-Health / Regression Guard thresholds · auth session lifetime.
+  - **Production risk**: NONE. `--reload` is dev-only; production containers do not modify files at runtime. The `/api/auth/health` change strictly widens the 200 envelope (aux failures no longer 503) and preserves the payload contract, so load balancers + deploy healthcheck behave identically for real outages.
+
+
 - [x] **Iter127a-UAT-fix v3 · Multi-state GST warning + green regression** (Feb 2026 — backend, frontend UX, tests)
   - **User's real-world clarification (this session)**: Large customers (e.g. MEGHA ENGINEERING) hold SEPARATE GST registrations per state. Same normalised name must NOT hard-block — only warn — while GSTIN/PAN remain hard-blocks. Hard rules unchanged: same GSTIN → 409, same PAN → 409, same normalised vehicle_number → existing-vehicle protection.
   - **Backend contract change** (`dedup.py :: existing_summary`): the 409 `duplicate_master.existing` payload now carries `state` alongside `id`/`name`/`gstin`/`phone`/`vehicle_number` so the modal can render the multi-state disambiguation row (Telangana vs Andhra Pradesh, etc.). No matching-rule change — customer name still soft-blocks (409, bypassable via `X-Confirm-Name-Match: allow`), customer GSTIN/PAN still hard-block (Owner/Admin override + reason).
