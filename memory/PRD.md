@@ -2,6 +2,37 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter127b-UAT-fix v2 · Silent-Restart TEMPORARY DIAGNOSTIC INSTRUMENTATION** (Feb 2026 — Option C, user-approved) 🚧 **P0 STILL OPEN — instrumentation-only pass, no RCA-verified fix yet**
+  - **Why**: After Iter127b-UAT-fix v1, staff still reported "REFRESHING…" during live UAT. Live-log RCA showed FIVE full-pod restarts today (external Emergent Preview schedule, ~every 2-4 h) plus the possibility of stale in-memory bundles in tabs opened before 07:47. Zero 5xx in the post-fix log window, so the trigger is currently invisible to server-side logs. User approved (Option C) a temporary read-only instrumentation to catch the exact 4-in-a-row failure trigger the next time it happens.
+  - **Backend — new router `/app/backend/routers/diagnostics.py`** (mounted in `server.py` alongside `dedup_admin_router`):
+    - `POST /api/diagnostics/silent-restart-probe` — public, fire-and-forget beacon, returns 204. Payload keys are hard-whitelisted (only `ts`, `phase`, `probe_result`, `http_status`, `duration_ms`, `fail_streak`, `restarting`, `page_visibility`, `connection_type`, `ua_ver`, `client_build_id`). ALL other keys — GSTIN, PAN, phone, form data, tokens, passwords — are silently dropped by `_scrub()`. Verified by test `test_beacon_drops_unknown_fields_for_safety`.
+    - `GET /api/diagnostics/build` — public. Returns `{build_id, version, server_ts}` where `build_id` is the on-disk mtime of `SilentRestartToast.jsx`. Frontend uses this to detect stale bundles.
+    - `GET /api/admin/silent-restart-probes` — requires `get_current_user` (401 without token). Returns the last 500 rows desc by `server_ts` for owner correlation.
+    - Rolling cap: after each insert, if the collection exceeds `_MAX_ROWS + 50 = 550`, the oldest rows are trimmed to bring it back to `_MAX_ROWS = 500`. Disk-safety guarantee.
+    - `DIAGNOSTIC_VERSION = "iter127b-diag-v1"` — bump this when the schema changes.
+  - **Frontend — `SilentRestartToast.jsx`** (unchanged toast contract, added beacon + nudge):
+    - Toast constants unchanged: `FAIL_THRESHOLD = 4`, `PROBE_TIMEOUT = 4000`, `POLL_BASE = 6000`, `POLL_BACKOFF_MS = [6000, 8000, 12000, 15000]`. Pill semantics preserved.
+    - `probeHealth()` return shape widened from `boolean` → `{ ok, status, error, durationMs }` so the beacon can emit precise failure categorisation (`http_5xx | http_4xx | network | abort`). Unit tests updated + still pass (15/15).
+    - Fire-and-forget beacon via `fetch()` with `keepalive:true`. NEVER uses axios/interceptors — no Idempotency-Key, no Authorization header, no session leakage. Emits only on state transitions (`streak_bump`, `restart_shown`, `cleared`, `build_stale`) — never on a healthy poll.
+    - Passive "App update available — reload" nudge (amber pill, `data-testid="app-update-nudge"`). Appears if `sessionStorage`-baselined `build_id` differs from the server's current mtime. Click reloads the page — never auto-reloads. Tooltip reassures the user that Iter126c form drafts are preserved through the reload.
+    - Beacon payload contains only technical metadata (`ts`, `phase`, `probe_result`, `http_status`, `duration_ms`, `fail_streak`, `restarting`, `page_visibility`, `connection_type`, `ua_ver ≤ 80 chars`, `client_build_id`). No app state, no form values, no PII.
+  - **UAT protocol** the user must follow to close the RCA:
+    1. Ask all staff to do ONE Ctrl+Shift+R hard refresh before continuing UAT (eliminates the stale-bundle variable).
+    2. Continue live UAT normally. When "REFRESHING…" appears, note the exact timestamp.
+    3. Ping the agent to run `curl -H "Authorization: Bearer …" $URL/api/admin/silent-restart-probes` and correlate the 4 preceding fail rows with the platform restart log.
+  - **Safety re-check** (all confirmed):
+    - No changes to `/api/auth/health` (Iter127b-UAT-fix v1 shape preserved).
+    - No changes to Save endpoints, auth, Regression Guard, Save-Health, Iter126a/b/c, Iter127a, freight, shortage, invoice, LR, supplier logic.
+    - No auto-retry, no duplicate network calls (beacon is fire-and-forget, no interceptor path).
+    - Beacon can never take the API down — every insert path is wrapped in `try/except: pass`.
+    - Removal is a single revert of this feature block: delete `routers/diagnostics.py`, drop the two lines in `server.py`, revert `SilentRestartToast.jsx` to Iter127b-UAT-fix v1.
+  - **Tests** (targeted only, no full regression per user instruction):
+    - Backend `tests/test_iter127b_diagnostics_beacon.py` — 4 cases (whitelisted payload → 204, unknown keys dropped, auth-gated admin listing desc, build endpoint shape) → **all pass**.
+    - Backend `tests/test_iter127b_health_endpoint_hardening.py` — **4/4 pass** (unchanged).
+    - Frontend `src/__tests__/silentRestartToast.test.js` — **15/15 pass** (updated for new `probeHealth` return shape).
+  - **Sign-off state**: P0 remains **OPEN** until the instrumentation captures a live REFRESHING event and root cause is conclusively identified. Iter127b (Invoice Page X of Y) NOT started. Iter127a and Iter126c remain frozen.
+
+
 - [x] **Iter127b-UAT-fix · "REFRESHING…" stability triple-fix** (Feb 2026 — P0 UAT unblocker, user-approved Option B)
   - **RCA** (evidence-based, from live pod logs): Staff UAT was intermittently blocked by the "REFRESHING…" pill because (i) `/etc/supervisor/conf.d/supervisord.conf` ran the backend with `uvicorn --reload`, so every backend file edit fired a WatchFiles reload → 5-15 s of downtime → 3,098 `/api/auth/health` 503s recorded in `backend.out.log`; (ii) `auth_router.py :: auth_health` wrapped its entire body in a single try/except and 503'd on ANY auxiliary lookup failure (`index_information`, `deploy_status`, demo-session peek) — not just on real DB outage; (iii) `SilentRestartToast` flipped the pill after only 2 consecutive fails (~12 s), well inside a normal reload window, and used `fetch()` with no timeout so a hung TCP connect during shutdown stretched to browser-default 30 s.
   - **Fix 1 — SilentRestartToast hardening** (`/app/frontend/src/components/SilentRestartToast.jsx`):

@@ -16,6 +16,7 @@ from db import client, db
 from storage_client import init_storage, APP_NAME
 from idempotency import idempotency_middleware, ensure_indexes as ensure_idempotency_indexes
 from routers.dedup_admin import router as dedup_admin_router, ensure_dedup_indexes_and_backfill
+from routers.diagnostics import router as diagnostics_router  # Iter127b-UAT-fix v2 (temporary)
 
 # Router modules
 from routers import (
@@ -83,6 +84,10 @@ for r in (
 
 # Iter127a — Duplicate-master admin listing (read-only).
 app.include_router(dedup_admin_router)
+
+# Iter127b-UAT-fix v2 — TEMPORARY diagnostic instrumentation (silent-restart probes).
+# Documented in /app/backend/routers/diagnostics.py. Slated for one-commit removal.
+app.include_router(diagnostics_router)
 
 
 # ---------------------------------------------------------------------------

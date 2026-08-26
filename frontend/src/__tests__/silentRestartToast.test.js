@@ -1,10 +1,10 @@
 /**
  * SilentRestartToast · Iter127b-UAT-fix behavioural contract.
  *
- * These are PURE unit tests against the exported helpers — no React render,
- * no @testing-library. They lock in the hardened polling behaviour that
- * unblocked UAT: 4-fail threshold, 4 s abort per probe, backoff ramp, and
- * instant clear on the next 200.
+ * Pure unit tests — no React render / no @testing-library.
+ * Locks in: 4-fail threshold, 4 s per-probe abort, backoff ramp, and
+ * probeHealth returning a structured `{ok,status,error,durationMs}` object
+ * (Iter127b-UAT-fix v2 · added for the diagnostic beacon).
  */
 import {
   FAIL_THRESHOLD, PROBE_TIMEOUT, POLL_BASE, POLL_BACKOFF_MS,
@@ -35,10 +35,10 @@ test("nextWaitMs uses base + jitter when healthy", () => {
 });
 
 test("nextWaitMs ramps through the backoff schedule and caps at last entry", () => {
-  expect(nextWaitMs(1)).toBe(POLL_BACKOFF_MS[1]);      // 8 s
-  expect(nextWaitMs(2)).toBe(POLL_BACKOFF_MS[2]);      // 12 s
-  expect(nextWaitMs(3)).toBe(POLL_BACKOFF_MS[3]);      // 15 s
-  expect(nextWaitMs(10)).toBe(POLL_BACKOFF_MS[3]);     // still 15 s
+  expect(nextWaitMs(1)).toBe(POLL_BACKOFF_MS[1]);
+  expect(nextWaitMs(2)).toBe(POLL_BACKOFF_MS[2]);
+  expect(nextWaitMs(3)).toBe(POLL_BACKOFF_MS[3]);
+  expect(nextWaitMs(10)).toBe(POLL_BACKOFF_MS[3]);
 });
 
 // ── nextState ────────────────────────────────────────────────────────────
@@ -68,43 +68,51 @@ test("a single 200 clears the pill immediately no matter how deep the streak", (
 // ── probeHealth ──────────────────────────────────────────────────────────
 class FakeAbortCtrl { constructor() { this.aborted = false; this.signal = {}; } abort() { this.aborted = true; } }
 
-test("probeHealth returns true on 2xx", async () => {
+test("probeHealth returns ok=true and status on 2xx", async () => {
   const fetchImpl = jest.fn(() => Promise.resolve({ ok: true, status: 200 }));
-  const ok = await probeHealth("http://x", { fetchImpl, AbortCtrl: FakeAbortCtrl });
-  expect(ok).toBe(true);
+  const res = await probeHealth("http://x", { fetchImpl, AbortCtrl: FakeAbortCtrl });
+  expect(res.ok).toBe(true);
+  expect(res.status).toBe(200);
+  expect(res.error).toBeNull();
+  expect(typeof res.durationMs).toBe("number");
   expect(fetchImpl).toHaveBeenCalledWith(
     "http://x",
     expect.objectContaining({ cache: "no-store", signal: expect.anything() }),
   );
 });
 
-test("probeHealth returns false on 5xx", async () => {
+test("probeHealth returns ok=false with status=503 on 5xx", async () => {
   const fetchImpl = jest.fn(() => Promise.resolve({ ok: false, status: 503 }));
-  const ok = await probeHealth("http://x", { fetchImpl, AbortCtrl: FakeAbortCtrl });
-  expect(ok).toBe(false);
+  const res = await probeHealth("http://x", { fetchImpl, AbortCtrl: FakeAbortCtrl });
+  expect(res.ok).toBe(false);
+  expect(res.status).toBe(503);
+  expect(res.error).toBeNull();
 });
 
-test("probeHealth returns false on network error", async () => {
-  const fetchImpl = jest.fn(() => Promise.reject(new Error("net")));
-  const ok = await probeHealth("http://x", { fetchImpl, AbortCtrl: FakeAbortCtrl });
-  expect(ok).toBe(false);
+test("probeHealth returns ok=false with error='network' on fetch reject", async () => {
+  const fetchImpl = jest.fn(() => Promise.reject(new Error("boom")));
+  const res = await probeHealth("http://x", { fetchImpl, AbortCtrl: FakeAbortCtrl });
+  expect(res.ok).toBe(false);
+  expect(res.status).toBeNull();
+  expect(res.error).toBe("network");
 });
 
-test("probeHealth aborts a hung fetch after the configured timeout", async () => {
+test("probeHealth aborts a hung fetch after the configured timeout (returns error='abort')", async () => {
   jest.useFakeTimers();
   let capturedCtrl;
   const fetchImpl = jest.fn((_url, { signal }) => new Promise((_res, rej) => {
-    // Never resolves. When aborted, reject like real fetch.
-    signal.addEventListener?.("abort", () => rej(new Error("aborted")));
+    signal.addEventListener?.("abort", () => {
+      const e = new Error("aborted");
+      e.name = "AbortError";
+      rej(e);
+    });
   }));
   const AbortCtrl = class {
     constructor() {
       capturedCtrl = this;
       this.aborted = false;
       const listeners = [];
-      this.signal = {
-        addEventListener: (_ev, cb) => listeners.push(cb),
-      };
+      this.signal = { addEventListener: (_ev, cb) => listeners.push(cb) };
       this._listeners = listeners;
     }
     abort() {
@@ -114,8 +122,9 @@ test("probeHealth aborts a hung fetch after the configured timeout", async () =>
   };
   const p = probeHealth("http://x", { fetchImpl, AbortCtrl, timeoutMs: 4000 });
   jest.advanceTimersByTime(4001);
-  const ok = await p;
-  expect(ok).toBe(false);
+  const res = await p;
+  expect(res.ok).toBe(false);
+  expect(res.error).toBe("abort");
   expect(capturedCtrl.aborted).toBe(true);
   jest.useRealTimers();
 });
