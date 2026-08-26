@@ -1,21 +1,18 @@
-// Iter97 → Iter127b-UAT-fix v2 · Silent Restart Toast + diagnostic beacon.
+// Iter97 → Iter127b-UAT-fix v3 · Silent Restart Toast + diagnostic beacon +
+// graceful startup UX.
 //
-// The toast itself is unchanged (hardened Feb 2026): 4-fail threshold, 4 s
-// per-probe abort, jittered 6 s poll with backoff ramp 6→8→12→15 s. The
-// pill remains a passive visibility indicator — never gates Save operations.
+// The toast itself is unchanged (hardened Feb 2026 / v1 · v2):
+//   • 4-fail threshold, 4 s per-probe abort, jittered 6 s poll with backoff
+//     ramp 6→8→12→15 s.
+// v2 · fire-and-forget beacon + "App update available — reload" nudge.
+// v3 · GRACEFUL STARTUP UX (user-approved Option B, Feb 2026):
+//   • For the FIRST 10 s after the pill first appears we display
+//     "Backend starting…" instead of "REFRESHING…". Cosmetic only. After the
+//     10 s grace window elapses (persistent outage), we fall back to
+//     "Refreshing…". Business flows are untouched.
 //
-// TEMPORARY DIAGNOSTIC INSTRUMENTATION (Feb 2026 · slated for revert):
-//   • Fire-and-forget beacon to POST /api/diagnostics/silent-restart-probe
-//     on every failStreak transition — including 0→1, sustained fails, the
-//     0→restarting flip, and the restarting→cleared flip. Uses `fetch()`
-//     with `keepalive:true` (NOT axios) so no interceptor / no Idempotency
-//     Key / no Authorization header is attached.
-//   • Passive "App update available — reload" nudge appears if the server-
-//     reported build_id differs from the one we captured on first mount
-//     (stored in sessionStorage — clears on hard refresh). No auto reload.
-//
-// Safety: NO form, PII, token, GSTIN or financial data leaves the browser
-// through this module. Beacon payload keys are hard-whitelisted server-side.
+// The pill remains a passive visibility indicator — never gates Save
+// operations.
 import React, { useEffect, useState, useRef, useCallback } from "react";
 import { Loader2, RefreshCw } from "lucide-react";
 
@@ -23,25 +20,23 @@ const BASE         = process.env.REACT_APP_BACKEND_URL || "";
 const HEALTH_URL   = `${BASE}/api/auth/health`;
 const BEACON_URL   = `${BASE}/api/diagnostics/silent-restart-probe`;
 const BUILD_URL    = `${BASE}/api/diagnostics/build`;
-const BUILD_POLL_MS = 60_000;      // check for stale-bundle once a minute
+const BUILD_POLL_MS = 60_000;
 const BASELINE_KEY  = "silent_restart_baseline_build_id_v1";
 
-// Pure, testable constants + helpers — exported so unit tests can lock the
-// contract without needing React rendering / @testing-library.
-export const FAIL_THRESHOLD  = 4;      // ~24 s of continuous failure before showing the pill
-export const PROBE_TIMEOUT   = 4000;   // 4 s abort per health probe
-export const POLL_BASE       = 6000;   // 6 s when backend is healthy
-export const POLL_BACKOFF_MS = [6000, 8000, 12000, 15000]; // ramp during failures
+export const FAIL_THRESHOLD  = 4;
+export const PROBE_TIMEOUT   = 4000;
+export const POLL_BASE       = 6000;
+export const POLL_BACKOFF_MS = [6000, 8000, 12000, 15000];
+// Iter127b-UAT-fix v3 · length of the "Backend starting…" grace window
+// (measured from the moment the pill first appears).
+export const STARTUP_GRACE_MS = 10_000;
 
-/** Returns the next poll delay given a failure streak. */
 export function nextWaitMs(failStreak, jitter = 0) {
   if (failStreak <= 0) return POLL_BASE + jitter;
   const idx = Math.min(failStreak, POLL_BACKOFF_MS.length - 1);
   return POLL_BACKOFF_MS[idx];
 }
 
-/** Fires a single /api/auth/health probe with a hard 4 s abort.
- *  Returns { ok, status, error, durationMs }. */
 export async function probeHealth(
   url = HEALTH_URL,
   { fetchImpl = fetch, AbortCtrl = AbortController, timeoutMs = PROBE_TIMEOUT } = {},
@@ -66,12 +61,18 @@ export async function probeHealth(
   }
 }
 
-/** Given the previous failure streak and the result of this probe, returns
- *  the next `{ failStreak, restarting }` state. */
 export function nextState(prevStreak, wasOk) {
   if (wasOk) return { failStreak: 0, restarting: false };
   const failStreak = prevStreak + 1;
   return { failStreak, restarting: failStreak >= FAIL_THRESHOLD };
+}
+
+/** Iter127b-UAT-fix v3 · Given the moment the pill first appeared and the
+ *  current time, return the label the pill should show. Within the grace
+ *  window → "Backend starting…"; afterwards → "Refreshing…". Never blocks. */
+export function pillLabel(restartingSince, now = Date.now(), graceMs = STARTUP_GRACE_MS) {
+  if (!restartingSince) return "Refreshing…";
+  return (now - restartingSince) < graceMs ? "Backend starting…" : "Refreshing…";
 }
 
 // -------------------------------------------------------------------- beacon
@@ -84,8 +85,6 @@ function _resultLabel(status, error) {
   return "unknown";
 }
 
-/** Fire-and-forget diagnostic beacon. Uses fetch() with keepalive:true so
- *  it survives page unloads. Never throws. Never uses axios / interceptors. */
 function sendBeacon(payload) {
   try {
     // eslint-disable-next-line no-undef
@@ -95,7 +94,6 @@ function sendBeacon(payload) {
       body: JSON.stringify(payload),
       keepalive: true,
       cache: "no-store",
-      // NO credentials, NO custom auth header — this is a public beacon.
     }).catch(() => {});
   } catch {
     /* swallow */
@@ -105,13 +103,15 @@ function sendBeacon(payload) {
 // -------------------------------------------------------------------- component
 export default function SilentRestartToast() {
   const [restarting, setRestarting]           = useState(false);
+  const [restartingSince, setRestartingSince] = useState(0);
+  const [nowTs, setNowTs]                     = useState(0);
   const [updateNudge, setUpdateNudge]         = useState(false);
   const [clientBuildId, setClientBuildId]     = useState(null);
   const failStreak    = useRef(0);
   const timerId       = useRef(null);
   const buildTimerId  = useRef(null);
+  const labelTickId   = useRef(null);
 
-  // ── Beacon helper (stable ref) ──
   const emit = useCallback((phase, extra) => {
     let visibility = "visible";
     try { visibility = document.visibilityState || "visible"; } catch {}
@@ -121,11 +121,7 @@ export default function SilentRestartToast() {
       if (nc && nc.effectiveType) conn = String(nc.effectiveType);
     } catch {}
     let ua = "unknown";
-    try {
-      // Only browser family + first version segment — no full UA string.
-      const raw = (navigator.userAgent || "").slice(0, 80);
-      ua = raw;
-    } catch {}
+    try { ua = (navigator.userAgent || "").slice(0, 80); } catch {}
     sendBeacon({
       ts: new Date().toISOString(),
       phase,
@@ -141,10 +137,9 @@ export default function SilentRestartToast() {
     });
   }, [clientBuildId]);
 
-  // ── Baseline the build_id once, then poll for drift every 60 s ──
+  // ── Build-drift check ──
   useEffect(() => {
     let alive = true;
-
     const checkBuild = async () => {
       try {
         const r = await fetch(BUILD_URL, { cache: "no-store" });
@@ -164,23 +159,19 @@ export default function SilentRestartToast() {
         if (serverBuildId && serverBuildId !== baseline) {
           if (!updateNudge) {
             setUpdateNudge(true);
-            // Emit a one-time beacon so we can correlate stale-bundle events.
             sendBeacon({
               ts: new Date().toISOString(),
               phase: "build_stale",
               fail_streak: failStreak.current,
               restarting,
               client_build_id: baseline,
-              // Deliberately not sending server_build_id — the diagnostic
-              // schema doesn't include it and we don't want schema drift.
             });
           }
         }
       } catch {
-        /* swallow — build check is best-effort */
+        /* swallow */
       }
     };
-
     checkBuild();
     buildTimerId.current = setInterval(checkBuild, BUILD_POLL_MS);
     return () => {
@@ -202,25 +193,24 @@ export default function SilentRestartToast() {
       failStreak.current = s.failStreak;
       setRestarting(s.restarting);
 
-      // Beacon on meaningful transitions only (avoid spam on continuous 200s).
-      const probeResult = _resultLabel(res.status, res.error);
-      if (!res.ok) {
-        emit("streak_bump", {
-          probeResult, status: res.status, durationMs: res.durationMs,
-          restarting: s.restarting,
-        });
-      }
+      // v3 · track when the pill first appeared so we can render the grace
+      // "Backend starting…" copy for the first STARTUP_GRACE_MS.
       if (s.restarting && !prevRestarting) {
-        emit("restart_shown", {
-          probeResult, status: res.status, durationMs: res.durationMs,
-          restarting: true,
-        });
+        setRestartingSince(Date.now());
       }
       if (!s.restarting && prevRestarting) {
-        emit("cleared", {
-          probeResult, status: res.status, durationMs: res.durationMs,
-          restarting: false,
-        });
+        setRestartingSince(0);
+      }
+
+      const probeResult = _resultLabel(res.status, res.error);
+      if (!res.ok) {
+        emit("streak_bump", { probeResult, status: res.status, durationMs: res.durationMs, restarting: s.restarting });
+      }
+      if (s.restarting && !prevRestarting) {
+        emit("restart_shown", { probeResult, status: res.status, durationMs: res.durationMs, restarting: true });
+      }
+      if (!s.restarting && prevRestarting) {
+        emit("cleared", { probeResult, status: res.status, durationMs: res.durationMs, restarting: false });
       }
     };
 
@@ -242,16 +232,43 @@ export default function SilentRestartToast() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [emit]);
 
+  // ── v3 · label ticker · once per 1 s while the pill is on, so the
+  // "Backend starting…" ⇒ "Refreshing…" flip re-renders without waiting
+  // for the next 6-15 s probe. Cheap; only runs during outages. ──
+  useEffect(() => {
+    if (!restarting) {
+      if (labelTickId.current) clearInterval(labelTickId.current);
+      labelTickId.current = null;
+      return () => {};
+    }
+    setNowTs(Date.now());
+    labelTickId.current = setInterval(() => setNowTs(Date.now()), 1000);
+    return () => {
+      if (labelTickId.current) clearInterval(labelTickId.current);
+      labelTickId.current = null;
+    };
+  }, [restarting]);
+
+  const inStartupGrace = restarting && restartingSince > 0 &&
+    (nowTs - restartingSince) < STARTUP_GRACE_MS;
+  const label = restarting ? pillLabel(restartingSince, nowTs) : "";
+
   return (
     <>
       {restarting && (
         <div
           data-testid="silent-restart-toast"
-          className="pointer-events-none fixed top-3 right-3 z-[60] inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-zinc-950/90 text-white text-[11px] uppercase tracking-wider font-semibold shadow-lg"
+          data-startup-grace={inStartupGrace ? "1" : "0"}
+          className={
+            "pointer-events-none fixed top-3 right-3 z-[60] inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-[11px] uppercase tracking-wider font-semibold shadow-lg " +
+            (inStartupGrace
+              ? "bg-blue-600/90 text-white"
+              : "bg-zinc-950/90 text-white")
+          }
           role="status" aria-live="polite"
         >
           <Loader2 size={12} className="animate-spin" />
-          Refreshing…
+          {label}
         </div>
       )}
       {updateNudge && (

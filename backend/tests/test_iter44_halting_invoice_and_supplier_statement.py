@@ -1,5 +1,6 @@
 """Iter44 — Invoice auto-recompute on fetch + Supplier Statement enhancements."""
 import os
+import uuid
 import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/")
@@ -7,13 +8,17 @@ API = f"{BASE_URL}/api"
 TOKEN = "test_session_bitumen_2026"
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
+# Iter127a — unique per pytest process so the name-duplicate rule can't
+# 409 across parallel xdist workers or repeated CI runs.
+_FIXTURE_NAME = f"TEST_Iter44_{uuid.uuid4().hex[:6]}"
+
 
 def _cust():
     r = requests.get(f"{API}/customers", headers=HEADERS)
     for c in r.json():
-        if c["name"] == "TEST_Iter44":
+        if c["name"] == _FIXTURE_NAME:
             return c["id"]
-    return requests.post(f"{API}/customers", headers=HEADERS, json={"name": "TEST_Iter44", "state": "Andhra Pradesh"}).json()["id"]
+    return requests.post(f"{API}/customers", headers=HEADERS, json={"name": _FIXTURE_NAME, "state": "Andhra Pradesh"}).json()["id"]
 
 
 def test_invoice_auto_recomputes_when_trip_halting_added_after_creation():

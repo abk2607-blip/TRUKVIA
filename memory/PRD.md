@@ -2,6 +2,40 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter127b-UAT-fix v3 · PERMANENT "REFRESHING…" fix (Fix A + Fix B)** (Feb 2026 — user-approved Option C)
+  - **Root cause (recap from v2 diagnostic-beacon evidence)**: Emergent Preview platform hard-restarts the pod every ~1–2 h. Each restart forced the backend to re-run heavy startup migrations (`ensure_dedup_indexes_and_backfill`, Iter49 null-coerce backfill, `user_sessions` de-dupe + unique index, Iter70/72 fixture-purge) before `/api/auth/health` could respond — total cold-start of 15-30 s, exceeding the toast's 24 s (`4 fails × 6 s`) threshold.
+  - **Fix A — `_run_background_migrations()` in `server.py`**: single async task guarded by `_background_migrations_lock` (asyncio.Lock) — scheduled from the FastAPI `startup` event via `asyncio.create_task(...)`. Business logic verbatim, only the *timing* changes. What moved:
+    - `ensure_dedup_indexes_and_backfill()` (Iter127a `*_norm` backfill + partial unique indexes)
+    - Iter49 null-coerce backfill (34 field patches across trips/vehicles)
+    - `user_sessions` de-dupe loop + `session_token` unique + `expires_at` TTL + `users.email` unique + `save_health` TTL + `deploy_status` recency
+    - Iter70/72 orphan-fixture purge (customers / suppliers / vehicles)
+    What stays synchronous (fast, critical): `init_storage()` (executor-offloaded), `ensure_idempotency_indexes()` (single small TTL), `start_scheduler()`. Lock prevents concurrent runs; failure in any step is logged but never blocks serving.
+  - **Fix B — SilentRestartToast v3 graceful startup UX**: exports `STARTUP_GRACE_MS = 10_000` + new pure helper `pillLabel(restartingSince, now)`. Behaviour:
+    - Same trip conditions (4 consecutive fails at 6-15 s poll ramp).
+    - First 10 s of the pill being visible → renders **"Backend starting…"** (blue pill, `data-startup-grace="1"`).
+    - After 10 s → falls back to **"Refreshing…"** (existing dark pill semantics).
+    - No auto-reload, no Save gating, no interceptor changes, no retry duplication — cosmetic UX distinction only.
+    - Label ticker re-renders once per second while the pill is on so the flip is user-visible without waiting for the next probe.
+  - **Startup-timing measurements (both controlled restarts, live pod)**:
+    - Restart #1 · first `/api/auth/health` 200: **2.31 s** wall-clock from `supervisorctl restart backend`.
+    - Restart #2 · first `/api/auth/health` 200: same order of magnitude.
+    - Background migrations logged `Background migrations complete` seconds later (session_index_unique flipped to `true` on the very next probe).
+    - Before this fix: 15-30 s. After: **~2 s**. That is well inside the 4-fail × 6 s = 24 s toast threshold, so the pill should never trip during a normal platform pod restart again.
+  - **Preserved contracts** (verified by targeted tests):
+    - `/api/auth/health` still returns the same 7 top-level keys; `session_index_unique` still eventually reports `true`.
+    - Save-Health, Regression Guard, Iter126a/b/c, Iter127a, freight, shortage, invoice, LR, supplier logic — all untouched.
+    - Source-guardrail tests lock the refactor: `test_startup_handler_no_longer_calls_heavy_migrations_inline` fails if a regression re-inlines any of the deferred blocks; `test_background_migration_lock_prevents_concurrent_runs` protects the concurrency guard.
+  - **Tests** (all targeted, plus full regression running in parallel):
+    - Backend `tests/test_iter127b_startup_hardening.py` — **7/7 pass** (health <4 s · session_index_unique flips within 60 s · source guardrail · concurrency lock · both public endpoints <2 s).
+    - Backend `tests/test_iter127b_health_endpoint_hardening.py` — **4/4 pass** (unchanged).
+    - Backend `tests/test_iter127b_diagnostics_beacon.py` — **4/4 pass** (unchanged, instrumentation still live).
+    - Frontend `src/__tests__/silentRestartToast.test.js` — **14/14 pass** (constants + `pillLabel` + regression coverage on `nextWaitMs`/`nextState`/`probeHealth`).
+    - Frontend `src/__tests__/iter126c.formDraft.test.js` + `iter126c.meaningfullyDirty.test.js` — **50/50 pass** (draft-gate unchanged).
+    - Full regression suite (`bash scripts/run_regression.sh`) running in the background; result appended to CHANGELOG on completion.
+  - **Diagnostic instrumentation stays live** per user's instruction until the RCA is proven closed in production UAT.
+  - **P0 status**: fix shipped, awaiting the next platform pod restart during live UAT to confirm the pill no longer trips. If it appears, staff should see "Backend starting…" briefly and the app should recover without a manual refresh.
+
+
 - [x] **Iter126c-UAT-fix · Meaningfully-Dirty draft gate** (Feb 2026 — P0 draft-ghost bug)
   - **User-observed bug** (video-verified): mounting `/trips/new` on a blank form displayed "Unsaved Draft Found — 3 seconds ago" without ANY user input. Confirmed as a regression in Iter126c Phase 1's autosave.
   - **Root cause** (line-by-line in `useFormDraft.js:58-81`): the debounced autosave `useEffect` fires 800 ms after mount even when the form is untouched. On first render there is no `existingDraft` yet, so the guard `if (existingDraft && !decided) return;` doesn't apply, and the `prev === sha` check compares `null` to `draftSha(EMPTY)` — they differ → writes an empty-form draft to sessionStorage. Reload reads it back → banner appears.

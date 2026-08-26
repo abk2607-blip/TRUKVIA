@@ -915,121 +915,115 @@ async def test_alert():
     return out
 
 
-@app.on_event("startup")
-async def startup_event():
-    # Iter126a — init_storage() is a synchronous function in storage_client.py
-    # (returns str). The previous `await init_storage()` raised TypeError on
-    # every boot ("object str can't be used in 'await' expression") — swallowed
-    # as a warning but left _storage_key un-primed at boot. Fix: call it
-    # synchronously; run_in_executor keeps the startup loop non-blocking.
-    try:
-        import asyncio as _asyncio
-        loop = _asyncio.get_event_loop()
-        await loop.run_in_executor(None, init_storage)
-        logger.info("Object storage initialized")
-    except Exception as e:
-        logger.warning(f"Object storage init failed: {e}")
-    # Iter126b — 24h TTL index on idempotency_keys.created_at.
-    try:
-        await ensure_idempotency_indexes()
-        logger.info("Idempotency TTL index ensured (24h replay window)")
-    except Exception as e:
-        logger.warning(f"Idempotency index setup failed: {e}")
-    # Iter127a — Backfill *_norm fields + partial unique indexes on masters.
-    try:
-        await ensure_dedup_indexes_and_backfill()
-    except Exception as e:
-        logger.warning(f"Iter127a dedup backfill failed: {e}")
-    try:
-        from scheduler import start_scheduler
-        start_scheduler()
-    except Exception as e:
-        logger.warning(f"Scheduler init failed: {e}")
-    # Iter48 — Auth stability hardening (root-cause fixes for repeated login/session issues)
-    # Iter49 — Also backfill legacy trips/vehicles with null-valued str/float fields
-    # so the Pydantic v2 contract never rejects a legacy row on PUT.
-    try:
-        # Trip-level supplier_id
-        r1 = await db.trips.update_many({"supplier_id": None}, {"$set": {"supplier_id": ""}})
-        r2 = await db.vehicles.update_many({"supplier_id": None}, {"$set": {"supplier_id": ""}})
-        # Trip.expenses.other_remarks & other_desc were `None` in legacy rows
-        r3 = await db.trips.update_many({"expenses.other_remarks": None}, {"$set": {"expenses.other_remarks": ""}})
-        r4 = await db.trips.update_many({"expenses.other_desc": None}, {"$set": {"expenses.other_desc": ""}})
-        # Common null-str Trip fields — coerce to "" everywhere
-        str_fields_to_normalise = [
-            "supplier_name", "supplier_loading_point", "supplier_unloading_point",
-            "supplier_material", "supplier_settlement_remarks",
-            "driver_name", "driver_mobile", "lr_driver_name", "lr_driver_mobile",
-            "consignor_name", "consignee_name", "consignor_address",
-            "consignee_site_location", "consignee_site_contact",
-            "hsn_sac", "load_details", "from_location", "to_location",
-            "from_pincode", "to_pincode", "loading_date", "unloading_date",
-            "halting_remarks", "shortage_remarks", "excess_remarks",
-            "other_income_remarks", "notes", "lr_number", "lr_time",
-            "external_invoice_no", "customer_invoice_no", "customer_purchased_at",
-            "waybill_no", "seal_numbers",
-        ]
-        fixed_str = 0
-        for f in str_fields_to_normalise:
-            rr = await db.trips.update_many({f: None}, {"$set": {f: ""}})
-            fixed_str += rr.modified_count
-        if r1.modified_count or r2.modified_count or r3.modified_count or r4.modified_count or fixed_str:
-            logger.info(
-                f"Iter49 null-coerce backfill: trips.supplier_id={r1.modified_count}, "
-                f"vehicles.supplier_id={r2.modified_count}, expenses.other_remarks={r3.modified_count}, "
-                f"expenses.other_desc={r4.modified_count}, other-str-fields={fixed_str}"
-            )
-    except Exception as e:
-        logger.warning(f"Iter49 null-coerce backfill failed: {e}")
-    # 1. Unique index on session_token → guarantees no duplicate session docs
-    # 2. TTL index on expires_at    → MongoDB auto-purges expired sessions
-    # 3. Unique index on users.email → prevents dup user rows on OAuth replay
-    try:
-        # De-dupe existing session rows before applying unique index (keep the newest)
-        seen = {}
-        async for s in db.user_sessions.find({}, {"_id": 1, "session_token": 1, "created_at": 1}):
-            tok = s.get("session_token")
-            if not tok:
-                await db.user_sessions.delete_one({"_id": s["_id"]})
-                continue
-            key = tok
-            prev = seen.get(key)
-            if prev is None or (s.get("created_at") or "") > (prev.get("created_at") or ""):
-                if prev is not None:
-                    await db.user_sessions.delete_one({"_id": prev["_id"]})
-                seen[key] = s
-            else:
-                await db.user_sessions.delete_one({"_id": s["_id"]})
-        # Now create the indexes (idempotent — will no-op if already there)
-        await db.user_sessions.create_index("session_token", unique=True, name="uniq_session_token")
-        # Iter106 — Real TTL index on expires_at. Requires expires_at to be a
-        # BSON Date (which auth.py now stores). MongoDB prunes rows within
-        # ~60s of `expires_at` passing, so no more stale user_sessions rows
-        # accumulating in the collection.
-        try:
-            await db.user_sessions.create_index("expires_at", expireAfterSeconds=0,
-                                                name="user_sessions_ttl")
-        except Exception as _ttl_e:
-            logger.warning(f"user_sessions TTL index setup issue: {_ttl_e}")
-        await db.users.create_index("email", unique=True, name="uniq_user_email", sparse=True)
-        await db.users.create_index("user_id", unique=True, name="uniq_user_id")
-        # Iter50 — Save-Health TTL (14 days)
-        await db.save_health.create_index("ts", expireAfterSeconds=14 * 24 * 60 * 60, name="save_health_ttl")
-        await db.save_health.create_index([("collection", 1), ("ts", -1)], name="save_health_lookup")
-        # Iter51 — deploy_status collection for the regression guard result cache
-        await db.deploy_status.create_index("checked_at", name="deploy_status_recency")
-        logger.info("Auth stability indexes ensured (user_sessions.session_token unique + users.email unique + save_health TTL)")
-    except Exception as e:
-        logger.warning(f"Auth index ensure failed: {e}")
+# Iter127b-UAT-fix v3 — Post-startup migration guard.
+# A single asyncio.Lock ensures the background migration bundle never runs
+# concurrently (e.g. if the worker reloads while a prior run is still
+# executing). If the lock is already held, the second attempt exits fast.
+_background_migrations_lock = None
+_background_migrations_ran = False
 
-    # Iter70/72 — Purge orphaned pytest fixture rows on startup. Real user
-    # data is protected — only rows whose IDs have no attached activity are
-    # deleted. Runs quietly in the background so backend boot isn't delayed.
-    async def _purge_fixture_orphans():
+
+async def _run_background_migrations():
+    """Iter127b-UAT-fix v3 · Bundle of NON-CRITICAL startup work that used to
+    block `/api/auth/health` for 15-30 s after every Preview pod restart.
+    Now scheduled after `Application startup complete` so the health endpoint
+    is reachable in ~2 s. Business logic and ordering are preserved
+    verbatim — nothing here changes what the migrations do, only WHEN.
+
+    Concurrency-safe: guarded by `_background_migrations_lock`. If the task
+    is already in flight (rare — only possible if uvicorn was hot-reloaded
+    while a previous run hadn't finished), the second invocation returns
+    without touching anything. Never raises."""
+    global _background_migrations_ran
+    import asyncio as _asyncio
+    global _background_migrations_lock
+    if _background_migrations_lock is None:
+        _background_migrations_lock = _asyncio.Lock()
+    if _background_migrations_lock.locked():
+        logger.info("Background migrations already running — skipping duplicate schedule.")
+        return
+    async with _background_migrations_lock:
+        # ── Iter127a · Backfill *_norm + partial unique indexes on masters ──
+        try:
+            await ensure_dedup_indexes_and_backfill()
+        except Exception as e:
+            logger.warning(f"Iter127a dedup backfill failed (background): {e}")
+
+        # ── Iter49 · Null-coerce backfill so the Pydantic v2 contract
+        # never rejects a legacy row on PUT. Runs in the background because
+        # `update_many` across trips/vehicles is the biggest single item
+        # in the startup path (5-15 s on a hot demo tenant). ──
+        try:
+            r1 = await db.trips.update_many({"supplier_id": None}, {"$set": {"supplier_id": ""}})
+            r2 = await db.vehicles.update_many({"supplier_id": None}, {"$set": {"supplier_id": ""}})
+            r3 = await db.trips.update_many({"expenses.other_remarks": None}, {"$set": {"expenses.other_remarks": ""}})
+            r4 = await db.trips.update_many({"expenses.other_desc": None}, {"$set": {"expenses.other_desc": ""}})
+            str_fields_to_normalise = [
+                "supplier_name", "supplier_loading_point", "supplier_unloading_point",
+                "supplier_material", "supplier_settlement_remarks",
+                "driver_name", "driver_mobile", "lr_driver_name", "lr_driver_mobile",
+                "consignor_name", "consignee_name", "consignor_address",
+                "consignee_site_location", "consignee_site_contact",
+                "hsn_sac", "load_details", "from_location", "to_location",
+                "from_pincode", "to_pincode", "loading_date", "unloading_date",
+                "halting_remarks", "shortage_remarks", "excess_remarks",
+                "other_income_remarks", "notes", "lr_number", "lr_time",
+                "external_invoice_no", "customer_invoice_no", "customer_purchased_at",
+                "waybill_no", "seal_numbers",
+            ]
+            fixed_str = 0
+            for f in str_fields_to_normalise:
+                rr = await db.trips.update_many({f: None}, {"$set": {f: ""}})
+                fixed_str += rr.modified_count
+            if r1.modified_count or r2.modified_count or r3.modified_count or r4.modified_count or fixed_str:
+                logger.info(
+                    f"Iter49 null-coerce backfill (background): trips.supplier_id={r1.modified_count}, "
+                    f"vehicles.supplier_id={r2.modified_count}, expenses.other_remarks={r3.modified_count}, "
+                    f"expenses.other_desc={r4.modified_count}, other-str-fields={fixed_str}"
+                )
+        except Exception as e:
+            logger.warning(f"Iter49 null-coerce backfill failed (background): {e}")
+
+        # ── Auth-index housekeeping (session_token unique + expires_at TTL
+        # + users.email unique + save_health TTL + deploy_status recency).
+        # The de-dupe loop iterating ALL user_sessions is the slow part,
+        # so we defer the whole block. create_index is idempotent — a
+        # subsequent runtime insert without the unique index still works
+        # (dedup is only about preventing rare race duplicates). ──
+        try:
+            seen = {}
+            async for s in db.user_sessions.find({}, {"_id": 1, "session_token": 1, "created_at": 1}):
+                tok = s.get("session_token")
+                if not tok:
+                    await db.user_sessions.delete_one({"_id": s["_id"]})
+                    continue
+                key = tok
+                prev = seen.get(key)
+                if prev is None or (s.get("created_at") or "") > (prev.get("created_at") or ""):
+                    if prev is not None:
+                        await db.user_sessions.delete_one({"_id": prev["_id"]})
+                    seen[key] = s
+                else:
+                    await db.user_sessions.delete_one({"_id": s["_id"]})
+            await db.user_sessions.create_index("session_token", unique=True, name="uniq_session_token")
+            try:
+                await db.user_sessions.create_index("expires_at", expireAfterSeconds=0,
+                                                    name="user_sessions_ttl")
+            except Exception as _ttl_e:
+                logger.warning(f"user_sessions TTL index setup issue: {_ttl_e}")
+            await db.users.create_index("email", unique=True, name="uniq_user_email", sparse=True)
+            await db.users.create_index("user_id", unique=True, name="uniq_user_id")
+            await db.save_health.create_index("ts", expireAfterSeconds=14 * 24 * 60 * 60, name="save_health_ttl")
+            await db.save_health.create_index([("collection", 1), ("ts", -1)], name="save_health_lookup")
+            await db.deploy_status.create_index("checked_at", name="deploy_status_recency")
+            logger.info("Auth stability indexes ensured (background)")
+        except Exception as e:
+            logger.warning(f"Auth index ensure failed (background): {e}")
+
+        # ── Iter70/72 · Purge orphaned pytest fixture rows ──
         try:
             from routers.customers import FIXTURE_NAME_REGEX
             uid = "user_demo_men_2026"
-            # --- Customers ---
             candidates = []
             async for c in db.customers.find(
                 {"user_id": uid, "name": {"$regex": FIXTURE_NAME_REGEX}},
@@ -1047,10 +1041,8 @@ async def startup_event():
                 if safe:
                     r = await db.customers.delete_many({"user_id": uid, "id": {"$in": safe}})
                     if r.deleted_count:
-                        logger.info(f"Iter70 fixture-purge: removed {r.deleted_count} orphan fixture customers")
+                        logger.info(f"Iter70 fixture-purge (background): removed {r.deleted_count} orphan fixture customers")
 
-            # --- Iter72: Suppliers ---
-            # Suppliers named like fixtures (IT\d+_, TEST_, AAA_iter*, UI\d+_, etc.)
             SUP_REGEX = r"^(IT\d+|TEST[_-]|AAA_|UI\d+|IsoCoB|Iso_|BULK_|Bulk_|Sup_[a-f0-9]{6}|IT72)"
             sup_ids = []
             async for s in db.suppliers.find(
@@ -1059,7 +1051,6 @@ async def startup_event():
             ):
                 sup_ids.append(s["id"])
             if sup_ids:
-                # Which suppliers are attached to vehicles or trips?
                 sup_on_veh = set()
                 async for v in db.vehicles.find({"user_id": uid, "supplier_id": {"$in": sup_ids}}, {"_id": 0, "supplier_id": 1}):
                     if v.get("supplier_id"):
@@ -1072,9 +1063,8 @@ async def startup_event():
                 if safe_sup:
                     r = await db.suppliers.delete_many({"user_id": uid, "id": {"$in": safe_sup}})
                     if r.deleted_count:
-                        logger.info(f"Iter72 fixture-purge: removed {r.deleted_count} orphan fixture suppliers")
+                        logger.info(f"Iter72 fixture-purge (background): removed {r.deleted_count} orphan fixture suppliers")
 
-            # --- Iter72: Vehicles ---
             VEH_REGEX = r"^(AA\d|AP16UI|AP16US|IT\d+_?VEH|IT72|UI\d+|AAA_)"
             veh_ids = []
             async for v in db.vehicles.find(
@@ -1083,7 +1073,6 @@ async def startup_event():
             ):
                 veh_ids.append(v["id"])
             if veh_ids:
-                # Which vehicles are used in trips?
                 veh_on_trip = set()
                 async for t in db.trips.find({"user_id": uid, "vehicle_id": {"$in": veh_ids}}, {"_id": 0, "vehicle_id": 1}):
                     if t.get("vehicle_id"):
@@ -1092,11 +1081,48 @@ async def startup_event():
                 if safe_veh:
                     r = await db.vehicles.delete_many({"user_id": uid, "id": {"$in": safe_veh}})
                     if r.deleted_count:
-                        logger.info(f"Iter72 fixture-purge: removed {r.deleted_count} orphan fixture vehicles")
+                        logger.info(f"Iter72 fixture-purge (background): removed {r.deleted_count} orphan fixture vehicles")
         except Exception as e:
-            logger.warning(f"Iter70/72 fixture-purge failed: {e}")
+            logger.warning(f"Iter70/72 fixture-purge failed (background): {e}")
 
-    _asyncio.create_task(_purge_fixture_orphans())
+        _background_migrations_ran = True
+        logger.info("Iter127b-UAT-fix v3 · Background migrations complete.")
+
+
+@app.on_event("startup")
+async def startup_event():
+    # Iter127b-UAT-fix v3 — ONLY critical, fast startup work runs synchronously
+    # here. Heavy migrations/backfills/index-housekeeping have been moved into
+    # `_run_background_migrations()` scheduled below.
+    #
+    # Iter126a — init_storage() is a synchronous function; run in executor so
+    # boot is non-blocking.
+    try:
+        import asyncio as _asyncio
+        loop = _asyncio.get_event_loop()
+        await loop.run_in_executor(None, init_storage)
+        logger.info("Object storage initialized")
+    except Exception as e:
+        logger.warning(f"Object storage init failed: {e}")
+    # Iter126b — 24h TTL index on idempotency_keys.created_at (small, fast).
+    try:
+        await ensure_idempotency_indexes()
+        logger.info("Idempotency TTL index ensured (24h replay window)")
+    except Exception as e:
+        logger.warning(f"Idempotency index setup failed: {e}")
+    try:
+        from scheduler import start_scheduler
+        start_scheduler()
+    except Exception as e:
+        logger.warning(f"Scheduler init failed: {e}")
+
+    # Iter127b-UAT-fix v3 — schedule ALL heavy migrations (dedup backfill,
+    # Iter49 null-coerce, auth-index housekeeping, Iter70/72 fixture-purge)
+    # in a single background task so this handler returns immediately and
+    # `Application startup complete` fires within ~2 s. Health endpoint is
+    # then reachable long before the frontend toast's 24 s threshold.
+    _asyncio.create_task(_run_background_migrations())
+    logger.info("Iter127b-UAT-fix v3 · Startup complete; background migrations scheduled.")
 
 
 @app.on_event("shutdown")
