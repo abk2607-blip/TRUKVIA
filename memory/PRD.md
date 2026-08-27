@@ -2,6 +2,34 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter126c-UAT-fix v2 · Banner = mount-discovery only + NEW-only** (Feb 2026 — user UAT round 2)
+  - **Two behaviours the user asked for**:
+    1. **Existing Trip Edit route (`/trips/:id/edit`) → NEVER shows the Restore banner** — even if a stale draft happens to exist on that composite key. Also never PROBES sessionStorage and never PERSISTS a draft while editing, so the DB row stays authoritative for Phase 1. Same for `/invoices/:id/edit`.
+    2. **New Trip route (`/trips/new`) — banner surfaces ONLY on FRESH mount when a PREVIOUS session's draft was already on disk**. Live autosave writes during the current session no longer flip the banner on; the user is never interrupted by "UNSAVED DRAFT FOUND" while actively working.
+  - **Fix in `useFormDraft.js`**:
+    - New `isEditRoute = Boolean(recordId)` short-circuit. `effectiveEnabled = enabled && !isEditRoute`. When edit route: no probe, no autosave, no banner.
+    - Split the internal state into two orthogonal machines:
+      - `existingDraft` — powers `restore()` / `getKeyForSave()` / autosave dedup. Updated by BOTH mount-probe and live autosave writes.
+      - `mountDraft` — powers **banner visibility ONLY**. Set exclusively by the on-mount probe. Never touched by autosave — that's the whole fix.
+    - `restore() / discard() / clearOnSuccess()` all clear both states so the banner disappears the moment the user acts on it (or a successful Save completes).
+    - Fixed the `@/lib/formDraft` alias — replaced with `../lib/formDraft` so jest can resolve the hook without a webpack alias.
+  - **Preserved guarantees** (locked by regression tests): sensitive-field filtering (`sanitizeDraft`), 24 h expiry, per-user + per-company isolation, logout wipe (`clearAllForUser`), successful-save clear (`clearOnSuccess`), Discard behaviour, meaningfully-dirty gate (`sha === baselineSha` ⇒ never persist).
+  - **New regression test suite** `src/__tests__/iter126c.restoreBanner.test.js` (10 cases, all green, uses `react-dom/client` + `react-dom/test-utils` — no new dep):
+    1. Existing Trip edit: no banner even with a pre-planted draft.
+    2. Edit route: autosave disabled — meaningful edit does NOT touch sessionStorage.
+    3. Blank New Trip mount → no draft, no banner (meaningfully-dirty gate intact).
+    4. Meaningful edit → draft silently persisted, banner stays hidden.
+    5. Close & reopen `/trips/new` → banner appears on the SECOND mount.
+    6. `restore()` merges draft into form AND clears the banner.
+    7. `discard()` wipes the draft from disk AND clears the banner.
+    8. `clearOnSuccess()` wipes the draft AND clears the banner (successful Save path).
+    9. Invoice-style form on `/invoices/new`: untouched → no draft, meaningful `rcm` toggle → silent persistence.
+    10. Invoice EDIT route (`/invoices/:id/edit`): no banner ever, even with a pre-planted draft.
+  - **All frontend Iter126c tests**: `iter126c.formDraft.test.js` (25/25) · `iter126c.meaningfullyDirty.test.js` (15/15) · `iter126c.restoreBanner.test.js` (10/10) + `silentRestartToast.test.js` (14/14) = **64 / 64 pass**.
+  - **Zero touch** to Iter127a duplicate rules, Iter126a Bucket-A retry, Iter126b idempotency, `/api/auth/health`, freight, shortage, invoice/LR business logic, Save-Health, auth. Backend fully untouched — this is a frontend-only behavioural correction.
+  - **P0 diagnostic instrumentation remains ACTIVE** per user's instruction until the "REFRESHING…" P0 is formally closed.
+
+
 - [x] **Iter127b-UAT-fix v3 · PERMANENT "REFRESHING…" fix (Fix A + Fix B)** (Feb 2026 — user-approved Option C)
   - **Root cause (recap from v2 diagnostic-beacon evidence)**: Emergent Preview platform hard-restarts the pod every ~1–2 h. Each restart forced the backend to re-run heavy startup migrations (`ensure_dedup_indexes_and_backfill`, Iter49 null-coerce backfill, `user_sessions` de-dupe + unique index, Iter70/72 fixture-purge) before `/api/auth/health` could respond — total cold-start of 15-30 s, exceeding the toast's 24 s (`4 fails × 6 s`) threshold.
   - **Fix A — `_run_background_migrations()` in `server.py`**: single async task guarded by `_background_migrations_lock` (asyncio.Lock) — scheduled from the FastAPI `startup` event via `asyncio.create_task(...)`. Business logic verbatim, only the *timing* changes. What moved:
