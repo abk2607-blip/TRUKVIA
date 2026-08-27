@@ -2,6 +2,10 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [ ] **User Manual PDF (with screenshots)** — Requested by user 2026-02, deferred by user until P0 "REFRESHING…" is formally closed. Not urgent. Scope/depth/language TBD at pickup time.
+
+
+
 - [🔒🔒 **FULL LOCK** by user · 2026-02] **Iter127c · Complete scope — LOCKED end-to-end.**
   - **Supplier Deactivate / Reactivate — UAT PASSED**
     - Active → Deactivate ✅
