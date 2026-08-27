@@ -24,12 +24,21 @@ const BUILD_POLL_MS = 60_000;
 const BASELINE_KEY  = "silent_restart_baseline_build_id_v1";
 
 export const FAIL_THRESHOLD  = 4;
-export const PROBE_TIMEOUT   = 4000;
+// Iter127b-UAT-fix v4 (Feb 2026) · PROBE_TIMEOUT raised 4000 → 6000 ms to
+// remove false-positive aborts observed during backend load / cold-start
+// windows (see beacon evidence: 9 back-to-back 4003-4130 ms aborts on 06:40:24
+// UTC when the server itself was slow but reachable — a 6 s ceiling would
+// have surfaced the recovering 3 145 ms response as OK instead of aborting).
+export const PROBE_TIMEOUT   = 6000;
 export const POLL_BASE       = 6000;
 export const POLL_BACKOFF_MS = [6000, 8000, 12000, 15000];
 // Iter127b-UAT-fix v3 · length of the "Backend starting…" grace window
 // (measured from the moment the pill first appears).
 export const STARTUP_GRACE_MS = 10_000;
+// Iter127b-UAT-fix v4 · after this long of continuous stale-bundle nudge
+// visibility we auto-reload. Iter126c drafts + Iter126b Idempotency-Key
+// survive the reload via sessionStorage — no data loss, no duplicate Save.
+export const BUILD_STALE_AUTORELOAD_MS = 15_000;
 
 export function nextWaitMs(failStreak, jitter = 0) {
   if (failStreak <= 0) return POLL_BASE + jitter;
@@ -106,6 +115,7 @@ export default function SilentRestartToast() {
   const [restartingSince, setRestartingSince] = useState(0);
   const [nowTs, setNowTs]                     = useState(0);
   const [updateNudge, setUpdateNudge]         = useState(false);
+  const [updateNudgeSince, setUpdateNudgeSince] = useState(0);
   const [clientBuildId, setClientBuildId]     = useState(null);
   const failStreak    = useRef(0);
   const timerId       = useRef(null);
@@ -159,6 +169,7 @@ export default function SilentRestartToast() {
         if (serverBuildId && serverBuildId !== baseline) {
           if (!updateNudge) {
             setUpdateNudge(true);
+            setUpdateNudgeSince(Date.now());
             sendBeacon({
               ts: new Date().toISOString(),
               phase: "build_stale",
@@ -180,6 +191,36 @@ export default function SilentRestartToast() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ── Iter127b-UAT-fix v4 · Build-stale auto-reload ──
+  // If the amber "App update available" nudge has been visible for
+  // BUILD_STALE_AUTORELOAD_MS AND the app can't currently reach a healthy
+  // backend probe (restarting=true), reload once. Reload preserves:
+  //   • Iter126c form drafts (sessionStorage survives location.reload)
+  //   • Iter126b Idempotency-Key (persisted alongside each draft)
+  //   • Any in-flight Save's replay contract (idempotency middleware
+  //     de-dupes retries on the server side)
+  // We deliberately require restarting=true so we never reload a tab that's
+  // successfully talking to the server — that path is user-initiated only
+  // via clicking the amber pill.
+  useEffect(() => {
+    if (!updateNudge) return () => {};
+    if (!updateNudgeSince) return () => {};
+    if (!restarting) return () => {};  // no reload if backend is reachable
+    const t = setTimeout(() => {
+      sendBeacon({
+        ts: new Date().toISOString(),
+        phase: "auto_reload_build_stale",
+        fail_streak: failStreak.current,
+        restarting: true,
+        client_build_id: clientBuildId,
+      });
+      // Iter126c drafts + Iter126b Idempotency-Key survive the reload via
+      // sessionStorage. No auto-Save is issued, no duplicate request.
+      try { window.location.reload(); } catch {}
+    }, BUILD_STALE_AUTORELOAD_MS);
+    return () => clearTimeout(t);
+  }, [updateNudge, updateNudgeSince, restarting, clientBuildId]);
 
   // ── Health-probe loop ──
   useEffect(() => {

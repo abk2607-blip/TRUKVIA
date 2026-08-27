@@ -2,6 +2,34 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter127b-UAT-fix v4 · PERMANENT P0 fix (Option C = A + B) — SHIPPED** (Feb 2026, user-approved)
+  - **Fix A · Build-stale auto-reload after 15 s** (`SilentRestartToast.jsx`):
+    - New constant `BUILD_STALE_AUTORELOAD_MS = 15_000`.
+    - New state `updateNudgeSince` — captures the timestamp when the amber "App update available" nudge first appeared.
+    - New guarded `useEffect` hook: when `updateNudge && updateNudgeSince && restarting` are ALL true continuously for 15 s, emits a `phase="auto_reload_build_stale"` beacon and calls `window.location.reload()`.
+    - **Safety invariants** (verified line-by-line):
+      - Auto-reload ONLY fires while `restarting=true` — a tab that has managed to reach ANY successful probe skips the reload (the user is still working normally on the stale bundle, no forced interrupt).
+      - Iter126c form drafts survive reload via sessionStorage (`iter126c:draft:v1:*` keys) → no active form data lost.
+      - Iter126b Idempotency-Key persisted per-draft → any pending Save that races the reload is de-duped by the server-side idempotency middleware → no duplicate POST.
+      - Amber nudge remains user-clickable throughout the 15 s window (user can reload sooner if they want).
+      - Every reload emits a beacon so we can correlate with the diagnostic instrumentation before deciding to remove it.
+  - **Fix B · `PROBE_TIMEOUT` 4 000 → 6 000 ms**:
+    - Direct constant change (single line). Removes the false-positive `abort` rate observed on 06:40:24 UTC where 9 back-to-back probes hit exactly 4 003-4 130 ms while the backend was reachable in 3 145 ms on the recovery probe.
+    - Poll cadence + backoff ramp + fail threshold unchanged.
+    - Existing retry / health semantics unchanged. 4xx / 5xx handling unchanged.
+  - **Untouched approved logic** (verified via existing green regression coverage): Save endpoints, Auth (Iter106/106b/110), Iter126a/b/c, Iter127a duplicate rules, supplier calculation, freight, shortage, invoice/LR, Regression Guard thresholds, Save-Health.
+  - **Tests** — `src/__tests__/silentRestartToast.v4.test.js` (5 new cases): `PROBE_TIMEOUT=6000`, `BUILD_STALE_AUTORELOAD_MS=15000`, v3 constants regression (`FAIL_THRESHOLD=4`, `POLL_BASE=6000`, `POLL_BACKOFF_MS=[6000,8000,12000,15000]`, `STARTUP_GRACE_MS=10000`), `probeHealth` honours caller-provided 6 s timeout (aborts at exactly the ceiling), slow-but-reachable 5 500 ms response now returns OK (previously would have aborted at 4 000 ms). All 78/78 frontend Iter126c + silent-restart-toast tests pass together.
+  - **Live bundle verification**: `curl bundle.js` grep confirms new constants `BUILD_STALE_AUTORELOAD_MS`, `auto_reload_build_stale`, `PROBE_TIMEOUT` are present in the deployed bundle. Server `build_id` now updated to reflect the new mtime — existing stale tabs will hit the amber nudge and auto-reload within 15 s the next time they lose backend reachability.
+  - **Verification / UAT plan**:
+    - Stale tab → server rebuild → amber "App update available — reload" appears → click reloads to current bundle (or auto-reloads after 15 s if backend also unreachable).
+    - `sudo supervisorctl restart backend` → the 6 s probe ceiling now tolerates the backend's ~2-3 s startup + any short DB slowness without tripping the pill.
+    - Unsaved Trip on `/trips/new` → force reload via nudge → Restore banner appears on next mount → draft data intact.
+    - Save that races a reload → idempotency middleware de-dupes → single row in DB.
+    - Normal 4xx errors on business endpoints unchanged (only the silent-restart-toast module was touched).
+  - **Diagnostic instrumentation stays ACTIVE** per user instruction until Preview UAT confirms P0 closed.
+- [ ] **P0 "REFRESHING…" — awaiting user's live UAT confirmation** post-v4. Once verified clean over the next 24 h, user LOCKS P0 and I remove the diagnostic instrumentation in a separate controlled change.
+
+
 - [x] **Iter127c · Supplier Deactivate / Reactivate — SHIPPED** (Feb 2026, user-approved with safeguards)
   - **Backend** (`routers/suppliers.py`):
     - `DELETE /api/suppliers/{sid}?reason=…` — soft-delete only. `is_override_authorised(user)` gate (Owner/Admin, 403 otherwise). Sets `is_active=False`, `deactivated_by`, `deactivated_at`, `deactivation_reason`, `modified_by`, `modified_at`. Returns dependency counts `{trips, payments, vehicles}` + `message` so the UI can render "N items preserved" toast. Audit-logged with action `"deactivate"`, target `"supplier"`, reason `"soft-delete"`, plus dependency counts in the audit body. **Never hard-deletes** (source-level guardrail test locks this: `db.suppliers.delete_one/_many` MUST NOT appear in the endpoint body).
