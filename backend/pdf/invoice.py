@@ -182,6 +182,20 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
     def _resolve_ship_to(trip):
         sid = trip.get("ship_site_id") or ""
         s = ship_sites_by_id.get(sid) if sid else None
+        if not s:
+            # Iter127c-invoice-shipto v2 (Feb 2026 · KOLVEKAR LOGISTICS UAT):
+            # heal the fallback path. If the trip has no ship_site_id but
+            # `to_location` case-insensitively matches an existing
+            # ship-site's name, USE that ship-site so its address/GSTIN/state
+            # flow into the header. This makes two trips that were entered
+            # inconsistently (one with FK, one without) resolve to the same
+            # SHIP TO — matching the already-correct Preview.
+            to_loc = (trip.get("to_location") or "").strip().casefold()
+            if to_loc:
+                for candidate in ship_sites_by_id.values():
+                    if (candidate.get("site_name") or "").strip().casefold() == to_loc:
+                        s = candidate
+                        break
         if s:
             return {"site_name": s.get("site_name") or "", "address": s.get("address") or "",
                     "gstin": s.get("gstin") or "", "state": s.get("state") or "",
