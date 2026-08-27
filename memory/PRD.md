@@ -2,6 +2,25 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter126c · LOCKED (Feb 2026)** ✅ — Draft-recovery Phase 1 formally approved after user's live UAT.
+  - **User-confirmed behaviour on live Preview**:
+    - Existing Trip → Edit → no Restore banner (edit-route silence works).
+    - New Trip → meaningful field entered → draft saved silently.
+    - While actively working → no Restore banner appears (mount-discovery-only gate works).
+    - User can leave incomplete Trip and continue other work.
+    - Returning to a fresh New Trip → "UNSAVED DRAFT FOUND" appears with correct age.
+    - Restore → previously entered fields auto-populate correctly.
+    - Discard / successful Save → draft cleared.
+  - **Frozen surfaces (no changes without explicit user approval)**:
+    - `/app/frontend/src/hooks/useFormDraft.js` — mount-probe vs autosave state split, `isEditRoute` short-circuit, meaningfully-dirty gate.
+    - `/app/frontend/src/lib/formDraft.js` — sanitizeDraft, sensitive-field regex, 24 h expiry, buildDraftKey, chooseSaveKey.
+    - `/app/frontend/src/components/DraftRestoreBanner.jsx` (banner UX).
+    - TripForm & InvoiceCreate wiring of `useFormDraft`.
+  - **Regression tests locked (all green)**: `iter126c.formDraft.test.js` (25) · `iter126c.meaningfullyDirty.test.js` (15) · `iter126c.restoreBanner.test.js` (10) = 50/50 dedicated coverage for Iter126c behaviour.
+  - **P0 "REFRESHING…" remains OPEN** — treated separately. Diagnostic instrumentation stays ACTIVE until user confirms stable pod-restart recovery during live usage.
+  - **Iter127a**: pending final UAT lock. **Iter127b + all backlog**: paused until user explicitly approves.
+
+
 - [x] **Iter126c-UAT-fix v2 · Banner = mount-discovery only + NEW-only** (Feb 2026 — user UAT round 2)
   - **Two behaviours the user asked for**:
     1. **Existing Trip Edit route (`/trips/:id/edit`) → NEVER shows the Restore banner** — even if a stale draft happens to exist on that composite key. Also never PROBES sessionStorage and never PERSISTS a draft while editing, so the DB row stays authoritative for Phase 1. Same for `/invoices/:id/edit`.
