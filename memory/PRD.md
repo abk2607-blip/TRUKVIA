@@ -2,6 +2,28 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter127c-invoice-shipto v3.1 · GSTIN Normalization (input + display) — SHIPPED** (Feb 2026, user-approved)
+  - **Trigger**: KOLVEKAR PDF rendered `GSTIN GSTIN 36AAUFM1425D1ZC` because the stored ship-site value was literally `"GSTIN 36AAUFM1425D1ZC\t\t"`. User approved both save-time and render-time cleanup — no bulk migration.
+  - **`normalize_gstin(value)` helper** (`/app/backend/ship_to_resolver.py`):
+    - Strips leading `GSTIN` / `GST` / `GSTN` prefix (case-insensitive, word-boundary — will NOT strip `GSTINX...`).
+    - Trims leading/trailing whitespace + tabs + newlines.
+    - Collapses internal whitespace to nothing (a real GSTIN has none).
+    - Uppercases the result.
+    - Blank / None / whitespace-only ⇒ empty string.
+  - **On save** (`routers/customers.py::create_ship_site` + `update_ship_site`): `payload.gstin = normalize_gstin(payload.gstin)` before persistence. Verified end-to-end via API: dirty input `"GSTIN 36AAUFM1425D1ZC\t\t"` and `"gst 29CUSTX9999Z1Z7"` both stored as their clean forms.
+  - **On render** (`ship_to_resolver::_display_from_site`): resolver output's `gstin` field is run through the same cleaner. Existing dirty records display cleanly TODAY. Test `test_resolver_renders_clean_gstin_from_dirty_stored_value` locks that the underlying dict is NOT mutated.
+  - **Live UAT PDF proof** — regenerated KOLVEKAR PDF (`/app/frontend/public/kolvekar_invoice_v3_1.pdf`) via shipped `build_invoice_pdf`; page-1 text extraction:
+    - `GSTIN 36AAUFM1425D1ZC` appears exactly once ✅
+    - `"GSTIN GSTIN"` substring is ABSENT ✅
+    - `SHIP TO → MRGR CONSTRUCTIONS`, no "Mixed" ✅ (Guarded resolver still works after normalizer.)
+  - **Multi-site regression proof** — Real DB invoice `INV/26-27/0247` (2 genuinely different ship_site_ids) still renders `Mixed — see per-trip below` on both Preview and PDF. Guarded resolver has NOT over-collapsed after the GSTIN change.
+  - **Tests** — `test_iter127c_gstin_normalization.py` (18 cases): prefix variants (GSTIN / GST / GSTN, uppercase / lowercase / mixed / with colon / no colon), whitespace/tab/newline handling, already-clean pass-through, blank/None → empty, uppercasing, word-boundary regression (`GSTINX...` untouched), render-time no-mutation, KOLVEKAR resolver contract lock, source-level guardrails on both save endpoints + resolver render. All 70/70 combined Ship-To + GSTIN + supplier + iter67/79 tests green in <7s.
+  - Wired into `scripts/run_regression.sh` as suite #61.
+  - **Untouched approved logic** (verified): freight, shortage, tax totals, IGST/CGST-SGST, LR, invoice number, customer, supplier, Iter126a/b/c, Iter127a, Iter127b P0 v4, Iter127c Supplier Deactivate.
+  - **Deferred per user directive**: Trip 8279 "no Ship-To" data-hygiene nudge, P0 diagnostic instrumentation removal — both remain OPEN awaiting user's live observation.
+
+
+
 - [x] **Iter127c-invoice-shipto v3 · Guarded Ship-To Resolver + Preview/PDF parity — SHIPPED** (Feb 2026, user-approved *Guarded Option B*)
   - **Trigger**: KOLVEKAR live UAT — Invoice AKB/26-27/0016 still rendered `Mixed — see per-trip below`. Live RCA (Motor query, read-only) confirmed two trips point at the SAME physical site but one had `ship_site_id=''` and `to_location='NAGARKURNOOL'` while the site's `site_name='MRGR CONSTRUCTIONS'`. Preview (permissive FK filter) showed the site; PDF (strict FK-vs-no-FK identity) said Mixed → divergence.
   - **Design decision** (user directive, verbatim): "For a trip with an empty ship_site_id, infer an existing ShipSite only when there is sufficient evidence that the trip refers to that same physical destination. The inference must NOT be based solely on the presence of one non-empty ship_site_id elsewhere in the invoice."

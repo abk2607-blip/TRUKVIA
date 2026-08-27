@@ -36,6 +36,27 @@ _TOKEN_MIN = 4
 _PIN_RE = re.compile(r"\b(\d{6})\b")
 _TOKEN_SPLIT_RE = re.compile(r"[^0-9a-z\u0900-\u097f]+")
 
+# Iter127c-invoice-shipto v3.1 (Feb 2026 · user-approved GSTIN cleanup).
+# Strips a leading `GSTIN` / `GST` / `GSTN` prefix (case-insensitive), trims
+# whitespace, and collapses internal whitespace. Used by BOTH:
+#   * Ship-Site POST/PUT endpoints  → cleans the value ON SAVE
+#   * Resolver render output        → cleans dirty historic values ON RENDER
+# Never mutates the DB during render — see `_display_from_site`.
+_GSTIN_PREFIX_RE = re.compile(r"^\s*(?:gstin|gstn|gst)\b[\s:.-]*", re.IGNORECASE)
+
+
+def normalize_gstin(value) -> str:
+    """Return a cleaned GSTIN string.  Blank input ⇒ empty string."""
+    if not value:
+        return ""
+    s = str(value).replace("\t", " ").replace("\r", " ").replace("\n", " ")
+    s = s.strip()
+    if not s:
+        return ""
+    s = _GSTIN_PREFIX_RE.sub("", s)          # drop leading GSTIN / GST / GSTN
+    s = re.sub(r"\s+", "", s).strip()        # collapse whitespace (GSTIN has none)
+    return s.upper()
+
 
 def _norm(s: Any) -> str:
     """Lower-cased, whitespace-collapsed, tab/newline-safe."""
@@ -87,7 +108,9 @@ def _display_from_site(site: dict) -> dict:
     return {
         "site_name": (site.get("site_name") or site.get("name") or "").strip(),
         "address": (site.get("address") or "").strip(),
-        "gstin": (site.get("gstin") or "").strip(),
+        # Render-time GSTIN cleanup — dirty historic records display cleanly
+        # WITHOUT mutating the stored DB value.
+        "gstin": normalize_gstin(site.get("gstin")),
         "state": (site.get("state") or "").strip(),
         "state_code": (site.get("state_code") or "").strip(),
         "pincode": (site.get("pincode") or "").strip(),

@@ -96,6 +96,7 @@ CRITICAL_TESTS=(
   "tests/test_iter127c_invoice_shipto_v2.py"              # Iter127c v2 · Fallback heal — inconsistent FK across trips still resolves to same site
   "tests/test_iter127c_ship_to_resolver_guarded.py"       # Iter127c v3 · Guarded Ship-To resolver (name/pincode/whole-token evidence; ambiguity → Mixed)
   "tests/test_iter127c_ship_to_parity.py"                 # Iter127c v3 · Preview / PDF parity — both surfaces call the same resolver
+  "tests/test_iter127c_gstin_normalization.py"            # Iter127c v3.1 · GSTIN normalize on save + on render (dirty stored → clean displayed, no DB mutation)
 )
 
 export PATH="/root/.venv/bin:$PATH"

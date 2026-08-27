@@ -331,6 +331,10 @@ async def create_ship_site(cid: str, payload: _ShipSite, request: Request,
     payload.site_name = (payload.site_name or "").strip()
     if not payload.site_name:
         raise HTTPException(status_code=400, detail="site_name is required")
+    # Iter127c-invoice-shipto v3.1 (Feb 2026 · user-approved) — clean GSTIN
+    # on save so future edits store the canonical form (no bulk migration).
+    from ship_to_resolver import normalize_gstin
+    payload.gstin = normalize_gstin(payload.gstin)
 
     existing = doc.get("ship_sites") or []
     key = payload.site_name.casefold()
@@ -370,6 +374,10 @@ async def update_ship_site(cid: str, sid: str, payload: _ShipSite, request: Requ
         raise HTTPException(status_code=404, detail="Ship site not found")
     updated = payload.model_dump()
     updated["id"] = sid  # never let the id change
+    # Iter127c-invoice-shipto v3.1 (Feb 2026 · user-approved) — clean GSTIN
+    # on save so future edits store the canonical form (no bulk migration).
+    from ship_to_resolver import normalize_gstin
+    updated["gstin"] = normalize_gstin(updated.get("gstin"))
     # Enforce single default
     if updated.get("is_default"):
         for i, s in enumerate(sites):
