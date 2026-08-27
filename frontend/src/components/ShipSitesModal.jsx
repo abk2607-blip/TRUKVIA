@@ -5,8 +5,8 @@ import React from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api";
 import { toast } from "sonner";
-import { Plus, Pencil, Trash2, MapPin, Star, X } from "lucide-react";
-import { StateSelect } from "@/lib/states";
+import { Plus, Pencil, Trash2, MapPin, Star, X, AlertTriangle, CheckCircle2 } from "lucide-react";
+import { StateSelect, INDIA_STATES } from "@/lib/states";
 
 const EMPTY = {
   site_name: "", address: "", gstin: "", state: "", state_code: "",
@@ -16,6 +16,20 @@ const EMPTY = {
 
 const ic = "w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none bg-white";
 const lbl = "text-[10px] font-bold uppercase tracking-wider text-zinc-500";
+
+// Iter127c-invoice-shipto v3.2 (Feb 2026 · user-approved) — GSTIN → State
+// auto-derivation. The first two digits of a well-formed GSTIN carry the
+// Indian State Code; look up the name from the canonical INDIA_STATES map.
+// Returns { state_code, state } or { "", "" } when GSTIN is blank/invalid.
+const _GSTIN_RE = /^([0-9]{2})([A-Z]{5}[0-9]{4}[A-Z])([0-9A-Z])Z([0-9A-Z])$/;
+function deriveStateFromGstin(gstin) {
+  const g = (gstin || "").trim().replace(/^\s*(?:gstin|gstn|gst)\b[\s:.-]*/i, "").replace(/\s+/g, "").toUpperCase();
+  const m = g.match(_GSTIN_RE);
+  if (!m) return { state_code: "", state: "" };
+  const code = m[1];
+  const hit = INDIA_STATES.find((s) => s.code === code);
+  return hit ? { state_code: code, state: hit.name } : { state_code: "", state: "" };
+}
 
 export default function ShipSitesModal({ customer, onClose }) {
   const qc = useQueryClient();
@@ -78,7 +92,69 @@ export default function ShipSitesModal({ customer, onClose }) {
                 <F label="Site / Consignee Name *"><input required data-testid="site-name" value={form.site_name} onChange={(e) => setForm({ ...form, site_name: e.target.value })} className={ic} placeholder="Vijayawada Plant" /></F>
                 <F label="Contact Person"><input data-testid="site-contact" value={form.contact_person} onChange={(e) => setForm({ ...form, contact_person: e.target.value })} className={ic} /></F>
                 <F label="Phone"><input data-testid="site-phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className={ic} /></F>
-                <F label="GSTIN (if different from billing)"><input data-testid="site-gstin" value={form.gstin} onChange={(e) => setForm({ ...form, gstin: e.target.value.toUpperCase() })} className={ic} /></F>
+                <F label="GSTIN (if different from billing)">
+                  <input
+                    data-testid="site-gstin"
+                    value={form.gstin}
+                    onChange={(e) => {
+                      const raw = e.target.value.toUpperCase();
+                      // v3.2 · Auto-derive State + State Code when GSTIN becomes
+                      // well-formed. NEVER silently overwrite a manually-entered
+                      // conflicting value — see the warning banner below.
+                      const derived = deriveStateFromGstin(raw);
+                      setForm((f) => {
+                        const next = { ...f, gstin: raw };
+                        if (derived.state_code) {
+                          if (!f.state_code) next.state_code = derived.state_code;
+                          if (!f.state)      next.state      = derived.state;
+                        }
+                        return next;
+                      });
+                    }}
+                    className={ic}
+                    placeholder="e.g. 36AAUFM1425D1ZC"
+                  />
+                  {(() => {
+                    // Inline validation + derivation UX.
+                    if (!form.gstin) return null;
+                    const derived = deriveStateFromGstin(form.gstin);
+                    if (!derived.state_code) {
+                      return (
+                        <div data-testid="site-gstin-invalid" className="mt-1 flex items-start gap-1 text-[10px] text-rose-700">
+                          <AlertTriangle size={11} className="mt-0.5 flex-shrink-0" />
+                          <span>GSTIN format looks invalid — State will not be auto-derived.</span>
+                        </div>
+                      );
+                    }
+                    const conflict = (
+                      (form.state_code && form.state_code !== derived.state_code) ||
+                      (form.state && form.state !== derived.state)
+                    );
+                    if (conflict) {
+                      return (
+                        <div data-testid="site-gstin-state-conflict" className="mt-1 flex items-start gap-1 text-[10px] text-amber-800 bg-amber-50 border border-amber-300 px-2 py-1 rounded-sm">
+                          <AlertTriangle size={11} className="mt-0.5 flex-shrink-0" />
+                          <span>
+                            GSTIN indicates <b>{derived.state}</b> (code {derived.state_code}), but you've
+                            entered <b>{form.state || "—"}</b> (code {form.state_code || "—"}). Please verify.
+                            <button
+                              type="button"
+                              data-testid="site-gstin-accept-derived"
+                              onClick={() => setForm((f) => ({ ...f, state: derived.state, state_code: derived.state_code }))}
+                              className="ml-1 underline font-semibold hover:text-amber-950"
+                            >Use {derived.state}</button>
+                          </span>
+                        </div>
+                      );
+                    }
+                    return (
+                      <div data-testid="site-gstin-derived" className="mt-1 flex items-center gap-1 text-[10px] text-emerald-700">
+                        <CheckCircle2 size={11} />
+                        <span>State auto-derived from GSTIN: <b>{derived.state}</b> (code {derived.state_code}).</span>
+                      </div>
+                    );
+                  })()}
+                </F>
                 <F label="State"><StateSelect value={form.state} onChange={(v) => setForm({ ...form, state: v })} dataTestId="site-state" className={ic + " bg-white"} /></F>
                 <F label="State Code"><input data-testid="site-state-code" value={form.state_code} onChange={(e) => setForm({ ...form, state_code: e.target.value })} className={ic} placeholder="37" /></F>
                 <F label="PIN Code"><input data-testid="site-pincode" value={form.pincode} onChange={(e) => setForm({ ...form, pincode: e.target.value })} className={ic} /></F>

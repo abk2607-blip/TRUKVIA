@@ -58,6 +58,76 @@ def normalize_gstin(value) -> str:
     return s.upper()
 
 
+# Iter127c-invoice-shipto v3.2 (Feb 2026 · user-approved) — Ship-To GSTIN
+# auto-derives the Indian State + State Code from the first two digits of
+# a *valid* GSTIN.  Never guesses on blank / invalid input, never silently
+# overwrites an existing manually-entered state (conflict is surfaced by
+# the FE; the backend simply refuses to overwrite).
+_GSTIN_FULL_RE = re.compile(
+    r"^([0-9]{2})([A-Z]{5}[0-9]{4}[A-Z])([0-9A-Z])(Z)([0-9A-Z])$"
+)
+
+
+def _gstin_state_code(gstin: str) -> str:
+    """First 2 digits of a well-formed GSTIN, or '' if not well-formed."""
+    g = normalize_gstin(gstin)
+    m = _GSTIN_FULL_RE.match(g)
+    return m.group(1) if m else ""
+
+
+def derive_state_from_gstin(gstin: str) -> dict:
+    """Given a candidate GSTIN string, return `{state_code, state}` if the
+    GSTIN is well-formed AND its state code maps to a known Indian state.
+    Otherwise returns `{"state_code": "", "state": ""}`.
+
+    NEVER raises. NEVER silently overwrites a caller's data — the caller
+    decides whether to accept the derivation.
+    """
+    # Local import to avoid a hard cycle: services imports ship_to_resolver
+    # is not (yet) established. This function is used from routers/customers
+    # which already imports services, so it's safe here.
+    try:
+        from services import STATE_CODE_TO_NAME
+    except Exception:
+        STATE_CODE_TO_NAME = {}
+    code = _gstin_state_code(gstin)
+    if not code:
+        return {"state_code": "", "state": ""}
+    name = STATE_CODE_TO_NAME.get(code) or ""
+    if not name:
+        return {"state_code": "", "state": ""}
+    return {"state_code": code, "state": name}
+
+
+def apply_gstin_state_derivation(payload: dict) -> dict:
+    """Fill blank `state_code` / `state` on a ship-site payload from its GSTIN.
+
+    Rules (user-locked):
+      * GSTIN is authoritative — but only when well-formed.
+      * NEVER overwrite a non-blank manual value that CONFLICTS with GSTIN;
+        the FE warns the user and the backend keeps their entry. This
+        preserves historical Ship-To records against silent mutation.
+      * NEVER guesses when GSTIN is blank or invalid.
+
+    Mutates and returns the same dict for chaining. Caller is expected to
+    have already run `normalize_gstin` on payload["gstin"].
+    """
+    if not isinstance(payload, dict):
+        return payload
+    derived = derive_state_from_gstin(payload.get("gstin"))
+    if not derived["state_code"]:
+        return payload
+    # State Code — auto-fill only when blank.
+    existing_code = (payload.get("state_code") or "").strip()
+    if not existing_code:
+        payload["state_code"] = derived["state_code"]
+    # State Name — auto-fill only when blank.
+    existing_state = (payload.get("state") or "").strip()
+    if not existing_state:
+        payload["state"] = derived["state"]
+    return payload
+
+
 def _norm(s: Any) -> str:
     """Lower-cased, whitespace-collapsed, tab/newline-safe."""
     return re.sub(r"\s+", " ", (str(s) if s else "").strip().casefold())

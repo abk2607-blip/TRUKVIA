@@ -2,6 +2,37 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter127c-invoice-shipto v3.2 · Ship-To GSTIN → State / State Code auto-derivation — SHIPPED** (Feb 2026, user-approved small isolated UX/data-entry enhancement)
+  - **Requirement**: When a valid Ship-To GSTIN is entered, read the first 2 digits → derive State Code + State Name → show in the form (no unnecessary manual entry). Never guess on blank/invalid. Never silently overwrite a conflicting manual value. Never touch historical records.
+  - **Backend helpers** (`/app/backend/ship_to_resolver.py`):
+    - `derive_state_from_gstin(gstin)` → `{state_code, state}` when GSTIN is well-formed (regex + known state code); else `{"", ""}`.  Combines with `normalize_gstin` so dirty inputs like `"GSTIN 36AAUFM1425D1ZC\t\t"` also derive correctly.
+    - `apply_gstin_state_derivation(payload)` → fills BLANK `state_code`/`state` only; refuses to overwrite non-blank fields that CONFLICT with GSTIN (safety guard for historical records).
+  - **Save-path integration** — `routers/customers.py::create_ship_site` and `update_ship_site` now call `apply_gstin_state_derivation` right after `normalize_gstin`. Same rules on POST and PUT.
+  - **Frontend UX** — `ShipSitesModal.jsx`:
+    - Live derivation on every GSTIN keystroke (via `deriveStateFromGstin`).
+    - Blank state/state_code auto-fill immediately.
+    - Manual value that CONFLICTS with derived value shows an amber inline banner (`data-testid="site-gstin-state-conflict"`) with a one-click "Use {State}" button.
+    - Manual value that AGREES shows a green tick (`data-testid="site-gstin-derived"`).
+    - Ill-formed GSTIN shows red inline warning (`data-testid="site-gstin-invalid"`).
+  - **Reused infrastructure** (nothing forked): `services.STATE_CODE_TO_NAME` for the 37 Indian state codes; `_GSTIN_RE`; the existing `GET /api/gstin/lookup` endpoint continues to work unchanged.
+  - **Guardrails locked** (all verified by tests): no silent overwrite of historical rows; blank GSTIN → no derivation; invalid GSTIN → no derivation; conflicting manual value kept; auto-migration NEVER runs; no impact on IGST/CGST/SGST calc, tax determination, freight, shortage, invoice calc, LR, Customer duplicate logic, Supplier logic, Iter126a/b/c, Iter127a, existing Ship-To permission restrictions, or historical data.
+  - **Tests** — `test_iter127c_gstin_state_derivation.py` (21 cases): Telangana / Karnataka / AP / Maharashtra / Delhi / Tamil Nadu derivation; unknown state code refused; blank + invalid + malformed GSTINs; normalization + derivation composition; blank-only fill semantics; manual conflict never overwritten; post-derivation state flows correctly through resolver into Preview + PDF; source guardrails on both save endpoints + FE modal. **90/90** combined Ship-To + GSTIN + derivation + supplier + iter67/79 tests green in <7s.
+  - **End-to-end API proof** — 7 cases via live `/api/customers/{cid}/ship-sites` POST + PUT:
+    - `GSTIN 36AAUFM1425D1ZC\t\t` (with prefix + tabs) → stored `36AAUFM1425D1ZC` + `state=Telangana` + `code=36` ✅
+    - `29BVMPK0275K1Z3` → Karnataka / 29 ✅
+    - `37AAECR5210P2Z2` → Andhra Pradesh / 37 ✅
+    - `""` → no derivation ✅
+    - `"BADGSTIN"` → no derivation ✅
+    - Manual `Karnataka/29` + Telangana GSTIN → manual kept (safety) ✅
+    - PUT with valid `27AAACR5055K1Z7` on previously-blank site → Maharashtra / 27 ✅
+  - **KOLVEKAR proof PDFs** (regenerated post-shipping):
+    - Before manual entry: `state=''` on the resolver output (no silent inheritance from `customer.state='Karnataka'`) ✅
+    - After simulated manual entry (Telangana / 36 / 509209): PDF text carries `Telangana` and NO `Mixed` / no doubled GSTIN ✅
+    - Artifact: `/app/frontend/public/kolvekar_invoice_v3_2_after_state_entry.pdf`.
+  - Wired into `scripts/run_regression.sh` as suite #62.
+
+
+
 - [x] **Iter127c-invoice-shipto v3.1 · GSTIN Normalization (input + display) — SHIPPED** (Feb 2026, user-approved)
   - **Trigger**: KOLVEKAR PDF rendered `GSTIN GSTIN 36AAUFM1425D1ZC` because the stored ship-site value was literally `"GSTIN 36AAUFM1425D1ZC\t\t"`. User approved both save-time and render-time cleanup — no bulk migration.
   - **`normalize_gstin(value)` helper** (`/app/backend/ship_to_resolver.py`):
