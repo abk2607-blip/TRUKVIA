@@ -28,6 +28,15 @@ export default function InvoiceView() {
     enabled: Boolean(invoice?.trip_ids?.length),
   });
 
+  // Iter127c-invoice-shipto v3 (Feb 2026 · KOLVEKAR LOGISTICS UAT · user-approved).
+  // Preview no longer resolves Ship-To locally — it calls the server-side
+  // resolver so the Preview and the PDF header render IDENTICAL output.
+  const { data: shipTo } = useQuery({
+    queryKey: ["invoice-ship-to", id, invoice?.updated_at],
+    queryFn: async () => (await api.get(`/invoices/${id}/ship-to`)).data,
+    enabled: Boolean(invoice?.id),
+  });
+
   const [showPay, setShowPay] = useState(false);
   const [pay, setPay] = useState({ amount: "", date: new Date().toISOString().slice(0, 10), mode: "Cash", note: "" });
 
@@ -194,42 +203,46 @@ export default function InvoiceView() {
           <div data-testid="invoice-ship-to">
             <div className="text-[10px] uppercase tracking-widest text-zinc-500 font-bold">Ship To</div>
             {(() => {
-              // Iter79 — Resolve consignee from the invoice's trips.
-              //   1) If ALL trips share the same ship_site_id → show that site
-              //   2) Else if all trips share the same to_location → show that
-              //   3) Else "Mixed — see trip rows below"
-              const sites = (customer.ship_sites || []);
-              const ids = Array.from(new Set(trips.map((t) => t.ship_site_id).filter(Boolean)));
-              const tos = Array.from(new Set(trips.map((t) => t.to_location).filter(Boolean)));
-              if (ids.length === 1) {
-                const s = sites.find((x) => x.id === ids[0]);
-                if (s) {
-                  return (
-                    <>
-                      <div className="mt-1 text-base sm:text-lg font-bold">{s.site_name || customer.name}</div>
-                      <div className="text-xs whitespace-pre-line mt-1 text-zinc-700">{s.address || "—"}</div>
-                      {s.gstin && <div className="text-xs font-mono mt-1"><span className="font-bold">GSTIN:</span> {s.gstin}</div>}
-                      <div className="text-xs font-mono">State: {s.state || customer.state || "—"} {s.pincode ? `· ${s.pincode}` : ""}</div>
-                      {(s.contact_person || s.phone) && (
-                        <div className="text-xs text-zinc-600 mt-1">
-                          {s.contact_person || ""}{s.contact_person && s.phone ? " · " : ""}{s.phone || ""}
-                        </div>
-                      )}
-                    </>
-                  );
-                }
+              // Iter127c-invoice-shipto v3 (Feb 2026 · KOLVEKAR LOGISTICS UAT).
+              // Preview renders the SAME header the PDF does — data comes from
+              // GET /api/invoices/:id/ship-to. NO silent inheritance from
+              // customer.state.
+              if (!shipTo) {
+                return <div className="mt-1 text-xs text-zinc-500 italic">Loading…</div>;
               }
-              if (tos.length === 1) {
+              if (shipTo.mixed) {
                 return (
-                  <>
-                    <div className="mt-1 text-base sm:text-lg font-bold">{customer.name}</div>
-                    <div className="text-xs mt-1 text-zinc-700">{tos[0]}</div>
-                    <div className="text-xs font-mono">State: {customer.state || "—"}</div>
-                  </>
+                  <div data-testid="invoice-ship-to-mixed" className="mt-1 text-xs text-zinc-600 italic">
+                    Mixed destinations — see trip rows below
+                  </div>
                 );
               }
+              const s = shipTo.common;
+              if (!s || (!s.site_name && !s.address)) {
+                return <div className="mt-1 text-base sm:text-lg font-bold">—</div>;
+              }
               return (
-                <div className="mt-1 text-xs text-zinc-600 italic">Mixed destinations — see trip rows below</div>
+                <>
+                  <div data-testid="invoice-ship-to-name" className="mt-1 text-base sm:text-lg font-bold">
+                    {s.site_name || "—"}
+                  </div>
+                  {s.address && (
+                    <div className="text-xs whitespace-pre-line mt-1 text-zinc-700">{s.address}</div>
+                  )}
+                  {s.gstin && (
+                    <div className="text-xs font-mono mt-1">
+                      <span className="font-bold">GSTIN:</span> {s.gstin}
+                    </div>
+                  )}
+                  <div className="text-xs font-mono">
+                    State: {s.state || "—"}{s.pincode ? ` · ${s.pincode}` : ""}
+                  </div>
+                  {(s.contact_person || s.phone) && (
+                    <div className="text-xs text-zinc-600 mt-1">
+                      {s.contact_person || ""}{s.contact_person && s.phone ? " · " : ""}{s.phone || ""}
+                    </div>
+                  )}
+                </>
               );
             })()}
           </div>

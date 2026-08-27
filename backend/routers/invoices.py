@@ -81,6 +81,41 @@ async def get_invoice(iid: str, user=Depends(get_current_user)):
         raise HTTPException(status_code=404, detail="Invoice not found")
     return doc
 
+
+@router.get("/invoices/{iid}/ship-to")
+async def get_invoice_ship_to(iid: str, user=Depends(get_current_user)):
+    """Iter127c-invoice-shipto v3 (Feb 2026 · KOLVEKAR LOGISTICS UAT).
+
+    Returns the SAME resolved Ship-To that the invoice PDF uses, so the
+    Invoice Preview can render an identical header. See
+    `ship_to_resolver.resolve_invoice_ship_to` for the guarded rules.
+
+    Read-only: never writes an inferred ship_site_id back to the trip.
+    """
+    from ship_to_resolver import resolve_invoice_ship_to
+    inv = await db.invoices.find_one(
+        {"id": iid, "user_id": user["user_id"]},
+        {"_id": 0, "user_id": 0},
+    )
+    if not inv:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+    customer = await db.customers.find_one(
+        {"id": inv.get("customer_id"), "user_id": user["user_id"]},
+        {"_id": 0, "user_id": 0},
+    ) or {}
+    trip_ids = inv.get("trip_ids") or []
+    trips = await db.trips.find(
+        {"id": {"$in": trip_ids}, "user_id": user["user_id"]},
+        {"_id": 0, "user_id": 0},
+    ).to_list(1000) if trip_ids else []
+    trip_by_id = {t.get("id"): t for t in trips}
+    ordered_trips = [trip_by_id[t] for t in trip_ids if t in trip_by_id]
+    result = resolve_invoice_ship_to(customer, ordered_trips)
+    # Identity is a tuple — JSON-serialize as a list.
+    for p in result["per_trip"]:
+        p["identity"] = list(p["identity"])
+    return result
+
 @router.post("/invoices")
 async def create_invoice(payload: InvoiceCreateRequest, request: Request, user=Depends(get_current_user)):
     cid = await _active_company_id(request, user)

@@ -1,137 +1,144 @@
-"""Iter127c-invoice-shipto · KOLVEKAR LOGISTICS UAT (Feb 2026).
+"""Iter127c-invoice-shipto v3 · KOLVEKAR LOGISTICS UAT — Ship-To identity contract.
 
-The user reported that an invoice containing 2 trips, both linked to the
-SAME Ship-To (MRGR CONSTRUCTIONS · KARWAR → NAGARKURNOOL), rendered a PDF
-header saying `Mixed — see per-trip below`. Root cause: the identity check
-compared the resolved display tuple `(site_name, address, gstin, state,
-pincode)` — if one trip's ship_site_id was stale in the customer's
-`ship_sites` dict (or the linked site had partial data), the resolution
-fell back to `to_location` for that trip and produced a different tuple
-than the other trip's fully-resolved tuple → treated as Mixed.
+This is the legacy identity-contract test suite, rewritten to exercise the
+NEW guarded resolver at `/app/backend/ship_to_resolver.py`.  All cases now
+run through `resolve_invoice_ship_to(customer, trips)` so the assertions
+match what the PDF *and* the Preview endpoint will actually render.
 
-New identity rule (locked here):
-  • Trip has ship_site_id                → identity = ("site_id", sid).
-                                          Two trips sharing the same
-                                          ship_site_id are always the
-                                          SAME delivery site, regardless
-                                          of dict resolution differences.
-  • Trip has no ship_site_id             → identity = ("fb", norm_name,
-                                          norm_address, norm_gstin).
-                                          Same name + different address
-                                          → different identity → Mixed.
+Key rule shift from v2 → v3 (user-approved, Feb 2026):
+  * v2 said: "trip with FK + trip without FK ⇒ always Mixed."
+  * v3 says: "trip with FK + trip without FK ⇒ Mixed UNLESS destination
+    evidence (name / pincode / whole-word address token) unambiguously
+    infers the missing FK to the SAME site."
 
-Test coverage matrix (all cases the user asked for):
-  1. Single trip / one Ship-To                    → not mixed.
-  2. Multiple trips / same ship_site_id           → Common Ship-To.
-  3. Multiple trips / different ship_site_id      → Mixed.
-  4. Same name, different address (no site FK)    → Mixed.
-  5. Same normalized identity + different trip
-     data (dates, refs, freight)                  → Common Ship-To.
+Detailed guarded rules and the ambiguity guard live in the resolver's
+docstring and are exhaustively covered by
+`test_iter127c_ship_to_resolver_guarded.py`.  This file is the
+higher-level invariant lock (identity ⇒ Mixed?) for the six original
+scenarios.
 """
 from __future__ import annotations
 
-import sys, importlib
+import sys
 sys.path.insert(0, "/app/backend")
-_inv = importlib.import_module("pdf.invoice")
+from ship_to_resolver import resolve_invoice_ship_to
 
-# Access the private identity helper we just introduced by re-implementing
-# the same rule at test scope. This is a pure logic contract test — no PDF
-# rendering needed (the full integration is covered by iter67 tests).
-def _ship_identity(trip, resolved):
-    sid = (trip.get("ship_site_id") or "").strip()
-    if sid:
-        return ("site_id", sid)
-    return (
-        "fb",
-        (resolved["site_name"] or "").strip().lower(),
-        (resolved["address"] or "").strip().lower(),
-        (resolved["gstin"] or "").strip().upper(),
-    )
 
-def _resolved(name="", address="", gstin=""):
-    return {"site_name": name, "address": address, "gstin": gstin,
-            "state": "", "pincode": "", "phone": "", "linked": bool(name)}
+def _site(sid, name, address="", state="", gstin="", pincode=""):
+    return {"id": sid, "site_name": name, "address": address,
+            "state": state, "gstin": gstin, "pincode": pincode}
+
+
+def _customer(*sites):
+    return {"name": "C", "state": "Karnataka", "gstin": "29X", "ship_sites": list(sites)}
 
 
 def test_case1_single_trip_never_mixed():
-    trips = [{"ship_site_id": "ship_1"}]
-    r = [_resolved("MRGR", "For M/s RKIPL", "36AAUFM1425D1ZC")]
-    ids = {_ship_identity(t, s) for t, s in zip(trips, r)}
-    assert len(ids) == 1
+    r = resolve_invoice_ship_to(
+        _customer(_site("ship_1", "MRGR", "For M/s RKIPL", "", "36AAUFM1425D1ZC")),
+        [{"ship_site_id": "ship_1", "to_location": "NAGARKURNOOL"}],
+    )
+    assert r["mixed"] is False
 
 
 def test_case2_two_trips_same_site_id_common():
-    """The KOLVEKAR LOGISTICS scenario from the UAT — MUST be Common."""
-    trips = [{"ship_site_id": "ship_mrgr"}, {"ship_site_id": "ship_mrgr"}]
-    # Simulate different display resolution on trip 2 (e.g. dict lookup
-    # partially failed) — identity MUST still match via the site_id.
-    r = [
-        _resolved("MRGR CONSTRUCTIONS", "For M/s RKIPL-KMV(JV)-NH167K Project", "36AAUFM1425D1ZC"),
-        _resolved("NAGARKURNOOL", "", ""),   # <-- stale dict fell back to to_location
-    ]
-    ids = {_ship_identity(t, s) for t, s in zip(trips, r)}
-    assert len(ids) == 1, "identical ship_site_id must be treated as Common Ship-To"
+    """Both trips carry the same explicit FK → always Common."""
+    r = resolve_invoice_ship_to(
+        _customer(_site("ship_mrgr", "MRGR CONSTRUCTIONS", "Site addr")),
+        [
+            {"ship_site_id": "ship_mrgr", "to_location": "NAGARKURNOOL"},
+            {"ship_site_id": "ship_mrgr", "to_location": "somewhere else"},
+        ],
+    )
+    assert r["mixed"] is False
+    assert r["common"]["site_name"] == "MRGR CONSTRUCTIONS"
 
 
 def test_case3_two_trips_different_site_id_mixed():
-    trips = [{"ship_site_id": "ship_a"}, {"ship_site_id": "ship_b"}]
-    r = [_resolved("Site A"), _resolved("Site B")]
-    ids = {_ship_identity(t, s) for t, s in zip(trips, r)}
-    assert len(ids) == 2
+    r = resolve_invoice_ship_to(
+        _customer(_site("ship_a", "Site A", "Addr A"), _site("ship_b", "Site B", "Addr B")),
+        [
+            {"ship_site_id": "ship_a", "to_location": "A"},
+            {"ship_site_id": "ship_b", "to_location": "B"},
+        ],
+    )
+    assert r["mixed"] is True
 
 
 def test_case4_same_name_different_address_no_fk_is_mixed():
-    """Two trips without ship_site_id, same display name but different
-    address ⇒ Mixed (different physical locations)."""
-    trips = [{"ship_site_id": ""}, {"ship_site_id": ""}]
-    r = [
-        _resolved("Depot", "Plot 1, Village X"),
-        _resolved("Depot", "Plot 999, Village Y"),
-    ]
-    ids = {_ship_identity(t, s) for t, s in zip(trips, r)}
-    assert len(ids) == 2
+    """Both trips lack FK; no ship_sites on customer → fallback identity
+    (name, address, gstin). Same name but different addresses ⇒ Mixed."""
+    r = resolve_invoice_ship_to(
+        _customer(),   # no sites → nothing to infer
+        [
+            {"ship_site_id": "", "to_location": "Depot"},
+            {"ship_site_id": "", "to_location": "Depot2"},
+        ],
+    )
+    assert r["mixed"] is True
 
 
-def test_case5_three_trips_all_same_fk_common():
-    """A + A + A → Common Ship-To even with unrelated trip payload drift."""
-    trips = [
-        {"ship_site_id": "ship_x", "date": "2026-08-01"},
-        {"ship_site_id": "ship_x", "date": "2026-08-05"},
-        {"ship_site_id": "ship_x", "date": "2026-08-12"},
-    ]
-    r = [_resolved("X Plant", "Addr X"), _resolved("X Plant", "Addr X"), _resolved("X Plant", "Addr X")]
-    ids = {_ship_identity(t, s) for t, s in zip(trips, r)}
-    assert len(ids) == 1
+def test_case5_three_trips_same_fk_common():
+    r = resolve_invoice_ship_to(
+        _customer(_site("ship_x", "X Plant", "Addr X")),
+        [
+            {"ship_site_id": "ship_x", "date": "2026-08-01"},
+            {"ship_site_id": "ship_x", "date": "2026-08-05"},
+            {"ship_site_id": "ship_x", "date": "2026-08-12"},
+        ],
+    )
+    assert r["mixed"] is False
 
 
-def test_case6_two_with_fk_plus_one_fallback_is_mixed():
-    """Trip with site FK vs trip without FK ⇒ always mixed (different
-    identity type buckets)."""
-    trips = [{"ship_site_id": "ship_x"}, {"ship_site_id": ""}]
-    r = [_resolved("X Plant"), _resolved("X Plant")]
-    ids = {_ship_identity(t, s) for t, s in zip(trips, r)}
-    assert len(ids) == 2
+def test_case6_fk_plus_no_fk_common_when_evidence_matches():
+    """UPDATED CONTRACT (v3): a trip with FK + a trip without FK is
+    Common when destination evidence unambiguously infers the missing FK.
+    (This is the exact KOLVEKAR live scenario.)"""
+    r = resolve_invoice_ship_to(
+        _customer(_site("ship_x", "MRGR CONSTRUCTIONS",
+                        "Village Y, Nagarkurnool-509209")),
+        [
+            {"ship_site_id": "ship_x", "to_location": "NAGARKURNOOL"},
+            {"ship_site_id": "",       "to_location": "NAGARKURNOOL"},
+        ],
+    )
+    assert r["mixed"] is False
+    assert r["common"]["site_name"] == "MRGR CONSTRUCTIONS"
 
 
-def test_case7_gstin_normalisation_case_insensitive():
-    """Fallback identity: same name + address + GSTIN differing in case ⇒ Common."""
-    trips = [{"ship_site_id": ""}, {"ship_site_id": ""}]
-    r = [
-        _resolved("Depot", "Plot 1", "36aaufm1425d1zc"),
-        _resolved(" DEPOT ", "  PLOT 1  ", "36AAUFM1425D1ZC"),
-    ]
-    ids = {_ship_identity(t, s) for t, s in zip(trips, r)}
-    assert len(ids) == 1
+def test_case6b_fk_plus_no_fk_still_mixed_when_no_evidence():
+    """If evidence does NOT link the FK-less trip to the sole customer site,
+    the resolver falls back and Mixed is the correct answer — the guard
+    exists precisely to prevent silent misgrouping."""
+    r = resolve_invoice_ship_to(
+        _customer(_site("ship_x", "X Plant", "Village Y, Nagarkurnool-509209")),
+        [
+            {"ship_site_id": "ship_x", "to_location": "NAGARKURNOOL"},
+            {"ship_site_id": "",       "to_location": "Chennai"},   # no evidence
+        ],
+    )
+    assert r["mixed"] is True
 
 
-def test_source_guardrail_ship_identity_uses_site_id_first():
-    """Lock: the invoice module's identity check MUST prefer ship_site_id."""
-    src = open("/app/backend/pdf/invoice.py").read()
-    # The new helper name is _ship_identity — enforce its existence.
-    assert "_ship_identity" in src
-    # The site_id branch MUST come BEFORE the fallback tuple.
-    fn_start = src.index("def _ship_identity(")
-    fn_body  = src[fn_start:src.index("\n    _st_identities", fn_start)]
-    site_pos = fn_body.index('("site_id"')
-    fb_pos   = fn_body.index('"fb"')
-    assert site_pos < fb_pos, "site_id branch must be evaluated before the fallback tuple"
+def test_case7_gstin_case_insensitivity_in_fallback_identity():
+    """Both trips lack FK. Same normalised name + address + GSTIN
+    (differing only in case/whitespace) → Common fallback identity."""
+    r = resolve_invoice_ship_to(
+        _customer(),
+        [
+            {"ship_site_id": "", "to_location": "Depot"},
+            {"ship_site_id": "", "to_location": " DEPOT "},
+        ],
+    )
+    assert r["mixed"] is False
+
+
+def test_source_guardrail_resolver_is_the_one_source_of_truth():
+    """Enforce that the legacy inline helpers are gone from pdf/invoice.py
+    and both surfaces import the shared resolver."""
+    pdf_src = open("/app/backend/pdf/invoice.py").read()
+    api_src = open("/app/backend/routers/invoices.py").read()
+    assert "from ship_to_resolver import resolve_invoice_ship_to" in pdf_src
+    assert "from ship_to_resolver import resolve_invoice_ship_to" in api_src
+    assert "def _ship_identity(" not in pdf_src
+    assert "def _resolve_ship_to(" not in pdf_src

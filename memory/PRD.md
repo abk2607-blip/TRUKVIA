@@ -2,6 +2,37 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter127c-invoice-shipto v3 · Guarded Ship-To Resolver + Preview/PDF parity — SHIPPED** (Feb 2026, user-approved *Guarded Option B*)
+  - **Trigger**: KOLVEKAR live UAT — Invoice AKB/26-27/0016 still rendered `Mixed — see per-trip below`. Live RCA (Motor query, read-only) confirmed two trips point at the SAME physical site but one had `ship_site_id=''` and `to_location='NAGARKURNOOL'` while the site's `site_name='MRGR CONSTRUCTIONS'`. Preview (permissive FK filter) showed the site; PDF (strict FK-vs-no-FK identity) said Mixed → divergence.
+  - **Design decision** (user directive, verbatim): "For a trip with an empty ship_site_id, infer an existing ShipSite only when there is sufficient evidence that the trip refers to that same physical destination. The inference must NOT be based solely on the presence of one non-empty ship_site_id elsewhere in the invoice."
+  - **New shared resolver** — `/app/backend/ship_to_resolver.py::resolve_invoice_ship_to(customer, trips)`
+    - Rule R1 · normalized `to_location` == normalized `site.site_name`.
+    - Rule R2 · 6-digit PIN in `to_location` matches `site.pincode` OR PIN embedded in `site.address`.
+    - Rule R3 · normalized `to_location` appears as a WHOLE TOKEN (>=4 chars) inside normalized `site.address` (this is the rule that rescues KOLVEKAR).
+    - **Ambiguity guard**: if more than one site matches, inference is refused → falls through → typically Mixed.
+    - **Read-only**: never writes an inferred `ship_site_id` back into the Trip document.
+    - **No silent inheritance**: if the resolved site has empty `state`/`pincode`/`gstin`, they stay empty — never fall back to Customer.state.
+  - **PDF path** (`backend/pdf/invoice.py`) now imports the shared resolver and drops the legacy inline `_resolve_ship_to` / `_ship_identity` helpers.
+  - **Preview parity endpoint** — `GET /api/invoices/{iid}/ship-to` returns the SAME resolver output. `frontend/src/pages/InvoiceView.jsx` now consumes it (replaces the old inline `ids/tos/sites` block) → Preview and PDF cannot diverge.
+  - **Frontend Ship-To block** — removed the silent `s.state || customer.state` fallback; site's `state` renders `—` when empty. `data-testid`s added: `invoice-ship-to-mixed`, `invoice-ship-to-name`.
+  - **ShipSite Independent State Fields** — verified state/state_code/pincode/gstin already exist on the `ShipSite` Pydantic model AND in the `ShipSitesModal` editor with dedicated `data-testid`s (`site-state`, `site-state-code`, `site-pincode`, `site-gstin`). No migration performed (per directive). No IGST/CGST/SGST calculation change (per directive).
+  - **Live UAT PDF** — regenerated via shipped `build_invoice_pdf` on KOLVEKAR data, extracted text confirms:
+    - `SHIP TO → MRGR CONSTRUCTIONS` (previously `Mixed — see per-trip below`) ✅
+    - Substring `"Mixed"` is ABSENT from page 1 ✅
+    - Address & Nagarkurnool-509209 render correctly ✅
+    - Artifact at `/app/frontend/public/kolvekar_invoice_v3.pdf` for user UAT.
+  - **Tests** — 53/53 green in <5s:
+    - `test_iter127c_ship_to_resolver_guarded.py` (17 cases · KOLVEKAR scenario, R1/R2/R3 rules, ambiguity guard, no-silent-inheritance, read-only trip mutation, empty/no-sites edge cases, source guardrails).
+    - `test_iter127c_ship_to_parity.py` (4 cases · both surfaces import the shared resolver; resolver output is deterministic; Preview endpoint wired; FE consumes it).
+    - `test_iter127c_invoice_shipto_identity.py` (rewritten to v3 · 9 cases including the updated case #6: FK + no-FK is Common when evidence supports inference, Mixed otherwise).
+    - `test_iter127c_invoice_shipto_v2.py` (rewritten to delegate to shared resolver · 4 cases).
+    - `test_iter67_invoice_pdf_ship_to_ref.py`, `test_iter79_invoice_view.py`, `test_iter127c_supplier_deactivate.py` — all still green (no regression).
+  - Wired into `scripts/run_regression.sh` as suites 59 & 60.
+  - **Untouched approved logic** (verified via green regression neighbours): freight, shortage, tax totals, LR, invoice number, customer, supplier, Iter126a/b/c, Iter127a, Iter127b P0 v4, Iter127c Supplier Deactivate.
+  - **Awaiting user UAT** on the live Preview + PDF for KOLVEKAR + at least one multi-site invoice regression.
+
+
+
 - [x] **Iter127c-invoice-shipto · KOLVEKAR LOGISTICS UAT fix — SHIPPED** (Feb 2026, user-reported bug)
   - **User-observed bug**: An invoice with 2 trips, both linked to the SAME Ship-To (MRGR CONSTRUCTIONS · KARWAR → NAGARKURNOOL), rendered a PDF header saying `Mixed — see per-trip below`.
   - **Root cause** (`/app/backend/pdf/invoice.py:194-196`): the identity comparison used the full resolved display tuple `(site_name, address, gstin, state, pincode)`. When one trip's `ship_site_id` was fully resolvable via `customer.ship_sites` but the other trip fell back to `to_location` (because dict lookup partially failed, or the linked site had partial data), the two tuples differed → treated as Mixed even though both trips genuinely referred to the same delivery site.

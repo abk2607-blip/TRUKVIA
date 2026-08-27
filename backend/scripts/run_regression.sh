@@ -94,6 +94,8 @@ CRITICAL_TESTS=(
   "tests/test_iter127c_supplier_deactivate.py"            # Iter127c · Supplier soft-delete + reactivate (Owner/Admin gated, audited, dependency counts)
   "tests/test_iter127c_invoice_shipto_identity.py"        # Iter127c · Invoice Ship-To identity uses ship_site_id first (KOLVEKAR LOGISTICS UAT fix)
   "tests/test_iter127c_invoice_shipto_v2.py"              # Iter127c v2 · Fallback heal — inconsistent FK across trips still resolves to same site
+  "tests/test_iter127c_ship_to_resolver_guarded.py"       # Iter127c v3 · Guarded Ship-To resolver (name/pincode/whole-token evidence; ambiguity → Mixed)
+  "tests/test_iter127c_ship_to_parity.py"                 # Iter127c v3 · Preview / PDF parity — both surfaces call the same resolver
 )
 
 export PATH="/root/.venv/bin:$PATH"

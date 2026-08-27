@@ -177,54 +177,14 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
     story.append(Spacer(1, 4))
 
     # ================== 2. BILL TO · SHIP TO · META ==================
-    ship_sites_by_id = {s.get("id"): s for s in (customer.get("ship_sites") or [])}
-
-    def _resolve_ship_to(trip):
-        sid = trip.get("ship_site_id") or ""
-        s = ship_sites_by_id.get(sid) if sid else None
-        if not s:
-            # Iter127c-invoice-shipto v2 (Feb 2026 · KOLVEKAR LOGISTICS UAT):
-            # heal the fallback path. If the trip has no ship_site_id but
-            # `to_location` case-insensitively matches an existing
-            # ship-site's name, USE that ship-site so its address/GSTIN/state
-            # flow into the header. This makes two trips that were entered
-            # inconsistently (one with FK, one without) resolve to the same
-            # SHIP TO — matching the already-correct Preview.
-            to_loc = (trip.get("to_location") or "").strip().casefold()
-            if to_loc:
-                for candidate in ship_sites_by_id.values():
-                    if (candidate.get("site_name") or "").strip().casefold() == to_loc:
-                        s = candidate
-                        break
-        if s:
-            return {"site_name": s.get("site_name") or "", "address": s.get("address") or "",
-                    "gstin": s.get("gstin") or "", "state": s.get("state") or "",
-                    "pincode": s.get("pincode") or "", "phone": s.get("phone") or "",
-                    "linked": True}
-        return {"site_name": trip.get("to_location") or "", "address": "",
-                "gstin": "", "state": "", "pincode": "", "phone": "", "linked": False}
-
-    per_trip_ship = [_resolve_ship_to(t) for t in trips]
-    # Iter127c-invoice-shipto (Feb 2026 · KOLVEKAR LOGISTICS UAT fix) ·
-    # Determine "same Ship-To" by NORMALISED identity, not just the display
-    # tuple. Two trips carrying the same `ship_site_id` are always the same
-    # delivery site — even if the customer's ship_sites dict is stale on one
-    # of them (address/name changed since the trip was created). Only trips
-    # without a site_id fall back to a normalised (name, address, gstin)
-    # tuple for comparison. Same normalised identity ⇒ Common Ship-To.
-    def _ship_identity(trip, resolved):
-        sid = (trip.get("ship_site_id") or "").strip()
-        if sid:
-            return ("site_id", sid)  # authoritative — always beats display tuple
-        return (
-            "fb",
-            (resolved["site_name"] or "").strip().lower(),
-            (resolved["address"] or "").strip().lower(),
-            (resolved["gstin"] or "").strip().upper(),
-        )
-    _st_identities = {_ship_identity(t, s) for t, s in zip(trips, per_trip_ship)} if per_trip_ship else set()
-    _ship_mixed = len(_st_identities) > 1
-    _common_ship = per_trip_ship[0] if per_trip_ship and not _ship_mixed else None
+    # Iter127c-invoice-shipto v3 (Feb 2026 · KOLVEKAR LOGISTICS UAT — user-approved).
+    # Ship-To resolution is now delegated to a shared resolver so that the
+    # Invoice PDF and Invoice Preview return the EXACT same header for the
+    # same input. See services/ship_to_resolver.py for the guarded rules.
+    from ship_to_resolver import resolve_invoice_ship_to as _resolve_invoice_ship_to
+    _st_result = _resolve_invoice_ship_to(customer, trips)
+    _ship_mixed = _st_result["mixed"]
+    _common_ship = _st_result["common"]
 
     bill_lines = [
         Paragraph("BILL TO", styles["SectLbl"]),
