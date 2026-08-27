@@ -164,19 +164,106 @@ async def update_supplier(sid: str, payload: Supplier, request: Request, user=De
 
 
 @router.delete("/suppliers/{sid}")
-async def delete_supplier(sid: str, request: Request, user=Depends(get_current_user)):
+async def delete_supplier(
+    sid: str,
+    request: Request,
+    reason: str = "",
+    user=Depends(get_current_user),
+):
+    """Iter127c · Owner/Admin soft-delete a supplier.
+
+    Never hard-deletes — flips `is_active=False` so all historical trips,
+    payments, diesel/advance entries, ledger and statement PDFs remain
+    fully readable and unchanged. Live operational pickers already scope
+    by `is_active:True` (see `/suppliers?active_only=true`, dashboard
+    aggregates, `/suppliers/{sid}/vehicles`, etc.) so a deactivated
+    supplier disappears from active flows on the next fetch. Owner/Admin
+    only (matches Iter127a override-authorisation semantics). Every
+    action is audit-logged with an optional reason (≤ 240 chars)."""
+    from dedup import is_override_authorised
+    if not is_override_authorised(user):
+        raise HTTPException(status_code=403, detail="Owner or Admin role required to deactivate a supplier.")
     uid = user["user_id"]
     cid = await _active_company_id(request, user)
     doc = await db.suppliers.find_one({"id": sid, "user_id": uid, "company_id": cid}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Supplier not found")
-    # Soft delete: mark inactive to preserve ledger history
-    await db.suppliers.update_one({"id": sid}, {"$set": {"is_active": False, "modified_by": uid, "modified_at": now_utc().isoformat()}})
+    # Snapshot dependency counts for the audit + response so the frontend
+    # can render "Deleted; N trips + M payments preserved" toast.
+    scope = {"user_id": uid, "company_id": cid}
+    trip_count = await db.trips.count_documents({**scope, "supplier_id": sid})
+    payment_count = await db.supplier_payments.count_documents({**scope, "supplier_id": sid}) \
+        if "supplier_payments" in await db.list_collection_names() else 0
+    vehicle_count = await db.vehicles.count_documents({**scope, "supplier_id": sid})
+    reason_clean = (reason or "").strip()[:240]
+
+    await db.suppliers.update_one(
+        {"id": sid},
+        {"$set": {
+            "is_active": False,
+            "deactivated_by": uid,
+            "deactivated_at": now_utc().isoformat(),
+            "deactivation_reason": reason_clean,
+            "modified_by": uid,
+            "modified_at": now_utc().isoformat(),
+        }},
+    )
     try:
-        await _log_audit({"user_id": uid, "company_id": cid}, "supplier", "delete", sid, doc.get("name", ""), "soft-delete", {})
+        await _log_audit(
+            {"user_id": uid, "company_id": cid},
+            "supplier", "deactivate", sid, doc.get("name", ""), "soft-delete",
+            {"reason": reason_clean, "trip_count": trip_count,
+             "payment_count": payment_count, "vehicle_count": vehicle_count},
+        )
     except Exception:
         pass
-    return {"ok": True}
+    return {
+        "ok": True,
+        "id": sid,
+        "is_active": False,
+        "dependencies": {
+            "trips": trip_count,
+            "payments": payment_count,
+            "vehicles": vehicle_count,
+        },
+        "message": "Supplier deactivated. Historical trips, payments, ledger and reports remain unchanged.",
+    }
+
+
+@router.post("/suppliers/{sid}/reactivate")
+async def reactivate_supplier(
+    sid: str,
+    request: Request,
+    user=Depends(get_current_user),
+):
+    """Iter127c · Owner/Admin only. Flips `is_active` back to True and
+    clears the deactivation audit fields. Every reactivation is audited."""
+    from dedup import is_override_authorised
+    if not is_override_authorised(user):
+        raise HTTPException(status_code=403, detail="Owner or Admin role required to reactivate a supplier.")
+    uid = user["user_id"]
+    cid = await _active_company_id(request, user)
+    doc = await db.suppliers.find_one({"id": sid, "user_id": uid, "company_id": cid}, {"_id": 0})
+    if not doc:
+        raise HTTPException(status_code=404, detail="Supplier not found")
+    await db.suppliers.update_one(
+        {"id": sid},
+        {"$set": {
+            "is_active": True,
+            "reactivated_by": uid,
+            "reactivated_at": now_utc().isoformat(),
+            "modified_by": uid,
+            "modified_at": now_utc().isoformat(),
+        }},
+    )
+    try:
+        await _log_audit(
+            {"user_id": uid, "company_id": cid},
+            "supplier", "reactivate", sid, doc.get("name", ""), "reactivate", {},
+        )
+    except Exception:
+        pass
+    return {"ok": True, "id": sid, "is_active": True}
 
 
 # --------------------------------------------------------------------------

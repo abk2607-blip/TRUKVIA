@@ -88,6 +88,10 @@ CRITICAL_TESTS=(
   "tests/test_iter126b_frontend_wiring.py"                # Iter126b · Frontend Idempotency-Key wiring + double-click Save protection
   "tests/test_iter127a_master_dedup.py"                   # Iter127a · Duplicate master prevention (customer/vehicle/supplier + override + admin listing)
   "tests/test_iter127a_multistate_gst.py"                 # Iter127a UAT · Multi-state GST warning (soft-block name, hard-block gstin/pan) + Continue Creating
+  "tests/test_iter127b_health_endpoint_hardening.py"      # Iter127b-UAT-fix v1 · /api/auth/health hardened (200 unless DB down)
+  "tests/test_iter127b_diagnostics_beacon.py"             # Iter127b-UAT-fix v2 · silent-restart diagnostic beacon + admin listing + build endpoint
+  "tests/test_iter127b_startup_hardening.py"              # Iter127b-UAT-fix v3 · post-startup migration guard (startup < 4s + session_index_unique flips)
+  "tests/test_iter127c_supplier_deactivate.py"            # Iter127c · Supplier soft-delete + reactivate (Owner/Admin gated, audited, dependency counts)
 )
 
 export PATH="/root/.venv/bin:$PATH"

@@ -2,6 +2,44 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter127c · Supplier Deactivate / Reactivate — SHIPPED** (Feb 2026, user-approved with safeguards)
+  - **Backend** (`routers/suppliers.py`):
+    - `DELETE /api/suppliers/{sid}?reason=…` — soft-delete only. `is_override_authorised(user)` gate (Owner/Admin, 403 otherwise). Sets `is_active=False`, `deactivated_by`, `deactivated_at`, `deactivation_reason`, `modified_by`, `modified_at`. Returns dependency counts `{trips, payments, vehicles}` + `message` so the UI can render "N items preserved" toast. Audit-logged with action `"deactivate"`, target `"supplier"`, reason `"soft-delete"`, plus dependency counts in the audit body. **Never hard-deletes** (source-level guardrail test locks this: `db.suppliers.delete_one/_many` MUST NOT appear in the endpoint body).
+    - `POST /api/suppliers/{sid}/reactivate` — NEW endpoint. Owner/Admin only (same gate). Sets `is_active=True` and logs `"reactivate"` audit row.
+    - Company isolation preserved end-to-end: every read/write is scoped by `{"user_id": uid, "company_id": cid}`.
+    - `GET /api/suppliers` unchanged; `?active_only=true` continues to hide inactive; default `active_only=false` still shows all so owner reviews are unaffected.
+    - Active-flow pickers (vehicle-picker, supplier-dashboard KPI, active-vehicle counts) already scoped by `is_active:True` — deactivated suppliers automatically vanish from active flows without any additional filter changes.
+  - **Frontend** (`pages/Suppliers.jsx :: SupplierList`):
+    - **Deactivate** action (rose text button, Trash2 icon, `data-testid="sup-delete-{id}"`) on every active row.
+    - Confirm modal `data-testid="sup-deactivate-modal"` renders live dependency counts fetched from `/suppliers/{sid}/vehicles` + `/suppliers/{sid}/payments` before proceeding.
+    - Optional reason textarea (`data-testid="sup-deactivate-reason"`), min 0 (empty allowed) up to 240 chars (server-clamped).
+    - **Reactivate** action on inactive rows (`data-testid="sup-reactivate-{id}"`) — Owner/Admin only.
+    - **Show Inactive** toggle (`data-testid="sup-show-inactive"`) — off by default so operational list stays clean.
+    - Rows display INACTIVE chip + 60% opacity when `is_active === false`.
+  - **Tests** — `tests/test_iter127c_supplier_deactivate.py` (**8/8 pass in 3.08s**):
+    - Deactivation returns dependency counts + soft-flag persisted.
+    - `active_only=true` hides the row while default listing still shows it.
+    - Reactivate restores the row + is audited.
+    - `suppliers-dashboard` KPIs stay identical for a deactivated supplier with no linked trips (regression proof: no calculation drift).
+    - 404 on unknown id.
+    - Repeated deactivate calls are shape-idempotent.
+    - Source-level guardrail: no `delete_one/_many` in the endpoint body; `is_active:False` present; Owner/Admin gate present.
+    - Same source-guardrail on `reactivate` endpoint.
+  - Wired into `scripts/run_regression.sh` as the 57th critical suite (also picked up Iter127b-UAT-fix v1/v2/v3 suites).
+  - **Untouched approved logic** (verified via existing green regression coverage): Iter127a duplicate rules, Iter126a/b/c, freight/shortage/supplier calculation engine, Invoice/LR, Auth, Save-Health, Regression Guard thresholds.
+- [ ] **P0 "REFRESHING…" · RCA COMPLETE — all 3 variables answered (READ-ONLY, no code change yet, awaiting user approval)**
+  - **Variable 1 · Why open Preview tabs run the old bundle after a pod restart** → **CONFIRMED root cause**: React dev-server HMR uses a WebSocket which dies during every full-pod restart. On reconnect, HMR only pushes updates for modules that changed AFTER the reconnect — modules changed WHILE disconnected are silently lost. There is also **no cache-control on `bundle.js`** (only on `index.html`), so the browser may serve `bundle.js` from HTTP cache even when index.html is refreshed. Result: 261 out of 307 beacon rows carried `phase="build_stale"` — the overwhelming majority of pill events are on stale bundles.
+  - **Variable 2 · Backend cold-start vs ingress-network for the ~4 s aborts** → **CONFIRMED root cause**: backend load, NOT ingress. Evidence: `/etc/nginx/nginx.conf` has NO explicit `proxy_read_timeout` (default 60 s — far above 4 s). The 06:40:24 UTC cluster shows 9 back-to-back `abort` at exactly ~4 003-4 130 ms — the frontend's 4 s AbortController firing, not any nginx timeout. The recovering 200 at 06:40:27 took 3 145 ms — well above healthy `/auth/health`'s 100-300 ms, indicating the backend itself was slow during that window (likely inside the `_run_background_migrations` de-dupe loop, which is still slower than a healthy state). Also captured: 2 × HTTP 502 at 16:02:52/53 which correlate EXACTLY with supervisord's 14 s SIGKILL sequence at 16:09:15-29 — i.e. real ingress 502s when the backend is stuck shutting down.
+  - **Variable 3 · Does old build_id contain old code?** → **CONFIRMED root cause**: yes, stale build_id means stale code. The current live bundle contains all v3 symbols (`FAIL_THRESHOLD`, `POLL_BACKOFF_MS`, `STARTUP_GRACE_MS`, `nextState`, `pillLabel`, `probeHealth`, `"Backend starting"` — verified via grep on `curl bundle.js`). Beacons stamped `client_build_id=1787737812` are older than the current server `build_id=1787760166`, so those tabs are running pre-v3 code (no `pillLabel`, no `STARTUP_GRACE_MS`). They still have `FAIL_THRESHOLD=4` + `PROBE_TIMEOUT=4000` from v2, so they still trip the raw "Refreshing…" pill — never the "Backend starting…" grace copy.
+  - **Production risk**: LOW. In production, `yarn start` is replaced by nginx serving a pre-built bundle with proper cache-control + a webpack content-hash on the filename. Also production doesn't experience Preview's ~1-2 h pod-restart cadence.
+  - **Smallest permanent fix proposal (READ-ONLY — awaiting your Option A/B/C selection)**:
+    - **Option A (recommended)** · Auto-reload on build_stale after a grace period. In `SilentRestartToast`, when both `restarting=true` AND `updateNudge=true` have been on for ≥ 15 s continuously, call `window.location.reload()`. Uses information the client ALREADY has (server build_id + own baseline). Preserves Iter126c drafts on reload. Eliminates the "user must Ctrl+Shift+R manually" step entirely. ~10 credits.
+    - **Option B** · Bump `PROBE_TIMEOUT` from 4 000 → 6 000 ms. Reduces false-positive `abort` bumps during backend load spikes. Trade-off: pill takes marginally longer to appear during a real outage. ~5 credits.
+    - **Option C** · A + B combined. Best UX during platform pod cycles + stale-tab hygiene. ~15 credits.
+  - **UAT plan (once you approve a permanent fix)**: (1) All staff Ctrl+Shift+R once to load the new bundle. (2) Continue live UAT. (3) Trigger controlled restart via `sudo supervisorctl restart backend`. (4) On stale-tab detection, expect either brief "Backend starting…" pill + auto-reload (A/C) or just "Backend starting…" that clears itself (B). (5) 24 h observation with diagnostic instrumentation LIVE. (6) Beacon should show all `build_stale` events followed by a `page_load` refresh within 15 s.
+  - **Diagnostic instrumentation stays ACTIVE** per user instruction.
+
+
 - [x] **Iter126c · LOCKED (Feb 2026)** ✅ — Draft-recovery Phase 1 formally approved after user's live UAT.
   - **User-confirmed behaviour on live Preview**:
     - Existing Trip → Edit → no Restore banner (edit-route silence works).

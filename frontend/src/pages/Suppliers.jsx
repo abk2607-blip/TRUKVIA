@@ -137,8 +137,53 @@ function useSuppliers() {
 /* ================= List ================= */
 function SupplierList() {
   const [q, setQ] = useState("");
+  const [showInactive, setShowInactive] = useState(false);
+  const [deleteSid, setDeleteSid] = useState(null);
+  const [deleteReason, setDeleteReason] = useState("");
+  const qc = useQueryClient();
   const { data = [], isLoading } = useSuppliers();
-  const rows = data.filter(s => !q || s.name.toLowerCase().includes(q.toLowerCase()) || (s.mobile || "").includes(q));
+  const rows = data
+    .filter(s => showInactive ? true : (s.is_active !== false))
+    .filter(s => !q || s.name.toLowerCase().includes(q.toLowerCase()) || (s.mobile || "").includes(q));
+  const activeSupplier = deleteSid ? data.find(s => s.id === deleteSid) : null;
+
+  // Iter127c · Fetch dependency counts (trips + payments + vehicles) when a
+  // Delete modal opens so the user sees what history will be preserved.
+  const { data: dep } = useQuery({
+    queryKey: ["sup-dep", deleteSid],
+    enabled: Boolean(deleteSid),
+    queryFn: async () => {
+      const [veh, pay] = await Promise.all([
+        api.get(`/suppliers/${deleteSid}/vehicles`).then(r => r.data).catch(() => []),
+        api.get(`/suppliers/${deleteSid}/payments`).then(r => r.data).catch(() => []),
+      ]);
+      return { vehicles: veh.length || 0, payments: pay.length || 0 };
+    },
+  });
+
+  const del = useMutation({
+    mutationFn: async ({ sid, reason }) => {
+      const params = reason ? `?reason=${encodeURIComponent(reason)}` : "";
+      return (await api.delete(`/suppliers/${sid}${params}`)).data;
+    },
+    onSuccess: (data) => {
+      const d = data && data.dependencies;
+      const summary = d ? ` · ${d.trips} trips, ${d.payments} payments, ${d.vehicles} vehicles preserved` : "";
+      toast.success(`Supplier deactivated${summary}`);
+      setDeleteSid(null); setDeleteReason("");
+      qc.invalidateQueries({ queryKey: ["suppliers"] });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Deactivation failed"),
+  });
+
+  const reactivate = useMutation({
+    mutationFn: async (sid) => (await api.post(`/suppliers/${sid}/reactivate`)).data,
+    onSuccess: () => {
+      toast.success("Supplier reactivated");
+      qc.invalidateQueries({ queryKey: ["suppliers"] });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Reactivation failed"),
+  });
 
   return (
     <div className="space-y-3">
@@ -146,6 +191,11 @@ function SupplierList() {
         <Search size={16} className="text-zinc-400" />
         <input data-testid="sup-search" value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name or mobile"
           className={`${inputCls} max-w-md`} />
+        <label className="flex items-center gap-2 text-xs uppercase font-bold text-zinc-600 cursor-pointer select-none">
+          <input type="checkbox" data-testid="sup-show-inactive" checked={showInactive}
+            onChange={(e) => setShowInactive(e.target.checked)} className="accent-zinc-950" />
+          Show Inactive
+        </label>
         <Link to="../add" data-testid="sup-goto-add" className="ml-auto px-3 py-2 bg-zinc-950 text-white text-xs uppercase tracking-wider font-bold rounded-sm hover:bg-zinc-800">+ New Supplier</Link>
       </div>
       <div className="border border-zinc-200 rounded-sm overflow-hidden bg-white">
@@ -158,14 +208,14 @@ function SupplierList() {
               <th className="text-left px-3 py-2">GSTIN</th>
               <th className="text-right px-3 py-2">Opening</th>
               <th className="text-center px-3 py-2">Status</th>
-              <th className="w-40"></th>
+              <th className="w-56"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-zinc-100">
             {isLoading && <tr><td colSpan={7} className="px-3 py-10 text-center text-zinc-400">Loading…</td></tr>}
             {!isLoading && rows.length === 0 && <tr><td colSpan={7} className="px-3 py-10 text-center text-zinc-400">No suppliers</td></tr>}
             {rows.map(s => (
-              <tr key={s.id} data-testid={`sup-row-${s.id}`} className="hover:bg-amber-50">
+              <tr key={s.id} data-testid={`sup-row-${s.id}`} className={`hover:bg-amber-50 ${s.is_active === false ? "opacity-60" : ""}`}>
                 <td className="px-3 py-2 font-bold">{s.name}</td>
                 <td className="px-3 py-2">{s.contact_person || "—"}</td>
                 <td className="px-3 py-2 font-mono">{s.mobile || "—"}</td>
@@ -174,18 +224,57 @@ function SupplierList() {
                   {s.opening_balance ? `${fmtCurrency(s.opening_balance)} ${s.opening_balance_type === "advance" ? "Cr" : "Dr"}` : "—"}
                 </td>
                 <td className="px-3 py-2 text-center">
-                  <span className={`text-[10px] px-2 py-0.5 rounded-sm font-bold ${s.is_active ? "bg-emerald-100 text-emerald-800" : "bg-zinc-200 text-zinc-700"}`}>
-                    {s.is_active ? "ACTIVE" : "INACTIVE"}
+                  <span className={`text-[10px] px-2 py-0.5 rounded-sm font-bold ${s.is_active !== false ? "bg-emerald-100 text-emerald-800" : "bg-zinc-200 text-zinc-700"}`}>
+                    {s.is_active !== false ? "ACTIVE" : "INACTIVE"}
                   </span>
                 </td>
-                <td className="px-3 py-2 text-right space-x-2">
+                <td className="px-3 py-2 text-right space-x-3">
                   <Link to={`../edit/${s.id}`} data-testid={`sup-edit-${s.id}`} className="text-[10px] uppercase font-bold text-zinc-500 hover:text-zinc-950"><Edit3 size={13} className="inline"/> Edit</Link>
+                  {s.is_active !== false ? (
+                    <button data-testid={`sup-delete-${s.id}`} onClick={() => { setDeleteSid(s.id); setDeleteReason(""); }}
+                      className="text-[10px] uppercase font-bold text-rose-600 hover:text-rose-800"><Trash2 size={13} className="inline"/> Deactivate</button>
+                  ) : (
+                    <button data-testid={`sup-reactivate-${s.id}`} onClick={() => reactivate.mutate(s.id)}
+                      className="text-[10px] uppercase font-bold text-emerald-700 hover:text-emerald-900">↻ Reactivate</button>
+                  )}
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      {/* Iter127c · Deactivate modal with dependency summary */}
+      {deleteSid && activeSupplier && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center" onClick={() => setDeleteSid(null)}>
+          <div className="bg-white rounded-sm border border-zinc-200 max-w-md w-full p-5" onClick={(e) => e.stopPropagation()} data-testid="sup-deactivate-modal">
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-lg font-bold">Deactivate supplier?</div>
+              <button onClick={() => setDeleteSid(null)} className="text-zinc-500"><X size={16}/></button>
+            </div>
+            <div className="text-sm mb-3">
+              <div className="font-bold">{activeSupplier.name}</div>
+              <div className="text-xs text-zinc-500">{activeSupplier.mobile || ""} {activeSupplier.gst_in ? ` · ${activeSupplier.gst_in}` : ""}</div>
+            </div>
+            <div className="bg-zinc-50 border border-zinc-200 rounded-sm p-3 text-xs mb-3">
+              This supplier will be marked <b>INACTIVE</b> and hidden from active pickers.
+              <div className="mt-2">The following history will be <b>preserved unchanged</b>:</div>
+              <ul className="mt-1 ml-4 list-disc text-zinc-700">
+                <li>{dep ? dep.vehicles : "…"} linked vehicles</li>
+                <li>{dep ? dep.payments : "…"} payments &amp; ledger entries</li>
+                <li>All trips, statement PDFs and reports</li>
+              </ul>
+            </div>
+            <label className={labelCls}>Reason (optional)</label>
+            <textarea data-testid="sup-deactivate-reason" value={deleteReason} onChange={(e) => setDeleteReason(e.target.value)} className={inputCls} rows={2} placeholder="Why is this supplier being deactivated?" />
+            <div className="flex gap-2 justify-end mt-4">
+              <button onClick={() => setDeleteSid(null)} className="px-4 py-2 text-xs uppercase font-bold border border-zinc-300 text-zinc-700 rounded-sm hover:bg-zinc-50">Cancel</button>
+              <button data-testid="sup-confirm-deactivate" onClick={() => del.mutate({ sid: deleteSid, reason: deleteReason.trim() })}
+                className="px-4 py-2 text-xs uppercase font-bold bg-rose-600 text-white rounded-sm hover:bg-rose-700">Deactivate</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
