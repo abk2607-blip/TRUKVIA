@@ -324,6 +324,12 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
         trip_short_amt = float(t.get("shortage_amount") or 0) + float((t.get("expenses") or {}).get("shortage_amount") or 0)
         net_short_mt = round(trip_short_amt / prod_rate, 3) if (prod_rate > 0 and trip_short_amt > 0) else 0
 
+        # Iter127c-invoice-shortage-availability (Feb 2026 · user-approved):
+        # when unloading is pending (unloaded_qty <= 0), ALL shortage-related
+        # cells — Actual Short, Allowance, Net Short — must render "—".
+        # Freight cell is unaffected.  Guard mirrors services.py._compute_trip.
+        _unload_available = unloaded_mt > 0
+
         # Allowance MT — Iter117 · dedicated column now, sourced from the
         # frozen trip snapshot (Product Master or Custom Customer Allowance).
         _lim = float(t.get("applied_customer_shortage_limit") or 0)
@@ -331,14 +337,18 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
         _prod_pct = float(t.get("applied_product_shortage_pct") or 0)
         allowed_mt = 0.0
         allow_cell = "—"
-        if _lim > 0 and _lim_type in ("pct", "kg"):
-            allowed_mt = (_lim / 1000.0) if _lim_type == "kg" else (loaded_mt * _lim / 100.0)
-            allow_cell = f"{allowed_mt:.3f}"
-        elif _prod_pct > 0:
-            allowed_mt = loaded_mt * _prod_pct / 100.0
-            allow_cell = f"{allowed_mt:.3f}"
+        if _unload_available:
+            if _lim > 0 and _lim_type in ("pct", "kg"):
+                allowed_mt = (_lim / 1000.0) if _lim_type == "kg" else (loaded_mt * _lim / 100.0)
+                allow_cell = f"{allowed_mt:.3f}"
+            elif _prod_pct > 0:
+                allowed_mt = loaded_mt * _prod_pct / 100.0
+                allow_cell = f"{allowed_mt:.3f}"
 
-        if short_qty > 0:
+        if not _unload_available:
+            actual_short_cell = "—"
+            net_short_cell = "—"
+        elif short_qty > 0:
             actual_short_cell = f"{short_qty:.3f}"
             net_short_cell = f"<font color='#B45309'><b>{net_short_mt:.3f}</b></font>" if net_short_mt > 0 else "—"
         elif excess_qty > 0:

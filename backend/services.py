@@ -64,17 +64,35 @@ def _compute_trip(t: Trip) -> Trip:
     # so old readers still work. Diff is always computed from tons vs unloaded_qty.
     effective_loaded = float(t.tons) if (t.tons or 0) > 0 else float(t.loaded_qty or 0)
     t.loaded_qty = round(effective_loaded, 3)
-    diff = round(effective_loaded - (t.unloaded_qty or 0), 3)
-    if effective_loaded > 0 or (t.unloaded_qty or 0) > 0:
-        if diff > 0:
-            t.shortage_qty = diff
-            t.excess_qty = 0.0
-        elif diff < 0:
-            t.excess_qty = round(-diff, 3)
-            t.shortage_qty = 0.0
-        else:
-            t.shortage_qty = 0.0
-            t.excess_qty = 0.0
+    # Iter127c-invoice-shortage-availability (Feb 2026 · user-approved):
+    # "Unloading pending" MUST NOT be treated as "0 unloaded".  Shortage /
+    # excess math only runs when actual unload data is available, i.e.
+    # unloaded_qty > 0.  When unloading is pending, shortage_qty and
+    # excess_qty stay at their model default (0.0), which naturally causes
+    # the PDF, Preview and downstream aggregations to render "—" — no
+    # fabricated shortage, no fabricated deduction from freight.  This is
+    # a DATA-AVAILABILITY gate only; the customer / supplier / driver
+    # shortage engines below run verbatim on the resulting truthful value.
+    if (t.unloaded_qty or 0) > 0:
+        diff = round(effective_loaded - t.unloaded_qty, 3)
+        if effective_loaded > 0 or t.unloaded_qty > 0:
+            if diff > 0:
+                t.shortage_qty = diff
+                t.excess_qty = 0.0
+            elif diff < 0:
+                t.excess_qty = round(-diff, 3)
+                t.shortage_qty = 0.0
+            else:
+                t.shortage_qty = 0.0
+                t.excess_qty = 0.0
+    else:
+        # Unloading not yet done ⇒ shortage / excess are NOT AVAILABLE.
+        # Preserve any user-set overrides (shortage_amount_override handled
+        # further below); zero out the auto-derived diffs so no fabricated
+        # value can propagate into invoice totals, supplier settlement, or
+        # reports.  Existing engine formulas run unchanged on this truthful 0.
+        t.shortage_qty = 0.0
+        t.excess_qty = 0.0
     # Product-rate valuation for shortage / excess (editable via override flags)
     rate = t.product_rate_per_mt or 0
     # Iter98 · Phase 3 — Central Customer Shortage Calc.

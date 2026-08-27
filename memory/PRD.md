@@ -2,6 +2,40 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter127c-invoice-shortage-availability · Pre-unload fabricated shortage fix — SHIPPED** (Feb 2026, user-approved)
+  - **Bug**: For trips where the vehicle was loaded but not yet unloaded (`unloaded_qty` is 0/None/missing), the shortage engine was silently converting the missing unload data into `shortage_qty = Load MT − 0 = Load MT`. The Invoice PDF then showed **Actual Short = 29.670 MT** (KOLVEKAR-style example) even though unloading had not happened. Real-world blast radius before the fix: **54,955 trips** in DB carrying a fabricated `shortage_qty` (**15,551 already invoiced**).
+  - **Business rule locked** (per user directive #7, verbatim): _"Blank/null/missing unload data means 'Not available yet.' It does NOT mean 'Zero quantity unloaded.'"_
+  - **Fix scope** — data-availability gate only, no formula/policy change:
+    - `backend/services.py::_compute_trip` — the shortage/excess auto-diff block now guards on `(t.unloaded_qty or 0) > 0`. When unloading is pending, `shortage_qty` and `excess_qty` remain at the model default `0.0`. The customer / supplier / driver shortage-engine branches downstream run **verbatim** on the resulting truthful values.
+    - `backend/pdf/invoice.py` — new `_unload_available` gate near the trip-row builder. When unloading is pending, Actual Short / Allowance / Net Short cells all render `—`. Freight cell, Load MT, and every other column unaffected.
+  - **Safeguard verifications** (read-only, before code was touched):
+    - No explicit "unloading_completed" status/flag exists in the Trip model — so `unloaded_qty > 0` is the correct availability signal.
+    - 9,868 trips have `unloaded_qty = 0` + non-empty `unloading_date` — inspection confirms every one of them is an incomplete-data-entry case (halting date typed, unload qty never entered), **not** a legitimate "0 unloaded" completion.
+    - **Historical financial impact on regeneration: ₹0.** The 15,551 invoiced trips with fabricated `shortage_qty` all had `shortage_amount = ₹0` in DB because product rate / customer shortage limit were absent — so the fabricated qty never translated into a real deduction. On re-render, invoice totals stay identical; only the DISPLAY corrects from `29.670` → `—`. This is exactly the user-approved outcome.
+    - 1,237 trips carry `shortage_amount_override = True` — preserved verbatim, the override branches at services.py:106 / :141 are untouched by this fix.
+  - **State contract locked**:
+    - **State A · Pre-unload** — Load MT populated; Unload MT / Unload Date / Actual Short / Allowance / Net Short all render `—`; Freight preserved.
+    - **State B · Unloaded** — existing customer/supplier/driver engine runs exactly as before.
+    - **State C · No shortage** — `Load = Unload` returns `shortage_qty = 0`, `shortage_amount = ₹0`.
+  - **Tests** — `test_iter127c_invoice_shortage_availability.py` (13 cases):
+    1. Loaded but not unloaded (`unload_qty=0`) → `shortage_qty=0`, `shortage_amount=₹0`, freight `₹3000` preserved.
+    2. `unloaded_qty=None` (never touched) → same.
+    3. Unload date present, unload qty blank → still unavailable (directive #9 lock).
+    4. State B — real shortage engine unchanged; 0.5 MT − 0.15 MT allowance → ₹17,500 deduction.
+    5. State C — `Load = Unload` → `shortage_qty=0`.
+    6. **KOLVEKAR regression** — both trips (unloaded) → shortage math byte-identical to pre-fix output.
+    7. Freight independence — freight identical pre- and post-unload.
+    8. PDF row proof — pre-unload PDF contains `29.670` **exactly once** (Load MT cell only); Actual Short / Allowance / Net Short cells render `—`; Freight ₹2,967 preserved.
+    9-13. Source guardrails — Iter127c-shortage-availability comment locked in services + pdf; override branches untouched; freight calc still precedes shortage gate.
+  - **Regression neighbours re-run** (all green): iter98 shortage engine, iter103 shortage simplification, iter107 allowance caption, iter42 unloading diff, iter46 halting single source, iter59 driver shortage policy, iter74 supplier shortage integration, iter10 billing, iter44 halting invoice/supplier, iter67 ship-to ref, iter79 invoice view, entire iter127c v3/v3.1/v3.2 Ship-To bundle, supplier deactivate. **Total 130+ tests green.**
+  - **Live PDFs regenerated**:
+    - `/app/frontend/public/kolvekar_invoice_shortage_availability.pdf` — State B (KOLVEKAR both trips unloaded) — output byte-identical to prior LOCKED baseline (16-Aug-2026 + 22-Aug-2026 in Unload Date column; MRGR CONSTRUCTIONS Ship-To; no `Mixed`; existing shortage 0.13 / 0.06 MT preserved).
+    - `/app/frontend/public/preunload_29670_demo.pdf` — Synthetic State A invoice (Load MT 29.670, unload pending). PDF text confirms: Load MT `29.670`; Unload MT `—`; Unload Date `—`; Actual Short `—`; Allowance `—`; Net Short `—`; Freight `₹ 2,967.00`. The fabricated `29.670` appears **exactly once** in the row — the Load MT cell — never in Actual Short.
+  - **Untouched (verified)**: Freight formula/policy, Customer shortage formula, Supplier shortage engine, Driver shortage policy, Invoice tax calc, Invoice totals, LR, Ship-To (Iter127c v3/v3.1/v3.2), Customer/Supplier duplicate logic, Iter126a/b/c, Iter127a, Auth, Save Health, Regression Guard, dd-Mmm-yyyy date contract.
+  - Wired into `scripts/run_regression.sh` as suite #64.
+
+
+
 - [x] **Iter127c-invoice-unload-date · KOLVEKAR LOGISTICS live UAT fix — SHIPPED** (Feb 2026, user-approved)
   - **Bug**: Invoice PDF's "Unload Date" column silently rendered `—` for every trip on every invoice, even when the trip had a saved `unloading_date`. Reported live during KOLVEKAR LOGISTICS UAT (invoice AKB/26-27/0016).
   - **Root cause (read-only RCA)**: single one-line typo in `backend/pdf/invoice.py:360`. The PDF trip-row builder called `t.get("unloaded_at") or t.get("unload_date")` — neither key exists anywhere in the codebase. The correct, canonical field is `unloading_date` (used by DB, Trip Model, Trip API, TripForm, TripView, Halting engine, Reports, and every test since Iter10). Data flow was intact at every stage; the PDF was the only broken hop.
