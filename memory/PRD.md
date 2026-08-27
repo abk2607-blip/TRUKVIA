@@ -2,6 +2,21 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [🔒 **LOCKED** by user · 2026-02] **Iter127c · Full invoice-related bundle — LOCKED, no further changes without explicit approval.**
+  - Guarded Ship-To resolver (v3)
+  - Invoice Preview / PDF Ship-To parity (v3)
+  - GSTIN normalization on save + render (v3.1)
+  - GSTIN → State / State Code auto-derivation (v3.2)
+  - Unload Date column correction (`unloading_date` field)
+  - Pre-unload shortage availability gate — "Missing unloading data = Not Available Yet"; no fabricated full-load shortage before unloading; freight independent and valid before unloading
+  - **DO NOT modify** any of the above without an explicit user directive.
+  - **DO NOT** add the optional "Unloading Pending" UI pill.
+  - **DO NOT** add the "disk newer than in-memory" guardrail at this stage.
+  - **DO NOT touch**: Freight · Shortage engine · Tax / IGST / CGST / SGST · Invoice totals · LR · Customer/Supplier duplicate logic · Iter126a/b/c · Iter127a · Auth · Save Health · Regression Guard.
+  - Iter127c Supplier Deactivate — remains pending user's UAT lock (separate item).
+
+
+
 - [x] **Iter127c-invoice-shortage-availability · Pre-unload fabricated shortage fix — SHIPPED** (Feb 2026, user-approved)
   - **Bug**: For trips where the vehicle was loaded but not yet unloaded (`unloaded_qty` is 0/None/missing), the shortage engine was silently converting the missing unload data into `shortage_qty = Load MT − 0 = Load MT`. The Invoice PDF then showed **Actual Short = 29.670 MT** (KOLVEKAR-style example) even though unloading had not happened. Real-world blast radius before the fix: **54,955 trips** in DB carrying a fabricated `shortage_qty` (**15,551 already invoiced**).
   - **Business rule locked** (per user directive #7, verbatim): _"Blank/null/missing unload data means 'Not available yet.' It does NOT mean 'Zero quantity unloaded.'"_
