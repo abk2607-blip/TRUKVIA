@@ -98,6 +98,7 @@ CRITICAL_TESTS=(
   "tests/test_iter127c_ship_to_parity.py"                 # Iter127c v3 · Preview / PDF parity — both surfaces call the same resolver
   "tests/test_iter127c_gstin_normalization.py"            # Iter127c v3.1 · GSTIN normalize on save + on render (dirty stored → clean displayed, no DB mutation)
   "tests/test_iter127c_gstin_state_derivation.py"         # Iter127c v3.2 · GSTIN → State/State Code auto-derivation on save (blank-only fill, no overwrite)
+  "tests/test_iter127c_invoice_unload_date.py"            # Iter127c · KOLVEKAR UAT fix — Invoice PDF now reads t["unloading_date"] (was t["unloaded_at"]/t["unload_date"] typo)
 )
 
 export PATH="/root/.venv/bin:$PATH"

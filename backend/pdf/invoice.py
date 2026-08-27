@@ -357,7 +357,7 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
             _fit_paragraph(route_html, _rt, _COL_PTS[4], min_font=7.0),
             Paragraph(f"{loaded_mt:.3f}", _rn),
             Paragraph(f"{unloaded_mt:.3f}" if unloaded_mt > 0 else "—", _rn),
-            _fit_paragraph(_fmt_ind_date(t.get("unloaded_at") or t.get("unload_date")), _rn, _COL_PTS[7], min_font=5.0),
+            _fit_paragraph(_fmt_ind_date(t.get("unloading_date")), _rn, _COL_PTS[7], min_font=5.0),
             Paragraph(actual_short_cell, _rn),
             Paragraph(allow_cell, _rn),
             Paragraph(net_short_cell, _rn),

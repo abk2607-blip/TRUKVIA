@@ -2,6 +2,27 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter127c-invoice-unload-date · KOLVEKAR LOGISTICS live UAT fix — SHIPPED** (Feb 2026, user-approved)
+  - **Bug**: Invoice PDF's "Unload Date" column silently rendered `—` for every trip on every invoice, even when the trip had a saved `unloading_date`. Reported live during KOLVEKAR LOGISTICS UAT (invoice AKB/26-27/0016).
+  - **Root cause (read-only RCA)**: single one-line typo in `backend/pdf/invoice.py:360`. The PDF trip-row builder called `t.get("unloaded_at") or t.get("unload_date")` — neither key exists anywhere in the codebase. The correct, canonical field is `unloading_date` (used by DB, Trip Model, Trip API, TripForm, TripView, Halting engine, Reports, and every test since Iter10). Data flow was intact at every stage; the PDF was the only broken hop.
+  - **Fix**: single line — `t.get("unloading_date")`. `_fmt_ind_date` (dd-Mmm-yyyy) contract preserved.
+  - **Tests**: `test_iter127c_invoice_unload_date.py` (6 cases):
+    1. Real `unloading_date="2026-08-16"` → PDF text contains `16-Aug-2026`.
+    2. KOLVEKAR two-trip fixture → both `16-Aug-2026` AND `22-Aug-2026` present.
+    3. Blank `unloading_date` → `—`; Trip Date is NOT substituted (no fabrication).
+    4. Missing `unloading_date` key → PDF renders without KeyError.
+    5. Source guardrail — `unloaded_at` and `t.get("unload_date")` MUST NOT reappear in `pdf/invoice.py`; `t.get("unloading_date")` MUST be present.
+    6. Date-format helper `_fmt_ind_date` still wraps the Unload Date lookup — dd-Mmm-yyyy contract locked.
+  - **Broader PDF regression neighbours** (iter67 ship-to ref, iter79 invoice view, iter127c v2/v3/v3.1/v3.2 Ship-To suite, supplier deactivate) — **98/98 green** in <7 s.
+  - **Live PDF proof** — regenerated KOLVEKAR PDF at `/app/frontend/public/kolvekar_invoice_unload_date_fixed.pdf` (965 KB). Text extraction confirms:
+    - Trip LR 8277 (DB `unloading_date='2026-08-16'`) → PDF cell renders `16-Aug-2026` ✅
+    - Trip LR 8279 (DB `unloading_date='2026-08-22'`) → PDF cell renders `22-Aug-2026` ✅
+    - Other `—` cells still present (from Actual Short / Allowance / Net Short columns — legitimate blanks, unrelated).
+  - **Untouched (verified)**: freight, shortage, tax, IGST/CGST/SGST calc, invoice totals, LR, Customer/Supplier duplicate logic, Iter126a/b/c, Iter127a, Ship-To logic (Iter127c v3/v3.1/v3.2), Auth, Regression Guard, date format contract.
+  - Wired into `scripts/run_regression.sh` as suite #63.
+
+
+
 - [x] **Iter127c-invoice-shipto v3.2 · Ship-To GSTIN → State / State Code auto-derivation — SHIPPED** (Feb 2026, user-approved small isolated UX/data-entry enhancement)
   - **Requirement**: When a valid Ship-To GSTIN is entered, read the first 2 digits → derive State Code + State Name → show in the form (no unnecessary manual entry). Never guess on blank/invalid. Never silently overwrite a conflicting manual value. Never touch historical records.
   - **Backend helpers** (`/app/backend/ship_to_resolver.py`):
