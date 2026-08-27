@@ -2,6 +2,30 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [🔒🔒 **FULL LOCK** by user · 2026-02] **Iter127c · Complete scope — LOCKED end-to-end.**
+  - **Supplier Deactivate / Reactivate — UAT PASSED**
+    - Active → Deactivate ✅
+    - Dependency confirmation modal ✅
+    - No-transaction deactivation ✅
+    - Linked-vehicle dependency handled correctly ✅
+    - Show Inactive toggle visibility ✅
+    - Reactivate returns supplier to Active ✅
+    - Show Inactive OFF hides inactive supplier ✅
+    - Active operational list clean ✅
+  - **Invoice / Ship-To / Shortage — UAT PASSED**
+    - Guarded Ship-To resolver (v3) ✅
+    - Preview/PDF parity ✅
+    - GSTIN normalization (v3.1) ✅
+    - GSTIN → State/State Code derivation (v3.2) ✅
+    - Unload Date rendering ✅
+    - Pre-unload shortage no longer fabricated ✅
+    - Freight independent of unloading ✅
+    - Completed unloading shortage behaviour preserved ✅
+  - **DO NOT modify** ANY Iter127c logic without an explicit user directive.
+  - **DO NOT touch**: Freight · Shortage engine · Tax / IGST / CGST / SGST · Invoice totals · LR · Customer/Supplier duplicate logic · Iter126a/b/c · Iter127a · Auth · Save Health · Regression Guard.
+
+
+
 - [🔒 **LOCKED** by user · 2026-02] **Iter127c · Full invoice-related bundle — LOCKED, no further changes without explicit approval.**
   - Guarded Ship-To resolver (v3)
   - Invoice Preview / PDF Ship-To parity (v3)
