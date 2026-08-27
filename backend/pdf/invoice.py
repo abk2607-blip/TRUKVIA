@@ -191,9 +191,25 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
                 "gstin": "", "state": "", "pincode": "", "phone": "", "linked": False}
 
     per_trip_ship = [_resolve_ship_to(t) for t in trips]
-    _st_keys = {(s["site_name"], s["address"], s["gstin"], s["state"], s["pincode"])
-                for s in per_trip_ship} if per_trip_ship else set()
-    _ship_mixed = len(_st_keys) > 1
+    # Iter127c-invoice-shipto (Feb 2026 · KOLVEKAR LOGISTICS UAT fix) ·
+    # Determine "same Ship-To" by NORMALISED identity, not just the display
+    # tuple. Two trips carrying the same `ship_site_id` are always the same
+    # delivery site — even if the customer's ship_sites dict is stale on one
+    # of them (address/name changed since the trip was created). Only trips
+    # without a site_id fall back to a normalised (name, address, gstin)
+    # tuple for comparison. Same normalised identity ⇒ Common Ship-To.
+    def _ship_identity(trip, resolved):
+        sid = (trip.get("ship_site_id") or "").strip()
+        if sid:
+            return ("site_id", sid)  # authoritative — always beats display tuple
+        return (
+            "fb",
+            (resolved["site_name"] or "").strip().lower(),
+            (resolved["address"] or "").strip().lower(),
+            (resolved["gstin"] or "").strip().upper(),
+        )
+    _st_identities = {_ship_identity(t, s) for t, s in zip(trips, per_trip_ship)} if per_trip_ship else set()
+    _ship_mixed = len(_st_identities) > 1
     _common_ship = per_trip_ship[0] if per_trip_ship and not _ship_mixed else None
 
     bill_lines = [

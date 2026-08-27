@@ -2,6 +2,27 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter127c-invoice-shipto · KOLVEKAR LOGISTICS UAT fix — SHIPPED** (Feb 2026, user-reported bug)
+  - **User-observed bug**: An invoice with 2 trips, both linked to the SAME Ship-To (MRGR CONSTRUCTIONS · KARWAR → NAGARKURNOOL), rendered a PDF header saying `Mixed — see per-trip below`.
+  - **Root cause** (`/app/backend/pdf/invoice.py:194-196`): the identity comparison used the full resolved display tuple `(site_name, address, gstin, state, pincode)`. When one trip's `ship_site_id` was fully resolvable via `customer.ship_sites` but the other trip fell back to `to_location` (because dict lookup partially failed, or the linked site had partial data), the two tuples differed → treated as Mixed even though both trips genuinely referred to the same delivery site.
+  - **Fix** — new `_ship_identity(trip, resolved)` helper (line ~194):
+    - If trip has `ship_site_id` → identity = `("site_id", sid)`. Authoritative — never depends on dict resolution. Two trips sharing the same `ship_site_id` are always the SAME delivery site.
+    - No `ship_site_id` → identity = `("fb", norm_name, norm_address, norm_gstin)`. Same name + different address → different identity → Mixed.
+    - Trip with FK vs trip without FK ⇒ mixed (different identity buckets — safest interpretation).
+  - **Scope preserved** (verified): no changes to freight calc, shortage, tax, invoice totals, LR, customer, Iter126a/b/c, Iter127a, supplier logic. Only the Ship-To header identity check + display grouping. Existing PDF render tests (iter67) still green.
+  - **Tests** — `tests/test_iter127c_invoice_shipto_identity.py` (**8/8 pass in 2 s**):
+    1. Single trip / one Ship-To → not mixed.
+    2. Two trips / same `ship_site_id` even with partial dict resolution on one trip → Common (the exact KOLVEKAR scenario).
+    3. Two trips / different `ship_site_id` → Mixed.
+    4. Same name + different address (no FK) → Mixed.
+    5. Three trips / same FK + drifted trip data (dates/refs) → Common.
+    6. Trip with FK + trip without FK → Mixed.
+    7. Fallback identity is case-insensitive on name / address / GSTIN (normalisation).
+    8. Source-guardrail: `_ship_identity` helper exists and `site_id` branch evaluated before fallback tuple.
+  - Existing iter67 integration tests re-verified (**4/4 pass**): same-site invoice PDF renders single Ship-To (no "Mixed"), different-site invoice PDF renders "Mixed" caption, customer_ref no-inheritance, fallback to `to_location` still works.
+  - Wired into `scripts/run_regression.sh` as the 58th critical suite.
+
+
 - [x] **Iter127b-UAT-fix v4 · PERMANENT P0 fix (Option C = A + B) — SHIPPED** (Feb 2026, user-approved)
   - **Fix A · Build-stale auto-reload after 15 s** (`SilentRestartToast.jsx`):
     - New constant `BUILD_STALE_AUTORELOAD_MS = 15_000`.
