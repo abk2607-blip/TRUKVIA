@@ -33,6 +33,53 @@ from reportlab.platypus import (
 )
 
 
+# Iter127b · Invoice PDF pagination footer (Feb 2026 · user-approved Option A).
+# Draws "Page X of Y" bottom-right on every page. Uses a two-pass render so
+# the total page count is known before the footer is drawn. Zero effect on
+# any flowable, calc or business logic — the story rebuilds identically on
+# each pass; only the footer glyph is added.
+class _TwoPassDocTemplate(SimpleDocTemplate):
+    """Renders once to count pages, then rebuilds so 'Page X of Y' has a
+    correct Y. The story flowables are IDENTICAL across both passes."""
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._total_pages = 0
+
+    def afterFlowable(self, flowable):
+        pass  # no-op, retained for clarity
+
+    def multiBuild(self, flowables, onFirstPage=None, onLaterPages=None, **kw):
+        # Pass 1 — count pages without any footer callback so the layout is
+        # exactly what pass 2 will use.
+        self.build(list(flowables))
+        self._total_pages = self.page
+        # Reset internal state and rebuild with the footer callback that now
+        # knows the correct total.
+        # NOTE: SimpleDocTemplate.build resets its own state each call, so a
+        # second .build() reuses the same buffer and re-emits pages 1..N.
+        # We must re-create the buffer so pass-1 pages don't leak into the
+        # final output. See _build_invoice_pdf caller.
+        self.build(list(flowables), onFirstPage=onFirstPage, onLaterPages=onLaterPages)
+
+
+def _invoice_page_footer_factory(total_pages_ref, page_size):
+    """Returns a canvas callback that draws 'Page X of Y'.  total_pages_ref
+    is a mutable [int] so the callback picks up the final page count set
+    by the two-pass renderer between passes."""
+    def _footer(canvas, doc):
+        canvas.saveState()
+        try:
+            canvas.setFont(_UNI_FONT, 7.5)
+        except Exception:
+            canvas.setFont("Helvetica", 7.5)
+        canvas.setFillColor(colors.HexColor("#64748B"))  # C_MUTED
+        total = total_pages_ref[0] or doc.page
+        text = f"Page {canvas.getPageNumber()} of {total}"
+        canvas.drawRightString(page_size[0] - 10 * mm, 5 * mm, text)
+        canvas.restoreState()
+    return _footer
+
+
 # -------------------- Freight Basis label resolver --------------------
 _FREIGHT_BASIS_LABELS = {
     "per_ton_loading": "Per Ton (Loading)",
@@ -720,5 +767,22 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
     ]))
     story.append(KeepTogether([Spacer(1, 6), sig_tbl]))
 
-    doc.build(story)
+    # Iter127b · Two-pass render so "Page X of Y" footer has a correct Y.
+    # Pass 1 counts pages into a fresh throwaway buffer; pass 2 draws the
+    # final PDF into `buf` with the footer callback. The story is byte-
+    # identical across both passes — no flowable, calc or business logic
+    # change.  Signature block remains inside `story` so it naturally lands
+    # on the LAST page only (Platypus flow · KeepTogether).
+    from io import BytesIO as _BytesIO
+    _count_buf = _BytesIO()
+    _count_doc = SimpleDocTemplate(
+        _count_buf, pagesize=PAGE,
+        leftMargin=10 * mm, rightMargin=10 * mm,
+        topMargin=8 * mm, bottomMargin=8 * mm,
+        title=f"Invoice {invoice.get('invoice_number','')}",
+    )
+    _count_doc.build(list(story))
+    _total_pages = [_count_doc.page]
+    _footer_cb = _invoice_page_footer_factory(_total_pages, PAGE)
+    doc.build(story, onFirstPage=_footer_cb, onLaterPages=_footer_cb)
     return buf.getvalue()

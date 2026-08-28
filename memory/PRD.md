@@ -2,6 +2,22 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **Iter127b · Invoice PDF Pagination · Page X of Y — SHIPPED** (Feb 2026 · user-approved Option A · uniform behaviour)
+  - **Uniform contract**: every invoice shows `Page X of Y` bottom-right — `Page 1 of 1` for single-page, `Page 1 of 2` / `Page 2 of 2` for two-page, and so on.
+  - **Implementation**: single helper `_invoice_page_footer_factory` + two-pass render (pass 1 counts pages into throwaway buffer, pass 2 draws footer with correct Y into final buffer). Story flowables byte-identical across passes. Total change: ~40 lines in `pdf/invoice.py`.
+  - **Geometry**: bottom-right corner, `x = PAGE_WIDTH − 10 mm`, `y = 5 mm`, font 7.5 pt in `#64748B` (C_MUTED). Sits inside the existing 8 mm bottom margin — zero overlap with any flowable.
+  - **Signature block**: remains inside `story` via `KeepTogether`, naturally lands on the LAST page only.
+  - **Tests** — `test_iter127b_invoice_page_of_pages.py` (12 cases): 1-page, 2-page, 3+ page footer numbering; signature-block last-page-only; no double-footer per page; deterministic two-pass; source guardrails (font/colour/position, two-pass wiring); KOLVEKAR State-B regression; RAGHAVA pre-unload regression; no overlap on single-page; every page has exactly one footer glyph.
+  - **Live PDF proofs regenerated (fresh)**:
+    - `/app/frontend/public/iter127b_kolvekar.pdf` — 1 page · `Page 1 of 1` · signature on p.1 · Ship-To/dates/shortage unchanged ✅
+    - `/app/frontend/public/iter127b_raghava.pdf` — 1 page · `Page 1 of 1` · pre-unload cells still `—`, freight preserved ✅
+    - `/app/frontend/public/iter127b_synthetic_3page.pdf` — 3 pages · `Page 1 of 3` / `Page 2 of 3` / `Page 3 of 3` · signature only on page 3 ✅
+  - **Regression**: 200+ tests green (all Iter127b/127c/126a-c/127a/48/50/51/106/107/67/79 suites).
+  - **Untouched (verified)**: Invoice totals · Freight · Shortage engine · Tax / IGST / CGST / SGST · LR · Ship-To (Iter127c v3/v3.1/v3.2) · GSTIN · Unload Date · margins · orientation · fonts · signature placement · all Iter126a/b/c · Iter127a · Auth · Save Health · Regression Guard.
+  - Wired into `scripts/run_regression.sh` as suite #66.
+
+
+
 - [🔒🔒 **P0 CLOSED & CLEANUP LOCKED** by user · 2026-02-28] **P0 "REFRESHING…" — RESOLVED after 24-hour observation.**
   - **Verdict**: Acceptance criterion met — "During active business use, the system does not require manual Ctrl+Shift+R to recover." No fail_streak >= 3 event during daytime active business use. Only 1 candidate at 10:50 IST early morning (null client build_id, consistent with overnight browser sleep/wake resume behaviour, self-recovered).
   - **Cleanup applied (single controlled commit)**:
