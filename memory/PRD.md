@@ -2,6 +2,17 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [x] **User Manual PDF v1.0 — SHIPPED** (Feb 2026, user-approved scope)
+  - Bilingual (English + తెలుగు) · Detailed depth · Full-app coverage · Mixed screenshot mode · PDF + Markdown source.
+  - **Markdown source**: `/app/docs/user_manual.md` — 17 sections covering Getting Started, Dashboard, Masters (Customers/Ship-Sites/Suppliers/Consignor/Vehicles/Drivers/Products/Shortage Policy), Trips (creation, loading, unloading, freight vs shortage, templates), Fuel, Invoices (creation, Ship-To, pre-unload vs completed, PDF Page X of Y), Payments, Reports, Customer History, Files, Team & Roles, Settings, Common Real-World Situations, Form Draft Recovery, Save Retry / Resilience, Troubleshooting, Do's and Don'ts, Appendices.
+  - **Builder**: `/app/docs/build_manual.py` — ReportLab-based Markdown → PDF converter that reuses the invoice DejaVu font stack (Telugu-safe). Handles headings, tables, bullets, blockquotes, screenshot placeholders, inline bold/italic/code.
+  - **Output**: `/app/frontend/public/qorvena_user_manual.pdf` — searchable, printable.
+  - **Screenshot mode (mix)**: Placeholder amber boxes appear inline where screenshots are referenced. To fill with real images, drop PNGs into `/app/docs/screenshots/` matching the referenced filenames (e.g. `01_login.png`, `02_dashboard.png`, `04_ship_site_form.png`, etc.) and re-run `python3 /app/docs/build_manual.py`.
+  - **Content anchored to locked application behaviour** — no invented features. Special attention paid to: Trip Save · Customer/Vehicle/Supplier duplicate handling · Ship-To management · GSTIN → State/State Code · Invoice creation & numbering · Pre-unload vs completed-unload · Freight vs shortage · Invoice PDF Page X of Y · Supplier Deactivate/Reactivate · Form draft recovery · Save retry/resilience · Roles/permissions.
+  - **Untouched**: no application code, no locked business logic, no DB data, no production records were modified for the manual.
+
+
+
 - [x] **Iter127b · Invoice PDF Pagination · Page X of Y — SHIPPED** (Feb 2026 · user-approved Option A · uniform behaviour)
   - **Uniform contract**: every invoice shows `Page X of Y` bottom-right — `Page 1 of 1` for single-page, `Page 1 of 2` / `Page 2 of 2` for two-page, and so on.
   - **Implementation**: single helper `_invoice_page_footer_factory` + two-pass render (pass 1 counts pages into throwaway buffer, pass 2 draws footer with correct Y into final buffer). Story flowables byte-identical across passes. Total change: ~40 lines in `pdf/invoice.py`.
