@@ -93,7 +93,7 @@ A one-glance overview of your business — receivables, payables, recent trips, 
 
 > TIP · Bookmark the Dashboard URL; it is designed to be the first page you open every morning.
 
-**Screenshot**: `screenshots/02_dashboard.png`
+**Screenshot**: `screenshots/02_dashboard_crop.png`
 **Caption**: Dashboard headline cards and recent-activity list.
 
 ---
@@ -135,26 +135,25 @@ Before you create the customer's first trip.
 
 **Duplicate customer warning**
 
-QORVENA runs a layered duplicate check when you click **Save**. The
-behaviour depends on which field matched.
+QORVENA checks for duplicates the moment you click **Save**. What happens next depends on which field matched.
 
-| Match on | Behaviour | Modal buttons |
+| Match on | What QORVENA does | Buttons you will see |
 |---|---|---|
-| **GSTIN** (exact, normalised) | **Hard block** — creation refused with `409` | **Cancel** · **Open Existing** |
-| **PAN** (only when neither record has a GSTIN) | **Hard block** — `409` | **Cancel** · **Open Existing** |
-| **Name** (case-insensitive, whitespace-normalised) | **Soft block** — refused with `409`, but you may proceed | **Cancel** · **Continue Creating** · **Open Existing** |
-| **Phone / mobile** | **Advisory only** — never blocks; the API returns matching customers under `soft_matches` so the UI can highlight them | (no modal) |
+| **GSTIN** | Blocks the save. A GSTIN belongs to only one customer, so a second record cannot be created. | **Cancel** · **Open Existing** |
+| **PAN** (only when neither record has a GSTIN) | Blocks the save. | **Cancel** · **Open Existing** |
+| **Name** (spelling/spaces ignored) | Shows a warning and pauses the save. You can proceed if you are sure this is a genuinely different party. | **Cancel** · **Continue Creating** · **Open Existing** |
+| **Phone number** | Never blocks. The app quietly highlights other customers with the same phone number so you can verify. | (no pop-up) |
 
 - **Cancel** — dismiss the dialog and go back to the form.
-- **Open Existing** — jump to the existing record; you can then edit it instead of creating a new one.
-- **Continue Creating** — only shown for a **Name** match. Click when the name is a genuine namesake or a distinct branch. The retry sends the header `X-Confirm-Name-Match: allow` and creates the new record.
+- **Open Existing** — jump to the existing record. You can then edit it instead of creating a new one.
+- **Continue Creating** — appears **only** for a Name match. Click it when the two records are genuinely different companies (for example, a namesake or a separate branch).
 
-Only the **Owner** or **Admin** role can override a hard GSTIN / PAN block via a separate admin flow (`X-Duplicate-Override` with a written reason); this is not exposed to standard users.
+If a GSTIN or PAN match is a mistake and the two records are truly different, ask an Owner or Admin — they have a separate override with a written reason. Regular users cannot bypass GSTIN or PAN matches.
 
 > IMPORTANT · Never bypass a duplicate warning to "fix" a spelling. Click **Open Existing** and edit the existing record.
 
 **Screenshot**: `screenshots/25_customer_duplicate_gstin.png`
-**Caption**: Duplicate detected — GSTIN match. Only **Cancel** and **Open Existing** are available; hard blocks cannot be overridden by regular users.
+**Caption**: Duplicate detected — GSTIN match. Only **Cancel** and **Open Existing** are available; GSTIN and PAN matches cannot be overridden by regular users.
 
 **Screenshot**: `screenshots/25b_customer_duplicate_name.png`
 **Caption**: Possible duplicate — Name match. **Continue Creating** appears **only** for name matches; click it if the two records are genuinely different companies.
@@ -163,7 +162,7 @@ Only the **Owner** or **Admin** role can override a hard GSTIN / PAN block via a
 - Pasting the GSTIN with a leading `GSTIN ` prefix. The app now cleans this, but keep entries tidy.
 - Editing the wrong record because two similarly-named customers exist. Always confirm the phone or GSTIN.
 
-**Screenshot**: `screenshots/03_customers.png`
+**Screenshot**: `screenshots/03_customers_crop.png`
 **Caption**: Customer list with History, Ship-To, Edit, and Delete actions.
 
 ### 3.2 Ship-To Sites
@@ -206,16 +205,16 @@ Same shape as Customers — Name, Phone / Mobile, GSTIN, State, PAN, Opening Bal
 
 **Duplicate supplier warning**
 
-Supplier duplicates are stricter than customer duplicates: **name is a hard block**, not a soft one.
+Supplier duplicates are stricter than customer duplicates. In addition to GSTIN and PAN, **the supplier name is also blocked** — the app will not let you create a second supplier with the same name.
 
-| Match on | Behaviour | Modal buttons |
+| Match on | What QORVENA does | Buttons you will see |
 |---|---|---|
-| **GSTIN** | **Hard block** — `409` | **Cancel** · **Open Existing** |
-| **PAN** (only when neither record has a GSTIN) | **Hard block** — `409` | **Cancel** · **Open Existing** |
-| **Name** (case-insensitive) | **Hard block** — `409` | **Cancel** · **Open Existing** |
-| **Mobile** | **Advisory only** — attached as `soft_matches`, never blocks | (no modal) |
+| **GSTIN** | Blocks the save | **Cancel** · **Open Existing** |
+| **PAN** (only when neither record has a GSTIN) | Blocks the save | **Cancel** · **Open Existing** |
+| **Name** (spelling/spaces ignored) | Blocks the save | **Cancel** · **Open Existing** |
+| **Mobile number** | Never blocks. The app quietly highlights other suppliers with the same mobile so you can verify. | (no pop-up) |
 
-There is **no Continue Creating** button on the supplier duplicate dialog. If a hard block fires and the records are genuinely different, an Owner / Admin can override via the admin flow with a written reason.
+There is **no Continue Creating** button on the supplier dialog. If a block is genuinely wrong, an Owner or Admin can override it with a written reason.
 
 **Screenshot**: `screenshots/05c_supplier_duplicate_modal.png`
 **Caption**: Supplier duplicate dialog — regardless of the matched field, only **Cancel** and **Open Existing** are offered.
@@ -247,18 +246,18 @@ A **soft-delete** for suppliers who no longer work with you. Their historical tr
 > IMPORTANT · Deactivate is a **soft-delete**. Historical LRs, trips and invoices continue to display the supplier correctly. Never delete a supplier record from the database — you would break historical books.
 
 **Permissions**
-Only **Owner** and **Admin** roles can Deactivate / Reactivate. Manager, Accountant, and Viewer roles see a `403` toast if they try.
+Only **Owner** and **Admin** roles can Deactivate / Reactivate. Manager, Accountant, and Viewer roles see an **Access denied** message if they try.
 
 **Screenshot**: `screenshots/05d_supplier_deactivate_modal.png`
 **Caption**: Deactivate confirmation dialog. QORVENA lists linked vehicles and historical-trip counts before the action, and a **Reason** is mandatory. The action is a soft-delete only.
 
-**Screenshot**: `screenshots/05_suppliers.png`
+**Screenshot**: `screenshots/05_suppliers_crop.png`
 **Caption**: Suppliers dashboard with Total Outstanding, Payments, and top-suppliers list.
 
-**Screenshot**: `screenshots/05b_supplier_list.png`
+**Screenshot**: `screenshots/05b_supplier_list_crop.png`
 **Caption**: Suppliers **List** tab — the Deactivate button appears at the right of each row. Toggle **Show Inactive** to reveal soft-deleted suppliers and reactivate them.
 
-**Screenshot**: `screenshots/06_parties_consignor.png`
+**Screenshot**: `screenshots/06_parties_consignor_crop.png`
 **Caption**: Consignor / Consignee address book. Add a party once, reuse it across LRs.
 
 ### 3.4 Consignor / Consignee
@@ -279,13 +278,13 @@ Each truck / tanker in your (or your suppliers') fleet.
 
 **Duplicate vehicle handling**
 
-Vehicles are matched on **vehicle number only** (uppercased, whitespace-stripped). The duplicate flow is **idempotent** — the API returns the existing row instead of creating a second one and the UI surfaces a clean dialog.
+Vehicles are matched purely on the **vehicle number** (upper-case, spaces removed). QORVENA never creates two records for the same vehicle — if you enter one that already exists, the app quietly points you at the existing record.
 
-| Match on | Behaviour | Modal buttons |
+| Match on | What QORVENA does | Buttons you will see |
 |---|---|---|
-| **Vehicle Number** (normalised) | Returns the existing record with `duplicate:true` · **no** new row created | **Cancel** · **Open Existing** |
+| **Vehicle Number** | Opens the dialog and offers to take you to the existing vehicle. No new record is created. | **Cancel** · **Open Existing** |
 
-The bulk-import path is stricter still: duplicate vehicle numbers within the file, or vehicle numbers that already exist in the tenant, are rejected as an error line — never silently merged.
+The bulk-import path is stricter still: duplicate vehicle numbers inside the same file, or vehicle numbers that already exist in your account, are rejected with a clear error line — never merged silently.
 
 **Screenshot**: `screenshots/07b_vehicle_duplicate_modal.png`
 **Caption**: Vehicle duplicate dialog. The backend never creates a second row; it returns the existing one, and the UI offers **Open Existing** so you can edit it.
@@ -352,16 +351,13 @@ The core operational record — a single vehicle movement from a Loading point t
 
 > TIP · You do **not** have to wait for unloading data to save the trip. Save with Loading complete and empty Unloading fields; return later to fill Unload Qty and Unload Date.
 
-**Screenshot**: `screenshots/11_trip_form.png`
+**Screenshot**: `screenshots/11_trip_form_crop.png`
 **Caption**: Trip creation form — sections collapse for a focused workflow.
 
-**Screenshot**: `screenshots/10_trips.png`
+**Screenshot**: `screenshots/10_trips_crop.png`
 **Caption**: Trip list with filters, totals bar, and inline actions per row.
 
-**Screenshot**: `screenshots/12_trip_view.png`
-**Caption**: Trip detail view — Loading, Unloading, Freight, and audit fields on a single page.
-
-**Screenshot**: `screenshots/14_trip_import.png`
+**Screenshot**: `screenshots/14_trip_import_crop.png`
 **Caption**: Bulk import — download the Excel template, fill your rows, and upload.
 
 ### 4.2 Loading
@@ -403,7 +399,7 @@ A saved set of default values (Customer, Product, From-To, Rate) for repetitive 
 3. Fill and save.
 4. Next time, on the trip form, choose the template from the **Apply Template** dropdown.
 
-**Screenshot**: `screenshots/13_trip_templates.png`
+**Screenshot**: `screenshots/13_trip_templates_crop.png`
 **Caption**: Trip Templates — save repetitive routes for one-click reuse.
 
 ---
@@ -419,7 +415,7 @@ A record of diesel fill-ups per vehicle, used for costing and reconciliation.
 3. Fill vehicle, date, litres, rate, amount, odometer, station.
 4. Click **Save**.
 
-**Screenshot**: `screenshots/18_fuel.png`
+**Screenshot**: `screenshots/18_fuel_crop.png`
 
 ---
 
@@ -458,13 +454,13 @@ Format: `{Invoice Prefix}/{FY}/{Sequence}` — e.g. `AKB/26-27/0018`.
 
 > IMPORTANT · Only change **Invoice Prefix** or **Next Invoice Number** in **Settings** when you have a real, deliberate reason (new FY, new company, legacy migration). Retro-changing after invoices have gone out breaks your audit trail.
 
-**Screenshot**: `screenshots/15_invoices.png`
+**Screenshot**: `screenshots/15_invoices_crop.png`
 **Caption**: Invoice list with status filters and quick actions.
 
-**Screenshot**: `screenshots/16_invoice_create.png`
+**Screenshot**: `screenshots/16_invoice_create_crop.png`
 **Caption**: Invoice creation — pick a customer, tick trips, preview totals, save.
 
-**Screenshot**: `screenshots/18b_overdue.png`
+**Screenshot**: `screenshots/18b_overdue_crop.png`
 **Caption**: Overdue Invoices screen — filter by age bucket and send reminders.
 
 ### 6.2 Ship-To Handling
@@ -526,7 +522,7 @@ The signature block appears only on the **last** page.
 **GSTIN cleanup**
 The Ship-To GSTIN is normalised on display. Even if a legacy record stored the GSTIN with a `GSTIN ` prefix or trailing tabs, the PDF renders only the 15-character GSTIN.
 
-**Screenshot**: `screenshots/17_invoice_view.png`
+**Screenshot**: `screenshots/17_invoice_view_crop.png`
 
 ---
 
@@ -562,7 +558,7 @@ The party's running balance updates immediately.
 
 Each report supports date filters and Export to Excel / PDF.
 
-**Screenshot**: `screenshots/19_reports.png`
+**Screenshot**: `screenshots/19_reports_crop.png`
 
 ---
 
@@ -576,7 +572,7 @@ A deep-drill single-customer view showing all trips, invoices, payments, and run
 2. Search or select the customer.
 3. Scroll for trip / invoice / payment tables and the age-bucket card.
 
-**Screenshot**: `screenshots/23_customer_history.png`
+**Screenshot**: `screenshots/23_customer_history_crop.png`
 
 ---
 
@@ -590,7 +586,7 @@ Attach documents (LR scans, delivery challans, driver documents) to trips, suppl
 2. Choose the **Category** and drag-and-drop the file (max 10 MB per file).
 3. Files appear in **Your Files** with Preview and Delete actions.
 
-**Screenshot**: `screenshots/22_files.png`
+**Screenshot**: `screenshots/22_files_crop.png`
 
 ---
 
@@ -614,7 +610,7 @@ Attach documents (LR scans, delivery challans, driver documents) to trips, suppl
 3. Click **Send Invite**.
 4. The invitee signs in with their own Google account.
 
-**Screenshot**: `screenshots/20_team.png`
+**Screenshot**: `screenshots/20_team_crop.png`
 
 ---
 
@@ -631,7 +627,7 @@ Attach documents (LR scans, delivery challans, driver documents) to trips, suppl
 
 > TIP · Only the **Owner / Admin** can change the invoice numbering settings. Do this only when starting a new financial year or migrating from a legacy series — never mid-year.
 
-**Screenshot**: `screenshots/21_settings.png`
+**Screenshot**: `screenshots/21_settings_crop.png`
 
 ---
 
@@ -667,13 +663,20 @@ Locally in your browser only. Drafts do **not** sync across devices. Save the fo
 
 ## 15. Save Retry / Resilience
 
-Every Save call carries a unique **Idempotency-Key** header.
+**What is this?**
+QORVENA is built to survive flaky mobile networks and dropped Wi-Fi. Even if the internet flickers while you click **Save**, the app never saves the same record twice.
 
-- If your network flickers and the browser retries the Save, the server recognises the duplicate and does **not** create two records.
-- You will see **one** green confirmation toast, not two.
-- Business data stays consistent even under bad networks.
+**What you will see**
+- One green **Saved** confirmation, not two.
+- If the network drops mid-save, the app quietly retries in the background.
+- Your typed data is not lost.
 
-If a Save toast never appears, wait ~30 seconds — the app is retrying under the hood. If the toast still doesn't appear, hard-refresh (Ctrl + Shift + R) and confirm from the list view whether the record was actually saved before re-entering.
+**If the Save confirmation doesn't appear**
+1. Wait about 30 seconds — the app is retrying quietly.
+2. If nothing appears, hard-refresh with **Ctrl + Shift + R**.
+3. Open the list view (Trips, Invoices, etc.) and check whether the record is already there **before** you re-enter it.
+
+> TIP · The green **Saved** toast is your proof. If you see it, the record is on the server — even if the page looks like it is still loading.
 
 ---
 
@@ -681,15 +684,16 @@ If a Save toast never appears, wait ~30 seconds — the app is retrying under th
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Customer "Already Exists" dialog with **Continue Creating** button | Name-only match (soft block) | Verify the details; click **Continue Creating** if this is a genuine namesake or branch |
-| Customer or Supplier "Already Exists" without a **Continue Creating** button | Hard match on GSTIN, PAN, or Supplier name | Click **Open Existing** and edit the existing record; contact your Owner/Admin for a written-reason override only if truly needed |
-| Vehicle "Already Exists" dialog | Vehicle number already registered in this company | Click **Open Existing**; the app never creates two rows for the same vehicle |
-| **REFRESHING…** pill visible for more than 15 seconds | Backend health probe temporarily failing (often after browser sleep/wake) | Wait 15–30 s; if it persists, Ctrl + Shift + R |
-| Invoice PDF still shows the old State | Ship-Site record wasn't re-saved after correction | Edit Ship-Site → Save → regenerate the invoice |
-| Shortage column shows `—` unexpectedly | Trip's Unload Qty is blank | Enter the actual Unload Qty; shortage will auto-appear |
-| Actual Short equals the full Load MT | Old cached invoice PDF | Hard-reload (Ctrl + Shift + R); the latest engine will show `—` for pre-unload trips |
-| Amber **App update available** nudge | A newer application build has shipped | Click it — your in-flight drafts are preserved |
-| `403` when clicking **Deactivate** on a supplier | You are not Owner or Admin | Ask the Owner to perform the action |
+| Customer "Already Exists" dialog with **Continue Creating** button | Name-only match (warning) | Verify the details. Click **Continue Creating** if this is a genuine namesake or a different branch. |
+| Customer or Supplier "Already Exists" **without** a **Continue Creating** button | The GSTIN, PAN, or Supplier name already exists | Click **Open Existing** and edit that record. If the block is genuinely wrong, ask your Owner or Admin to override it with a reason. |
+| Vehicle "Already Exists" dialog | Vehicle number is already registered in your account | Click **Open Existing**. The app never creates two records for the same vehicle. |
+| **REFRESHING…** pill visible for more than 15 seconds | The app is re-checking its connection to the server, often after the laptop woke up from sleep | Wait 15–30 seconds. If it stays, press **Ctrl + Shift + R** to reload. |
+| Invoice PDF still shows the old State | The Ship-To Site was corrected but the invoice PDF hasn't been regenerated | Edit the Ship-To Site → **Save** → open the invoice and regenerate the PDF. |
+| Shortage column shows **—** unexpectedly | The trip's **Unload Qty** has not been entered yet | Open the trip, fill Unload Qty and Unload Date, then Save. Shortage will appear automatically. |
+| Shortage column shows the full Load MT | Your browser is showing an old copy of the invoice PDF | Press **Ctrl + Shift + R** to force a fresh copy. The latest invoice will correctly show **—** for pre-unload trips. |
+| Amber **App update available** nudge | A newer build of QORVENA has been released | Click the nudge. Your in-flight draft is preserved. |
+| **Access denied** message when clicking **Deactivate** on a supplier | Your role does not have permission | Ask an Owner or Admin to perform the action. |
+| Nothing happens after you click **Save** | The internet dropped and the app is retrying quietly | Wait 30 seconds. Check the list view to see whether the record was saved before re-entering. |
 
 ---
 
@@ -729,8 +733,8 @@ If a Save toast never appears, wait ~30 seconds — the app is retrying under th
 The following rules are LOCKED in the current release. They protect data integrity across trips, invoices, and books.
 
 1. **Duplicate Masters** —
-    - **Customer** · GSTIN + PAN are hard blocks; **Name** is a soft block bypassable via *Continue Creating* (Owner/Admin can additionally override GSTIN/PAN via the admin flow with a reason). Phone matches are advisory-only.
-    - **Supplier** · GSTIN, PAN, **and Name** are all hard blocks; mobile is advisory-only. No *Continue Creating* button.
+    - **Customer** · GSTIN and PAN matches are blocked; **Name** matches show a warning that a regular user can bypass with *Continue Creating* (Owner/Admin can also override GSTIN/PAN via the admin flow with a written reason). Phone matches are advisory only.
+    - **Supplier** · GSTIN, PAN, **and Name** all block creation; mobile is advisory only. No *Continue Creating* button on the supplier dialog.
     - **Vehicle** · Match on vehicle number is idempotent — the backend returns the existing row, never inserts a second. Modal offers Cancel / Open Existing.
 2. **Ship-To Independence** — Ship-To State is independent of Customer State; GSTIN can derive State / State Code; Customer State is never silently copied to a Ship-To.
 3. **Trip Loading and Unloading** — Loading and Unloading are **separate stages**. Freight is available at dispatch; shortage requires unloading data.

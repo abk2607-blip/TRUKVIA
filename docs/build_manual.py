@@ -161,8 +161,8 @@ def _styles() -> dict[str, ParagraphStyle]:
         "TblCell", fontName=_F, fontSize=9, leading=12, textColor=C_INK,
     )
     s["CalloutLabel"] = ParagraphStyle(
-        "CalloutLabel", fontName=_FB, fontSize=8.5, leading=11,
-        textColor=colors.white, alignment=0,
+        "CalloutLabel", fontName=_FB, fontSize=6.8, leading=8.4,
+        textColor=colors.white, alignment=1,
     )
     s["CalloutBody"] = ParagraphStyle(
         "CalloutBody", fontName=_F, fontSize=10, leading=14,
@@ -216,20 +216,21 @@ def make_callout(kind: str, body: str, styles: dict) -> Table:
 
     label_cell = Table(
         [[label_para]],
-        colWidths=[16 * mm],
+        colWidths=[26 * mm],
         style=TableStyle([
             ("BACKGROUND", (0, 0), (-1, -1), bar),
-            ("LEFTPADDING", (0, 0), (-1, -1), 4),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-            ("TOPPADDING", (0, 0), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
-            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 2),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 2),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("ALIGN", (0, 0), (-1, -1), "CENTER"),
         ]),
     )
 
     outer = Table(
         [[label_cell, body_para]],
-        colWidths=[16 * mm, CONTENT_W - 16 * mm],
+        colWidths=[26 * mm, CONTENT_W - 26 * mm],
         style=TableStyle([
             ("BACKGROUND", (1, 0), (1, 0), bg),
             ("LEFTPADDING", (0, 0), (0, 0), 0),
@@ -336,8 +337,15 @@ def make_screenshot(path: str, caption: str | None, styles: dict):
     abs_path = path if os.path.isabs(path) else os.path.join(SCREENSHOTS_ROOT, path)
     if not os.path.exists(abs_path):
         return None
+    # Choose the max box based on the source aspect ratio. Cropped shots
+    # (sidebar removed) print at up to 135mm tall; the modal mockups and
+    # the login page stay smaller so they don't dwarf the surrounding text.
+    max_h = 105 * mm
+    is_modal = ("_modal" in path) or ("_duplicate" in path) or ("deactivate_modal" in path)
+    if is_modal:
+        max_h = 72 * mm
     try:
-        img = Image(abs_path, width=CONTENT_W - 10 * mm, height=95 * mm,
+        img = Image(abs_path, width=CONTENT_W - 6 * mm, height=max_h,
                     kind="proportional")
     except Exception:
         return None
