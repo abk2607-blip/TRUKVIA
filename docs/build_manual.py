@@ -414,9 +414,9 @@ def build_cover(styles: dict):
     meta = Table(
         [
             [Paragraph("<b>Version</b>", styles["CoverMeta"]),
-             Paragraph("1.0 (English)", styles["CoverMeta"])],
-            [Paragraph("<b>Release</b>", styles["CoverMeta"]),
-             Paragraph("February 2026", styles["CoverMeta"])],
+             Paragraph("1.0 (English) · <b>Draft — awaiting UAT approval</b>", styles["CoverMeta"])],
+            [Paragraph("<b>Compiled</b>", styles["CoverMeta"]),
+             Paragraph("February 2026 · Official release date pending", styles["CoverMeta"])],
             [Paragraph("<b>Audience</b>", styles["CoverMeta"]),
              Paragraph("Owners · Admins · Accountants · Managers · Viewers", styles["CoverMeta"])],
             [Paragraph("<b>Scope</b>", styles["CoverMeta"]),
@@ -489,9 +489,14 @@ def parse_manual(styles: dict):
         if stripped.startswith("## "):
             title = stripped[3:].strip()
             plain = re.sub(r"^\d+\.\s*", "", title)
-            # Page break before every top-level chapter (except the very first)
-            if any(isinstance(f, Table) or isinstance(f, Paragraph) for f in story):
+            # Page break before every top-level chapter (except the very first).
+            # Skip the break for Appendix headings so short appendices flow and
+            # fill the tail of the previous page instead of wasting a full page.
+            is_appendix = title.strip().lower().startswith("appendix")
+            if any(isinstance(f, Table) or isinstance(f, Paragraph) for f in story) and not is_appendix:
                 story.append(PageBreak())
+            elif is_appendix:
+                story.append(Spacer(1, 10))
             story.append(make_h2(title, styles))
             # Emit a TOC entry via an invisible TocParagraph
             story.append(TocParagraph(f"<b>{plain}</b>", ParagraphStyle(
@@ -656,7 +661,7 @@ def _draw_page_chrome(canv, total):
     canv.setFont(_F, 8.5)
     canv.setFillColor(C_MUTED)
     canv.drawString(LEFT_M + 24 * mm, PAGE_H - 12 * mm, "Bitumen Transport ERP · User Manual")
-    canv.drawRightString(PAGE_W - RIGHT_M, PAGE_H - 12 * mm, "v1.0 · English")
+    canv.drawRightString(PAGE_W - RIGHT_M, PAGE_H - 12 * mm, "v1.0 Draft · English")
     canv.setStrokeColor(C_LINE)
     canv.setLineWidth(0.4)
     canv.line(LEFT_M, PAGE_H - 14 * mm, PAGE_W - RIGHT_M, PAGE_H - 14 * mm)
@@ -666,7 +671,7 @@ def _draw_page_chrome(canv, total):
     canv.line(LEFT_M, 14 * mm, PAGE_W - RIGHT_M, 14 * mm)
     canv.setFont(_F, 8.5)
     canv.setFillColor(C_MUTED)
-    canv.drawString(LEFT_M, 10 * mm, "© QORVENA · User Manual · February 2026")
+    canv.drawString(LEFT_M, 10 * mm, "© QORVENA · User Manual · v1.0 Draft (English)")
     # Page X of Y — but page 1 is the cover, so we display (p) of (total)
     canv.drawRightString(PAGE_W - RIGHT_M, 10 * mm, f"Page {p} of {total}")
     canv.restoreState()

@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>QORVENA modal mockups</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<style>
+body { background:#F4F4F5; padding:32px; font-family:'Inter',system-ui,sans-serif; }
+.stage { min-height:420px; display:flex; align-items:center; justify-content:center; padding:24px; }
+</style></head>
+<body>
+
+<!-- ============= Card 1: Customer GSTIN duplicate (Cancel + Open Existing) ============= -->
+<div id="mock1" class="stage bg-zinc-900/50 backdrop-blur-sm">
+  <div class="bg-white w-full max-w-md border border-zinc-950 rounded-sm">
+    <div class="px-5 py-3 border-b border-zinc-200">
+      <div class="text-[10px] uppercase tracking-wider font-bold text-amber-700">Duplicate Detected</div>
+      <h3 class="mt-0.5 font-bold text-lg">Customer Already Exists</h3>
+    </div>
+    <div class="px-5 py-4 space-y-3">
+      <p class="text-sm text-zinc-700">A customer with this GSTIN already exists.</p>
+      <dl class="border border-zinc-200 rounded-sm divide-y divide-zinc-200 text-sm">
+        <div class="flex px-3 py-2"><dt class="w-32 text-[11px] uppercase tracking-wider font-bold text-zinc-500">Customer Name</dt><dd class="flex-1 font-medium text-zinc-950">Sri Venkateswara Enterprises</dd></div>
+        <div class="flex px-3 py-2"><dt class="w-32 text-[11px] uppercase tracking-wider font-bold text-zinc-500">GSTIN</dt><dd class="flex-1 font-medium text-zinc-950">36AABCS1234N1Z5</dd></div>
+        <div class="flex px-3 py-2"><dt class="w-32 text-[11px] uppercase tracking-wider font-bold text-zinc-500">State</dt><dd class="flex-1 font-medium text-zinc-950">Telangana</dd></div>
+        <div class="flex px-3 py-2"><dt class="w-32 text-[11px] uppercase tracking-wider font-bold text-zinc-500">Phone</dt><dd class="flex-1 font-medium text-zinc-950">9899012345</dd></div>
+      </dl>
+    </div>
+    <div class="px-5 py-3 border-t border-zinc-200 flex justify-end gap-2">
+      <button class="px-4 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm">Cancel</button>
+      <button class="px-4 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm">Open Existing</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============= Card 2: Customer NAME soft-block (adds Continue Creating) ============= -->
+<div id="mock2" class="stage bg-zinc-900/50 backdrop-blur-sm">
+  <div class="bg-white w-full max-w-md border border-zinc-950 rounded-sm">
+    <div class="px-5 py-3 border-b border-zinc-200">
+      <div class="text-[10px] uppercase tracking-wider font-bold text-amber-700">Possible Duplicate</div>
+      <h3 class="mt-0.5 font-bold text-lg">Customer Already Exists</h3>
+    </div>
+    <div class="px-5 py-4 space-y-3">
+      <p class="text-sm text-zinc-700">A customer with this name already exists. Please verify whether this is the same company with a different state GST registration.</p>
+      <dl class="border border-zinc-200 rounded-sm divide-y divide-zinc-200 text-sm">
+        <div class="flex px-3 py-2"><dt class="w-32 text-[11px] uppercase tracking-wider font-bold text-zinc-500">Customer Name</dt><dd class="flex-1 font-medium text-zinc-950">Sri Venkateswara Enterprises</dd></div>
+        <div class="flex px-3 py-2"><dt class="w-32 text-[11px] uppercase tracking-wider font-bold text-zinc-500">GSTIN</dt><dd class="flex-1 font-medium text-zinc-950">36AABCS1234N1Z5</dd></div>
+        <div class="flex px-3 py-2"><dt class="w-32 text-[11px] uppercase tracking-wider font-bold text-zinc-500">State</dt><dd class="flex-1 font-medium text-zinc-950">Telangana</dd></div>
+      </dl>
+    </div>
+    <div class="px-5 py-3 border-t border-zinc-200 flex justify-end gap-2">
+      <button class="px-4 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm">Cancel</button>
+      <button class="px-4 py-2 text-xs uppercase tracking-wider border border-amber-700 text-amber-800 rounded-sm">Continue Creating</button>
+      <button class="px-4 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm">Open Existing</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============= Card 3: Supplier duplicate (no Continue Creating) ============= -->
+<div id="mock3" class="stage bg-zinc-900/50 backdrop-blur-sm">
+  <div class="bg-white w-full max-w-md border border-zinc-950 rounded-sm">
+    <div class="px-5 py-3 border-b border-zinc-200">
+      <div class="text-[10px] uppercase tracking-wider font-bold text-amber-700">Duplicate Detected</div>
+      <h3 class="mt-0.5 font-bold text-lg">Supplier Already Exists</h3>
+    </div>
+    <div class="px-5 py-4 space-y-3">
+      <p class="text-sm text-zinc-700">A supplier with this name already exists.</p>
+      <dl class="border border-zinc-200 rounded-sm divide-y divide-zinc-200 text-sm">
+        <div class="flex px-3 py-2"><dt class="w-32 text-[11px] uppercase tracking-wider font-bold text-zinc-500">Supplier Name</dt><dd class="flex-1 font-medium text-zinc-950">Kolvekar Transport Co</dd></div>
+        <div class="flex px-3 py-2"><dt class="w-32 text-[11px] uppercase tracking-wider font-bold text-zinc-500">GSTIN</dt><dd class="flex-1 font-medium text-zinc-950">29AAECK2345B1Z8</dd></div>
+        <div class="flex px-3 py-2"><dt class="w-32 text-[11px] uppercase tracking-wider font-bold text-zinc-500">State</dt><dd class="flex-1 font-medium text-zinc-950">Karnataka</dd></div>
+      </dl>
+    </div>
+    <div class="px-5 py-3 border-t border-zinc-200 flex justify-end gap-2">
+      <button class="px-4 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm">Cancel</button>
+      <button class="px-4 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm">Open Existing</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============= Card 4: Vehicle duplicate ============= -->
+<div id="mock4" class="stage bg-zinc-900/50 backdrop-blur-sm">
+  <div class="bg-white w-full max-w-md border border-zinc-950 rounded-sm">
+    <div class="px-5 py-3 border-b border-zinc-200">
+      <div class="text-[10px] uppercase tracking-wider font-bold text-amber-700">Duplicate Detected</div>
+      <h3 class="mt-0.5 font-bold text-lg">Vehicle Already Exists</h3>
+    </div>
+    <div class="px-5 py-4 space-y-3">
+      <p class="text-sm text-zinc-700">A vehicle with this registration number already exists.</p>
+      <dl class="border border-zinc-200 rounded-sm divide-y divide-zinc-200 text-sm">
+        <div class="flex px-3 py-2"><dt class="w-32 text-[11px] uppercase tracking-wider font-bold text-zinc-500">Vehicle Number</dt><dd class="flex-1 font-medium text-zinc-950">AP16TA1234</dd></div>
+      </dl>
+    </div>
+    <div class="px-5 py-3 border-t border-zinc-200 flex justify-end gap-2">
+      <button class="px-4 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm">Cancel</button>
+      <button class="px-4 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm">Open Existing</button>
+    </div>
+  </div>
+</div>
+
+<!-- ============= Card 5: Supplier Deactivate confirmation (indicative) ============= -->
+<div id="mock5" class="stage bg-zinc-900/50 backdrop-blur-sm">
+  <div class="bg-white w-full max-w-md border border-zinc-950 rounded-sm">
+    <div class="px-5 py-3 border-b border-zinc-200">
+      <div class="text-[10px] uppercase tracking-wider font-bold text-red-700">Deactivate Supplier</div>
+      <h3 class="mt-0.5 font-bold text-lg">Confirm Deactivation</h3>
+    </div>
+    <div class="px-5 py-4 space-y-3">
+      <p class="text-sm text-zinc-700">
+        This is a <b>soft-delete</b>. The supplier will no longer appear in active
+        pickers, but every historical LR, trip, invoice, and payment linked to
+        them remains intact.
+      </p>
+      <dl class="border border-zinc-200 rounded-sm divide-y divide-zinc-200 text-sm">
+        <div class="flex px-3 py-2"><dt class="w-32 text-[11px] uppercase tracking-wider font-bold text-zinc-500">Supplier</dt><dd class="flex-1 font-medium text-zinc-950">Kolvekar Transport Co</dd></div>
+        <div class="flex px-3 py-2"><dt class="w-32 text-[11px] uppercase tracking-wider font-bold text-zinc-500">Linked Vehicles</dt><dd class="flex-1 font-medium text-zinc-950">3</dd></div>
+        <div class="flex px-3 py-2"><dt class="w-32 text-[11px] uppercase tracking-wider font-bold text-zinc-500">Historical Trips</dt><dd class="flex-1 font-medium text-zinc-950">128</dd></div>
+      </dl>
+      <label class="block text-[11px] uppercase tracking-wider font-bold text-zinc-500 mt-2">Reason <span class="text-red-600">*</span></label>
+      <input class="w-full border border-zinc-300 rounded-sm px-3 py-2 text-sm" value="Contract ended · not active from Jan-2026" readonly />
+    </div>
+    <div class="px-5 py-3 border-t border-zinc-200 flex justify-end gap-2">
+      <button class="px-4 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm">Cancel</button>
+      <button class="px-4 py-2 text-xs uppercase tracking-wider bg-red-700 text-white rounded-sm">Deactivate</button>
+    </div>
+  </div>
+</div>
+
+</body></html>

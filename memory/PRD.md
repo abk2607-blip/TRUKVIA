@@ -7,10 +7,14 @@ QORVENA is a Bitumen transport ERP tracking LRs, Trips, Freight, Shortage, Invoi
 User frequently switches between English and Telugu. Detect the language of the user's prompt and respond in the same. Application UI itself is bilingual by design.
 
 ## Locked business rules (do NOT change without explicit approval)
-- **Duplicate Masters** — Customer/Supplier/Vehicle duplicate detection with Open Existing / Cancel / Continue Creating dialog.
+- **Duplicate Masters** (Iter127a):
+  - **Customer** — HARD block on GSTIN + PAN (only when no GSTIN); SOFT-blocking on **Name** (bypassable via `X-Confirm-Name-Match: allow` header, surfaced as *Continue Creating*); Phone match is ADVISORY only (soft_matches). Owner/Admin can override GSTIN/PAN via `X-Duplicate-Override` header with reason.
+  - **Supplier** — HARD block on GSTIN, PAN (only when no GSTIN), and **Name**; Mobile is ADVISORY only. NO *Continue Creating* button in modal.
+  - **Vehicle** — Match on vehicle_number is IDEMPOTENT — backend returns existing row with `duplicate:true`, never inserts a duplicate. Modal offers Cancel / Open Existing.
 - **Ship-To Independence** — Ship-To State is independent of Customer State; GSTIN derives State/State Code; no silent copy of Customer State.
-- **Trip Loading vs Unloading** — separate stages. Freight available at dispatch, shortage only after unload data.
+- **Trip Loading vs Unloading** — separate stages. Freight available at dispatch; shortage only after unload data.
 - **Missing Unload Data** — "Not Available Yet", not zero. Pre-unload invoices must not fabricate shortages.
+- **Invoice Number** — Server-assigned as `{Prefix}/{FY}/{Sequence}` per company. NO per-invoice user override. Prefix + Next Number in **Settings** only, Owner/Admin.
 - **Invoice Ship-To** — Preview and PDF are identical. GSTIN normalised on display. Unload Date renders correctly.
 - **Invoice PDF Page X of Y** — every page. Signature block on last page only.
 - **Supplier Deactivate/Reactivate** — soft-delete. Owner/Admin only. Historical data preserved.
@@ -19,15 +23,16 @@ User frequently switches between English and Telugu. Detect the language of the 
 ## Completed work (rolling log)
 - **Iter126, Iter127a, Iter127b, Iter127c** — LOCKED
 - **P0 "REFRESHING..." stability** — CLOSED
-- **User Manual v1.0 (bilingual)** — DEPRECATED (Telugu rendering rejected by user)
-- **User Manual v1.0 (English-only, professional)** — DELIVERED Feb 2026
-  - Source: `/app/docs/user_manual.md` (English only, zero Telugu content)
-  - Builder: `/app/docs/build_manual.py` (ReportLab, DejaVu font stack)
-  - Screenshots: `/app/docs/screenshots/` (26 real app screenshots via Playwright)
-  - Screenshot capture script: `/app/docs/capture_screenshots.py`
-  - Output: `/app/frontend/public/qorvena_user_manual.pdf` (36 pages, 4.4 MB)
-  - Features: cover page, auto TOC with page numbers, coloured chapter chips, IMPORTANT/WARNING/TIP callouts, framed screenshots with captions, running header + footer with Page X of Y, printable + searchable.
-  - Validation: zero Telugu in source AND in extracted PDF text; visual QA on multiple pages passed.
+- **User Manual v1.0 (bilingual)** — SUPERSEDED (Telugu rendering rejected)
+- **User Manual v1.0 English-only (initial)** — SUPERSEDED
+- **User Manual v1.0 English-only refined (Draft)** — DELIVERED Feb 2026, awaiting UAT approval
+  - Source: `/app/docs/user_manual.md`
+  - Builder: `/app/docs/build_manual.py` (ReportLab, DejaVu fonts, cover + TOC + coloured callouts + Page X of Y footer)
+  - Screenshots: `/app/docs/screenshots/` (31 files — 26 real app screenshots + 5 pixel-perfect modal mockups)
+  - Screenshot builders: `capture_screenshots.py` (Playwright, real app), `capture_modal_mockups.py` (Tailwind HTML mockups for duplicate/deactivate modals)
+  - Output: `/app/frontend/public/qorvena_user_manual.pdf` (38 pages, ~4.8 MB)
+  - Verification: 0 Telugu runs in source AND in extracted PDF text; live duplicate rules cross-checked against `routers/{customers,suppliers,vehicles}.py` and `DuplicateMasterModal.jsx`; invoice-number auto-format cross-checked against `services.py::_next_invoice_number_for_company`.
+  - Corrections from v1 draft: duplicate rules per entity, invoice-number claim removed, cover metadata reframed as "Draft awaiting UAT / Compiled Feb 2026", appendices tightened to reduce blank space.
 
 ## Backlog (upcoming)
 - **P1** Deploy Readiness Badge
@@ -42,10 +47,12 @@ User frequently switches between English and Telugu. Detect the language of the 
 - **Idea** In-app Help side-drawer
 
 ## Explicitly deferred by user
-- IGST vs CGST/SGST recalculation based on independent Ship-To State (would break historical totals).
+- IGST vs CGST/SGST recalculation based on independent Ship-To State.
 - Freezing historical invoice Ship-To strings as snapshots.
 
 ## Critical operational notes
 - Backend does **NOT** auto-reload. Any change under `/app/backend` requires `sudo supervisorctl restart backend`.
 - `/app/memory/test_credentials.md` holds the demo token and OAuth email used for UAT.
-- Manual is regenerated by `python3 /app/docs/build_manual.py`; screenshots by `/opt/plugins-venv/bin/python /app/docs/capture_screenshots.py`.
+- Manual regen: `python3 /app/docs/build_manual.py`
+- Real screenshots regen: `/opt/plugins-venv/bin/python /app/docs/capture_screenshots.py`
+- Modal mockups regen: `/opt/plugins-venv/bin/python /app/docs/capture_modal_mockups.py`
