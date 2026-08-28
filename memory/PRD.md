@@ -2,6 +2,24 @@
 
 > 🅿️ **Phase 2 Mobile App is PARKED** — full spec + preliminary cost estimate (400–800 credits + non-credit costs) documented in `/app/memory/PHASE_2_MOBILE.md`. Do NOT start Mobile until Web reaches v1.0-stable. Priority order when we start: 1) Driver → 2) Supplier → 3) Office/Admin.
 
+- [🔒🔒 **P0 CLOSED & CLEANUP LOCKED** by user · 2026-02-28] **P0 "REFRESHING…" — RESOLVED after 24-hour observation.**
+  - **Verdict**: Acceptance criterion met — "During active business use, the system does not require manual Ctrl+Shift+R to recover." No fail_streak >= 3 event during daytime active business use. Only 1 candidate at 10:50 IST early morning (null client build_id, consistent with overnight browser sleep/wake resume behaviour, self-recovered).
+  - **Cleanup applied (single controlled commit)**:
+    - `frontend/src/components/SilentRestartToast.jsx` — removed `sendBeacon` helper, `emit` callback, `BEACON_URL` constant, `_resultLabel` helper. **Retained verbatim**: probe loop (4-fail threshold, 6 s abort, 6→8→12→15 s backoff), graceful-startup UX ("Backend starting…" for first 10 s), build-drift check with amber "App update available — reload" nudge, v4 auto-reload after 15 s of nudge visibility.
+    - `backend/routers/diagnostics.py` — removed `POST /api/diagnostics/silent-restart-probe` and `GET /api/admin/silent-restart-probes` plus their `_scrub` / `_capped_insert` / `_ALLOWED_KEYS` / `_MAX_ROWS` / `_COLLECTION` helpers. **Retained**: `GET /api/diagnostics/build` (still consumed by frontend build-drift check; returns only `build_id` + `version` + `server_ts`, zero business data).
+    - `backend/tests/test_iter127b_diagnostics_beacon.py` — rewritten as a regression guard: locks endpoint removal (POST beacon + admin listing must return 404), locks `GET /diagnostics/build` retention, locks source-level removal of helpers.
+    - Historical `silent_restart_probes` documents remain in Mongo (untouched) — no longer written to, read from, or exposed.
+  - **Verification (post-cleanup)**:
+    - `GET /api/auth/health` → 200, `db=up`, `session_index_unique=true`
+    - `GET /api/diagnostics/build` → 200, returns `{build_id, version, server_ts}` only
+    - `POST /api/diagnostics/silent-restart-probe` → **404** ✅ (removed)
+    - `GET /api/admin/silent-restart-probes` → **404** ✅ (removed)
+    - 128+ regression tests green: iter127b beacon-removed guardrails, iter127c full LOCKED bundle, iter126a/b/c drafts + idempotency + storage startup, iter127a master-dedup + multi-state GST, iter48/50/51/106 auth stability + save health + regression guard + deploy alerts.
+  - **Untouched (verified)**: Iter127c LOCKED bundle · Iter126a/b/c · Iter127a · Freight · Shortage engine · Tax · Invoice totals · LR · Ship-To · Customer/Supplier duplicate logic · Auth · Save Health · Regression Guard · Idempotency middleware · Form drafts · date format contract.
+  - **DO NOT** add "Uptime Chip" or any new P0-adjacent enhancement — deferred per user directive.
+
+
+
 - [ ] **User Manual PDF (with screenshots)** — Requested by user 2026-02, deferred by user until P0 "REFRESHING…" is formally closed. Not urgent. Scope/depth/language TBD at pickup time.
 
 
