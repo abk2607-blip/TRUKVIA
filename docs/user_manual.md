@@ -1,8 +1,8 @@
 # QORVENA · Bitumen Transport ERP
 ## User Manual
 
-**Version**: 1.0 · Draft (English) · awaiting UAT approval
-**Compiled**: February 2026 · Official release date pending
+**Version**: 1.0 (English)
+**Released**: February 2026
 **Application**: QORVENA · Bitumen Transport ERP
 **Audience**: Owners, Admins, Accountants, Managers, and new users
 **Scope**: All modules and workflows, current locked behaviour
@@ -757,6 +757,6 @@ For questions about the application:
 
 ---
 
-End of manual · Version 1.0 (Draft — awaiting UAT approval)
+End of manual · Version 1.0 · Released February 2026
 
 QORVENA · Bitumen Transport ERP

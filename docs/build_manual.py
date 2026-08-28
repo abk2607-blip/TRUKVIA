@@ -422,9 +422,9 @@ def build_cover(styles: dict):
     meta = Table(
         [
             [Paragraph("<b>Version</b>", styles["CoverMeta"]),
-             Paragraph("1.0 (English) · <b>Draft — awaiting UAT approval</b>", styles["CoverMeta"])],
-            [Paragraph("<b>Compiled</b>", styles["CoverMeta"]),
-             Paragraph("February 2026 · Official release date pending", styles["CoverMeta"])],
+             Paragraph("1.0 (English)", styles["CoverMeta"])],
+            [Paragraph("<b>Released</b>", styles["CoverMeta"]),
+             Paragraph("February 2026", styles["CoverMeta"])],
             [Paragraph("<b>Audience</b>", styles["CoverMeta"]),
              Paragraph("Owners · Admins · Accountants · Managers · Viewers", styles["CoverMeta"])],
             [Paragraph("<b>Scope</b>", styles["CoverMeta"]),
@@ -669,7 +669,7 @@ def _draw_page_chrome(canv, total):
     canv.setFont(_F, 8.5)
     canv.setFillColor(C_MUTED)
     canv.drawString(LEFT_M + 24 * mm, PAGE_H - 12 * mm, "Bitumen Transport ERP · User Manual")
-    canv.drawRightString(PAGE_W - RIGHT_M, PAGE_H - 12 * mm, "v1.0 Draft · English")
+    canv.drawRightString(PAGE_W - RIGHT_M, PAGE_H - 12 * mm, "v1.0 · English")
     canv.setStrokeColor(C_LINE)
     canv.setLineWidth(0.4)
     canv.line(LEFT_M, PAGE_H - 14 * mm, PAGE_W - RIGHT_M, PAGE_H - 14 * mm)
@@ -679,7 +679,7 @@ def _draw_page_chrome(canv, total):
     canv.line(LEFT_M, 14 * mm, PAGE_W - RIGHT_M, 14 * mm)
     canv.setFont(_F, 8.5)
     canv.setFillColor(C_MUTED)
-    canv.drawString(LEFT_M, 10 * mm, "© QORVENA · User Manual · v1.0 Draft (English)")
+    canv.drawString(LEFT_M, 10 * mm, "© QORVENA · User Manual · v1.0 (English) · February 2026")
     # Page X of Y — but page 1 is the cover, so we display (p) of (total)
     canv.drawRightString(PAGE_W - RIGHT_M, 10 * mm, f"Page {p} of {total}")
     canv.restoreState()

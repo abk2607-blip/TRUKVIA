@@ -23,9 +23,7 @@ User frequently switches between English and Telugu. Detect the language of the 
 ## Completed work (rolling log)
 - **Iter126, Iter127a, Iter127b, Iter127c** — LOCKED
 - **P0 "REFRESHING..." stability** — CLOSED
-- **User Manual v1.0 (bilingual)** — SUPERSEDED (Telugu rendering rejected)
-- **User Manual v1.0 (English initial + refined)** — SUPERSEDED
-- **User Manual v1.0 (English, presentation-improved) — Draft** — DELIVERED Feb 2026, awaiting UAT
+- **User Manual v1.0 (English) — LOCKED · Released February 2026 · UAT approved by user**
   - Source: `/app/docs/user_manual.md`
   - Builder: `/app/docs/build_manual.py` (ReportLab, DejaVu fonts, cover + TOC + coloured callouts + Page X of Y footer, 26mm callout labels)
   - Screenshots: `/app/docs/screenshots/` — 26 real app screenshots captured at **2× DPI** + 5 pixel-perfect modal mockups
@@ -34,16 +32,8 @@ User frequently switches between English and Telugu. Detect the language of the 
     - `recapture_hires.py` — 2× DPI re-capture
     - `crop_screenshots.py` — trims left sidebar for larger useful area (PIL)
     - `capture_modal_mockups.py` — pixel-perfect duplicate/deactivate modals from Tailwind HTML
-    - `retake_trip_view.py` — reserved (trip view SPA won't hydrate headless)
   - Output: `/app/frontend/public/qorvena_user_manual.pdf` (37 pages, 9.2 MB @ 2× DPI)
-  - Presentation refinements (this pass):
-    - 2× DPI screenshots + left-sidebar crop for readability
-    - In-PDF image size 95mm → 105mm max height
-    - Callout labels widened to 26mm; label font tuned to prevent mid-word wrap
-    - Save Retry section rewritten in plain English (no `Idempotency-Key`)
-    - Troubleshooting rewritten (no HTTP codes / header names)
-    - Removed unusable "Loading trip…" screenshot
-  - Verification: 0 Telugu in source and PDF; 0 dev-jargon leaks (`403`, `409`, `Idempotency-Key`, `case-insensitive`, `hard block`, `soft block`, header names).
+  - Verification: 0 Telugu; 0 dev-jargon leaks; every locked business rule documented accurately; cover / header / footer / final-page metadata read as "v1.0 (English) · Released February 2026".
 
 ## Backlog (upcoming)
 - **P1** Deploy Readiness Badge
