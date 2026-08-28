@@ -7,6 +7,7 @@ import {
   LayoutDashboard, Truck, Users, FileText, Settings as SettingsIcon, LogOut, UserCog, Package, BarChart3, Car, Fuel as FuelIcon, FolderArchive, History, ShieldCheck, MapPin, AlertCircle, Building2, LayoutTemplate, Handshake, Menu, X, MoreHorizontal,
 } from "lucide-react";
 import AIChatBubble from "@/components/AIChatBubble";
+import DeployReadinessBadge from "@/components/DeployReadinessBadge";
 
 const nav = [
   { to: "/dashboard", te: "డ్యాష్‌బోర్డ్", en: "Dashboard", icon: LayoutDashboard, testid: "nav-dashboard" },
@@ -121,6 +122,7 @@ export default function Layout({ children }) {
           <div className="text-xs text-zinc-500">Accounting Suite</div>
         </div>
         <CompanySwitcher companies={companies} activeCid={activeCid} active={active} onSwitch={switchCompany} />
+        <DeployReadinessBadge variant="desktop" />
         <NavList />
         <div className="border-t border-zinc-200 p-3">
           <div className="flex items-center gap-2 px-2 py-2">
@@ -167,6 +169,7 @@ export default function Layout({ children }) {
               </button>
             </div>
             <CompanySwitcher companies={companies} activeCid={activeCid} active={active} onSwitch={switchCompany} />
+            <DeployReadinessBadge variant="desktop" />
             <NavList onNavigate={() => setDrawerOpen(false)} />
             <div className="border-t border-zinc-200 p-3">
               <div className="flex items-center gap-2 px-2 py-2">
@@ -213,6 +216,7 @@ export default function Layout({ children }) {
               <div className="mt-0.5 text-xs font-semibold text-zinc-800 truncate leading-tight">{active.name}</div>
             </div>
           )}
+          <DeployReadinessBadge variant="mobile" />
         </div>
 
         {/* Page content */}

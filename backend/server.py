@@ -8,11 +8,12 @@ import logging
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, APIRouter
+from fastapi import FastAPI, HTTPException, APIRouter, Depends
 from starlette.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from db import client, db
+from auth import get_current_user
 from storage_client import init_storage, APP_NAME
 from idempotency import idempotency_middleware, ensure_indexes as ensure_idempotency_indexes
 from routers.dedup_admin import router as dedup_admin_router, ensure_dedup_indexes_and_backfill
@@ -464,10 +465,27 @@ async def _kick_regression_watcher():
                     "(set REGRESSION_GUARD_PERIODIC=1 to re-enable)")
 
 
+# Iter128 — Deploy-Readiness Badge role-gate. Owner / Admin / Manager only.
+# Matches the visibility scope approved for the top-nav badge and prevents
+# lower-role users from probing the regression-guard endpoints. Return 403
+# with a stable, plain-English message so the frontend can map it cleanly.
+_DEPLOY_ROLES = ("owner", "admin", "manager")
+
+
+def _require_deploy_role(user: dict) -> None:
+    if (user.get("effective_role") or "").lower() not in _DEPLOY_ROLES:
+        raise HTTPException(
+            status_code=403,
+            detail="Owner, Admin, or Manager role required.",
+        )
+
+
 @app.get("/api/admin/deploy-readiness")
-async def deploy_readiness():
+async def deploy_readiness(user=Depends(get_current_user)):
     """Iter51 — Latest cached regression-guard result. Deploy pipelines call
-    this to check readiness. Returns 200 with status=pass or fail. Never 5xx."""
+    this to check readiness. Returns 200 with status=pass or fail. Never 5xx.
+    Iter128 — Role-gated to Owner / Admin / Manager (403 otherwise)."""
+    _require_deploy_role(user)
     doc = await db.deploy_status.find_one({"_id": "current"}, {"_id": 0})
     if not doc:
         return {
@@ -479,10 +497,12 @@ async def deploy_readiness():
 
 
 @app.get("/api/admin/deploy-history")
-async def deploy_history(limit: int = 30):
+async def deploy_history(limit: int = 30, user=Depends(get_current_user)):
     """Iter52 — Guard History: returns the last N regression runs with their
     pass/fail status and (if failed) the list of broken test files. Drives
-    the sparkline / bar-chart on the Dashboard's Deploy Guard tile."""
+    the sparkline / bar-chart on the Dashboard's Deploy Guard tile.
+    Iter128 — Role-gated to Owner / Admin / Manager (403 otherwise)."""
+    _require_deploy_role(user)
     rows = await db.deploy_status_history.find({}, {"_id": 0}).sort("checked_at", -1).limit(min(100, max(1, limit))).to_list(100)
     # Return in chronological order for chart plotting
     rows.reverse()
