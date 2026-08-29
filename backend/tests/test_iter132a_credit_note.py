@@ -46,7 +46,7 @@ def _create_invoice_with_trip():
             "customer_id": cust_id, "product_id": None,
             "from_location": "FromCity", "to_location": "ToCity",
             "tons": 10.0, "rate": 500.0, "freight_amount": 5000.0,
-            "basis": "per_ton",
+            "basis": "per_ton", "freight_mode": "per_ton",
         },
         timeout=15,
     )

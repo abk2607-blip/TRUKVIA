@@ -1202,7 +1202,7 @@ async def startup_event():
         await db.credit_debit_notes.create_index([("invoice_id", 1), ("status", 1)])
         await db.credit_debit_notes.create_index(
             [("user_id", 1), ("company_id", 1), ("kind", 1), ("note_number", 1)],
-            partialFilterExpression={"note_number": {"$type": "string", "$ne": ""}},
+            partialFilterExpression={"note_number": {"$type": "string", "$gt": ""}},
         )
     except Exception as e:
         logger.warning(f"Iter132a startup backfill failed: {e}")
