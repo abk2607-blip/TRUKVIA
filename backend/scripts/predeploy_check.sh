@@ -96,7 +96,7 @@ echo
 # ── Stage 3: synthetic Trip + Halting smoke test ─────────────────────────
 echo -e "${YELLOW}[3/3] End-to-end Trip → Edit → Halting → Invoice smoke test${NC}"
 python3 - <<PYEOF
-import sys, json, uuid
+import os, sys, json, uuid
 import httpx
 BASE = "$BACKEND_URL"
 TOK = {"Authorization": f"Bearer {os.environ['DEMO_TOKEN_VALUE']}"}
