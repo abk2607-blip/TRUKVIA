@@ -107,10 +107,16 @@ def test_no_hardcoded_legacy_token_in_executable_sources():
 # ─── D · Simulated production behaviour ─────────────────────────────────
 
 def test_auth_module_reloads_to_fail_secure_when_flag_missing(monkeypatch):
-    """When IS_PREVIEW_ENV is unset at module-import time, the reloaded
+    """When IS_PREVIEW_ENV is not "1" at module-import time, the reloaded
     auth module must compute _IS_PREVIEW=False, _DEMO_ENABLED=False, and
-    DEMO_TOKEN="" — fail-secure regardless of ENABLE_DEMO_TOKEN."""
-    monkeypatch.delenv("IS_PREVIEW_ENV", raising=False)
+    DEMO_TOKEN="" — fail-secure regardless of ENABLE_DEMO_TOKEN.
+
+    NB: we set IS_PREVIEW_ENV="0" rather than delenv, because dotenv's
+    load_dotenv() is called during import-chain reloads (db.py) and would
+    otherwise re-populate the value from /app/backend/.env, defeating the
+    monkeypatch. The auth.py gate is `== "1"` so any other value is
+    equivalent to absence."""
+    monkeypatch.setenv("IS_PREVIEW_ENV", "0")
     monkeypatch.setenv("ENABLE_DEMO_TOKEN", "1")  # Even with feature toggle ON
     monkeypatch.setenv("DEMO_TOKEN_VALUE", "should-be-blanked")
 
@@ -150,9 +156,13 @@ def test_google_oauth_endpoint_shape_unchanged():
 
 
 def test_rbac_roles_untouched():
-    """Owner/Admin/Manager permission map must remain intact — the guard
-    must not have altered the RBAC layer."""
+    """Iter130 · The permission map must remain intact — the guard must
+    not have altered the RBAC layer. The current role trio is
+    owner / accountant / viewer (see models.ROLE_PERMISSIONS)."""
     from models import ROLE_PERMISSIONS
     assert "owner" in ROLE_PERMISSIONS
-    assert "admin" in ROLE_PERMISSIONS
-    assert "manager" in ROLE_PERMISSIONS
+    assert "accountant" in ROLE_PERMISSIONS
+    assert "viewer" in ROLE_PERMISSIONS
+    # Owner still holds the destructive permissions
+    assert "delete_invoice" in ROLE_PERMISSIONS["owner"]
+    assert "manage_users" in ROLE_PERMISSIONS["owner"]

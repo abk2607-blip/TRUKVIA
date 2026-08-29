@@ -1141,6 +1141,21 @@ async def _run_background_migrations():
 
 @app.on_event("startup")
 async def startup_event():
+    # Iter130 · Defense-in-depth demo-token rotation.
+    # After the one-shot Mongo purge of the legacy demo-session row, this
+    # startup hook also deletes any user_sessions document whose token is
+    # the pre-rotation literal. Guards against re-seeding (e.g. a rogue
+    # migration or a restored backup smuggling the old row back in).
+    try:
+        LEGACY = "test_session_" + "bitumen_2026"
+        result = await db.user_sessions.delete_many({"session_token": LEGACY})
+        if result.deleted_count:
+            logger.warning(
+                f"Iter130 · purged {result.deleted_count} legacy demo-session row(s)"
+            )
+    except Exception as e:
+        logger.warning(f"Iter130 legacy-session cleanup failed: {e}")
+
     # Iter127b-UAT-fix v3 — ONLY critical, fast startup work runs synchronously
     # here. Heavy migrations/backfills/index-housekeeping have been moved into
     # `_run_background_migrations()` scheduled below.
