@@ -276,6 +276,16 @@ async def delete_invoice(iid: str, reason: str = "", user=Depends(get_current_us
     doc = await db.invoices.find_one({"id": iid, "user_id": user["user_id"]}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Not found")
+    # Iter132a · Block deletion while any non-cancelled CN/DN references this invoice.
+    linked = await db.credit_debit_notes.count_documents({
+        "user_id": user["user_id"], "invoice_id": iid,
+        "status": {"$in": ["draft", "issued"]},
+    })
+    if linked:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot delete — {linked} active Credit/Debit Note(s) reference this invoice. Cancel the notes first.",
+        )
     await db.trips.update_many(
         {"user_id": user["user_id"], "id": {"$in": doc.get("trip_ids", [])}},
         {"$set": {"status": "pending", "invoice_id": None}},

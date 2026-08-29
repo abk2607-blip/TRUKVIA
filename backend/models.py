@@ -86,6 +86,12 @@ class Company(BaseModel):
     logo: str = ""  # data URL (base64)
     udyam_registration: str = ""  # MSME / Udyam Registration No. — appears in Invoice T&C
     is_default: bool = False
+    # Iter132a · Credit Note / Debit Note numbering + configuration
+    credit_note_prefix: str = "CN"
+    next_credit_note_number: int = 1
+    debit_note_prefix: str = "DN"       # reserved for Iter132b
+    next_debit_note_number: int = 1     # reserved for Iter132b
+    require_cdn_approval: bool = False  # draft→issued gate when true
 
 class ShipSite(BaseModel):
     """Iter66 · Phase A — a customer's Ship-To / consignee site location.
@@ -558,10 +564,107 @@ class Invoice(BaseModel):
 
 # Simple RBAC: role -> permissions
 ROLE_PERMISSIONS = {
-    "owner": {"edit_trip", "delete_trip", "edit_invoice", "delete_invoice", "edit_master", "delete_master", "manage_users"},
-    "accountant": {"edit_trip", "edit_invoice", "edit_master"},
+    "owner": {"edit_trip", "delete_trip", "edit_invoice", "delete_invoice", "edit_master", "delete_master", "manage_users",
+              # Iter132a additive — CN/DN permissions. Existing keys untouched.
+              "create_note", "issue_note", "cancel_note", "edit_note_settings"},
+    "accountant": {"edit_trip", "edit_invoice", "edit_master",
+                   "create_note", "issue_note"},
     "viewer": set(),
 }
+
+
+# ==================== Iter132a · Credit Note / Debit Note ====================
+
+class CDNLine(BaseModel):
+    """One line inside a Credit/Debit Note. Same shape as an invoice line
+    but semantically an adjustment against the linked invoice."""
+    id: str = Field(default_factory=lambda: new_id("cdnl_"))
+    description: str
+    hsn_sac: str = "996791"
+    trip_id: Optional[str] = None   # optional link to a specific trip for drilldown
+    quantity: float = 1.0
+    rate: float
+    taxable_value: float            # quantity * rate, rounded 2dp
+
+class CreditDebitNote(BaseModel):
+    """Iter132a · Credit Note (kind='credit'). Debit Note (kind='debit')
+    ships in Iter132b — the schema already carries the kind field so no
+    migration is needed at that time. Always positive amounts; the kind
+    field determines sign in aggregations."""
+    id: str = Field(default_factory=lambda: new_id("cdn_"))
+    kind: Literal["credit", "debit"] = "credit"
+    company_id: str
+    note_number: str = ""               # assigned at issue time
+    note_date: str                      # ISO date; ≥ invoice_date and ≤ today
+    invoice_id: str                     # exactly one linked invoice
+    invoice_number_snapshot: str = ""   # cached for reporting/PDF stability
+    customer_id: str = ""
+    reason_code: Literal[
+        "rate_correction", "short_delivery", "quality_claim",
+        "post_invoice_discount", "under_charge", "missed_halting",
+        "freight_escalation", "sales_return", "other"
+    ]
+    reason_text: str                    # free text, min 8 chars (validated in router)
+    lines: List[CDNLine]
+
+    subtotal: float = 0.0
+    gst_type: Literal["cgst_sgst", "igst"] = "cgst_sgst"
+    cgst_rate: float = 2.5
+    sgst_rate: float = 2.5
+    igst_rate: float = 5.0
+    cgst_amount: float = 0.0
+    sgst_amount: float = 0.0
+    igst_amount: float = 0.0
+    total_tax: float = 0.0
+    total_amount: float = 0.0
+    round_off: float = 0.0
+    rcm: bool = True                    # inherited from invoice
+
+    status: Literal["draft", "issued", "cancelled"] = "draft"
+    cancelled_at: Optional[str] = None
+    cancelled_by: Optional[str] = None
+    cancelled_reason: Optional[str] = None
+
+    # Approval trail
+    created_by: str = ""
+    approved_by: Optional[str] = None
+    approved_at: Optional[str] = None
+    deadline_override: bool = False     # true when issued past 30-Nov statutory cutoff
+
+    share_token: Optional[str] = None
+
+    # Iter86-parity: historical isolation
+    is_historical: bool = False
+
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+
+
+class CDNLineCreate(BaseModel):
+    description: str
+    hsn_sac: str = "996791"
+    trip_id: Optional[str] = None
+    quantity: float = 1.0
+    rate: float
+
+
+class CDNCreateRequest(BaseModel):
+    invoice_id: str
+    note_date: Optional[str] = None     # defaults to today at server
+    reason_code: Literal[
+        "rate_correction", "short_delivery", "quality_claim",
+        "post_invoice_discount", "under_charge", "missed_halting",
+        "freight_escalation", "sales_return", "other"
+    ]
+    reason_text: str
+    lines: List[CDNLineCreate]
+    deadline_override_reason: Optional[str] = None  # required when past 30-Nov
+
+
+class CDNCancelRequest(BaseModel):
+    reason: str
+
+
+# ============================================================================
 
 class TeamMember(BaseModel):
     id: str = Field(default_factory=lambda: new_id("tm_"))

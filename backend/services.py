@@ -449,6 +449,82 @@ async def _next_invoice_number_for_company(company_id: str, user_id: str) -> str
     return num
 
 
+# ── Iter132a · Credit Note numbering ──────────────────────────────────────
+
+def _derive_fy_from_iso(iso_date: str) -> str:
+    """Iter132a · Financial-year string (`26-27`) derived from an ISO date
+    string. Unlike the invoice helper, this respects the caller-supplied
+    `note_date` rather than `now_utc()` — so a note dated 31-March lands in
+    the outgoing FY and one dated 1-April lands in the new FY, regardless
+    of when the request hits the server. Invoice numbering is untouched."""
+    from datetime import date as _date
+    d = _date.fromisoformat(iso_date)
+    yr = d.year % 100
+    yr_next = (d.year + 1) % 100
+    return f"{yr:02d}-{yr_next:02d}" if d.month >= 4 else f"{yr-1:02d}-{yr:02d}"
+
+
+async def _next_credit_note_number_for_company(
+    company_id: str, user_id: str, note_date_iso: str
+) -> str:
+    """Atomically consume the next CN sequence for a company. Uses
+    `$inc` (not `$set: seq+1`) so two concurrent issues cannot collide.
+    Reuses `_compose_invoice_number` for FY-in-prefix self-healing."""
+    fy_str = _derive_fy_from_iso(note_date_iso)
+    # Atomic increment + read
+    doc = await db.companies.find_one_and_update(
+        {"id": company_id, "user_id": user_id},
+        {"$inc": {"next_credit_note_number": 1}},
+        projection={"_id": 0, "credit_note_prefix": 1, "next_credit_note_number": 1},
+        return_document=False,  # return doc BEFORE the increment
+    )
+    prefix = ((doc or {}).get("credit_note_prefix")) or "CN"
+    seq = int(((doc or {}).get("next_credit_note_number")) or 1)
+    return _compose_invoice_number(prefix, fy_str, seq)
+
+
+async def _effective_invoice_totals(inv_doc: dict, notes_docs: list) -> dict:
+    """Iter132a · Given an invoice doc and its issued (non-cancelled) CN/DN
+    docs, return the invoice's effective totals WITHOUT mutating either.
+    Cancelled/draft notes are excluded — callers must pre-filter."""
+    credits = sum(float(n.get("total_amount") or 0)
+                  for n in notes_docs if n.get("kind") == "credit")
+    debits = sum(float(n.get("total_amount") or 0)
+                 for n in notes_docs if n.get("kind") == "debit")
+    raw_total = float(inv_doc.get("total_amount") or 0)
+    amount_paid = float(inv_doc.get("amount_paid") or 0)
+    effective_total = round(raw_total - credits + debits, 2)
+    effective_balance = round(effective_total - amount_paid, 2)
+    return {
+        "effective_total_amount": effective_total,
+        "effective_balance_due": effective_balance,
+        "credits_total": round(credits, 2),
+        "debits_total": round(debits, 2),
+    }
+
+
+async def _apply_effective_balance(invoices: list, user_id: str, company_id: str = "") -> list:
+    """Mutate an invoice list in place to add `effective_balance_due`,
+    `effective_total_amount`, `credits_total`, `debits_total`.
+    Zero-cost when no CN/DN docs exist (batch-loads a single Mongo query)."""
+    if not invoices:
+        return invoices
+    inv_ids = [i.get("id") for i in invoices if i.get("id")]
+    if not inv_ids:
+        return invoices
+    q = {"user_id": user_id, "invoice_id": {"$in": inv_ids}, "status": "issued"}
+    if company_id:
+        q["company_id"] = company_id
+    notes = await db.credit_debit_notes.find(q, {"_id": 0, "invoice_id": 1, "kind": 1, "total_amount": 1}).to_list(5000)
+    by_inv: dict = {}
+    for n in notes:
+        by_inv.setdefault(n["invoice_id"], []).append(n)
+    for inv in invoices:
+        eff = await _effective_invoice_totals(inv, by_inv.get(inv.get("id"), []))
+        inv.update(eff)
+    return invoices
+
+
 
 def _in_range(date_str: str, start: Optional[str], end: Optional[str]) -> bool:
     if not date_str:

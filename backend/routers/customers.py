@@ -162,13 +162,19 @@ async def list_customers(
 
     if with_balance:
         # Iter86 — Exclude historical invoices from live balance
-        invs = await db.invoices.find({"user_id": user["user_id"], "company_id": cid, **LIVE_ONLY_FILTER}, {"_id": 0, "customer_id": 1, "balance_due": 1, "total_amount": 1, "gross_total": 1, "amount_paid": 1}).to_list(5000)
+        invs = await db.invoices.find({"user_id": user["user_id"], "company_id": cid, **LIVE_ONLY_FILTER}, {"_id": 0, "id": 1, "customer_id": 1, "balance_due": 1, "total_amount": 1, "gross_total": 1, "amount_paid": 1}).to_list(5000)
+        # Iter132a — attach effective_balance_due (CN reduces / DN increases).
+        try:
+            from services import _apply_effective_balance
+            await _apply_effective_balance(invs, user["user_id"], cid)
+        except Exception:
+            pass
         bal_map: dict = {}
         for i in invs:
             k = i.get("customer_id")
             if not k:
                 continue
-            bal_map[k] = bal_map.get(k, 0.0) + float(i.get("balance_due", 0))
+            bal_map[k] = bal_map.get(k, 0.0) + float(i.get("effective_balance_due", i.get("balance_due", 0)))
         for c in docs:
             c["outstanding_balance"] = round(bal_map.get(c["id"], 0.0), 2)
 

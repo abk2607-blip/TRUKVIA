@@ -113,6 +113,14 @@ for r in (
 ):
     app.include_router(r.router)
 
+# Iter132a · Credit Note router (feature-flagged internally by ENABLE_CDN).
+try:
+    from routers.notes import router as notes_r
+    app.include_router(notes_r)
+except Exception as _e:
+    import logging as _log
+    _log.getLogger(__name__).warning(f"Iter132a notes router not mounted: {_e}")
+
 # Iter127a — Duplicate-master admin listing (read-only).
 app.include_router(dedup_admin_router)
 
@@ -1174,6 +1182,30 @@ async def startup_event():
             )
     except Exception as e:
         logger.warning(f"Iter130 legacy-session cleanup failed: {e}")
+
+    # Iter132a · Backfill CN/DN fields on existing companies (idempotent) +
+    # create indexes for credit_debit_notes.
+    try:
+        r = await db.companies.update_many(
+            {"credit_note_prefix": {"$exists": False}},
+            {"$set": {
+                "credit_note_prefix": "CN",
+                "next_credit_note_number": 1,
+                "debit_note_prefix": "DN",
+                "next_debit_note_number": 1,
+                "require_cdn_approval": False,
+            }},
+        )
+        if r.modified_count:
+            logger.info(f"Iter132a · backfilled CN/DN fields on {r.modified_count} company docs")
+        await db.credit_debit_notes.create_index([("user_id", 1), ("company_id", 1), ("note_date", -1)])
+        await db.credit_debit_notes.create_index([("invoice_id", 1), ("status", 1)])
+        await db.credit_debit_notes.create_index(
+            [("user_id", 1), ("company_id", 1), ("kind", 1), ("note_number", 1)],
+            partialFilterExpression={"note_number": {"$type": "string", "$ne": ""}},
+        )
+    except Exception as e:
+        logger.warning(f"Iter132a startup backfill failed: {e}")
 
     # Iter127b-UAT-fix v3 — ONLY critical, fast startup work runs synchronously
     # here. Heavy migrations/backfills/index-housekeeping have been moved into
