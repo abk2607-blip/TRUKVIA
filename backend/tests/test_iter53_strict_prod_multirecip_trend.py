@@ -55,7 +55,9 @@ def test_auth_health_gate_semantics():
 
 def test_deploy_readiness_writes_history():
     """Every guard run should append to the history collection (or already have entries)."""
-    r = httpx.get(f"{BASE}/api/admin/deploy-history?limit=50", timeout=10)
+    # Iter128 · endpoint is role-gated (Owner/Admin/Manager). Use demo Bearer.
+    hdr = {"Authorization": "Bearer test_session_bitumen_2026"}
+    r = httpx.get(f"{BASE}/api/admin/deploy-history?limit=50", headers=hdr, timeout=10)
     assert r.status_code == 200
     d = r.json()
     assert d["count"] >= 1, "no history rows recorded"

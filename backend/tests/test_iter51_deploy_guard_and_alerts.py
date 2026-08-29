@@ -28,10 +28,13 @@ BASE = os.environ.get("BACKEND_URL_INTERNAL", "http://localhost:8001")
 # Pytest runs on the same pod need an XFF header to look like external ingress
 # traffic; otherwise middleware inserts get skipped.
 XFF = {"X-Forwarded-For": "203.0.113.51"}
+# Iter128 · /api/admin/deploy-readiness + /api/admin/deploy-history are now
+# role-gated (Owner/Admin/Manager). Use the shared demo Bearer to authenticate.
+DEMO_HDR = {"Authorization": "Bearer test_session_bitumen_2026"}
 
 
 def test_deploy_readiness_endpoint_shape():
-    r = httpx.get(f"{BASE}/api/admin/deploy-readiness", timeout=10)
+    r = httpx.get(f"{BASE}/api/admin/deploy-readiness", headers=DEMO_HDR, timeout=10)
     assert r.status_code == 200
     d = r.json()
     assert "status" in d
