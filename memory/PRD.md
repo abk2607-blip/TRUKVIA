@@ -25,33 +25,39 @@ User frequently switches between English and Telugu. Detect the language of the 
 - **Iter126, Iter127a, Iter127b, Iter127c** — LOCKED
 - **P0 "REFRESHING..." stability** — CLOSED
 - **User Manual v1.0 (English)** — LOCKED · UAT approved
-- **Iter128 · Deploy Readiness Badge** — 🔒 **LOCKED · UAT approved 2026-08-29**
-  - Backend: role guard added to `/api/admin/deploy-readiness` and `/api/admin/deploy-history` (Owner/Admin/Manager only, 403 otherwise) in `server.py`
-  - Frontend: `DeployReadinessBadge.jsx` — TanStack Query poll every 60s, paused when tab hidden; states = Ready / Checking… / Not ready / Offline; popover shows Checked / Elapsed / Exit Code + See History link
-  - Mounted in `Layout.jsx` beneath CompanySwitcher (desktop) and inside mobile top bar (icon-only variant)
-  - Tests: `test_iter128_deploy_readiness_badge.py` — 8 pytest cases (owner/manager allowed; accountant/viewer/unauthed rejected; history parity; run-now untouched)
-  - Iter51/52/53 auth-header co-update: 3 pre-existing tests updated to send demo Bearer to reflect the new role gate (test-only change, +10/−3 lines)
-  - Fresh regression run 2026-08-29 02:25 UTC: **503 passed · 1 skipped · 0 failed · exit_code=0 · elapsed=642.6s** ✓
-  - Badge visual UAT: desktop pill + popover + mobile icon variant all confirmed green
-  - `data-testid`: `deploy-badge-root`, `deploy-badge-status`, `deploy-badge-popover`, plus internal `deploy-badge-{checked-at,elapsed,exit-code,see-history}`
+- **Iter128 · Deploy Readiness Badge** — 🔒 LOCKED · UAT approved 2026-08-29
+  - Backend role guard on `/api/admin/deploy-readiness` and `/api/admin/deploy-history` (Owner/Admin/Manager only)
+  - Frontend `DeployReadinessBadge.jsx` mounted beneath CompanySwitcher (desktop) + mobile icon variant
+  - States: Ready / Checking… / Not ready / Offline; popover shows Checked / Elapsed / Exit Code + See History
+  - 8 pytest cases in `test_iter128_deploy_readiness_badge.py`, all green
+  - Iter51/52/53 auth-header co-update (test-only, +10/−3 lines)
+  - `data-testid`: `deploy-badge-root`, `deploy-badge-status`, `deploy-badge-popover`, `deploy-badge-{checked-at,elapsed,exit-code,see-history}`
+- **Xdist Test Cleanup** — 🔒 LOCKED · UAT approved 2026-08-29
+  - `test_iter46_halting_single_source.py` — UUID-namespaced `TEST_Iter46_{6hex}` customer + `_VEH_SUFFIX` on all vehicle numbers so parallel workers cannot mutate this file's fixtures
+  - `test_iter43_drilldown_share_refine_chat.py` — local 3× 500 ms `_drill()` retry helper around `GET /api/dashboard/expenditure-detail` to survive Mongo read-after-write commit lag under xdist load
+  - Test-only change (2 files, +35/−12 lines); zero production code, routers, models, services, halting/shortage/freight/invoice, pytest.ini, conftest.py, or run_regression.sh touched
+  - Verified: 10/10 in isolation; 5 consecutive full-regression PASSes (503 passed / 1 skipped / 0 failed / exit 0); Iter128 badge still Ready
+  - No backend restart occurred; no dependency change
 
-## Backlog (upcoming)
-- **P1** Preview Uptime Chip — 🧊 frozen
+## Frozen — do NOT start without explicit instruction
+- Preview Uptime Chip 🧊
+- LR Register Email Digest 🧊
+- User Manual footer distribution link 🧊
+- Credit / Debit Notes 🧊
+- All Iter126 / Iter127a-c / Iter128 / P0 locked functionality 🔒
+
+## Backlog (later, on user's call only)
 - **P2** Trip 8279 missing-Ship-To data-hygiene nudge
-- **P2** LR Register Email Digest — 🧊 frozen
-- **P2** Credit/Debit Notes
 - **P3** Trip Templates feature completion
 - **P3** QORVENA global rebranding rename
 - **Deferred** Iter105 Demo-Customer UAT
 - **Deferred** "Disk newer than in-memory" backend guardrail
-- **Deferred** iter43 + iter46 xdist / data-fixture cleanup (6 tests failing only inside 67-file batch; pass in isolation — not a code bug)
 - **Idea** In-app Help side-drawer
-- **Later** User Manual footer distribution link
 
 ## Explicitly deferred by user
 - IGST vs CGST/SGST recalculation based on independent Ship-To State.
 - Freezing historical invoice Ship-To strings as snapshots.
-- Adding `effective_role` to `/api/auth/me` — auth is frozen; badge uses backend 403 as the gate instead.
+- Adding `effective_role` to `/api/auth/me` — auth frozen; Iter128 badge uses backend 403 as the gate.
 
 ## Critical operational notes
 - Backend does **NOT** auto-reload. Any change under `/app/backend` requires `sudo supervisorctl restart backend`.
