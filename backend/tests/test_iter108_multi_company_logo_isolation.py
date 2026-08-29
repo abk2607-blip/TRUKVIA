@@ -21,7 +21,7 @@ from pypdf import PdfReader
 
 
 API = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/") + "/api"
-DEMO = "test_session_bitumen_2026"
+DEMO = os.environ["DEMO_TOKEN_VALUE"]
 T = 30
 
 

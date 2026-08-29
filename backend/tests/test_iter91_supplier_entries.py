@@ -16,7 +16,7 @@ import time
 import requests
 
 API = os.environ.get("REACT_APP_BACKEND_URL", "https://trip-billing-pro-1.preview.emergentagent.com")
-TOKEN = "test_session_bitumen_2026"
+TOKEN = os.environ["DEMO_TOKEN_VALUE"]
 
 
 def _boot():

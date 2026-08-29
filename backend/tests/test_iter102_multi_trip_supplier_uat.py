@@ -26,7 +26,7 @@ import httpx
 from pypdf import PdfReader
 
 API = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/") + "/api"
-TOK = "test_session_bitumen_2026"
+TOK = os.environ["DEMO_TOKEN_VALUE"]
 H = {"Authorization": f"Bearer {TOK}", "Content-Type": "application/json"}
 T = 60
 

@@ -22,7 +22,7 @@ from dotenv import load_dotenv
 load_dotenv("/app/backend/.env")
 
 BASE = os.environ.get("BACKEND_URL_INTERNAL", "http://localhost:8001")
-TOKEN = "test_session_bitumen_2026"
+TOKEN = os.environ["DEMO_TOKEN_VALUE"]
 HDR = {"Authorization": f"Bearer {TOKEN}"}
 # Iter121 · Loopback (127.0.0.1) telemetry is filtered from save_health. Pytest
 # calls from the same pod must supply an XFF header (mimicking Kubernetes ingress)

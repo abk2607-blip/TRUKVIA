@@ -15,7 +15,7 @@ import requests
 
 API = os.environ.get("REACT_APP_BACKEND_URL", "https://trip-billing-pro-1.preview.emergentagent.com")
 H = {
-    "Authorization": "Bearer test_session_bitumen_2026",
+    "Authorization": f"Bearer {os.environ['DEMO_TOKEN_VALUE']}",
     "Content-Type": "application/json",
 }
 

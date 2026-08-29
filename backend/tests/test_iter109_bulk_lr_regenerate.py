@@ -17,7 +17,7 @@ import httpx
 
 
 API = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/") + "/api"
-H = {"Authorization": "Bearer test_session_bitumen_2026", "Content-Type": "application/json"}
+H = {"Authorization": f"Bearer {os.environ['DEMO_TOKEN_VALUE']}", "Content-Type": "application/json"}
 T = 30
 
 

@@ -8,8 +8,9 @@ These guards protect the P0 sign-in reliability commitment made to Bharath:
      an active user never lapses mid-form.
   C. `expires_at` is persisted as a BSON Date so the TTL index actually
      prunes stale rows.
-  D. The `test_session_bitumen_2026` demo token requires `ENABLE_DEMO_TOKEN=1`
-     on the backend; without it, requests carrying that token get 401.
+  D. The env-backed demo token (Iter130) requires `IS_PREVIEW_ENV=1` +
+     `ENABLE_DEMO_TOKEN=1` on the backend; without them, requests carrying
+     that token get 401.
   E. `abk2607@gmail.com` is auto-provisioned as the owner user.
 
 The frontend 401-auto-relaunch is verified structurally (source scan) since
@@ -23,7 +24,10 @@ import httpx
 
 
 API = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/") + "/api"
-DEMO_TOKEN = "test_session_bitumen_2026"
+DEMO_TOKEN = os.environ["DEMO_TOKEN_VALUE"]  # Iter130 · env-backed, no literal
+# Legacy literal — retained only as a NEGATIVE marker for the frontend
+# source-scan below (must NOT appear in the shipped bundle).
+_OLD_TOKEN_LITERAL = "test_session_" + "bitumen_2026"
 
 
 def _hdrs(tok=DEMO_TOKEN):
@@ -78,36 +82,44 @@ def test_user_sessions_ttl_index_exists():
 # ─── D — Demo token requires ENABLE_DEMO_TOKEN=1 ─────────────────────────
 
 def test_demo_token_gated_by_env_flag():
-    """When ENABLE_DEMO_TOKEN=1 (preview/dev), the demo token authenticates.
-    When 0 or missing (production), the same token must be refused.
-    Preview + pytest both run with the flag ON — the important production
-    guard (flag OFF → 401) is enforced by `auth.get_current_user` itself
-    and is covered by `test_login_page_hides_demo_button_by_default` +
-    the source-scan below."""
+    """Iter130 · Fail-secure gating.
+    Preview: token authenticates. Production (IS_PREVIEW_ENV absent):
+    the same token must be refused. Preview + pytest run with the flag
+    ON — the production guard is enforced by `auth.get_current_user`
+    itself and is source-scanned below."""
     from pathlib import Path
     auth_src = Path("/app/backend/auth.py").read_text()
-    # The env-gate check must exist in the auth module — the only line that
-    # ever raises 401 for the demo token in production.
+    # The env-gate check must exist in the auth module — the only lines
+    # that ever raise 401 for the demo token in production.
     assert 'if not _DEMO_ENABLED:' in auth_src, \
-        "auth.py must refuse demo token when ENABLE_DEMO_TOKEN is not set"
-    assert '_os.environ.get("ENABLE_DEMO_TOKEN") == "1"' in auth_src
+        "auth.py must refuse demo token when the guard is off"
+    assert '_IS_PREVIEW' in auth_src, \
+        "auth.py must derive IS_PREVIEW from env"
+    assert 'IS_PREVIEW_ENV' in auth_src, \
+        "auth.py must read IS_PREVIEW_ENV from the environment"
+    # The old hard-coded literal must not resurface in auth.py.
+    assert _OLD_TOKEN_LITERAL not in auth_src, \
+        "auth.py must not contain the rotated legacy token literal"
 
     # And when the flag IS on (preview / pytest), the token actually works.
-    if os.environ.get("ENABLE_DEMO_TOKEN") == "1" or True:  # preview always has it
+    if os.environ.get("IS_PREVIEW_ENV") == "1":
         r = httpx.get(f"{API}/auth/me", headers=_hdrs(), timeout=15)
         assert r.status_code == 200
 
 
 def test_login_page_hides_demo_button_by_default():
-    """The Login screen only renders the demo button when
-    REACT_APP_ENABLE_DEMO_LOGIN=1 at build time. In production, the
-    button + the hardcoded static-token fallback are both gone."""
+    """Iter130 · The Login screen renders the demo button only when BOTH
+    build-time flags are "1": REACT_APP_IS_PREVIEW_ENV and
+    REACT_APP_ENABLE_DEMO_LOGIN. In production the button is absent from
+    the JS bundle."""
     src = Path("/app/frontend/src/pages/Login.jsx").read_text()
+    assert 'REACT_APP_IS_PREVIEW_ENV === "1"' in src, \
+        "demo button must be wrapped in the IS_PREVIEW_ENV build-time gate"
     assert 'REACT_APP_ENABLE_DEMO_LOGIN === "1"' in src, \
-        "demo button must be wrapped in a build-time env check"
-    # The old fallback that pushed the hardcoded token no matter what is gone.
-    assert 'localStorage.setItem("session_token", "test_session_bitumen_2026")' not in src, \
-        "hardcoded static-token fallback must be removed"
+        "demo button must also honour the feature toggle"
+    # Rotated legacy literal must never appear in the shipped frontend.
+    assert _OLD_TOKEN_LITERAL not in src, \
+        "old hard-coded token literal must be absent from the frontend source"
 
 
 # ─── E — Owner account provisioning ──────────────────────────────────────

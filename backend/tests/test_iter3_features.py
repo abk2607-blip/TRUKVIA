@@ -8,7 +8,7 @@ import pytest
 import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "").rstrip("/")
-TOKEN = "test_session_bitumen_2026"
+TOKEN = os.environ["DEMO_TOKEN_VALUE"]
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 JSON_HEADERS = {**HEADERS, "Content-Type": "application/json"}
 API = f"{BASE_URL}/api"

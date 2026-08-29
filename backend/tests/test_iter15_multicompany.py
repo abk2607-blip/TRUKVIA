@@ -11,7 +11,7 @@ if not BASE:
             if line.startswith("REACT_APP_BACKEND_URL="):
                 BASE = line.split("=", 1)[1].strip().rstrip("/")
 API = f"{BASE}/api"
-TOKEN = "test_session_bitumen_2026"
+TOKEN = os.environ["DEMO_TOKEN_VALUE"]
 UID = "test-user-bitumen"
 H = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 

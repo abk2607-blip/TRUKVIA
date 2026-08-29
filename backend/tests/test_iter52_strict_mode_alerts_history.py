@@ -153,7 +153,7 @@ def test_extract_failed_tests_parser():
 
 def test_deploy_history_endpoint_shape():
     # Iter128 · endpoint is role-gated (Owner/Admin/Manager). Use demo Bearer.
-    hdr = {"Authorization": "Bearer test_session_bitumen_2026"}
+    hdr = {"Authorization": f"Bearer {os.environ['DEMO_TOKEN_VALUE']}"}
     r = httpx.get(f"{BASE}/api/admin/deploy-history?limit=10", headers=hdr, timeout=10)
     assert r.status_code == 200
     d = r.json()

@@ -10,7 +10,7 @@ Customer's frozen policy honoured for round-trip billing too.
 import os, time, requests
 
 API = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/") + "/api"
-TOKEN = "test_session_bitumen_2026"
+TOKEN = os.environ["DEMO_TOKEN_VALUE"]
 H = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
 

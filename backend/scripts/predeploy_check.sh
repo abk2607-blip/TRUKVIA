@@ -99,7 +99,7 @@ python3 - <<PYEOF
 import sys, json, uuid
 import httpx
 BASE = "$BACKEND_URL"
-TOK = {"Authorization": "Bearer test_session_bitumen_2026"}
+TOK = {"Authorization": f"Bearer {os.environ['DEMO_TOKEN_VALUE']}"}
 try:
     cid = httpx.get(f"{BASE}/api/companies", headers=TOK, timeout=5).json()[0]["id"]
     h = {**TOK, "X-Company-Id": cid}

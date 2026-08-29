@@ -7,7 +7,7 @@ import pytest
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL").rstrip("/")
 STATIC_URL = "https://trip-billing-pro-1.preview.static.emergentagent.com"
-TOKEN = "test_session_bitumen_2026"
+TOKEN = os.environ["DEMO_TOKEN_VALUE"]
 HDR = {"Authorization": f"Bearer {TOKEN}"}
 
 

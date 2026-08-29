@@ -4,7 +4,7 @@ import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/")
 API = f"{BASE_URL}/api"
-HEADERS = {"Authorization": "Bearer test_session_bitumen_2026", "Content-Type": "application/json"}
+HEADERS = {"Authorization": f"Bearer {os.environ['DEMO_TOKEN_VALUE']}", "Content-Type": "application/json"}
 
 
 def _cust():

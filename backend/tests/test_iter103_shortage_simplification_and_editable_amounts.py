@@ -21,7 +21,7 @@ import httpx
 
 
 API = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/") + "/api"
-TOK = "test_session_bitumen_2026"
+TOK = os.environ["DEMO_TOKEN_VALUE"]
 H = {"Authorization": f"Bearer {TOK}", "Content-Type": "application/json"}
 T = 30
 
@@ -287,7 +287,7 @@ def test_manual_shortage_override_flows_to_invoice_and_audit():
                 "system_value": system_short,
                 "final_value": override_val,
                 "reason": "Customer accepted only ₹1000 as agreed telephonically",
-                "modified_by": "test_session_bitumen_2026",
+                "modified_by": os.environ["DEMO_TOKEN_VALUE"],
                 "modified_at": "2026-11-03T10:00:00Z",
             }],
         }, timeout=T)
@@ -420,7 +420,7 @@ def test_manual_excess_override_flows_to_invoice_customer_side_only():
                 "system_value": sys_excess,
                 "final_value": 0.0,
                 "reason": "Waived per management call",
-                "modified_by": "test_session_bitumen_2026",
+                "modified_by": os.environ["DEMO_TOKEN_VALUE"],
                 "modified_at": "2026-11-05T10:00:00Z",
             }],
         }, timeout=T)

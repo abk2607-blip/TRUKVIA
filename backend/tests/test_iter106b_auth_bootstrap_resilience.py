@@ -25,7 +25,7 @@ import httpx
 
 
 BASE = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/") + "/api"
-DEMO_TOKEN = "test_session_bitumen_2026"
+DEMO_TOKEN = os.environ["DEMO_TOKEN_VALUE"]
 
 
 def test_auth_me_valid_session_returns_200_with_profile():

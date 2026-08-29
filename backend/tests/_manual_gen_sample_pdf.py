@@ -1,7 +1,8 @@
 """Generate a sample invoice PDF matching the user's reported case for visual QA."""
+import os
 import requests, sys
 BASE = "https://trip-billing-pro-1.preview.emergentagent.com/api"
-H = {"Authorization": "Bearer test_session_bitumen_2026", "Content-Type": "application/json"}
+H = {"Authorization": f"Bearer {os.environ['DEMO_TOKEN_VALUE']}", "Content-Type": "application/json"}
 
 def ok(r, l):
     if r.status_code >= 300:

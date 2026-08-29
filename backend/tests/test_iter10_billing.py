@@ -11,7 +11,7 @@ import fitz  # PyMuPDF
 from dotenv import load_dotenv
 load_dotenv("/app/frontend/.env")
 BASE_URL = os.environ["REACT_APP_BACKEND_URL"].rstrip("/")
-TOKEN = "test_session_bitumen_2026"
+TOKEN = os.environ["DEMO_TOKEN_VALUE"]
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
 

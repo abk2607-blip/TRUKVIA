@@ -20,7 +20,7 @@ import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/")
 API = f"{BASE_URL}/api"
-TOKEN = "test_session_bitumen_2026"
+TOKEN = os.environ["DEMO_TOKEN_VALUE"]
 HDR = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
 

@@ -18,9 +18,10 @@ Verifies (per user-locked requirements):
 
 Environment
 -----------
-Uses the pre-seeded demo token `test_session_bitumen_2026` (Iter106 keeps
-this alive in every environment). For the "different user" isolation
-test we insert a second `user_sessions` row directly via pymongo.
+Uses the env-backed demo token (`DEMO_TOKEN_VALUE`, Iter130 rotation)
+which Iter106 keeps alive in every preview/UAT environment. For the
+"different user" isolation test we insert a second `user_sessions` row
+directly via pymongo.
 """
 from __future__ import annotations
 
@@ -35,7 +36,7 @@ import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/")
 API = f"{BASE_URL}/api"
-DEMO_TOKEN = "test_session_bitumen_2026"
+DEMO_TOKEN = os.environ["DEMO_TOKEN_VALUE"]
 
 
 def _hdr(key: str | None = None, token: str = DEMO_TOKEN, company_id: str | None = None) -> dict:

@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 load_dotenv("/app/backend/.env")
 
 BASE = os.environ.get("BACKEND_URL_INTERNAL", "http://localhost:8001")
-HDR = {"Authorization": "Bearer test_session_bitumen_2026"}
+HDR = {"Authorization": f"Bearer {os.environ['DEMO_TOKEN_VALUE']}"}
 UNIQUE = f"IT72_{uuid.uuid4().hex[:6]}"
 
 

@@ -6,10 +6,11 @@ Iter106 · Support-recommended stability fixes:
   2. Session lifetime extended from 7 → 30 days.
   3. `expires_at` is stored as a real BSON Date (not ISO string) so the
      MongoDB TTL index actually fires and prunes stale rows.
-  4. The `test_session_bitumen_2026` demo token is gated behind
-     `ENABLE_DEMO_TOKEN=1` in `backend/.env`. In production (default) the
-     token is refused with 401. Pytest + local dev keep the flag ON so the
-     regression suite keeps working. See `/app/backend/.env`.
+  4. The demo session token (env-backed, Iter130) is gated behind
+     `IS_PREVIEW_ENV=1` + `ENABLE_DEMO_TOKEN=1` + non-empty
+     `DEMO_TOKEN_VALUE` in `backend/.env`. In production these flags are
+     absent, so the token is refused with 401. Pytest + local dev keep the
+     flags ON so the regression suite keeps working. See `/app/backend/.env`.
   5. Owner account is seeded as `abk2607@gmail.com` (the real signed-in user).
 """
 from datetime import datetime, timezone, timedelta
@@ -21,11 +22,24 @@ from models import ROLE_PERMISSIONS, now_utc
 
 
 # ── Constants ─────────────────────────────────────────────────────────────
-DEMO_TOKEN = "test_session_bitumen_2026"
-# Demo token is OFF in production by default. Turn on for local dev / preview
-# with `ENABLE_DEMO_TOKEN=1`. The legacy `DEMO_TOKEN_DISABLED=1` still works.
+# Iter130 · Demo-token production guard
+#   - Fail-secure: demo access is disabled unless IS_PREVIEW_ENV=1 is set
+#     in the environment. Real production deploys omit this flag, so the
+#     demo token is rejected even if ENABLE_DEMO_TOKEN=1 is accidentally
+#     inherited.
+#   - The token value itself is read from DEMO_TOKEN_VALUE at import time.
+#     No literal is stored in source. If the env var is missing/empty, the
+#     module-level constant is the empty string, which never matches an
+#     incoming Bearer header (an empty Bearer is rejected upstream).
+_IS_PREVIEW = _os.environ.get("IS_PREVIEW_ENV") == "1"
+DEMO_TOKEN = _os.environ.get("DEMO_TOKEN_VALUE", "") if _IS_PREVIEW else ""
 _DEMO_LEGACY_DISABLED = _os.environ.get("DEMO_TOKEN_DISABLED") == "1"
-_DEMO_ENABLED = _os.environ.get("ENABLE_DEMO_TOKEN") == "1" and not _DEMO_LEGACY_DISABLED
+_DEMO_ENABLED = (
+    _IS_PREVIEW
+    and _os.environ.get("ENABLE_DEMO_TOKEN") == "1"
+    and not _DEMO_LEGACY_DISABLED
+    and DEMO_TOKEN != ""
+)
 
 SESSION_LIFETIME_DAYS = 30                # was 7 — extended per support recommendation
 ROLLING_REFRESH_MIN_INTERVAL_SEC = 30     # write at most every 30s of activity
@@ -115,9 +129,11 @@ async def get_current_user(request: Request):
 
     # Demo token: idempotently self-provision on every request. Rolling 30-day
     # expiry means active users are never bounced back to login.
-    if token == DEMO_TOKEN:
+    # Iter130 — DEMO_TOKEN is "" in production (fail-secure), so this branch
+    # is unreachable there and any Bearer will fall through to the normal
+    # session lookup (which will return 401 for the old literal too).
+    if DEMO_TOKEN and token == DEMO_TOKEN:
         if not _DEMO_ENABLED:
-            # Iter106 — demo token is disabled by default in production.
             raise HTTPException(status_code=401, detail="Invalid session")
         await _ensure_demo_session()
 

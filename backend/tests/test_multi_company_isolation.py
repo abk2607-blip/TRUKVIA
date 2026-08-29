@@ -8,10 +8,11 @@ Creates two companies (A, B) for the same test user, then:
 - Verifies the reverse for B.
 - Cleans up all created data at the end.
 """
+import os
 import requests, sys, json
 
 BASE = "https://trip-billing-pro-1.preview.emergentagent.com/api"
-TOKEN = "test_session_bitumen_2026"
+TOKEN = os.environ["DEMO_TOKEN_VALUE"]
 
 def call(method, path, cid=None, **kw):
     h = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}

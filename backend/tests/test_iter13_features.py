@@ -11,7 +11,7 @@ import requests
 from datetime import date
 
 BASE_URL = (os.environ.get("REACT_APP_BACKEND_URL") or "https://trip-billing-pro-1.preview.emergentagent.com").rstrip("/")
-TOKEN = "test_session_bitumen_2026"
+TOKEN = os.environ["DEMO_TOKEN_VALUE"]
 HDRS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
 

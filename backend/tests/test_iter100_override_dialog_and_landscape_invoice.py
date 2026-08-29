@@ -14,7 +14,7 @@ import pytest
 from pypdf import PdfReader
 
 BASE = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/")
-TOK = "test_session_bitumen_2026"
+TOK = os.environ["DEMO_TOKEN_VALUE"]
 HA = {"Authorization": f"Bearer {TOK}"}
 T = 60
 

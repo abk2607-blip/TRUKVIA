@@ -5,7 +5,7 @@ import uuid
 import httpx
 
 BASE = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/")
-HA = {"Authorization": "Bearer test_session_bitumen_2026"}
+HA = {"Authorization": f"Bearer {os.environ['DEMO_TOKEN_VALUE']}"}
 T = 60
 
 httpx.post(f"{BASE}/api/auth/demo-login", timeout=T)

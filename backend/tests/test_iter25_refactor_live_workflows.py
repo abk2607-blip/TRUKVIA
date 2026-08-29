@@ -20,7 +20,7 @@ if not BASE_URL:
                     break
     except Exception:
         pass
-TOKEN = "test_session_bitumen_2026"
+TOKEN = os.environ["DEMO_TOKEN_VALUE"]
 HDR = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
 

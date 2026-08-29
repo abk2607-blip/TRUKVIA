@@ -19,7 +19,7 @@ import httpx
 import fitz  # PyMuPDF
 
 BASE = os.environ.get("BACKEND_URL_INTERNAL", "http://localhost:8001")
-TOKEN = os.environ.get("TEST_TOKEN", "test_session_bitumen_2026")
+TOKEN = os.environ.get("TEST_TOKEN", os.environ["DEMO_TOKEN_VALUE"])
 HDR = {"Authorization": f"Bearer {TOKEN}"}
 
 

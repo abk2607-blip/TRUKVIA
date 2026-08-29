@@ -22,7 +22,7 @@ def _load_backend_url():
 
 
 BASE_URL = _load_backend_url()
-TOKEN = "test_session_bitumen_2026"
+TOKEN = os.environ["DEMO_TOKEN_VALUE"]
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
 

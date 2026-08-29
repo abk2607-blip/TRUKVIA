@@ -23,7 +23,7 @@ import pymongo
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/")
 API = f"{BASE_URL}/api"
-DEMO_TOKEN = "test_session_bitumen_2026"
+DEMO_TOKEN = os.environ["DEMO_TOKEN_VALUE"]
 DEMO_HDR = {"Authorization": f"Bearer {DEMO_TOKEN}", "Content-Type": "application/json"}
 
 MONGO_URL = os.environ.get("MONGO_URL", "mongodb://localhost:27017")

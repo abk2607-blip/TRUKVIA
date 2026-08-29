@@ -30,7 +30,7 @@ BASE = os.environ.get("BACKEND_URL_INTERNAL", "http://localhost:8001")
 XFF = {"X-Forwarded-For": "203.0.113.51"}
 # Iter128 · /api/admin/deploy-readiness + /api/admin/deploy-history are now
 # role-gated (Owner/Admin/Manager). Use the shared demo Bearer to authenticate.
-DEMO_HDR = {"Authorization": "Bearer test_session_bitumen_2026"}
+DEMO_HDR = {"Authorization": f"Bearer {os.environ['DEMO_TOKEN_VALUE']}"}
 
 
 def test_deploy_readiness_endpoint_shape():
@@ -116,7 +116,7 @@ def test_alert_config_enforces_minimum():
 
 def test_alert_fires_when_threshold_crossed():
     """Set threshold=2, trigger 3 failures, verify alert fires with all fields."""
-    HDR = {"Authorization": "Bearer test_session_bitumen_2026"}
+    HDR = {"Authorization": f"Bearer {os.environ['DEMO_TOKEN_VALUE']}"}
     cid = httpx.get(f"{BASE}/api/companies", headers=HDR, timeout=10).json()[0]["id"]
     h = {**HDR, "X-Company-Id": cid}
 
@@ -172,7 +172,7 @@ def test_alert_fires_when_threshold_crossed():
 def test_alert_acknowledgement():
     """Ack an alert → it drops out of unacknowledged_only feed."""
     # Ensure at least one alert exists
-    HDR = {"Authorization": "Bearer test_session_bitumen_2026"}
+    HDR = {"Authorization": f"Bearer {os.environ['DEMO_TOKEN_VALUE']}"}
     cid = httpx.get(f"{BASE}/api/companies", headers=HDR, timeout=10).json()[0]["id"]
     h = {**HDR, "X-Company-Id": cid}
     httpx.put(f"{BASE}/api/admin/save-health/alert-config",
@@ -203,7 +203,7 @@ def test_alert_cooldown_prevents_spam():
         await db.save_health_alerts.delete_many({})
         c.close()
     asyncio.run(_clean())
-    HDR = {"Authorization": "Bearer test_session_bitumen_2026"}
+    HDR = {"Authorization": f"Bearer {os.environ['DEMO_TOKEN_VALUE']}"}
     cid = httpx.get(f"{BASE}/api/companies", headers=HDR, timeout=10).json()[0]["id"]
     h = {**HDR, "X-Company-Id": cid}
     httpx.put(f"{BASE}/api/admin/save-health/alert-config",

@@ -39,7 +39,7 @@ def test_demo_login_provisions_server_side():
     r = httpx.post(f"{BASE}/api/auth/demo-login", timeout=10)
     assert r.status_code == 200, r.text
     d = r.json()
-    assert d["session_token"] == "test_session_bitumen_2026"
+    assert d["session_token"] == os.environ["DEMO_TOKEN_VALUE"]
     assert d["user_id"].startswith("user_demo_")
     assert d["email"] == "demo@bitumen-transport.local"
     assert "expires_at" in d
@@ -56,7 +56,7 @@ def test_demo_login_idempotent():
 
 def test_me_endpoint_with_bearer():
     r = httpx.get(f"{BASE}/api/auth/me",
-                  headers={"Authorization": "Bearer test_session_bitumen_2026"},
+                  headers={"Authorization": f"Bearer {os.environ['DEMO_TOKEN_VALUE']}"},
                   timeout=10)
     assert r.status_code == 200, r.text
     d = r.json()
@@ -82,12 +82,12 @@ def test_logout_preserves_demo_token():
     httpx.post(f"{BASE}/api/auth/demo-login", timeout=10)
     # Logout using demo token
     r = httpx.post(f"{BASE}/api/auth/logout",
-                   headers={"Authorization": "Bearer test_session_bitumen_2026"},
+                   headers={"Authorization": f"Bearer {os.environ['DEMO_TOKEN_VALUE']}"},
                    timeout=10)
     assert r.status_code == 200
     # /auth/me should STILL work after logout
     me = httpx.get(f"{BASE}/api/auth/me",
-                   headers={"Authorization": "Bearer test_session_bitumen_2026"},
+                   headers={"Authorization": f"Bearer {os.environ['DEMO_TOKEN_VALUE']}"},
                    timeout=10)
     assert me.status_code == 200, f"Demo token was destroyed by logout! {me.text}"
 

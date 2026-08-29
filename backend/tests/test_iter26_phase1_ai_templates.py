@@ -23,7 +23,7 @@ if not BASE_URL:
                 BASE_URL = line.split("=", 1)[1].strip().rstrip("/")
                 break
 
-TOKEN = "test_session_bitumen_2026"
+TOKEN = os.environ["DEMO_TOKEN_VALUE"]
 HDR = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
 

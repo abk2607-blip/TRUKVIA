@@ -18,7 +18,7 @@ import httpx
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/")
 API = f"{BASE_URL}/api"
-DEMO_HDR = {"Authorization": "Bearer test_session_bitumen_2026"}
+DEMO_HDR = {"Authorization": f"Bearer {os.environ['DEMO_TOKEN_VALUE']}"}
 
 
 # ── Security headers ─────────────────────────────────────────────────────

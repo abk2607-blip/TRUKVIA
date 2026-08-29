@@ -117,7 +117,15 @@ async def demo_login():
     """Iter48 — Server-side Demo Login. Provisions the demo user + session
     server-side and returns the token. Frontend no longer has to hardcode a
     static string; if this endpoint changes token strategy, only the backend
-    changes. Prevents "Demo Login not working" caused by stale localStorage."""
+    changes. Prevents "Demo Login not working" caused by stale localStorage.
+
+    Iter130 — Production guard: in the real production environment
+    (IS_PREVIEW_ENV unset) this endpoint responds 404 as if the route were
+    not registered. Preview / UAT / pytest keep working exactly as before.
+    """
+    import os as _os
+    if _os.environ.get("IS_PREVIEW_ENV") != "1":
+        raise HTTPException(status_code=404, detail="Not Found")
     try:
         user_id = await _ensure_demo_session()
         return {

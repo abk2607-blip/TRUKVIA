@@ -112,12 +112,16 @@ export default function Login() {
             <GoogleIcon /> Continue with Google
           </button>
 
-          {/* Iter106 — Demo-login button is now hidden in production and only
-              rendered when REACT_APP_ENABLE_DEMO_LOGIN=1 is set on the build.
-              The hardcoded static-token fallback has been removed — testers
-              should now use Google OAuth or the pytest suite's Authorization
-              header directly. */}
-          {process.env.REACT_APP_ENABLE_DEMO_LOGIN === "1" && (
+          {/* Iter106/130 — Demo-login button is fail-secure hidden in
+              production. Two build-time flags must BOTH be "1":
+                REACT_APP_IS_PREVIEW_ENV=1  (environment gate — absent in prod)
+                REACT_APP_ENABLE_DEMO_LOGIN=1 (feature toggle within preview)
+              Any real production build omits IS_PREVIEW_ENV, so the button
+              is not even present in the shipped JS bundle. The demo token
+              is fetched at runtime from POST /api/auth/demo-login — never
+              baked into the frontend source. */}
+          {process.env.REACT_APP_IS_PREVIEW_ENV === "1" &&
+           process.env.REACT_APP_ENABLE_DEMO_LOGIN === "1" && (
             <>
               <div className="relative my-4">
                 <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-zinc-200"></div></div>
