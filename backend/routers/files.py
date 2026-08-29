@@ -30,6 +30,31 @@ router = APIRouter(prefix="/api")
 
 from storage_client import put_object, get_object, mime_for, APP_NAME
 
+# Iter129-sec · Restrict user-uploaded file types to prevent stored-XSS
+# (.html/.svg/.js served back inline) and Office-macro uploads. Business
+# users typically upload photos of bills + scanned PDFs. Existing files
+# are unaffected — this gate applies only to NEW uploads.
+ALLOWED_UPLOAD_EXTS = {"jpg", "jpeg", "png", "webp", "heic", "heif", "pdf"}
+ALLOWED_UPLOAD_MIMES = {
+    "image/jpeg", "image/png", "image/webp", "image/heic", "image/heif",
+    "application/pdf",
+}
+
+
+def _reject_disallowed_upload(ext: str, ctype: str) -> None:
+    """Raise 415 if the extension or MIME is outside the approved allow-list.
+    MIME check is skipped when the client omits Content-Type (some tools do)."""
+    if ext not in ALLOWED_UPLOAD_EXTS:
+        raise HTTPException(
+            status_code=415,
+            detail="Unsupported file type. Allowed: JPG, PNG, WEBP, HEIC, PDF.",
+        )
+    if ctype and ctype not in ALLOWED_UPLOAD_MIMES:
+        raise HTTPException(
+            status_code=415,
+            detail="Unsupported file type. Allowed: JPG, PNG, WEBP, HEIC, PDF.",
+        )
+
 
 @router.post("/files/upload")
 async def upload_file(
@@ -43,8 +68,9 @@ async def upload_file(
     if len(data) > 10 * 1024 * 1024:
         raise HTTPException(status_code=400, detail="File too large (max 10MB)")
     ext = (file.filename or "bin").rsplit(".", 1)[-1].lower() if "." in (file.filename or "") else "bin"
-    path = f"{APP_NAME}/uploads/{user['user_id']}/{uuid.uuid4().hex}.{ext}"
     ctype = file.content_type or mime_for(file.filename or "")
+    _reject_disallowed_upload(ext, ctype)
+    path = f"{APP_NAME}/uploads/{user['user_id']}/{uuid.uuid4().hex}.{ext}"
     try:
         result = put_object(path, data, ctype)
     except Exception as e:
@@ -104,8 +130,13 @@ async def bulk_upload(
                 continue
             fname = f.filename or ""
             ext = fname.rsplit(".", 1)[-1].lower() if "." in fname else "bin"
-            path = f"{APP_NAME}/uploads/{user['user_id']}/{uuid.uuid4().hex}.{ext}"
             ctype = f.content_type or mime_for(fname)
+            try:
+                _reject_disallowed_upload(ext, ctype)
+            except HTTPException as _he:
+                results.append({"filename": fname, "ok": False, "error": _he.detail})
+                continue
+            path = f"{APP_NAME}/uploads/{user['user_id']}/{uuid.uuid4().hex}.{ext}"
             result = put_object(path, data, ctype)
 
             # Auto-tag
@@ -185,7 +216,14 @@ async def delete_file(fid: str, user=Depends(get_current_user)):
 # Only exposes objects under the "lr_shares/" or "public/" prefix; any other path is 404.
 @router.get("/files/public/{obj_path:path}")
 async def public_file(obj_path: str):
-    if not (obj_path.startswith("lr_shares/") or obj_path.startswith("public/")):
+    # Iter129-sec · Belt-and-braces path-traversal hardening on top of the
+    # existing prefix allow-list. UUID keys already prevent enumeration.
+    if (
+        ".." in obj_path
+        or obj_path.startswith("/")
+        or "\\" in obj_path
+        or not (obj_path.startswith("lr_shares/") or obj_path.startswith("public/"))
+    ):
         raise HTTPException(status_code=404, detail="Not found")
     try:
         data, ctype = get_object(obj_path)

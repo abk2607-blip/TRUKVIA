@@ -59,18 +59,48 @@ app = FastAPI(title="Bitumen Transport Accounting")
 async def root():
     return {"message": "Bitumen Transport Accounting API"}
 
-# CORS — the frontend authenticates via Bearer token (Authorization header),
-# so we never rely on cookies. Setting allow_credentials=False lets us use
-# a plain `*` origin and keeps the API reachable from every preview URL
-# (dynamic + static) as well as any user-supplied embed / mobile client.
+# Iter129-sec · CORS is now restricted to origins listed in CORS_ORIGINS
+# (backend/.env). If the variable is absent or empty we fall back to "*" so
+# preview URLs remain reachable during rollout. Cookies stay disabled
+# (allow_credentials=False) — the frontend authenticates via Bearer.
+_cors_env = os.environ.get("CORS_ORIGINS", "").strip()
+_cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()] or ["*"]
 app.add_middleware(
     CORSMiddleware,
     allow_credentials=False,
-    allow_origins=["*"],
+    allow_origins=_cors_origins,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["Content-Disposition"],
 )
+
+# Iter129-sec · Standard security response headers on every route. CSP is
+# intentionally relaxed so Tailwind inline styles, data: images, https:
+# fonts, and the AI-chat WebSocket keep working. Can be tightened later.
+_SEC_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+    "Permissions-Policy": "camera=(), microphone=(self), geolocation=()",
+    "Content-Security-Policy": (
+        "default-src 'self' https:; "
+        "img-src 'self' data: https:; "
+        "style-src 'self' 'unsafe-inline' https:; "
+        "script-src 'self' 'unsafe-inline' https:; "
+        "connect-src 'self' https: wss:; "
+        "font-src 'self' data: https:; "
+        "frame-ancestors 'none'"
+    ),
+}
+
+
+@app.middleware("http")
+async def _add_security_headers(request, call_next):
+    resp = await call_next(request)
+    for k, v in _SEC_HEADERS.items():
+        resp.headers.setdefault(k, v)
+    return resp
 
 # Mount all sub-routers. Each router has prefix="/api" so paths are already fully qualified.
 for r in (
