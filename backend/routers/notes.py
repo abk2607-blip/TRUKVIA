@@ -28,6 +28,7 @@ from models import (
 from services import (
     now_utc,
     _next_credit_note_number_for_company,
+    _next_debit_note_number_for_company,
     _derive_fy_from_iso,
     _effective_invoice_totals,
 )
@@ -352,3 +353,230 @@ async def list_notes_for_invoice(iid: str, user=Depends(get_current_user)):
         {"_id": 0, "user_id": 0},
     ).sort("note_date", 1).to_list(500)
     return docs
+
+
+# ============================================================================
+# Iter132b · Debit Note endpoints
+#
+# Debit Notes INCREASE the customer's outstanding (missed halting, freight
+# escalation, rate difference, etc.). They reuse every Iter132a mechanism
+# (numbering shape, GST parity, RCM parity, audit, lifecycle) EXCEPT:
+#   - independent atomic counter (next_debit_note_number)
+#   - independent prefix (debit_note_prefix, default "DN")
+#   - no over-credit guard (DNs are supposed to increase totals)
+# ============================================================================
+
+async def _create_debit_note_impl(payload: CDNCreateRequest, user: dict) -> dict:
+    if not (payload.reason_text or "").strip() or len(payload.reason_text.strip()) < 8:
+        raise HTTPException(status_code=400, detail="reason_text must be at least 8 characters")
+    if not payload.lines:
+        raise HTTPException(status_code=400, detail="At least one line item is required")
+    inv = await db.invoices.find_one({"id": payload.invoice_id, "user_id": user["user_id"]}, {"_id": 0})
+    if not inv:
+        raise HTTPException(status_code=404, detail="Linked invoice not found")
+    if inv.get("is_historical") or inv.get("imported_from"):
+        raise HTTPException(status_code=422, detail="Historical/imported invoices cannot receive Debit Notes")
+
+    note_date_iso = (payload.note_date or now_utc().date().isoformat())
+    try:
+        n_date = date.fromisoformat(note_date_iso)
+    except Exception:
+        raise HTTPException(status_code=400, detail="note_date must be ISO YYYY-MM-DD")
+    inv_date_iso = inv.get("invoice_date") or now_utc().date().isoformat()
+    if n_date < date.fromisoformat(inv_date_iso):
+        raise HTTPException(status_code=400, detail="note_date cannot be earlier than invoice_date")
+    if n_date > now_utc().date():
+        raise HTTPException(status_code=400, detail="note_date cannot be in the future")
+
+    # Statutory deadline (30-Nov of FY following the invoice's FY)
+    deadline = _statutory_deadline_for_invoice_fy(inv_date_iso)
+    deadline_override = False
+    if n_date > deadline:
+        if user.get("effective_role") != "owner":
+            raise HTTPException(
+                status_code=403,
+                detail=f"Post-statutory-deadline note (past {deadline.isoformat()}) requires Owner override",
+            )
+        if not (payload.deadline_override_reason or "").strip():
+            raise HTTPException(
+                status_code=400,
+                detail="deadline_override_reason is required for notes past the statutory deadline",
+            )
+        deadline_override = True
+
+    totals = await _compute_note_totals(payload.lines, inv)
+    # Iter132b · positive-amount check (a DN MUST increase, not decrease).
+    if totals["total_amount"] <= 0:
+        raise HTTPException(status_code=422, detail="Debit Note total must be positive")
+
+    from models import CreditDebitNote, CDNLine
+    note = CreditDebitNote(
+        kind="debit",
+        company_id=inv.get("company_id") or "",
+        note_date=note_date_iso,
+        invoice_id=inv["id"],
+        invoice_number_snapshot=inv.get("invoice_number", ""),
+        customer_id=inv.get("customer_id", ""),
+        reason_code=payload.reason_code,
+        reason_text=payload.reason_text.strip(),
+        lines=[CDNLine(**l) for l in totals["lines"]],
+        subtotal=totals["subtotal"],
+        gst_type=totals["gst_type"],
+        cgst_rate=totals["cgst_rate"], sgst_rate=totals["sgst_rate"], igst_rate=totals["igst_rate"],
+        cgst_amount=totals["cgst_amount"], sgst_amount=totals["sgst_amount"], igst_amount=totals["igst_amount"],
+        total_tax=totals["total_tax"],
+        total_amount=totals["total_amount"],
+        round_off=totals["round_off"],
+        rcm=totals["rcm"],
+        status="draft",
+        created_by=user["user_id"],
+        deadline_override=deadline_override,
+        is_historical=bool(inv.get("is_historical")),
+    )
+    doc = note.model_dump()
+    doc["user_id"] = user["user_id"]
+    company = await db.companies.find_one({"id": note.company_id, "user_id": user["user_id"]},
+                                          {"_id": 0, "require_cdn_approval": 1})
+    if not (company or {}).get("require_cdn_approval", False):
+        num = await _next_debit_note_number_for_company(note.company_id, user["user_id"], note_date_iso)
+        doc["status"] = "issued"
+        doc["note_number"] = num
+        doc["approved_by"] = user["user_id"]
+        doc["approved_at"] = now_utc().isoformat()
+    await db.credit_debit_notes.insert_one(doc)
+    await _log_audit(
+        user, "debit_note", "create" if doc["status"] == "draft" else "issue",
+        entity_id=doc["id"], entity_ref=doc.get("note_number", ""),
+        reason=payload.reason_text.strip(),
+        changes={"snapshot": {k: doc.get(k) for k in
+                              ("kind", "invoice_id", "invoice_number_snapshot",
+                               "note_date", "total_amount", "reason_code")}},
+    )
+    doc.pop("user_id", None)
+    doc.pop("_id", None)
+    return doc
+
+
+@router.post("/debit-notes")
+async def create_debit_note(payload: CDNCreateRequest, user=Depends(get_current_user)):
+    _require_flag()
+    if not _has_perm(user, "create_note"):
+        raise HTTPException(status_code=403, detail="Missing permission: create_note")
+    return await _create_debit_note_impl(payload, user)
+
+
+@router.post("/debit-notes/{nid}/issue")
+async def issue_debit_note(nid: str, user=Depends(get_current_user)):
+    _require_flag()
+    if not _has_perm(user, "issue_note"):
+        raise HTTPException(status_code=403, detail="Missing permission: issue_note")
+    note = await db.credit_debit_notes.find_one(
+        {"id": nid, "user_id": user["user_id"], "kind": "debit"}, {"_id": 0})
+    if not note:
+        raise HTTPException(status_code=404, detail="Not found")
+    if note["status"] == "issued":
+        return {k: v for k, v in note.items() if k != "user_id"}
+    if note["status"] == "cancelled":
+        raise HTTPException(status_code=409, detail="Cancelled notes cannot be issued")
+    num = await _next_debit_note_number_for_company(
+        note["company_id"], user["user_id"], note["note_date"])
+    res = await db.credit_debit_notes.update_one(
+        {"id": nid, "user_id": user["user_id"], "kind": "debit", "status": "draft"},
+        {"$set": {
+            "status": "issued", "note_number": num,
+            "approved_by": user["user_id"], "approved_at": now_utc().isoformat(),
+        }},
+    )
+    if res.matched_count == 0:
+        winner = await db.credit_debit_notes.find_one(
+            {"id": nid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
+        return winner
+    await _log_audit(user, "debit_note", "issue", entity_id=nid, entity_ref=num)
+    return await db.credit_debit_notes.find_one(
+        {"id": nid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
+
+
+@router.post("/debit-notes/{nid}/cancel")
+async def cancel_debit_note(nid: str, payload: CDNCancelRequest, user=Depends(get_current_user)):
+    _require_flag()
+    if not _has_perm(user, "cancel_note"):
+        raise HTTPException(status_code=403, detail="Missing permission: cancel_note")
+    if not (payload.reason or "").strip() or len(payload.reason.strip()) < 8:
+        raise HTTPException(status_code=400, detail="Cancellation reason must be at least 8 characters")
+    note = await db.credit_debit_notes.find_one(
+        {"id": nid, "user_id": user["user_id"], "kind": "debit"}, {"_id": 0})
+    if not note:
+        raise HTTPException(status_code=404, detail="Not found")
+    if note["status"] == "cancelled":
+        return {k: v for k, v in note.items() if k != "user_id"}
+    await db.credit_debit_notes.update_one(
+        {"id": nid, "user_id": user["user_id"], "kind": "debit"},
+        {"$set": {
+            "status": "cancelled",
+            "cancelled_at": now_utc().isoformat(),
+            "cancelled_by": user["user_id"],
+            "cancelled_reason": payload.reason.strip(),
+        }},
+    )
+    await _log_audit(user, "debit_note", "cancel", entity_id=nid,
+                     entity_ref=note.get("note_number", ""), reason=payload.reason.strip())
+    return await db.credit_debit_notes.find_one(
+        {"id": nid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
+
+
+@router.put("/debit-notes/{nid}")
+async def update_debit_note(nid: str, payload: CDNCreateRequest, user=Depends(get_current_user)):
+    _require_flag()
+    if not _has_perm(user, "create_note"):
+        raise HTTPException(status_code=403, detail="Missing permission: create_note")
+    note = await db.credit_debit_notes.find_one(
+        {"id": nid, "user_id": user["user_id"], "kind": "debit"}, {"_id": 0})
+    if not note:
+        raise HTTPException(status_code=404, detail="Not found")
+    if note["status"] != "draft":
+        raise HTTPException(status_code=409, detail="Only draft notes can be edited")
+    inv = await db.invoices.find_one({"id": note["invoice_id"], "user_id": user["user_id"]}, {"_id": 0})
+    if not inv:
+        raise HTTPException(status_code=404, detail="Linked invoice missing")
+    totals = await _compute_note_totals(payload.lines, inv)
+    if totals["total_amount"] <= 0:
+        raise HTTPException(status_code=422, detail="Debit Note total must be positive")
+    await db.credit_debit_notes.update_one(
+        {"id": nid, "user_id": user["user_id"], "kind": "debit", "status": "draft"},
+        {"$set": {
+            "reason_code": payload.reason_code,
+            "reason_text": payload.reason_text.strip(),
+            **totals, "lines": totals["lines"],
+        }},
+    )
+    await _log_audit(user, "debit_note", "update", entity_id=nid,
+                     entity_ref=note.get("note_number", ""), reason=payload.reason_text.strip())
+    return await db.credit_debit_notes.find_one(
+        {"id": nid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
+
+
+@router.get("/debit-notes")
+async def list_debit_notes(
+    customer_id: Optional[str] = None,
+    invoice_id: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = Query(default=100, le=500),
+    user=Depends(get_current_user),
+):
+    _require_flag()
+    q: dict = {"user_id": user["user_id"], "kind": "debit"}
+    if customer_id: q["customer_id"] = customer_id
+    if invoice_id: q["invoice_id"] = invoice_id
+    if status: q["status"] = status
+    return await db.credit_debit_notes.find(
+        q, {"_id": 0, "user_id": 0}).sort("note_date", -1).to_list(limit)
+
+
+@router.get("/debit-notes/{nid}")
+async def get_debit_note(nid: str, user=Depends(get_current_user)):
+    _require_flag()
+    d = await db.credit_debit_notes.find_one(
+        {"id": nid, "user_id": user["user_id"], "kind": "debit"}, {"_id": 0, "user_id": 0})
+    if not d:
+        raise HTTPException(status_code=404, detail="Not found")
+    return d

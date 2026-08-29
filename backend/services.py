@@ -483,6 +483,24 @@ async def _next_credit_note_number_for_company(
     return _compose_invoice_number(prefix, fy_str, seq)
 
 
+async def _next_debit_note_number_for_company(
+    company_id: str, user_id: str, note_date_iso: str
+) -> str:
+    """Iter132b · Atomically consume the next DN sequence. Mirrors the
+    Credit Note helper but on `next_debit_note_number` + `debit_note_prefix`.
+    Independent from invoice + credit-note counters."""
+    fy_str = _derive_fy_from_iso(note_date_iso)
+    doc = await db.companies.find_one_and_update(
+        {"id": company_id, "user_id": user_id},
+        {"$inc": {"next_debit_note_number": 1}},
+        projection={"_id": 0, "debit_note_prefix": 1, "next_debit_note_number": 1},
+        return_document=False,
+    )
+    prefix = ((doc or {}).get("debit_note_prefix")) or "DN"
+    seq = int(((doc or {}).get("next_debit_note_number")) or 1)
+    return _compose_invoice_number(prefix, fy_str, seq)
+
+
 async def _effective_invoice_totals(inv_doc: dict, notes_docs: list) -> dict:
     """Iter132a · Given an invoice doc and its issued (non-cancelled) CN/DN
     docs, return the invoice's effective totals WITHOUT mutating either.
