@@ -550,7 +550,22 @@ async def deploy_history(limit: int = 30, user=Depends(get_current_user)):
 @app.post("/api/admin/deploy-readiness/run-now")
 async def deploy_readiness_run_now():
     """Iter51 — Trigger an on-demand regression run. Used by CI (`curl -X POST`)
-    to force a fresh check before promoting a build."""
+    to force a fresh check before promoting a build.
+
+    Iter131 · Scheduler cascade fix — Short-circuit when a regression is
+    already in flight. Previously the endpoint scheduled an `_asyncio.create_task`
+    unconditionally, so any nested call (including the deploy-guard test suite
+    itself, which POSTs /run-now inside test_iter51 and test_iter128) queued
+    behind the current run's lock and fired the instant it released — creating
+    a self-perpetuating ~11-min cascade. We now consult `_regression_lock.locked()`
+    first and return `{triggered: False, reason: "already_running"}` instead of
+    schedulng a redundant task."""
+    if _regression_lock.locked():
+        return {
+            "triggered": False,
+            "reason": "already_running",
+            "message": "A regression run is already in flight; poll /api/admin/deploy-readiness for its result.",
+        }
     # Fire-and-forget — the watcher's next hourly tick will refresh anyway,
     # but we schedule an immediate run.
     async def _once():
@@ -577,6 +592,10 @@ async def deploy_readiness_run_now():
                         "elapsed_s": round(elapsed, 1),
                         "output_tail": out,
                         "checked_at": _dt.now(_tz.utc).isoformat(),
+                        # Iter131 · Also refresh next_check_at from the on-demand
+                        # path so the field never drifts stale when only /run-now
+                        # is in use (previously only the periodic loop wrote it).
+                        "next_check_at": (_dt.now(_tz.utc) + _td(hours=1)).isoformat(),
                     }},
                     upsert=True,
                 )

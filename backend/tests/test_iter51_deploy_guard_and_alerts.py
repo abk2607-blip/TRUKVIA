@@ -42,9 +42,14 @@ def test_deploy_readiness_endpoint_shape():
 
 
 def test_deploy_readiness_run_now_triggers():
+    """Iter131 · /run-now now short-circuits when a regression is already in
+    flight to break the self-cascade. Accept either shape."""
     r = httpx.post(f"{BASE}/api/admin/deploy-readiness/run-now", timeout=10)
     assert r.status_code == 200
-    assert r.json().get("triggered") is True
+    body = r.json()
+    assert body.get("triggered") is True or (
+        body.get("triggered") is False and body.get("reason") == "already_running"
+    ), f"unexpected /run-now response: {body}"
 
 
 def test_predeploy_script_exists_and_executable():

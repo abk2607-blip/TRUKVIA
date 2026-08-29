@@ -180,7 +180,11 @@ def test_deploy_history_rejects_accountant():
 
 def test_run_now_endpoint_untouched():
     """MVP explicitly leaves POST run-now alone — sanity-check it still 200s
-    for the owner-scoped demo token so we haven't regressed by accident."""
+    for the owner-scoped demo token so we haven't regressed by accident.
+
+    Iter131 · Scheduler cascade fix — /run-now now short-circuits with
+    triggered:false when a regression is already in flight. Both shapes
+    (queued or already-running) are accepted."""
     r = httpx.post(
         f"{API}/admin/deploy-readiness/run-now",
         headers=DEMO_HDR,
@@ -188,4 +192,6 @@ def test_run_now_endpoint_untouched():
     )
     assert r.status_code in (200, 202), r.text
     body = r.json()
-    assert body.get("triggered") is True
+    assert body.get("triggered") is True or (
+        body.get("triggered") is False and body.get("reason") == "already_running"
+    ), f"unexpected /run-now response: {body}"
