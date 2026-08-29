@@ -1,5 +1,6 @@
 """Iter43 — Expenditure drill-down, WhatsApp share, Voice refine, AI chat tool."""
 import os
+import time
 import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/")
@@ -16,8 +17,24 @@ def _cust():
     return requests.post(f"{API}/customers", headers=HEADERS, json={"name": "TEST_Iter43", "state": "Andhra Pradesh"}).json()["id"]
 
 
+def _drill(exp_type, date, expected_count):
+    """Xdist Test Cleanup (approved plan §5b) — retry the drill-down up to
+    3 × 500 ms so the just-committed POST /trips is visible to the
+    aggregation endpoint even when Mongo commit propagation lags under
+    xdist parallel load. Assertions remain on the returned response."""
+    last = None
+    for _ in range(3):
+        r = requests.get(f"{API}/dashboard/expenditure-detail", headers=HEADERS,
+                         params={"type": exp_type, "start": date, "end": date})
+        if r.status_code == 200 and r.json().get("count") == expected_count:
+            return r
+        last = r
+        time.sleep(0.5)
+    return last  # trigger the existing assertion in the caller
+
+
 def test_expenditure_drill_down_returns_trip_rows():
-    import time, uuid
+    import uuid
     cid = _cust()
     ts = int(time.time())
     y = 2060 + (ts % 20)
@@ -43,8 +60,7 @@ def test_expenditure_drill_down_returns_trip_rows():
             {"id": "d3", "date": date, "type": "Toll",  "amount": 500, "remarks": "Ignored"},
         ],
     })
-    r = requests.get(f"{API}/dashboard/expenditure-detail", headers=HEADERS,
-                     params={"type": exp_type, "start": date, "end": date})
+    r = _drill(exp_type, date, 2)
     assert r.status_code == 200
     d = r.json()
     assert d["type"] == exp_type

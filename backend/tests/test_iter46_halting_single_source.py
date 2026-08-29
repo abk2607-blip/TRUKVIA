@@ -8,6 +8,7 @@ Locks the two entry paths + full downstream flow:
   5. Invoice PDF renders halting sub-row per trip with '↳ Halting — N day(s) × ₹X / day → ₹Y'
 """
 import os
+import uuid
 import requests
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/")
@@ -15,13 +16,19 @@ API = f"{BASE_URL}/api"
 TOKEN = "test_session_bitumen_2026"
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
+# Xdist Test Cleanup (approved plan §5b) — per-process unique fixtures so
+# concurrent workers on other files cannot mutate this customer's policy
+# mid-flight. Matches the pattern already used by test_iter44.
+_FIXTURE_NAME = f"TEST_Iter46_{uuid.uuid4().hex[:6]}"
+_VEH_SUFFIX = uuid.uuid4().hex[:4].upper()
+
 
 def _customer():
     r = requests.get(f"{API}/customers", headers=HEADERS)
     for c in r.json():
-        if c["name"] == "TEST_Iter46":
+        if c["name"] == _FIXTURE_NAME:
             return c["id"]
-    return requests.post(f"{API}/customers", headers=HEADERS, json={"name": "TEST_Iter46", "state": "Andhra Pradesh"}).json()["id"]
+    return requests.post(f"{API}/customers", headers=HEADERS, json={"name": _FIXTURE_NAME, "state": "Andhra Pradesh"}).json()["id"]
 
 
 def test_halting_from_manual_total_days_no_dates():
@@ -29,7 +36,7 @@ def test_halting_from_manual_total_days_no_dates():
     cid = _customer()
     t = requests.post(f"{API}/trips", headers=HEADERS, json={
         "customer_id": cid, "date": "2028-05-01",
-        "vehicle_number": "ITER46-MAN", "tons": 20,
+        "vehicle_number": f"ITER46-MAN-{_VEH_SUFFIX}", "tons": 20,
         "freight_mode": "per_ton", "rate_per_ton": 1000,
         "total_halting_days": 10, "grace_days": 4, "halting_rate_per_day": 3000,
     }).json()
@@ -43,7 +50,7 @@ def test_halting_from_dates():
     cid = _customer()
     t = requests.post(f"{API}/trips", headers=HEADERS, json={
         "customer_id": cid, "date": "2028-05-01",
-        "vehicle_number": "ITER46-DATES", "tons": 20,
+        "vehicle_number": f"ITER46-DATES-{_VEH_SUFFIX}", "tons": 20,
         "freight_mode": "per_ton", "rate_per_ton": 1000,
         "loading_date": "2028-05-01", "unloading_date": "2028-05-13",
         "grace_days": 4, "halting_rate_per_day": 3000,
@@ -57,7 +64,7 @@ def test_halting_zero_when_within_grace():
     cid = _customer()
     t = requests.post(f"{API}/trips", headers=HEADERS, json={
         "customer_id": cid, "date": "2028-05-01",
-        "vehicle_number": "ITER46-GRACE", "tons": 20,
+        "vehicle_number": f"ITER46-GRACE-{_VEH_SUFFIX}", "tons": 20,
         "freight_mode": "per_ton", "rate_per_ton": 1000,
         "total_halting_days": 3, "grace_days": 4, "halting_rate_per_day": 3000,
     }).json()
@@ -69,7 +76,7 @@ def test_halting_override_preserved():
     cid = _customer()
     t = requests.post(f"{API}/trips", headers=HEADERS, json={
         "customer_id": cid, "date": "2028-05-01",
-        "vehicle_number": "ITER46-OVR", "tons": 20,
+        "vehicle_number": f"ITER46-OVR-{_VEH_SUFFIX}", "tons": 20,
         "freight_mode": "per_ton", "rate_per_ton": 1000,
         "total_halting_days": 10, "grace_days": 4, "halting_rate_per_day": 3000,
         "halting_amount": 15000, "halting_amount_override": True,
@@ -83,13 +90,13 @@ def test_invoice_halting_flows_from_multiple_trips():
     cid = _customer()
     t1 = requests.post(f"{API}/trips", headers=HEADERS, json={
         "customer_id": cid, "date": "2028-06-01",
-        "vehicle_number": "ITER46-INV1", "tons": 30,
+        "vehicle_number": f"ITER46-INV1-{_VEH_SUFFIX}", "tons": 30,
         "freight_mode": "per_ton", "rate_per_ton": 1500,
         "total_halting_days": 10, "grace_days": 4, "halting_rate_per_day": 3000,
     }).json()
     t2 = requests.post(f"{API}/trips", headers=HEADERS, json={
         "customer_id": cid, "date": "2028-06-02",
-        "vehicle_number": "ITER46-INV2", "tons": 30,
+        "vehicle_number": f"ITER46-INV2-{_VEH_SUFFIX}", "tons": 30,
         "freight_mode": "per_ton", "rate_per_ton": 1500,
         "loading_date": "2028-06-02", "unloading_date": "2028-06-14",
         "grace_days": 4, "halting_rate_per_day": 3000,
@@ -112,7 +119,7 @@ def test_invoice_halting_flows_from_multiple_trips():
     # Auto-recompute: update trip 1 halting, refetch → PDF updates
     requests.put(f"{API}/trips/{t1['id']}", headers=HEADERS, json={
         "customer_id": cid, "date": "2028-06-01",
-        "vehicle_number": "ITER46-INV1", "tons": 30,
+        "vehicle_number": f"ITER46-INV1-{_VEH_SUFFIX}", "tons": 30,
         "freight_mode": "per_ton", "rate_per_ton": 1500,
         "total_halting_days": 5, "grace_days": 4, "halting_rate_per_day": 3000,
     })
