@@ -35,18 +35,25 @@ def _pick_active_company_and_customer():
 
 
 def _create_invoice_with_trip():
-    """Create a fresh single-trip invoice and return (invoice, company_id, header)."""
+    """Create a fresh single-trip invoice and return (invoice, company_id, header).
+
+    Uses the trip payload shape proven-working in _iter100_seed_fe_trip.py
+    (`freight_mode=per_ton` + `rate_per_ton`), which reliably produces a
+    non-zero invoice total. A fail-fast assert guards against future
+    fixture drift so this class of defect surfaces immediately."""
     cid, cust_id, h = _pick_active_company_and_customer()
     tag = uuid.uuid4().hex[:8]
     trip = httpx.post(
         f"{API}/trips",
         headers=h,
         json={
-            "date": "2026-06-01", "vehicle_number": f"TCN{tag[:4].upper()}",
-            "customer_id": cust_id, "product_id": None,
-            "from_location": "FromCity", "to_location": "ToCity",
-            "tons": 10.0, "rate": 500.0, "freight_amount": 5000.0,
-            "basis": "per_ton", "freight_mode": "per_ton",
+            "customer_id": cust_id, "date": "2026-06-01",
+            "vehicle_number": f"TCN{tag[:4].upper()}",
+            "tons": 20, "loaded_qty": 20, "unloaded_qty": 20,
+            "freight_mode": "per_ton", "rate_per_ton": 900,
+            "product_rate_per_mt": 40000,
+            "from_location": "Kakinada", "to_location": "Vizag",
+            "loading_date": "2026-06-01", "unloading_date": "2026-06-02",
         },
         timeout=15,
     )
@@ -59,7 +66,10 @@ def _create_invoice_with_trip():
         timeout=15,
     )
     assert inv.status_code == 200, inv.text
-    return inv.json(), cid, h
+    inv_doc = inv.json()
+    assert float(inv_doc.get("total_amount") or 0) > 0, \
+        f"Test fixture produced zero/negative invoice total: {inv_doc.get('total_amount')}"
+    return inv_doc, cid, h
 
 
 # ─── Feature flag ────────────────────────────────────────────────────────
