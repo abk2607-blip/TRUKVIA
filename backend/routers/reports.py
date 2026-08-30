@@ -82,8 +82,69 @@ async def report_ledger(
             if start and pdt < start:
                 opening -= p["amount"]
 
-    # Sort by date, then type (invoice before payment on same day)
-    entries.sort(key=lambda x: (x["date"], 0 if x["type"] == "invoice" else 1))
+    # Iter133 L1 · Credit / Debit Note ledger integration.
+    # Second streaming cursor — tenant + customer + issued-only scope. Uses
+    # the existing (user_id, company_id, note_date DESC) compound index so no
+    # new index is required. Sign convention:
+    #   • Credit Note → credit column (reduces receivable)
+    #   • Debit Note  → debit column (increases receivable)
+    # Draft / cancelled notes are excluded entirely by the status filter.
+    # Notes dated < start fold into opening balance (mirroring invoice/payment
+    # opening semantics). Notes within the period become ledger rows. The
+    # invoice_number_snapshot on each note is used verbatim — no join.
+    async for n in db.credit_debit_notes.find(
+        {
+            "user_id": uid, "company_id": cid,
+            "customer_id": customer_id, "status": "issued",
+        },
+        {
+            "_id": 0, "id": 1, "kind": 1, "note_date": 1, "note_number": 1,
+            "total_amount": 1, "invoice_id": 1, "invoice_number_snapshot": 1,
+            "reason_code": 1,
+        },
+    ):
+        ndt = n.get("note_date", "")
+        kind = n.get("kind")
+        amt = float(n.get("total_amount") or 0.0)
+        inv_snap = n.get("invoice_number_snapshot") or ""
+        reason = n.get("reason_code") or ""
+        if _in_range(ndt, start, end):
+            if kind == "credit":
+                entries.append({
+                    "date": ndt,
+                    "type": "credit_note",
+                    "reference": n.get("note_number", ""),
+                    "particulars": f"Credit Note — {reason} · against {inv_snap}".strip(" ·"),
+                    "debit": 0.0,
+                    "credit": amt,
+                    "invoice_id": n.get("invoice_id"),
+                    "note_id": n.get("id"),
+                    "kind": "credit",
+                })
+            elif kind == "debit":
+                entries.append({
+                    "date": ndt,
+                    "type": "debit_note",
+                    "reference": n.get("note_number", ""),
+                    "particulars": f"Debit Note — {reason} · against {inv_snap}".strip(" ·"),
+                    "debit": amt,
+                    "credit": 0.0,
+                    "invoice_id": n.get("invoice_id"),
+                    "note_id": n.get("id"),
+                    "kind": "debit",
+                })
+        elif start and ndt < start:
+            # pre-period folds into opening. CN reduces, DN increases.
+            if kind == "credit":
+                opening -= amt
+            elif kind == "debit":
+                opening += amt
+
+    # Sort by date, then by type priority (invoice → DN → CN → payment on
+    # the same day). Auditor-friendly ordering: receivable-creating rows come
+    # before receivable-adjusting rows, and payments last.
+    _PRIORITY = {"invoice": 0, "debit_note": 1, "credit_note": 2, "payment": 3}
+    entries.sort(key=lambda x: (x["date"], _PRIORITY.get(x["type"], 9)))
 
     running = opening
     for e in entries:
@@ -94,6 +155,16 @@ async def report_ledger(
     total_credit = round(sum(e["credit"] for e in entries), 2)
     closing = round(opening + total_debit - total_credit, 2)
 
+    # Iter133 L1 · additive totals-by-type metadata. Backwards-compatible —
+    # existing consumers ignore this key. Enables future L2/L3 slices to render
+    # per-type breakdowns without a second cursor.
+    totals_by_type = {
+        "invoice":     round(sum(e["debit"]  for e in entries if e["type"] == "invoice"),     2),
+        "payment":     round(sum(e["credit"] for e in entries if e["type"] == "payment"),     2),
+        "credit_note": round(sum(e["credit"] for e in entries if e["type"] == "credit_note"), 2),
+        "debit_note":  round(sum(e["debit"]  for e in entries if e["type"] == "debit_note"),  2),
+    }
+
     return {
         "customer": {k: customer.get(k, "") for k in ["id", "name", "gstin", "phone", "address", "state"]},
         "period": {"start": start, "end": end},
@@ -102,6 +173,7 @@ async def report_ledger(
         "total_debit": total_debit,
         "total_credit": total_credit,
         "closing_balance": closing,
+        "totals_by_type": totals_by_type,
     }
 
 @router.get("/reports/ledger/pdf")
