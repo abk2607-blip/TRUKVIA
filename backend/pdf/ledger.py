@@ -22,9 +22,9 @@ def build_ledger_pdf(company: dict, ledger: dict) -> bytes:
         title="Customer Ledger",
     )
     styles = getSampleStyleSheet()
-    styles.add(ParagraphStyle(name="H1L", fontName="Helvetica-Bold", fontSize=16, leading=20))
-    styles.add(ParagraphStyle(name="BodyL", fontName="Helvetica", fontSize=9, leading=12))
-    styles.add(ParagraphStyle(name="SmallL", fontName="Helvetica", fontSize=8, leading=10))
+    styles.add(ParagraphStyle(name="H1L", fontName=_UNI_FONT_BOLD, fontSize=16, leading=20))
+    styles.add(ParagraphStyle(name="BodyL", fontName=_UNI_FONT, fontSize=9, leading=12))
+    styles.add(ParagraphStyle(name="SmallL", fontName=_UNI_FONT, fontSize=8, leading=10))
     story = []
 
     company_name = company.get("name") or "YOUR COMPANY NAME"
@@ -60,10 +60,10 @@ def build_ledger_pdf(company: dict, ledger: dict) -> bytes:
     tbl.setStyle(TableStyle([
         ("GRID", (0, 0), (-1, -1), 0.4, colors.grey),
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F4F4F5")),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTNAME", (0, -1), (-1, -1), "Helvetica-Bold"),
-        ("FONTNAME", (0, -2), (-1, -2), "Helvetica-Bold"),
-        ("FONTNAME", (0, 1), (-1, 1), "Helvetica-Bold"),
+        ("FONTNAME", (0, 0), (-1, 0), _UNI_FONT_BOLD),
+        ("FONTNAME", (0, -1), (-1, -1), _UNI_FONT_BOLD),
+        ("FONTNAME", (0, -2), (-1, -2), _UNI_FONT_BOLD),
+        ("FONTNAME", (0, 1), (-1, 1), _UNI_FONT_BOLD),
         ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#FEF3C7")),
         ("FONTSIZE", (0, 0), (-1, -1), 8),
         ("ALIGN", (3, 1), (5, -1), "RIGHT"),

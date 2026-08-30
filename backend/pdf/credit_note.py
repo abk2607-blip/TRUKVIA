@@ -14,6 +14,7 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image, KeepTogether,
 )
+from ._base import _UNI_FONT, _UNI_FONT_BOLD
 
 ACCENT = colors.HexColor("#B91C1C")  # Credit Note red
 ACCENT_LIGHT = colors.HexColor("#FEE2E2")
@@ -81,11 +82,11 @@ def build_credit_note_pdf(company, customer, invoice, note):
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=12*mm, rightMargin=12*mm,
                             topMargin=10*mm, bottomMargin=12*mm)
     styles = getSampleStyleSheet()
-    small = ParagraphStyle("s", parent=styles["Normal"], fontSize=8, textColor=INK, leading=10)
-    muted = ParagraphStyle("m", parent=styles["Normal"], fontSize=8, textColor=MUTED, leading=10)
-    title = ParagraphStyle("t", parent=styles["Heading1"], fontSize=18, textColor=ACCENT, alignment=2, leading=22)
-    label = ParagraphStyle("l", parent=styles["Normal"], fontSize=7, textColor=MUTED, leading=9, spaceAfter=1)
-    body = ParagraphStyle("b", parent=styles["Normal"], fontSize=9, textColor=INK, leading=12)
+    small = ParagraphStyle("s", parent=styles["Normal"],   fontName=_UNI_FONT,      fontSize=8,  textColor=INK,   leading=10)
+    muted = ParagraphStyle("m", parent=styles["Normal"],   fontName=_UNI_FONT,      fontSize=8,  textColor=MUTED, leading=10)
+    title = ParagraphStyle("t", parent=styles["Heading1"], fontName=_UNI_FONT_BOLD, fontSize=18, textColor=ACCENT, alignment=2, leading=22)
+    label = ParagraphStyle("l", parent=styles["Normal"],   fontName=_UNI_FONT_BOLD, fontSize=7,  textColor=MUTED, leading=9,  spaceAfter=1)
+    body  = ParagraphStyle("b", parent=styles["Normal"],   fontName=_UNI_FONT,      fontSize=9,  textColor=INK,   leading=12)
 
     story = []
     kind_label = "CREDIT NOTE"
@@ -97,10 +98,13 @@ def build_credit_note_pdf(company, customer, invoice, note):
 
     # Header
     logo = _logo_flowable(company)
+    _co   = company or {}
+    _co_gst   = (_co.get("gstin") or "").strip() or "—"
+    _co_state = (_co.get("state") or "").strip() or "—"
     company_lines = [
-        Paragraph(f"<b>{(company or {}).get('name','')}</b>", body),
-        Paragraph((company or {}).get("address",""), small),
-        Paragraph(f"GSTIN: {(company or {}).get('gstin','')} · State: {(company or {}).get('state','')}", muted),
+        Paragraph(f"<b>{_co.get('name','')}</b>", body),
+        Paragraph(_co.get("address",""), small),
+        Paragraph(f"GSTIN: {_co_gst} · State: {_co_state}", muted),
     ]
     left = Table([[logo or "", company_lines]], colWidths=[24*mm, 100*mm]) if logo else Table([[company_lines]], colWidths=[124*mm])
     left.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"TOP"),("BOX",(0,0),(-1,-1),0,colors.white)]))
@@ -184,7 +188,7 @@ def build_credit_note_pdf(company, customer, invoice, note):
     lt.setStyle(TableStyle([
         ("BACKGROUND",(0,0),(-1,0),ACCENT),
         ("TEXTCOLOR",(0,0),(-1,0),colors.white),
-        ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),
+        ("FONTNAME",(0,0),(-1,0),_UNI_FONT_BOLD),
         ("FONTSIZE",(0,0),(-1,-1),8),
         ("ALIGN",(0,0),(0,-1),"CENTER"),
         ("ALIGN",(3,0),(5,-1),"RIGHT"),
@@ -198,27 +202,30 @@ def build_credit_note_pdf(company, customer, invoice, note):
 
     # Tax summary right-aligned
     apply_gst = note.get("apply_gst", True) is not False
-    tot_rows = [
-        ["Subtotal", _inr(note.get("subtotal",0))],
-    ]
+    is_rcm    = bool(note.get("rcm"))
+    tot_rows = [["Subtotal", _inr(note.get("subtotal", 0))]]
     if apply_gst:
-        if float(note.get("cgst_amount",0) or 0) > 0:
-            tot_rows.append([f"CGST @ {note.get('cgst_rate',0)}%", _inr(note.get("cgst_amount",0))])
-        if float(note.get("sgst_amount",0) or 0) > 0:
-            tot_rows.append([f"SGST @ {note.get('sgst_rate',0)}%", _inr(note.get("sgst_amount",0))])
-        if float(note.get("igst_amount",0) or 0) > 0:
-            tot_rows.append([f"IGST @ {note.get('igst_rate',0)}%", _inr(note.get("igst_amount",0))])
-        tot_rows.append(["Total Tax", _inr(note.get("total_tax",0))])
+        if float(note.get("cgst_amount", 0) or 0) > 0:
+            tot_rows.append([f"CGST @ {note.get('cgst_rate',0)}%", _inr(note.get("cgst_amount", 0))])
+        if float(note.get("sgst_amount", 0) or 0) > 0:
+            tot_rows.append([f"SGST @ {note.get('sgst_rate',0)}%", _inr(note.get("sgst_amount", 0))])
+        if float(note.get("igst_amount", 0) or 0) > 0:
+            tot_rows.append([f"IGST @ {note.get('igst_rate',0)}%", _inr(note.get("igst_amount", 0))])
+        tax_label = "Total Tax (RCM — not collected)" if is_rcm else "Total Tax"
+        tot_rows.append([tax_label, _inr(note.get("total_tax", 0))])
+        if is_rcm:
+            tot_rows.append(["GST under Reverse Charge", "Not included in Payable"])
     else:
         tot_rows.append(["GST", "Not Applied"])
-    tot_rows.append(["Round Off", _inr(note.get("round_off",0))])
-    tot_rows.append(["TOTAL CREDIT NOTE", _inr(note.get("total_amount",0))])
+    tot_rows.append(["Round Off", _inr(note.get("round_off", 0))])
+    final_label = "TOTAL CREDIT NOTE (excl. RCM GST)" if (is_rcm and apply_gst) else "TOTAL CREDIT NOTE"
+    tot_rows.append([final_label, _inr(note.get("total_amount", 0))])
     tot = Table(tot_rows, colWidths=[38*mm, 34*mm])
     tot.setStyle(TableStyle([
         ("ALIGN",(0,0),(-1,-1),"RIGHT"),
         ("FONTSIZE",(0,0),(-1,-1),9),
         ("LINEABOVE",(0,-1),(-1,-1),1,ACCENT),
-        ("FONTNAME",(0,-1),(-1,-1),"Helvetica-Bold"),
+        ("FONTNAME",(0,-1),(-1,-1),_UNI_FONT_BOLD),
         ("TEXTCOLOR",(0,-1),(-1,-1),ACCENT),
         ("TOPPADDING",(0,-1),(-1,-1),4),
     ]))
@@ -230,7 +237,18 @@ def build_credit_note_pdf(company, customer, invoice, note):
     story.append(Paragraph(f"<b>Amount in Words:</b> {_amount_in_words(note.get('total_amount',0))}", small))
     if note.get("rcm"):
         story.append(Spacer(1, 2*mm))
-        story.append(Paragraph("<b>RCM applicable</b> — Tax to be paid by recipient under Reverse Charge Mechanism.", muted))
+        rcm_box = Table([[Paragraph(
+            "<b>REVERSE CHARGE MECHANISM (RCM)</b> — GST on this Credit Note is to be paid by the recipient under Notification No. 08/2017. "
+            "The tax amount shown above is <b>not</b> included in the payable total.",
+            small)]], colWidths=[186*mm])
+        rcm_box.setStyle(TableStyle([
+            ("BACKGROUND",(0,0),(-1,-1),ACCENT_LIGHT),
+            ("BOX",(0,0),(-1,-1),0.8,ACCENT),
+            ("TEXTCOLOR",(0,0),(-1,-1),INK),
+            ("LEFTPADDING",(0,0),(-1,-1),8), ("RIGHTPADDING",(0,0),(-1,-1),8),
+            ("TOPPADDING",(0,0),(-1,-1),5), ("BOTTOMPADDING",(0,0),(-1,-1),5),
+        ]))
+        story.append(rcm_box)
     story.append(Spacer(1, 3*mm))
     story.append(Paragraph("Computer-generated document · Valid without physical signature.", muted))
     story.append(Spacer(1, 10*mm))

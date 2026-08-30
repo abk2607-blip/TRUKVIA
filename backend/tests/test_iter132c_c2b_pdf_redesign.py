@@ -196,3 +196,170 @@ def test_cn_without_gst_still_blocks_past_deadline_for_non_owner():
     # deadline_override_reason regardless of apply_gst. It must NOT silently
     # accept the note.
     assert r.status_code in (400, 403), r.text
+
+
+# ============================================================================
+# Iter132c C2c · ₹ font · RCM clarifier · GSTIN presentation guard
+# ============================================================================
+
+
+def _cn_with_gst(h, cid):
+    inv = _inv(h, _fresh_customer(h))
+    r = httpx.post(f"{API}/credit-notes", headers=h, json={
+        "invoice_id": inv["id"], "note_date": "2026-07-01",
+        "reason_code": "rate_correction", "reason_text": "c2c rcm gst test",
+        "lines": [{"description": "C2C RCM CN", "quantity": 1, "rate": 4000}],
+    }, timeout=15)
+    assert r.status_code == 200, r.text
+    return r.json(), inv
+
+
+def _dn_with_gst(h, cid):
+    inv = _inv(h, _fresh_customer(h))
+    r = httpx.post(f"{API}/debit-notes", headers=h, json={
+        "invoice_id": inv["id"], "note_date": "2026-07-01",
+        "reason_code": "freight_escalation", "reason_text": "c2c rcm gst dn test",
+        "lines": [{"description": "C2C RCM DN", "quantity": 1, "rate": 4000}],
+    }, timeout=15)
+    assert r.status_code == 200, r.text
+    return r.json(), inv
+
+
+# ---- Track #1 · ₹ glyph must render as the real Rupee sign ----
+
+def test_c2c_cn_pdf_contains_real_rupee_glyph():
+    _cid, h = _ch(); cn, _ = _cn_with_gst(h, _cid)
+    r = httpx.get(f"{API}/credit-notes/{cn['id']}/pdf", headers=h, timeout=30)
+    assert r.status_code == 200
+    text = _pdf_text(r.content)
+    # The DejaVu font preserves U+20B9. Fail if a tofu box or empty currency prefix leaks through.
+    assert "\u20b9" in text, "Rupee glyph U+20B9 not found in Credit Note PDF (font swap failed?)"
+
+
+def test_c2c_dn_pdf_contains_real_rupee_glyph():
+    _cid, h = _ch(); dn, _ = _dn_with_gst(h, _cid)
+    r = httpx.get(f"{API}/debit-notes/{dn['id']}/pdf", headers=h, timeout=30)
+    assert r.status_code == 200
+    text = _pdf_text(r.content)
+    assert "\u20b9" in text, "Rupee glyph U+20B9 not found in Debit Note PDF"
+
+
+def test_c2c_ledger_pdf_contains_real_rupee_glyph():
+    """C2c · Ledger PDF font swap must render ₹ (header row + closing-balance line)."""
+    _cid, h = _ch()
+    cust_id = _fresh_customer(h)
+    _inv(h, cust_id)  # ensure ledger has at least one entry
+    r = httpx.get(f"{API}/reports/ledger/pdf?customer_id={cust_id}", headers=h, timeout=30)
+    assert r.status_code == 200, r.text
+    text = _pdf_text(r.content)
+    assert "\u20b9" in text, "Rupee glyph U+20B9 not found in Ledger PDF"
+
+
+def test_c2c_customer_statement_pdf_contains_real_rupee_glyph():
+    """C2c · Customer Statement PDF font swap must render ₹."""
+    _cid, h = _ch()
+    cust_id = _fresh_customer(h)
+    _inv(h, cust_id)
+    r = httpx.get(f"{API}/customers/{cust_id}/statement.pdf", headers=h, timeout=30)
+    assert r.status_code == 200, r.text
+    text = _pdf_text(r.content)
+    assert "\u20b9" in text, "Rupee glyph U+20B9 not found in Customer Statement PDF"
+
+
+# ---- Track #2 · RCM presentation clarifier ----
+
+def test_c2c_cn_pdf_rcm_clarifier_wording():
+    """When RCM=True and apply_gst=True, CN PDF must carry the new clarifier wording."""
+    _cid, h = _ch(); cn, _ = _cn_with_gst(h, _cid)
+    assert bool(cn.get("rcm")) is True and cn.get("apply_gst", True) is True
+    r = httpx.get(f"{API}/credit-notes/{cn['id']}/pdf", headers=h, timeout=30)
+    assert r.status_code == 200
+    text = _pdf_text(r.content)
+    assert "REVERSE CHARGE MECHANISM" in text
+    assert "not included in the payable total" in text
+    assert "Total Tax (RCM — not collected)" in text
+    assert "GST under Reverse Charge" in text
+    assert "Not included in Payable" in text
+    assert "TOTAL CREDIT NOTE (excl. RCM GST)" in text
+    # legacy short line must be gone
+    assert "RCM applicable" not in text
+
+
+def test_c2c_dn_pdf_rcm_clarifier_wording():
+    _cid, h = _ch(); dn, _ = _dn_with_gst(h, _cid)
+    assert bool(dn.get("rcm")) is True and dn.get("apply_gst", True) is True
+    r = httpx.get(f"{API}/debit-notes/{dn['id']}/pdf", headers=h, timeout=30)
+    assert r.status_code == 200
+    text = _pdf_text(r.content)
+    assert "REVERSE CHARGE MECHANISM" in text
+    assert "not included in the payable total" in text
+    assert "Total Tax (RCM — not collected)" in text
+    assert "GST under Reverse Charge" in text
+    assert "Not included in Payable" in text
+    assert "TOTAL DEBIT NOTE (excl. RCM GST)" in text
+    assert "RCM applicable" not in text
+
+
+# ---- Track #3 · GSTIN empty-guard renders `—` ----
+
+def test_c2c_cn_pdf_gstin_dash_when_company_gstin_empty():
+    """If issuer company gstin is empty, PDF must show `GSTIN: —` (not `GSTIN:  ·`)."""
+    import asyncio, os as _os
+    from motor.motor_asyncio import AsyncIOMotorClient as _MC
+    _cid, h = _ch(); cn, _ = _cn_with_gst(h, _cid)
+
+    async def _clear_and_restore():
+        cli = _MC(_os.environ.get("MONGO_URL", "mongodb://localhost:27017"))
+        d   = cli[_os.environ.get("DB_NAME", "test_database")]
+        before = await d.companies.find_one({"id": cn["company_id"]}, {"_id": 0, "gstin": 1}) or {}
+        await d.companies.update_one({"id": cn["company_id"]}, {"$set": {"gstin": ""}})
+        return before.get("gstin", "")
+
+    async def _restore(orig):
+        cli = _MC(_os.environ.get("MONGO_URL", "mongodb://localhost:27017"))
+        d   = cli[_os.environ.get("DB_NAME", "test_database")]
+        await d.companies.update_one({"id": cn["company_id"]}, {"$set": {"gstin": orig or ""}})
+
+    loop = asyncio.new_event_loop()
+    try:
+        original = loop.run_until_complete(_clear_and_restore())
+        r = httpx.get(f"{API}/credit-notes/{cn['id']}/pdf", headers=h, timeout=30)
+        assert r.status_code == 200
+        text = _pdf_text(r.content)
+        # Guard: the empty field must be replaced by an em-dash marker
+        assert "GSTIN: —" in text, f"GSTIN guard not applied; got: ...{text[max(0,text.find('GSTIN')):text.find('GSTIN')+80]}..."
+        # And the double-space-dot artifact must NOT appear anywhere
+        assert "GSTIN:  ·" not in text
+    finally:
+        loop.run_until_complete(_restore(original))
+        loop.close()
+
+
+def test_c2c_dn_pdf_gstin_dash_when_company_gstin_empty():
+    import asyncio, os as _os
+    from motor.motor_asyncio import AsyncIOMotorClient as _MC
+    _cid, h = _ch(); dn, _ = _dn_with_gst(h, _cid)
+
+    async def _clear():
+        cli = _MC(_os.environ.get("MONGO_URL", "mongodb://localhost:27017"))
+        d   = cli[_os.environ.get("DB_NAME", "test_database")]
+        before = await d.companies.find_one({"id": dn["company_id"]}, {"_id": 0, "gstin": 1}) or {}
+        await d.companies.update_one({"id": dn["company_id"]}, {"$set": {"gstin": ""}})
+        return before.get("gstin", "")
+
+    async def _restore(orig):
+        cli = _MC(_os.environ.get("MONGO_URL", "mongodb://localhost:27017"))
+        d   = cli[_os.environ.get("DB_NAME", "test_database")]
+        await d.companies.update_one({"id": dn["company_id"]}, {"$set": {"gstin": orig or ""}})
+
+    loop = asyncio.new_event_loop()
+    try:
+        original = loop.run_until_complete(_clear())
+        r = httpx.get(f"{API}/debit-notes/{dn['id']}/pdf", headers=h, timeout=30)
+        assert r.status_code == 200
+        text = _pdf_text(r.content)
+        assert "GSTIN: —" in text
+        assert "GSTIN:  ·" not in text
+    finally:
+        loop.run_until_complete(_restore(original))
+        loop.close()

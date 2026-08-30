@@ -698,12 +698,13 @@ async def customer_statement_pdf(
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
     from reportlab.lib import colors
     from reportlab.lib.units import mm
+    from pdf._base import _UNI_FONT, _UNI_FONT_BOLD
     buf = io.BytesIO()
     styles = getSampleStyleSheet()
     doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=16 * mm, rightMargin=16 * mm, topMargin=14 * mm, bottomMargin=14 * mm)
     story: list = []
-    title_st = ParagraphStyle("t", parent=styles["Title"], fontSize=15, leading=18)
-    hdr_st = ParagraphStyle("h", parent=styles["Normal"], fontSize=10, textColor=colors.grey)
+    title_st = ParagraphStyle("t", parent=styles["Title"], fontName=_UNI_FONT_BOLD, fontSize=15, leading=18)
+    hdr_st = ParagraphStyle("h", parent=styles["Normal"], fontName=_UNI_FONT, fontSize=10, textColor=colors.grey)
 
     story.append(Paragraph(f"<b>{company.get('name', '')}</b>", title_st))
     story.append(Paragraph(f"Customer Statement — {customer.get('name', '')}", hdr_st))
@@ -723,14 +724,14 @@ async def customer_statement_pdf(
         ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d1d5db")),
         ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f3f4f6")),
         ("BACKGROUND", (2, 0), (2, -1), colors.HexColor("#f3f4f6")),
-        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-        ("FONTNAME", (2, 0), (2, -1), "Helvetica-Bold"),
+        ("FONTNAME", (0, 0), (0, -1), _UNI_FONT_BOLD),
+        ("FONTNAME", (2, 0), (2, -1), _UNI_FONT_BOLD),
     ]))
     story.append(st)
 
     # Iter132c C1 · R4 — small "Adjustments" line only when notes exist.
     if total_credits > 0 or total_debits > 0:
-        adj_st = ParagraphStyle("adj", parent=styles["Normal"], fontSize=9, textColor=colors.HexColor("#374151"))
+        adj_st = ParagraphStyle("adj", parent=styles["Normal"], fontName=_UNI_FONT, fontSize=9, textColor=colors.HexColor("#374151"))
         story.append(Spacer(1, 4))
         story.append(Paragraph(
             f"Adjustments: −CN ₹{total_credits:,.2f} / +DN ₹{total_debits:,.2f}",
@@ -754,7 +755,7 @@ async def customer_statement_pdf(
     tt.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#111827")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, 0), (-1, 0), _UNI_FONT_BOLD),
         ("FONTSIZE", (0, 0), (-1, -1), 8),
         ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d1d5db")),
         ("ALIGN", (4, 0), (5, -1), "RIGHT"),
@@ -775,7 +776,7 @@ async def customer_statement_pdf(
     it.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#111827")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTNAME", (0, 0), (-1, 0), _UNI_FONT_BOLD),
         ("FONTSIZE", (0, 0), (-1, -1), 8),
         ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d1d5db")),
         ("ALIGN", (2, 0), (4, -1), "RIGHT"),
