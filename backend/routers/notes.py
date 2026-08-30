@@ -52,9 +52,13 @@ def _round2(x: float) -> float:
     return round(float(x or 0), 2)
 
 
-async def _compute_note_totals(payload_lines: list, invoice: dict) -> dict:
+async def _compute_note_totals(payload_lines: list, invoice: dict, apply_gst: bool = True) -> dict:
     """Inherit GST from invoice; sum lines; produce totals. No auto-derivation
-    of gst_type — CN must carry the same tax character as the invoice."""
+    of gst_type — CN must carry the same tax character as the invoice.
+
+    Iter132c C2b · apply_gst=False zeros CGST/SGST/IGST/total_tax but keeps
+    the invoice's gst_type/rates on the persisted note for reporting parity.
+    """
     subtotal = 0.0
     lines_out = []
     for l in payload_lines:
@@ -74,15 +78,17 @@ async def _compute_note_totals(payload_lines: list, invoice: dict) -> dict:
     sgst_rate = float(invoice.get("sgst_rate") or 2.5)
     igst_rate = float(invoice.get("igst_rate") or 5.0)
     cgst = sgst = igst = 0.0
-    if gst_type == "cgst_sgst":
-        cgst = _round2(subtotal * cgst_rate / 100)
-        sgst = _round2(subtotal * sgst_rate / 100)
-    else:
-        igst = _round2(subtotal * igst_rate / 100)
+    if apply_gst:
+        if gst_type == "cgst_sgst":
+            cgst = _round2(subtotal * cgst_rate / 100)
+            sgst = _round2(subtotal * sgst_rate / 100)
+        else:
+            igst = _round2(subtotal * igst_rate / 100)
     total_tax = _round2(cgst + sgst + igst)
-    # RCM parity — if invoice is RCM, tax not added to gross
+    # RCM parity — if invoice is RCM, tax not added to gross. Also, when
+    # apply_gst=False, total_tax is 0 so gross == subtotal regardless of RCM.
     rcm = bool(invoice.get("rcm", True))
-    gross = _round2(subtotal if rcm else subtotal + total_tax)
+    gross = _round2(subtotal if (rcm or not apply_gst) else subtotal + total_tax)
     final_amount = float(int(gross + 0.5)) if gross >= 0 else -float(int(-gross + 0.5))
     round_off = _round2(final_amount - gross)
     return {
@@ -95,6 +101,7 @@ async def _compute_note_totals(payload_lines: list, invoice: dict) -> dict:
         "round_off": round_off,
         "total_amount": _round2(final_amount),
         "rcm": rcm,
+        "apply_gst": bool(apply_gst),
     }
 
 
@@ -154,7 +161,7 @@ async def create_credit_note(payload: CDNCreateRequest, user=Depends(get_current
             )
         deadline_override = True
 
-    totals = await _compute_note_totals(payload.lines, inv)
+    totals = await _compute_note_totals(payload.lines, inv, apply_gst=bool(payload.apply_gst if payload.apply_gst is not None else True))
 
     # Over-credit guard — reject if this CN would drive effective total < 0.
     existing = await db.credit_debit_notes.find(
@@ -188,6 +195,7 @@ async def create_credit_note(payload: CDNCreateRequest, user=Depends(get_current
         total_amount=totals["total_amount"],
         round_off=totals["round_off"],
         rcm=totals["rcm"],
+        apply_gst=totals["apply_gst"],
         status="draft",
         created_by=user["user_id"],
         deadline_override=deadline_override,
@@ -404,7 +412,7 @@ async def _create_debit_note_impl(payload: CDNCreateRequest, user: dict) -> dict
             )
         deadline_override = True
 
-    totals = await _compute_note_totals(payload.lines, inv)
+    totals = await _compute_note_totals(payload.lines, inv, apply_gst=bool(payload.apply_gst if payload.apply_gst is not None else True))
     # Iter132b · positive-amount check (a DN MUST increase, not decrease).
     if totals["total_amount"] <= 0:
         raise HTTPException(status_code=422, detail="Debit Note total must be positive")
@@ -428,6 +436,7 @@ async def _create_debit_note_impl(payload: CDNCreateRequest, user: dict) -> dict
         total_amount=totals["total_amount"],
         round_off=totals["round_off"],
         rcm=totals["rcm"],
+        apply_gst=totals["apply_gst"],
         status="draft",
         created_by=user["user_id"],
         deadline_override=deadline_override,

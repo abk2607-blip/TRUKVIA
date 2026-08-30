@@ -619,6 +619,11 @@ class CreditDebitNote(BaseModel):
     total_amount: float = 0.0
     round_off: float = 0.0
     rcm: bool = True                    # inherited from invoice
+    # Iter132c C2b · GST treatment. Default True → inherit invoice tax as
+    # before (statutorily-conservative). When False, taxes are zeroed and the
+    # PDF renders a prominent "GST NOT APPLIED" badge. Note that all statutory
+    # validators (deadline, over-credit, note-date) still apply regardless.
+    apply_gst: bool = True
 
     status: Literal["draft", "issued", "cancelled"] = "draft"
     cancelled_at: Optional[str] = None
@@ -658,6 +663,9 @@ class CDNCreateRequest(BaseModel):
     reason_text: str
     lines: List[CDNLineCreate]
     deadline_override_reason: Optional[str] = None  # required when past 30-Nov
+    # Iter132c C2b · optional GST treatment override. Default True → inherit
+    # tax from invoice. False → zero-tax note; PDF renders "GST NOT APPLIED".
+    apply_gst: Optional[bool] = True
 
 
 class CDNCancelRequest(BaseModel):

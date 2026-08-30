@@ -13,6 +13,11 @@ export default function NoteCreateDialog({ kind, invoice, onClose }) {
   const [reasonText, setReasonText] = useState("");
   const [deadlineOverrideReason, setDeadlineOverrideReason] = useState("");
   const [lines, setLines] = useState([{ description: "", quantity: 1, rate: "" }]);
+  // Iter132c C2b · GST Treatment. Default = "with" (statutorily-conservative
+  // parity with the linked invoice). "without" zeros the tax on both the
+  // persisted note and the PDF; statutory validators (deadline, over-credit)
+  // remain enforced server-side regardless.
+  const [applyGst, setApplyGst] = useState(true);
 
   const updateLine = (i, patch) => {
     const next = [...lines];
@@ -42,6 +47,7 @@ export default function NoteCreateDialog({ kind, invoice, onClose }) {
         note_date: noteDate,
         reason_code: reasonCode,
         reason_text: reasonText.trim(),
+        apply_gst: applyGst,
         lines: lines.filter((l) => l.description && l.rate).map((l) => ({
           description: l.description,
           quantity: Number(l.quantity) || 1,
@@ -85,6 +91,38 @@ export default function NoteCreateDialog({ kind, invoice, onClose }) {
             {" · "}Total: <span className="font-semibold">{fmtCurrency(invoice?.total_amount)}</span>
             {" · "}Effective balance: <span className="font-semibold">{fmtCurrency(invoice?.effective_balance_due ?? invoice?.balance_due)}</span>
           </div>
+
+          {/* Iter132c C2b · GST Treatment. Default "with GST". */}
+          <fieldset className="border border-zinc-200 rounded-sm p-2" data-testid="note-create-gst-treatment">
+            <legend className="text-[11px] font-bold uppercase tracking-wider text-zinc-600 px-1">GST Treatment</legend>
+            <div className="flex flex-wrap gap-4 mt-1">
+              <label className="inline-flex items-center gap-1.5 text-xs cursor-pointer" data-testid="gst-treatment-with-label">
+                <input
+                  type="radio"
+                  name="apply-gst"
+                  data-testid="gst-treatment-with"
+                  checked={applyGst === true}
+                  onChange={() => setApplyGst(true)}
+                />
+                <span>Proceed <b>with GST</b> <span className="text-zinc-500">(inherit from invoice)</span></span>
+              </label>
+              <label className="inline-flex items-center gap-1.5 text-xs cursor-pointer" data-testid="gst-treatment-without-label">
+                <input
+                  type="radio"
+                  name="apply-gst"
+                  data-testid="gst-treatment-without"
+                  checked={applyGst === false}
+                  onChange={() => setApplyGst(false)}
+                />
+                <span>Proceed <b>without GST</b> <span className="text-zinc-500">(zero tax on this note)</span></span>
+              </label>
+            </div>
+            {applyGst === false && (
+              <div className="text-[10px] mt-1.5 text-orange-700 bg-orange-50 border border-orange-200 rounded-sm px-2 py-1" data-testid="gst-treatment-without-hint">
+                No GST will be added. Statutory validations (30-Nov deadline, over-credit protection) still apply.
+              </div>
+            )}
+          </fieldset>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <label className="text-xs font-semibold text-zinc-700">

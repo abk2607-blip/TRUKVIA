@@ -105,3 +105,94 @@ def test_dn_pdf_reason_present():
     r = httpx.get(f"{API}/debit-notes/{dn['id']}/pdf", headers=h, timeout=30)
     text = _pdf_text(r.content)
     assert "REASON" in text and "freight_escalation" in text
+
+
+# ============================================================================
+# Iter132c C2b · GST Treatment tests
+# ============================================================================
+
+def test_cn_without_gst_zeros_tax_and_flags_apply_gst():
+    _cid, h = _ch(); inv = _inv(h, _fresh_customer(h))
+    r = httpx.post(f"{API}/credit-notes", headers=h, json={
+        "invoice_id": inv["id"], "note_date": "2026-07-01",
+        "reason_code": "quality_claim", "reason_text": "no-gst test",
+        "apply_gst": False,
+        "lines": [{"description": "No-GST line", "quantity": 1, "rate": 1000}],
+    }, timeout=15)
+    assert r.status_code == 200, r.text
+    cn = r.json()
+    assert cn["apply_gst"] is False
+    assert cn["cgst_amount"] == 0 and cn["sgst_amount"] == 0 and cn["igst_amount"] == 0
+    assert cn["total_tax"] == 0
+    # For RCM invoice, gross == subtotal previously; without GST, still subtotal.
+    assert round(cn["total_amount"]) == round(cn["subtotal"])
+
+
+def test_cn_with_gst_default_still_applies_tax():
+    _cid, h = _ch(); inv = _inv(h, _fresh_customer(h))
+    r = httpx.post(f"{API}/credit-notes", headers=h, json={
+        "invoice_id": inv["id"], "note_date": "2026-07-01",
+        "reason_code": "quality_claim", "reason_text": "default gst test",
+        "lines": [{"description": "Default GST line", "quantity": 1, "rate": 1000}],
+    }, timeout=15)
+    assert r.status_code == 200, r.text
+    cn = r.json()
+    # apply_gst defaults to True; rates carried from invoice
+    assert cn.get("apply_gst", True) is True
+    # For RCM=True (fixture) gross = subtotal even though tax is computed
+    assert cn["cgst_amount"] > 0 or cn["igst_amount"] > 0
+
+
+def test_cn_pdf_without_gst_shows_badge_and_hides_gst_rows():
+    _cid, h = _ch(); inv = _inv(h, _fresh_customer(h))
+    r = httpx.post(f"{API}/credit-notes", headers=h, json={
+        "invoice_id": inv["id"], "note_date": "2026-07-01",
+        "reason_code": "quality_claim", "reason_text": "pdf no-gst test",
+        "apply_gst": False,
+        "lines": [{"description": "PDF NoGST", "quantity": 1, "rate": 1500}],
+    }, timeout=15)
+    assert r.status_code == 200, r.text
+    cn = r.json()
+    pr = httpx.get(f"{API}/credit-notes/{cn['id']}/pdf", headers=h, timeout=30)
+    assert pr.status_code == 200
+    text = _pdf_text(pr.content)
+    assert "GST NOT APPLIED" in text
+    # No CGST / SGST / IGST rate rows on the PDF
+    assert "CGST @" not in text
+    assert "IGST @" not in text
+
+
+def test_dn_without_gst_zero_tax_and_pdf_badge():
+    _cid, h = _ch(); inv = _inv(h, _fresh_customer(h))
+    r = httpx.post(f"{API}/debit-notes", headers=h, json={
+        "invoice_id": inv["id"], "note_date": "2026-07-01",
+        "reason_code": "freight_escalation", "reason_text": "DN no-gst test",
+        "apply_gst": False,
+        "lines": [{"description": "DN No-GST", "quantity": 1, "rate": 800}],
+    }, timeout=15)
+    assert r.status_code == 200, r.text
+    dn = r.json()
+    assert dn["apply_gst"] is False
+    assert dn["total_tax"] == 0
+    pr = httpx.get(f"{API}/debit-notes/{dn['id']}/pdf", headers=h, timeout=30)
+    assert pr.status_code == 200
+    text = _pdf_text(pr.content)
+    assert "GST NOT APPLIED" in text
+    assert "CGST @" not in text and "IGST @" not in text
+
+
+def test_cn_without_gst_still_blocks_past_deadline_for_non_owner():
+    """Statutory validators must remain active even when apply_gst=False."""
+    _cid, h = _ch(); inv = _inv(h, _fresh_customer(h))
+    # Invoice fixture is FY 2026-27 (invoice_date 2026-06-15); statutory
+    # deadline = 2027-11-30. Use a note_date past that to force the guard.
+    r = httpx.post(f"{API}/credit-notes", headers=h, json={
+        "invoice_id": inv["id"], "note_date": "2028-01-15",
+        "reason_code": "quality_claim", "reason_text": "past deadline test",
+        "apply_gst": False,
+        "lines": [{"description": "past deadline", "quantity": 1, "rate": 500}],
+    }, timeout=15)
+    # DEMO_TOKEN is a demo owner in this stack; the guard requires
+    # deadline_override_reason regardless of apply_gst. It must NOT silently
+    # accept the note.
+    assert r.status_code in (400, 403), r.text

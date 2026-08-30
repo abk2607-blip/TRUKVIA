@@ -155,6 +155,19 @@ def build_credit_note_pdf(company, customer, invoice, note):
     ]))
     story.append(reason); story.append(Spacer(1, 4*mm))
 
+    # Iter132c C2b · GST Treatment badge (only when explicitly opted out).
+    if note.get("apply_gst", True) is False:
+        gst_badge = Table([[Paragraph("<b>GST NOT APPLIED</b> · This Credit Note is issued without GST at the party's election. All statutory validations still apply.", small)]],
+                          colWidths=[186*mm])
+        gst_badge.setStyle(TableStyle([
+            ("BACKGROUND",(0,0),(-1,-1),ACCENT_LIGHT),
+            ("BOX",(0,0),(-1,-1),0.8,ACCENT),
+            ("TEXTCOLOR",(0,0),(-1,-1),ACCENT),
+            ("LEFTPADDING",(0,0),(-1,-1),8), ("RIGHTPADDING",(0,0),(-1,-1),8),
+            ("TOPPADDING",(0,0),(-1,-1),5), ("BOTTOMPADDING",(0,0),(-1,-1),5),
+        ]))
+        story.append(gst_badge); story.append(Spacer(1, 4*mm))
+
     # Line-item table
     hdr = ["#", "Description", "HSN/SAC", "Qty", "Rate", "Taxable Value"]
     lines_data = [hdr]
@@ -184,16 +197,20 @@ def build_credit_note_pdf(company, customer, invoice, note):
     story.append(lt); story.append(Spacer(1, 3*mm))
 
     # Tax summary right-aligned
+    apply_gst = note.get("apply_gst", True) is not False
     tot_rows = [
         ["Subtotal", _inr(note.get("subtotal",0))],
     ]
-    if float(note.get("cgst_amount",0) or 0) > 0:
-        tot_rows.append([f"CGST @ {note.get('cgst_rate',0)}%", _inr(note.get("cgst_amount",0))])
-    if float(note.get("sgst_amount",0) or 0) > 0:
-        tot_rows.append([f"SGST @ {note.get('sgst_rate',0)}%", _inr(note.get("sgst_amount",0))])
-    if float(note.get("igst_amount",0) or 0) > 0:
-        tot_rows.append([f"IGST @ {note.get('igst_rate',0)}%", _inr(note.get("igst_amount",0))])
-    tot_rows.append(["Total Tax", _inr(note.get("total_tax",0))])
+    if apply_gst:
+        if float(note.get("cgst_amount",0) or 0) > 0:
+            tot_rows.append([f"CGST @ {note.get('cgst_rate',0)}%", _inr(note.get("cgst_amount",0))])
+        if float(note.get("sgst_amount",0) or 0) > 0:
+            tot_rows.append([f"SGST @ {note.get('sgst_rate',0)}%", _inr(note.get("sgst_amount",0))])
+        if float(note.get("igst_amount",0) or 0) > 0:
+            tot_rows.append([f"IGST @ {note.get('igst_rate',0)}%", _inr(note.get("igst_amount",0))])
+        tot_rows.append(["Total Tax", _inr(note.get("total_tax",0))])
+    else:
+        tot_rows.append(["GST", "Not Applied"])
     tot_rows.append(["Round Off", _inr(note.get("round_off",0))])
     tot_rows.append(["TOTAL CREDIT NOTE", _inr(note.get("total_amount",0))])
     tot = Table(tot_rows, colWidths=[38*mm, 34*mm])
