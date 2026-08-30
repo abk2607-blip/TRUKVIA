@@ -199,6 +199,48 @@ User communicates in English. Respond in English. (Prior bilingual reference ret
 - **Phase 2 Security Hardening** — Save-Health role-gating, `/run-now` role-gating, localStorage-token removal, global 500-error sanitisation.
 - **Trip Sheet redesign / rebrand / other backlog** — untouched.
 
+## Iter133 L1 · Customer Ledger CN/DN Row Integration (data-layer only) — 🔒 LOCKED (2026-08-30 UAT + Deploy-Guard approved)
+
+- **What shipped**
+  - `/api/reports/ledger` now emits `type: "credit_note"` and `type: "debit_note"` entries alongside existing `invoice` / `payment` rows.
+  - **Sign convention** (approved): Credit Note → credit column (reduces receivable). Debit Note → debit column (increases receivable). Running-balance formula unchanged: `balance = running + debit − credit`.
+  - **Opening-balance treatment**: notes dated `< start` fold into opening — CN subtracts, DN adds — mirroring the pre-existing invoice/payment opening semantics. Notes dated `> end` are excluded.
+  - **Draft / cancelled exclusion**: `status ∈ {"draft", "cancelled"}` never touch opening, entries, totals, or closing (only `status == "issued"` participates).
+  - **Same-day sort priority** (auditor-friendly): `invoice → debit_note → credit_note → payment`.
+  - **Additive `totals_by_type` metadata** on the JSON response — `{invoice, payment, credit_note, debit_note}` — backwards-compatible; existing consumers ignore it.
+  - **Ledger PDF (`/api/reports/ledger/pdf`)** renders the new rows automatically via payload-driven `pdf/ledger.py`; zero PDF code change in L1.
+- **Design guarantees preserved**
+  - **Tenant + customer isolation**: every CN/DN cursor filter carries `{user_id, company_id, customer_id, status:"issued"}`.
+  - **No N+1**: single additional Motor `async for` cursor (`db.credit_debit_notes.find(...)`) reusing the existing `(user_id, company_id, note_date DESC)` compound index — no join, no per-note round trip.
+  - **DB queries per call**: 2 → 3 (customer master + invoice cursor + CN/DN cursor). Negligible latency impact.
+  - **`invoice_number_snapshot` used verbatim** for the "against …" particulars — no join needed.
+- **Non-goals honoured (zero touches)**
+  - `pdf/ledger.py`, `pdf/invoice.py`, `pdf/credit_note.py`, `pdf/debit_note.py`, `pdf/lr.py`, `pdf/owner.py`, `pdf/_base.py`.
+  - `routers/notes.py`, `routers/customers.py`, `routers/invoices.py`, `routers/dashboard.py`, `routers/ai.py`.
+  - `models.py`, `services.py`, `auth.py`, `server.py`.
+  - Frontend — no changes; the existing Reports Ledger consumer picks up new rows automatically because the response shape is additive.
+  - Invoice numbering, `_effective_balance`, `_compute_note_totals`, RBAC, feature flags, `AKB/26-27//26-27/0004` anomalous invoice row.
+- **Regression evidence (2026-08-30 lock day)**
+  - **Targeted matrix** (serial `-n0`): L1 **7/7** + Iter132a **10/10** + Iter132b **11/11** + C1 **15/15** + H1 **4/4** + C2 **6/6** + C2b+C2c **19/19** = **72 / 72 passed** in isolation.
+  - **Full Deploy Guard** at `2026-08-30T13:13:54Z`: **504 passed / 0 skipped / 0 failed / exit 0** in 729.81s (~12 min 10 s), `consecutive_failures=0`, `strict_mode=true`, `next_check_at=2026-08-30T14:13:54Z`, Iter128 badge **🟢 Ready**.
+  - **Behavioural spot-checks** (post-regression, fresh tenant):
+    - Ledger JSON — invoice ₹18,000 + issued CN ₹1,500 + issued DN ₹900 → `total_debit=18,900 · total_credit=1,500 · closing=17,400` · `totals_by_type={invoice:18000, payment:0, credit_note:1500, debit_note:900}`.
+    - Cancelled CN → **excluded** from entries and totals.
+    - Opening-balance rollup (query starting after all notes) → `opening=17,400 · entries=0 · closing=17,400`.
+    - Ledger PDF byte-check: `CN/26-27/0312` present, `CN/26-27/0313 (cancelled)` absent, `DN/26-27/0234` present, `₹` glyph count = 4.
+- **Files changed (final L1 inventory)**
+  - `backend/routers/reports.py` — +76 / −6 lines (second cursor, priority sort, `totals_by_type`).
+  - `backend/tests/test_iter133_l1_ledger_cdn_rows.py` — NEW · 265 lines · 7 tests.
+- **Restarts used**: 1 authorised backend restart. Zero unauthorised restarts.
+- **STOP RULE compliance**: no autonomous fixes; xdist / asyncio-loop pollution flagged as known-issue and confirmed as false positives via `-n0` re-runs.
+- **Not shipped (deferred)**
+  - **L2** — Customer Ledger / Statement PDF presentation (customer-facing readability, professional layout).
+  - **C3** — GSTR-1 §9B statutory export.
+  - **C4** — CN/DN Register report.
+  - **Iter132c-ai-agg-fix** — `to_list(2000)` truncation in `ai.py` LLM tools.
+  - **Invoice-Number Hygiene one-off** — anomalous `AKB/26-27//26-27/0004`.
+  - **Phase-2 Security Hardening**, Trip Sheet redesign, other backlog — all untouched.
+
 ## Frozen — do NOT start without explicit instruction
 - **Phase 2 security items** 🧊 (pending separate approvals):
   - Save Health role-gating
