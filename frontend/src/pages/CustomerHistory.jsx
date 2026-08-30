@@ -28,11 +28,19 @@ function StatusChip({ type, status }) {
     if (status === "partial") return <span className={`${chipCls} bg-blue-50 text-blue-800 border-blue-300`}>Partial</span>;
     return <span className={`${chipCls} bg-rose-50 text-rose-800 border-rose-300`}>Unpaid</span>;
   }
+  if (type === "credit_note") {
+    return <span className={`${chipCls} bg-red-50 text-red-800 border-red-300`}>Issued · CN</span>;
+  }
+  if (type === "debit_note") {
+    return <span className={`${chipCls} bg-blue-50 text-blue-800 border-blue-300`}>Issued · DN</span>;
+  }
   return <span className={`${chipCls} bg-indigo-50 text-indigo-800 border-indigo-300`}>Received</span>;
 }
 function TypeIcon({ type }) {
   if (type === "trip") return <Truck size={13} className="text-zinc-700" />;
   if (type === "invoice") return <FileText size={13} className="text-indigo-700" />;
+  if (type === "credit_note") return <FileMinus size={13} className="text-red-700" />;
+  if (type === "debit_note") return <FilePlus size={13} className="text-blue-700" />;
   return <Wallet size={13} className="text-emerald-700" />;
 }
 function KV({ label, value, hint, tone = "zinc" }) {
@@ -137,30 +145,68 @@ function groupByMonth(txns) {
     groups[d].items.push(t);
     if (t.type === "payment") groups[d].total += Number(t.amount || 0);
     else if (t.type === "trip" || t.type === "invoice") groups[d].total += Number(t.amount || 0);
+    // Iter133 L1.5 — CN reduces (−), DN increases (+) the monthly running.
+    else if (t.type === "credit_note") groups[d].total -= Number(t.amount || 0);
+    else if (t.type === "debit_note")  groups[d].total += Number(t.amount || 0);
   }
   return Object.values(groups).sort((a, b) => (a.key < b.key ? 1 : -1));
 }
 
 // ---------- Unified transaction row (used by All / Trip Ledger / Passbook) ----------
 function TxnRow({ t, onClick, showType = true }) {
+  const isCN = t.type === "credit_note";
+  const isDN = t.type === "debit_note";
+  const refCls = t.type === "trip"
+    ? "bg-indigo-50 text-indigo-800 border-indigo-200"
+    : t.type === "invoice"
+      ? "bg-purple-50 text-purple-800 border-purple-200"
+      : isCN
+        ? "bg-red-50 text-red-800 border-red-200"
+        : isDN
+          ? "bg-blue-50 text-blue-800 border-blue-200"
+          : "bg-emerald-50 text-emerald-800 border-emerald-200";
+  const rowTint = isCN ? "hover:bg-red-50/60 bg-red-50/20"
+    : isDN ? "hover:bg-blue-50/60 bg-blue-50/20"
+    : "hover:bg-amber-50/50";
+  const amountCls = t.type === "payment"
+    ? "text-emerald-700"
+    : isCN
+      ? "text-red-700"
+      : isDN
+        ? "text-blue-700"
+        : "text-zinc-900";
+  const amountPrefix = t.type === "payment" ? "+ " : isCN ? "− " : isDN ? "+ " : "";
+  const typeLabel = isCN ? "Credit Note" : isDN ? "Debit Note" : t.type;
   return (
-    <tr data-testid={`txn-row-${t.type}-${t.id}`} onClick={onClick} className="cursor-pointer hover:bg-amber-50/50 transition-colors border-t border-zinc-100">
+    <tr data-testid={`txn-row-${t.type}-${t.id}`} onClick={onClick} className={`cursor-pointer transition-colors border-t border-zinc-100 ${rowTint}`}>
       <td className="px-3 py-2.5 font-mono text-xs whitespace-nowrap">{fmtDate(t.date)}</td>
       {showType && (
-        <td className="px-3 py-2.5"><div className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-700 uppercase tracking-wider"><TypeIcon type={t.type} /> {t.type}</div></td>
+        <td className="px-3 py-2.5"><div className="inline-flex items-center gap-1.5 text-xs font-semibold text-zinc-700 uppercase tracking-wider"><TypeIcon type={t.type} /> {typeLabel}</div></td>
       )}
-      <td className="px-3 py-2.5 font-mono text-xs whitespace-nowrap"><span className={`inline-block font-mono text-[11px] font-bold px-2 py-0.5 rounded-sm border ${t.type === "trip" ? "bg-indigo-50 text-indigo-800 border-indigo-200" : t.type === "invoice" ? "bg-purple-50 text-purple-800 border-purple-200" : "bg-emerald-50 text-emerald-800 border-emerald-200"}`}>{t.ref || "—"}</span></td>
+      <td className="px-3 py-2.5 font-mono text-xs whitespace-nowrap"><span className={`inline-block font-mono text-[11px] font-bold px-2 py-0.5 rounded-sm border ${refCls}`}>{t.ref || "—"}</span></td>
       <td className="px-3 py-2.5 text-xs">
         {t.type === "trip" ? (
           <div><div className="font-mono font-bold">{t.vehicle_number}</div><div className="text-[10px] text-zinc-500 truncate max-w-[220px]">{t.from_location} → {t.to_location}</div></div>
         ) : t.type === "invoice" ? (
           <div className="text-zinc-500">Invoice{t.due_date ? ` · due ${fmtDate(t.due_date)}` : ""}</div>
+        ) : isCN || isDN ? (
+          <div className="text-zinc-600">
+            <span className="font-mono">Ref: {t.invoice_number || "—"}</span>
+            {t.reason_code && (
+              <span className="ml-2 text-[10px] uppercase tracking-wider text-zinc-500">
+                · {String(t.reason_code).replace(/_/g, " ")}
+              </span>
+            )}
+            {t.reason_text && (
+              <div className="text-[10px] text-zinc-400 truncate max-w-[260px]">{t.reason_text}</div>
+            )}
+          </div>
         ) : (
           <div className="text-zinc-500">Payment{t.mode ? ` · ${t.mode}` : ""}{t.note ? ` · ${t.note}` : ""}</div>
         )}
       </td>
       <td className="px-3 py-2.5 text-right font-mono text-xs">{t.type === "trip" ? `${Number(t.tons || 0).toFixed(2)}` : "—"}</td>
-      <td className={`px-3 py-2.5 text-right font-mono text-sm font-bold ${t.type === "payment" ? "text-emerald-700" : "text-zinc-900"}`}>{t.type === "payment" ? "+ " : ""}{fmtCurrency(t.amount)}</td>
+      <td className={`px-3 py-2.5 text-right font-mono text-sm font-bold ${amountCls}`}>{amountPrefix}{fmtCurrency(t.amount)}</td>
       <td className="px-3 py-2.5 text-center"><StatusChip type={t.type} status={t.status} /></td>
       <td className="px-3 py-2.5 text-center"><ChevronRight size={14} className="text-zinc-400" /></td>
     </tr>
@@ -781,6 +827,7 @@ export default function CustomerHistory() {
     if (t.type === "trip") nav(`/trips/${t.id}/view`);
     else if (t.type === "invoice") nav(`/invoices/${t.id}`);
     else if (t.type === "payment" && t.invoice_id) nav(`/invoices/${t.invoice_id}`);
+    else if ((t.type === "credit_note" || t.type === "debit_note") && t.invoice_id) nav(`/invoices/${t.invoice_id}`);
   };
 
   const downloadStatement = () => {

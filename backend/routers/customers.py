@@ -454,7 +454,7 @@ async def customer_transactions(
     product_id: Optional[str] = None,
     from_location: Optional[str] = None,
     to_location: Optional[str] = None,
-    txn_type: Optional[str] = None,              # all | trip | invoice | payment
+    txn_type: Optional[str] = None,              # all | trip | invoice | payment | credit_note | debit_note
 ):
     company_id = await _active_company_id(request, user)
     customer = await db.customers.find_one({"id": cid, "user_id": user["user_id"], "company_id": company_id}, {"_id": 0})
@@ -641,6 +641,60 @@ async def customer_transactions(
                 "invoice_id": p.get("invoice_id"),
                 "status": "received",
             })
+
+    # ------------------------------------------------------------
+    # Iter133 L1.5 — Passbook CN/DN row detail.
+    # Surface issued Credit / Debit notes as individual rows in the
+    # unified transactions list. Scoped strictly by
+    # {user_id, company_id, customer_id, status:"issued"} and
+    # honours the same date_from / date_to filters (mapped onto
+    # `note_date`). Draft + cancelled notes are excluded.
+    # Existing summary aggregates (credits_total / debits_total) are
+    # NOT recomputed here — they continue to come from the invoice
+    # enrichment above so this slice is additive-only.
+    # ------------------------------------------------------------
+    want_cn = (not txn_type) or txn_type in ("all", "credit_note")
+    want_dn = (not txn_type) or txn_type in ("all", "debit_note")
+    if want_cn or want_dn:
+        notes_q: dict = {
+            "user_id": user["user_id"], "company_id": company_id,
+            "customer_id": cid, "status": "issued",
+        }
+        if want_cn and not want_dn:
+            notes_q["kind"] = "credit"
+        elif want_dn and not want_cn:
+            notes_q["kind"] = "debit"
+        if date_from or date_to:
+            _nq: dict = {}
+            if date_from:
+                _nq["$gte"] = date_from
+            if date_to:
+                _nq["$lte"] = date_to
+            notes_q["note_date"] = _nq
+        note_rows = await db.credit_debit_notes.find(
+            notes_q,
+            {"_id": 0, "id": 1, "kind": 1, "note_date": 1, "note_number": 1,
+             "total_amount": 1, "invoice_id": 1, "invoice_number_snapshot": 1,
+             "reason_code": 1, "reason_text": 1, "created_at": 1},
+        ).sort("note_date", -1).to_list(5000)
+        for n in note_rows:
+            _kind = n.get("kind")
+            _t = "credit_note" if _kind == "credit" else "debit_note"
+            txns.append({
+                "type": _t,
+                "date": n.get("note_date"),
+                "id": n.get("id"),
+                "ref": n.get("note_number") or "—",
+                "amount": float(n.get("total_amount") or 0),
+                "invoice_id": n.get("invoice_id"),
+                "invoice_number": n.get("invoice_number_snapshot") or "",
+                "reason_code": n.get("reason_code") or "",
+                "reason_text": n.get("reason_text") or "",
+                "status": "issued",
+                "kind": _kind,
+                "created_at": n.get("created_at"),
+            })
+
     txns.sort(key=lambda t: (t.get("date") or "", t.get("created_at") or ""), reverse=True)
 
     return {
