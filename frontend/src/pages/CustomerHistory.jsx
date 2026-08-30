@@ -890,6 +890,26 @@ export default function CustomerHistory() {
               <CustomerProfileAndPolicyCard customer={history.customer} />
 
               <SummaryStrip summary={history.summary} />
+              {/* Iter133 L2 · Adjustments summary strip (uses aggregate totals only; no backend change). */}
+              {history.summary && ((Number(history.summary.credits_total) || 0) > 0 || (Number(history.summary.debits_total) || 0) > 0) && (
+                <div
+                  data-testid="passbook-adjustments-strip"
+                  className="border border-amber-200 bg-amber-50 rounded-sm px-3 py-2 text-xs text-zinc-800 flex items-center gap-2 flex-wrap"
+                >
+                  <span className="font-bold uppercase tracking-wider text-zinc-600">Adjustments applied:</span>
+                  {(Number(history.summary.credits_total) || 0) > 0 && (
+                    <span data-testid="passbook-adj-cn" className="inline-flex items-center gap-1 px-2 py-0.5 rounded-sm border border-red-300 bg-red-50 text-red-800 font-mono font-semibold">
+                      − {fmtCurrency(history.summary.credits_total)} (Credit Notes)
+                    </span>
+                  )}
+                  {(Number(history.summary.debits_total) || 0) > 0 && (
+                    <span data-testid="passbook-adj-dn" className="inline-flex items-center gap-1 px-2 py-0.5 rounded-sm border border-blue-300 bg-blue-50 text-blue-800 font-mono font-semibold">
+                      + {fmtCurrency(history.summary.debits_total)} (Debit Notes)
+                    </span>
+                  )}
+                  <span className="text-[10px] text-zinc-500">Detailed CN/DN available on the Notes page.</span>
+                </div>
+              )}
               <AgingCards aging={history.summary.aging} />
 
               <div className="border border-zinc-200 bg-zinc-50/50 rounded-sm p-3">

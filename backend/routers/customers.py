@@ -786,7 +786,92 @@ async def customer_statement_pdf(
     ]))
     story.append(it)
 
-    doc.build(story)
+    # ============================================================
+    # Iter133 L2 · Balance Bridge + Adjustments table
+    # Presentation-only. Uses one additional read cursor scoped by
+    # {user_id, company_id, customer_id, status:"issued"} — mirrors
+    # L1 semantics. Cancelled/draft notes excluded.
+    # ============================================================
+    notes_q = {
+        "user_id": user["user_id"], "company_id": company_id,
+        "customer_id": cid, "status": "issued",
+    }
+    if "date" in trip_q:
+        # Reuse period filter for consistency with the trips/invoices view.
+        _dq = trip_q["date"]
+        _nq = {}
+        if "$gte" in _dq: _nq["$gte"] = _dq["$gte"]
+        if "$lte" in _dq: _nq["$lte"] = _dq["$lte"]
+        if _nq: notes_q["note_date"] = _nq
+    issued_notes = await db.credit_debit_notes.find(
+        notes_q,
+        {"_id": 0, "id": 1, "kind": 1, "note_date": 1, "note_number": 1,
+         "total_amount": 1, "invoice_number_snapshot": 1, "reason_code": 1},
+    ).sort("note_date", 1).to_list(5000)
+    cn_notes = [n for n in issued_notes if n.get("kind") == "credit"]
+    dn_notes = [n for n in issued_notes if n.get("kind") == "debit"]
+    cn_sum = round(sum(float(n.get("total_amount") or 0) for n in cn_notes), 2)
+    dn_sum = round(sum(float(n.get("total_amount") or 0) for n in dn_notes), 2)
+
+    if issued_notes:
+        story.append(Spacer(1, 12))
+        story.append(Paragraph("<b>Balance Bridge</b>", styles["Heading3"]))
+        bridge_rows = [
+            ["Original Invoiced Total",            f"₹{total_billed:,.2f}"],
+            [f"Less: Credit Notes ({len(cn_notes)})", f"− ₹{cn_sum:,.2f}"],
+            [f"Add: Debit Notes ({len(dn_notes)})",   f"+ ₹{dn_sum:,.2f}"],
+            [f"Less: Payments Received",              f"− ₹{total_received:,.2f}"],
+            ["Balance Due",                        f"₹{outstanding:,.2f}"],
+        ]
+        bt = Table(bridge_rows, hAlign="LEFT", colWidths=[100 * mm, 60 * mm])
+        bt.setStyle(TableStyle([
+            ("FONTNAME", (0, 0), (-1, -1), _UNI_FONT),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d1d5db")),
+            ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#FEF3C7")),
+            ("FONTNAME", (0, -1), (-1, -1), _UNI_FONT_BOLD),
+            ("TEXTCOLOR", (0, -1), (-1, -1), colors.HexColor("#B45309")),
+            ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+        ]))
+        story.append(bt)
+        story.append(Spacer(1, 10))
+
+        story.append(Paragraph("<b>Adjustments (Credit / Debit Notes)</b>", styles["Heading3"]))
+        adj_hdr = ["Date", "Note #", "Type", "Ref Invoice", "Reason", "Amount"]
+        adj_rows = [adj_hdr]
+        for n in issued_notes:
+            adj_rows.append([
+                n.get("note_date", ""),
+                n.get("note_number", ""),
+                "CN" if n.get("kind") == "credit" else "DN",
+                n.get("invoice_number_snapshot", "") or "—",
+                (n.get("reason_code", "") or "").replace("_", " "),
+                f"₹{float(n.get('total_amount') or 0):,.2f}",
+            ])
+        at = Table(adj_rows, hAlign="LEFT", repeatRows=1,
+                   colWidths=[22 * mm, 32 * mm, 12 * mm, 34 * mm, 40 * mm, 22 * mm])
+        astyle = [
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#111827")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), _UNI_FONT_BOLD),
+            ("FONTNAME", (0, 1), (-1, -1), _UNI_FONT),
+            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d1d5db")),
+            ("ALIGN", (5, 0), (5, -1), "RIGHT"),
+        ]
+        # Row tint by kind
+        for i, n in enumerate(issued_notes, start=1):
+            if n.get("kind") == "credit":
+                astyle.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor("#FEF2F2")))
+            else:
+                astyle.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor("#EFF6FF")))
+        at.setStyle(TableStyle(astyle))
+        story.append(at)
+
+    # Signatory + footer
+    story.append(Spacer(1, 12))
+    from pdf.ledger import NumberedCanvas as _NC
+    doc.build(story, canvasmaker=_NC)
     buf.seek(0)
     fname = f"statement_{(customer.get('name', 'customer')).replace(' ', '_')}.pdf"
     return StreamingResponse(buf, media_type="application/pdf", headers={"Content-Disposition": f'inline; filename="{fname}"'})

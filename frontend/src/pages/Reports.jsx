@@ -796,11 +796,55 @@ function LedgerReport() {
               <div className="font-mono text-xl font-bold text-amber-800">{fmtCurrency(data.closing_balance)}</div>
             </div>
           </div>
+
+          {/* Iter133 L2 · totals_by_type breakdown cards */}
+          {data.totals_by_type && (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 px-5 py-3 border-b border-zinc-200 bg-zinc-50/60" data-testid="ledger-totals-by-type">
+              <div className="border border-zinc-200 bg-white rounded-sm p-2" data-testid="tbt-invoice">
+                <div className="text-[9px] uppercase tracking-wider font-bold text-zinc-500">Invoiced</div>
+                <div className="font-mono text-sm font-bold text-zinc-900">{fmtCurrency(data.totals_by_type.invoice || 0)}</div>
+              </div>
+              <div className="border border-blue-200 bg-blue-50 rounded-sm p-2" data-testid="tbt-debit-note">
+                <div className="text-[9px] uppercase tracking-wider font-bold text-blue-700">Debit Notes</div>
+                <div className="font-mono text-sm font-bold text-blue-900">{fmtCurrency(data.totals_by_type.debit_note || 0)}</div>
+              </div>
+              <div className="border border-red-200 bg-red-50 rounded-sm p-2" data-testid="tbt-credit-note">
+                <div className="text-[9px] uppercase tracking-wider font-bold text-red-700">Credit Notes</div>
+                <div className="font-mono text-sm font-bold text-red-900">{fmtCurrency(data.totals_by_type.credit_note || 0)}</div>
+              </div>
+              <div className="border border-emerald-200 bg-emerald-50 rounded-sm p-2" data-testid="tbt-payment">
+                <div className="text-[9px] uppercase tracking-wider font-bold text-emerald-700">Payments</div>
+                <div className="font-mono text-sm font-bold text-emerald-900">{fmtCurrency(data.totals_by_type.payment || 0)}</div>
+              </div>
+            </div>
+          )}
+
+          {/* Iter133 L2 · Adjustments summary strip (only when CN or DN present) */}
+          {data.totals_by_type && ((data.totals_by_type.credit_note || 0) > 0 || (data.totals_by_type.debit_note || 0) > 0) && (
+            <div className="px-5 py-2 text-xs text-zinc-700 bg-amber-50 border-b border-amber-200" data-testid="ledger-adjustments-strip">
+              <span className="font-bold uppercase tracking-wider text-zinc-600">Adjustments this period:</span>{" "}
+              {(data.totals_by_type.credit_note || 0) > 0 && (
+                <span className="text-red-700 font-mono font-semibold" data-testid="ledger-adj-cn">
+                  − {fmtCurrency(data.totals_by_type.credit_note)} (Credit Notes)
+                </span>
+              )}
+              {(data.totals_by_type.credit_note || 0) > 0 && (data.totals_by_type.debit_note || 0) > 0 && (
+                <span className="mx-1 text-zinc-400">·</span>
+              )}
+              {(data.totals_by_type.debit_note || 0) > 0 && (
+                <span className="text-blue-700 font-mono font-semibold" data-testid="ledger-adj-dn">
+                  + {fmtCurrency(data.totals_by_type.debit_note)} (Debit Notes)
+                </span>
+              )}
+            </div>
+          )}
+
           <table className="w-full text-sm">
             <thead className="bg-zinc-50 text-[10px] uppercase tracking-wider text-zinc-500">
               <tr>
                 <th className="text-left px-4 py-2">Date</th>
                 <th className="text-left px-4 py-2">Ref</th>
+                <th className="text-left px-4 py-2">Type</th>
                 <th className="text-left px-4 py-2">Particulars</th>
                 <th className="text-right px-4 py-2">Debit</th>
                 <th className="text-right px-4 py-2">Credit</th>
@@ -809,21 +853,34 @@ function LedgerReport() {
             </thead>
             <tbody className="font-mono">
               <tr className="bg-zinc-50 border-t border-zinc-100">
-                <td colSpan={5} className="px-4 py-2 text-xs font-bold">Opening Balance</td>
+                <td colSpan={6} className="px-4 py-2 text-xs font-bold">Opening Balance</td>
                 <td className="px-4 py-2 text-right font-bold">{fmtCurrency(data.opening_balance)}</td>
               </tr>
-              {data.entries.map((e, i) => (
-                <tr key={i} className="border-t border-zinc-100">
-                  <td className="px-4 py-1.5 text-xs">{fmtDate(e.date)}</td>
-                  <td className="px-4 py-1.5 text-xs font-semibold">{e.reference}</td>
-                  <td className="px-4 py-1.5 text-xs">{e.particulars}</td>
-                  <td className="px-4 py-1.5 text-right">{e.debit ? fmtCurrency(e.debit) : ""}</td>
-                  <td className="px-4 py-1.5 text-right text-emerald-700">{e.credit ? fmtCurrency(e.credit) : ""}</td>
-                  <td className="px-4 py-1.5 text-right font-semibold">{fmtCurrency(e.balance)}</td>
-                </tr>
-              ))}
+              {data.entries.map((e, i) => {
+                const typePill =
+                  e.type === "invoice"     ? { cls: "bg-purple-100 text-purple-800 border-purple-300", label: "INV" } :
+                  e.type === "payment"     ? { cls: "bg-emerald-100 text-emerald-800 border-emerald-300", label: "PMT" } :
+                  e.type === "credit_note" ? { cls: "bg-red-100 text-red-800 border-red-300", label: "CN" } :
+                  e.type === "debit_note"  ? { cls: "bg-blue-100 text-blue-800 border-blue-300", label: "DN" } :
+                                             { cls: "bg-zinc-100 text-zinc-700 border-zinc-300", label: "—" };
+                const rowTint =
+                  e.type === "credit_note" ? "bg-red-50/40 hover:bg-red-50" :
+                  e.type === "debit_note"  ? "bg-blue-50/40 hover:bg-blue-50" :
+                                             "";
+                return (
+                  <tr key={i} className={`border-t border-zinc-100 ${rowTint}`} data-testid={`ledger-row-${e.type}-${i}`}>
+                    <td className="px-4 py-1.5 text-xs">{fmtDate(e.date)}</td>
+                    <td className="px-4 py-1.5 text-xs font-semibold">{e.reference}</td>
+                    <td className="px-4 py-1.5"><span className={`inline-block text-[9px] font-bold px-1.5 py-0.5 border rounded-sm ${typePill.cls}`}>{typePill.label}</span></td>
+                    <td className="px-4 py-1.5 text-xs">{e.particulars}</td>
+                    <td className="px-4 py-1.5 text-right">{e.debit ? fmtCurrency(e.debit) : ""}</td>
+                    <td className="px-4 py-1.5 text-right text-emerald-700">{e.credit ? fmtCurrency(e.credit) : ""}</td>
+                    <td className="px-4 py-1.5 text-right font-semibold">{fmtCurrency(e.balance)}</td>
+                  </tr>
+                );
+              })}
               <tr className="bg-amber-50 border-t border-zinc-300">
-                <td colSpan={3} className="px-4 py-2 font-bold">TOTAL</td>
+                <td colSpan={4} className="px-4 py-2 font-bold">TOTAL</td>
                 <td className="px-4 py-2 text-right font-bold">{fmtCurrency(data.total_debit)}</td>
                 <td className="px-4 py-2 text-right font-bold text-emerald-700">{fmtCurrency(data.total_credit)}</td>
                 <td className="px-4 py-2 text-right font-bold">{fmtCurrency(data.closing_balance)}</td>
