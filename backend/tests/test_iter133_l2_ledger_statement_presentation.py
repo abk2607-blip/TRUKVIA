@@ -216,3 +216,65 @@ def test_l2_t9_ledger_and_statement_rupee_glyph_universal():
     _, stext = _statement_pdf(h, cust)
     assert ltext.count("\u20b9") > 0, "Ledger PDF missing ₹ glyph"
     assert stext.count("\u20b9") > 0, "Statement PDF missing ₹ glyph"
+
+
+# ================= L2b · Statement PDF branding parity =================
+
+def test_l2b_statement_pdf_has_customer_statement_hero():
+    _cid, h = _headers(); cust = _fresh_customer(h); _invoice(h, cust)
+    _, text = _statement_pdf(h, cust)
+    assert "CUSTOMER" in text and "STATEMENT" in text, "Statement PDF branded hero missing"
+
+
+def test_l2b_statement_pdf_shows_company_gstin_with_dash_guard():
+    _cid, h = _headers(); cust = _fresh_customer(h); _invoice(h, cust)
+    _, text = _statement_pdf(h, cust)
+    assert "GSTIN:" in text
+    assert "GSTIN:  ·" not in text  # empty-guard artefact must never appear
+
+
+def test_l2b_statement_pdf_shows_bill_to_and_period_block():
+    _cid, h = _headers(); cust = _fresh_customer(h); _invoice(h, cust)
+    _, text = _statement_pdf(h, cust)
+    assert "BILL TO" in text
+    assert "STATEMENT PERIOD" in text
+    assert "OUTSTANDING" in text
+
+
+def test_l2b_statement_pdf_shows_amount_in_words():
+    _cid, h = _headers(); cust = _fresh_customer(h); _invoice(h, cust)
+    _, text = _statement_pdf(h, cust)
+    assert "Amount in Words:" in text
+    assert "RUPEES" in text.upper()
+
+
+def test_l2b_statement_pdf_shows_authorised_signatory():
+    _cid, h = _headers(); cust = _fresh_customer(h); _invoice(h, cust)
+    _, text = _statement_pdf(h, cust)
+    assert "Authorised Signatory" in text
+
+
+def test_l2b_statement_pdf_shows_page_x_of_y_footer():
+    _cid, h = _headers(); cust = _fresh_customer(h); _invoice(h, cust)
+    _, text = _statement_pdf(h, cust)
+    assert "Page 1 of" in text
+    assert "Computer-generated statement" in text
+
+
+def test_l2b_statement_pdf_balance_bridge_and_adjustments_still_correct():
+    _cid, h = _headers(); cust = _fresh_customer(h); inv = _invoice(h, cust)
+    cn_kept = _cn(h, inv, 300)
+    cn_cancelled = _cn(h, inv, 100, note_date="2026-07-05")
+    dn_kept = _dn(h, inv, 200)
+    r = httpx.post(f"{API}/credit-notes/{cn_cancelled['id']}/cancel", headers=h,
+                   json={"reason": "L2b cancellation test"}, timeout=15)
+    assert r.status_code == 200, r.text
+    _, text = _statement_pdf(h, cust)
+    # Bridge preserved
+    for tok in ("Balance Bridge", "Original Invoiced Total", "Less: Credit Notes",
+                "Add: Debit Notes", "Less: Payments Received", "Balance Due"):
+        assert tok in text, f"Bridge token missing: {tok}"
+    # Adjustments table preserved (issued-only)
+    assert cn_kept["note_number"] in text
+    assert dn_kept["note_number"] in text
+    assert cn_cancelled["note_number"] not in text

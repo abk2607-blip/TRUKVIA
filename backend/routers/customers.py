@@ -698,19 +698,83 @@ async def customer_statement_pdf(
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
     from reportlab.lib import colors
     from reportlab.lib.units import mm
-    from pdf._base import _UNI_FONT, _UNI_FONT_BOLD
+    from pdf._base import _UNI_FONT, _UNI_FONT_BOLD, _num_to_words_inr
+    from pdf.ledger import _logo_flowable, NumberedCanvas
     buf = io.BytesIO()
     styles = getSampleStyleSheet()
-    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=16 * mm, rightMargin=16 * mm, topMargin=14 * mm, bottomMargin=14 * mm)
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=16 * mm, rightMargin=16 * mm, topMargin=12 * mm, bottomMargin=16 * mm)
     story: list = []
-    title_st = ParagraphStyle("t", parent=styles["Title"], fontName=_UNI_FONT_BOLD, fontSize=15, leading=18)
-    hdr_st = ParagraphStyle("h", parent=styles["Normal"], fontName=_UNI_FONT, fontSize=10, textColor=colors.grey)
 
-    story.append(Paragraph(f"<b>{company.get('name', '')}</b>", title_st))
-    story.append(Paragraph(f"Customer Statement — {customer.get('name', '')}", hdr_st))
-    if date_from or date_to:
-        story.append(Paragraph(f"Period: {date_from or 'all'} to {date_to or 'today'}", hdr_st))
-    story.append(Spacer(1, 6))
+    ACCENT = colors.HexColor("#B45309")
+    INK    = colors.HexColor("#111827")
+    MUTED  = colors.HexColor("#6B7280")
+    BORDER = colors.HexColor("#D1D5DB")
+
+    body_st  = ParagraphStyle("sb", parent=styles["Normal"], fontName=_UNI_FONT,      fontSize=9,  textColor=INK,   leading=12)
+    small_st = ParagraphStyle("ss", parent=styles["Normal"], fontName=_UNI_FONT,      fontSize=8,  textColor=INK,   leading=10)
+    muted_st = ParagraphStyle("sm", parent=styles["Normal"], fontName=_UNI_FONT,      fontSize=8,  textColor=MUTED, leading=10)
+    label_st = ParagraphStyle("sl", parent=styles["Normal"], fontName=_UNI_FONT_BOLD, fontSize=7,  textColor=MUTED, leading=9, spaceAfter=1)
+    hero_st  = ParagraphStyle("sh", parent=styles["Heading1"], fontName=_UNI_FONT_BOLD, fontSize=16, textColor=ACCENT, alignment=2, leading=20)
+    title_st = ParagraphStyle("t", parent=styles["Title"], fontName=_UNI_FONT_BOLD, fontSize=15, leading=18)  # kept for legacy consumers
+    hdr_st = ParagraphStyle("h", parent=styles["Normal"], fontName=_UNI_FONT, fontSize=10, textColor=colors.grey)  # kept for legacy consumers
+
+    # Iter133 L2b · Branded header (logo + company info + hero band).
+    _co       = company or {}
+    _co_gst   = (_co.get("gstin") or "").strip() or "—"
+    _co_state = (_co.get("state") or "").strip() or "—"
+    company_lines = [
+        Paragraph(f"<b>{_co.get('name','')}</b>", body_st),
+        Paragraph(_co.get("address", ""), small_st),
+        Paragraph(f"GSTIN: {_co_gst} · State: {_co_state}", muted_st),
+    ]
+    header_tbl = Table(
+        [[_logo_flowable(_co), company_lines, [Paragraph("CUSTOMER<br/>STATEMENT", hero_st)]]],
+        colWidths=[42 * mm, 90 * mm, 46 * mm],
+    )
+    header_tbl.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 0),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 0),
+    ]))
+    story.append(header_tbl)
+    story.append(Spacer(1, 4 * mm))
+
+    # Accent divider
+    div = Table([[""]], colWidths=[178 * mm], rowHeights=[3])
+    div.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), ACCENT)]))
+    story.append(div)
+    story.append(Spacer(1, 3 * mm))
+
+    # Bill-To + Period card
+    cust_lines = [
+        Paragraph("BILL TO", label_st),
+        Paragraph(f"<b>{customer.get('name','')}</b>", body_st),
+        Paragraph(f"GSTIN: {customer.get('gstin') or '—'}", small_st),
+        Paragraph(f"Phone: {customer.get('phone') or '—'} · State: {customer.get('state') or '—'}", small_st),
+        Paragraph(customer.get("address", "") or "", small_st),
+    ]
+    period_lines = [
+        Paragraph("STATEMENT PERIOD", label_st),
+        Paragraph(f"<b>{date_from or 'Beginning'}</b> to <b>{date_to or 'Today'}</b>", body_st),
+        Spacer(1, 2 * mm),
+        Paragraph("OUTSTANDING", label_st),
+        Paragraph(
+            f"<b>₹ {outstanding:,.2f}</b>",
+            ParagraphStyle("scb", parent=body_st, fontName=_UNI_FONT_BOLD, fontSize=13, textColor=ACCENT),
+        ),
+    ]
+    info_tbl = Table([[cust_lines, period_lines]], colWidths=[110 * mm, 68 * mm])
+    info_tbl.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("BOX", (0, 0), (-1, -1), 0.5, BORDER),
+        ("INNERGRID", (0, 0), (-1, -1), 0.3, BORDER),
+        ("LEFTPADDING", (0, 0), (-1, -1), 6),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    story.append(info_tbl)
+    story.append(Spacer(1, 4 * mm))
 
     # Summary block
     smy = [
@@ -867,6 +931,23 @@ async def customer_statement_pdf(
                 astyle.append(("BACKGROUND", (0, i), (-1, i), colors.HexColor("#EFF6FF")))
         at.setStyle(TableStyle(astyle))
         story.append(at)
+
+    # Iter133 L2b · Amount-in-Words + Authorised Signatory before build.
+    story.append(Spacer(1, 6 * mm))
+    _bal_words = _num_to_words_inr(abs(float(outstanding)))
+    story.append(Paragraph(
+        f"<b>Amount in Words:</b> {_bal_words} ({'Dr' if float(outstanding) >= 0 else 'Cr'})",
+        small_st,
+    ))
+    story.append(Spacer(1, 10 * mm))
+    _sig = Table([[
+        "",
+        [Paragraph(f"For <b>{_co.get('name','')}</b>", body_st),
+         Spacer(1, 10 * mm),
+         Paragraph("Authorised Signatory", small_st)],
+    ]], colWidths=[110 * mm, 68 * mm])
+    _sig.setStyle(TableStyle([("VALIGN", (0, 0), (-1, -1), "TOP")]))
+    story.append(_sig)
 
     # Signatory + footer
     story.append(Spacer(1, 12))
