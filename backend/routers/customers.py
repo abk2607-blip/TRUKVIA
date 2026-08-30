@@ -959,7 +959,7 @@ async def customer_statement_pdf(
         f"<b>Amount in Words:</b> {_bal_words} ({'Dr' if float(outstanding) >= 0 else 'Cr'})",
         small_st,
     ))
-    story.append(Spacer(1, 10 * mm))
+    story.append(Spacer(1, 6 * mm))
     _sig = Table([[
         "",
         [Paragraph(f"For <b>{_co.get('name','')}</b>", body_st),
