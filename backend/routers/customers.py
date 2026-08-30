@@ -490,6 +490,15 @@ async def customer_transactions(
         inv_q["payment_status"] = payment_status
     invoices = await db.invoices.find(inv_q, {"_id": 0, "user_id": 0}).sort("date", -1).to_list(2000)
 
+    # Iter132c C1 · R1 — attach effective totals (CN reduces / DN increases)
+    # WITHOUT mutating persisted invoice.balance_due / total_amount. Existing
+    # keys stay raw for back-compat; effective siblings are additive.
+    try:
+        from services import _apply_effective_balance
+        await _apply_effective_balance(invoices, user["user_id"], company_id)
+    except Exception:
+        pass
+
     # Payments from invoices
     payments = []
     for inv in invoices:
@@ -510,17 +519,23 @@ async def customer_transactions(
     total_excess = sum(float(t.get("excess_amount", 0)) for t in trips)
     total_halting = sum(float(t.get("halting_amount", 0)) for t in trips)
     total_billed = sum(float(inv.get("total_amount", inv.get("gross_total", 0))) for inv in invoices)
+    total_billed_effective = sum(float(inv.get("effective_total_amount", inv.get("total_amount", inv.get("gross_total", 0)))) for inv in invoices)
     total_received = sum(float(inv.get("amount_paid", 0)) for inv in invoices)
     outstanding = sum(float(inv.get("balance_due", 0)) for inv in invoices)
+    outstanding_effective = sum(float(inv.get("effective_balance_due", inv.get("balance_due", 0))) for inv in invoices)
+    total_credits = sum(float(inv.get("credits_total", 0)) for inv in invoices)
+    total_debits = sum(float(inv.get("debits_total", 0)) for inv in invoices)
     # Uninvoiced billable freight (pending trips)
     total_pending_freight = sum(_trip_billable(t) for t in trips if t.get("status") != "invoiced")
 
-    # Aging buckets (based on invoice date vs today)
+    # Aging buckets (based on invoice date vs today) — raw uses balance_due; effective uses CN/DN-adjusted balance
     today = datetime.now(timezone.utc).date()
     aging = {"0_30": 0.0, "31_60": 0.0, "61_90": 0.0, "90_plus": 0.0}
+    aging_effective = {"0_30": 0.0, "31_60": 0.0, "61_90": 0.0, "90_plus": 0.0}
     for inv in invoices:
         bal = float(inv.get("balance_due", 0))
-        if bal <= 0:
+        bal_eff = float(inv.get("effective_balance_due", bal))
+        if bal <= 0 and bal_eff <= 0:
             continue
         try:
             dt = datetime.fromisoformat(inv.get("date", ""))
@@ -531,14 +546,19 @@ async def customer_transactions(
                 continue
         days = (today - dt.date()).days
         if days <= 30:
-            aging["0_30"] += bal
+            bucket = "0_30"
         elif days <= 60:
-            aging["31_60"] += bal
+            bucket = "31_60"
         elif days <= 90:
-            aging["61_90"] += bal
+            bucket = "61_90"
         else:
-            aging["90_plus"] += bal
+            bucket = "90_plus"
+        if bal > 0:
+            aging[bucket] += bal
+        if bal_eff > 0:
+            aging_effective[bucket] += bal_eff
     aging = {k: round(v, 2) for k, v in aging.items()}
+    aging_effective = {k: round(v, 2) for k, v in aging_effective.items()}
 
     summary = {
         "trip_count": len(trips),
@@ -550,12 +570,18 @@ async def customer_transactions(
         "total_excess": round(total_excess, 2),
         "total_halting": round(total_halting, 2),
         "total_billed": round(total_billed, 2),
+        "total_billed_effective": round(total_billed_effective, 2),
         "total_received": round(total_received, 2),
         "outstanding": round(outstanding, 2),
+        "outstanding_raw": round(outstanding, 2),
+        "outstanding_effective": round(outstanding_effective, 2),
+        "credits_total": round(total_credits, 2),
+        "debits_total": round(total_debits, 2),
         "total_pending_uninvoiced": round(total_pending_freight, 2),
         "invoice_count": len(invoices),
         "payment_count": len(payments),
         "aging": aging,
+        "aging_effective": aging_effective,
     }
 
     # Unified transaction list (sorted DESC by date)
@@ -593,6 +619,11 @@ async def customer_transactions(
                 "amount": inv.get("total_amount") or inv.get("gross_total"),
                 "amount_paid": inv.get("amount_paid", 0),
                 "balance_due": inv.get("balance_due", 0),
+                # Iter132c C1 — additive effective siblings; existing keys unchanged.
+                "effective_total_amount": inv.get("effective_total_amount", inv.get("total_amount") or inv.get("gross_total")),
+                "effective_balance_due": inv.get("effective_balance_due", inv.get("balance_due", 0)),
+                "credits_total": inv.get("credits_total", 0),
+                "debits_total": inv.get("debits_total", 0),
                 "status": inv.get("payment_status"),   # unpaid | partial | paid
                 "due_date": inv.get("due_date"),
                 "created_at": inv.get("created_at"),
@@ -645,11 +676,22 @@ async def customer_statement_pdf(
     trips = await db.trips.find(trip_q, {"_id": 0, "user_id": 0}).sort("date", -1).to_list(2000)
     invoices = await db.invoices.find({"user_id": user["user_id"], "company_id": company_id, "customer_id": cid, **({"date": trip_q["date"]} if "date" in trip_q else {})}, {"_id": 0, "user_id": 0}).sort("date", -1).to_list(2000)
 
+    # Iter132c C1 · R4 — attach effective note totals for the "Adjustments" line.
+    # All existing summary/table cells stay raw (byte-identical output);
+    # a single small "Adjustments: −CN ₹X / +DN ₹Y" line is added below.
+    try:
+        from services import _apply_effective_balance
+        await _apply_effective_balance(invoices, user["user_id"], company_id)
+    except Exception:
+        pass
+
     total_qty = sum(float(t.get("tons", 0)) for t in trips)
     total_freight = sum(float(t.get("freight_amount", 0)) for t in trips)
     total_billed = sum(float(inv.get("total_amount", inv.get("gross_total", 0))) for inv in invoices)
     total_received = sum(float(inv.get("amount_paid", 0)) for inv in invoices)
     outstanding = sum(float(inv.get("balance_due", 0)) for inv in invoices)
+    total_credits = sum(float(inv.get("credits_total", 0)) for inv in invoices)
+    total_debits = sum(float(inv.get("debits_total", 0)) for inv in invoices)
 
     from reportlab.lib.pagesizes import A4
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -685,6 +727,16 @@ async def customer_statement_pdf(
         ("FONTNAME", (2, 0), (2, -1), "Helvetica-Bold"),
     ]))
     story.append(st)
+
+    # Iter132c C1 · R4 — small "Adjustments" line only when notes exist.
+    if total_credits > 0 or total_debits > 0:
+        adj_st = ParagraphStyle("adj", parent=styles["Normal"], fontSize=9, textColor=colors.HexColor("#374151"))
+        story.append(Spacer(1, 4))
+        story.append(Paragraph(
+            f"Adjustments: −CN ₹{total_credits:,.2f} / +DN ₹{total_debits:,.2f}",
+            adj_st,
+        ))
+
     story.append(Spacer(1, 12))
 
     # Trip table
@@ -816,14 +868,25 @@ async def bulk_reminder_previews(request: Request, user=Depends(get_current_user
         {"user_id": user["user_id"], "company_id": cid, "balance_due": {"$gt": 0}, **LIVE_ONLY_FILTER},
         {"_id": 0}
     ).to_list(5000)
+    # Iter132c C1 · R3 — enrich with effective balance; drop invoices where a
+    # CN has fully offset the outstanding so no reminder goes out.
+    try:
+        from services import _apply_effective_balance
+        await _apply_effective_balance(invs, user["user_id"], cid)
+    except Exception:
+        pass
     today = datetime.now(timezone.utc).date()
     per_cust: dict = {}
     for i in invs:
         k = i.get("customer_id")
         if not k:
             continue
+        eff_bal = float(i.get("effective_balance_due", i.get("balance_due", 0)))
+        # Skip fully-credited invoices — nothing to remind about.
+        if eff_bal <= 0.01:
+            continue
         b = per_cust.setdefault(k, {"balance": 0.0, "invoices": [], "oldest_days": 0})
-        b["balance"] += float(i.get("balance_due", 0))
+        b["balance"] += eff_bal
         try:
             dt = datetime.fromisoformat(i["date"]).date()
         except Exception:
@@ -833,7 +896,7 @@ async def bulk_reminder_previews(request: Request, user=Depends(get_current_user
                 dt = today
         days = (today - dt).days
         b["oldest_days"] = max(b["oldest_days"], days)
-        b["invoices"].append({"number": i.get("invoice_number"), "amount": float(i.get("balance_due", 0)), "date": i.get("date"), "days": days})
+        b["invoices"].append({"number": i.get("invoice_number"), "amount": eff_bal, "date": i.get("date"), "days": days})
 
     customers = await db.customers.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0}).to_list(2000)
     cust_map = {c["id"]: c for c in customers}
@@ -884,25 +947,43 @@ async def monthly_balances(cid: str, request: Request, user=Depends(get_current_
     company_id = await _active_company_id(request, user)
     # Iter86 — monthly balances reflect only live trips + invoices
     trips = await db.trips.find({"user_id": user["user_id"], "company_id": company_id, "customer_id": cid, **LIVE_ONLY_FILTER}, {"_id": 0, "date": 1, "freight_amount": 1, "tons": 1, "status": 1}).to_list(5000)
-    invoices = await db.invoices.find({"user_id": user["user_id"], "company_id": company_id, "customer_id": cid, **LIVE_ONLY_FILTER}, {"_id": 0, "date": 1, "total_amount": 1, "gross_total": 1, "amount_paid": 1, "balance_due": 1, "payments": 1}).to_list(5000)
+    invoices = await db.invoices.find({"user_id": user["user_id"], "company_id": company_id, "customer_id": cid, **LIVE_ONLY_FILTER}, {"_id": 0, "id": 1, "invoice_date": 1, "total_amount": 1, "gross_total": 1, "amount_paid": 1, "balance_due": 1, "payments": 1}).to_list(5000)
+
+    # Iter132c C1 · R2 — enrich for sibling effective monthly aggregates.
+    try:
+        from services import _apply_effective_balance
+        await _apply_effective_balance(invoices, user["user_id"], company_id)
+    except Exception:
+        pass
 
     months: dict = {}
+
+    def _mkrow(k):
+        return {
+            "month": k, "trip_count": 0, "quantity": 0.0, "freight": 0.0,
+            "billed": 0.0, "received": 0.0, "balance": 0.0,
+            "billed_effective": 0.0, "balance_effective": 0.0,
+        }
 
     def _key(dstr):
         return (dstr or "")[:7] or "unknown"
 
     for t in trips:
         k = _key(t.get("date"))
-        m = months.setdefault(k, {"month": k, "trip_count": 0, "quantity": 0.0, "freight": 0.0, "billed": 0.0, "received": 0.0, "balance": 0.0})
+        m = months.setdefault(k, _mkrow(k))
         m["trip_count"] += 1
         m["quantity"] += float(t.get("tons", 0))
         m["freight"] += float(t.get("freight_amount", 0))
     for inv in invoices:
-        k = _key(inv.get("date"))
-        m = months.setdefault(k, {"month": k, "trip_count": 0, "quantity": 0.0, "freight": 0.0, "billed": 0.0, "received": 0.0, "balance": 0.0})
-        m["billed"] += float(inv.get("total_amount", inv.get("gross_total", 0)))
+        k = _key(inv.get("invoice_date"))
+        m = months.setdefault(k, _mkrow(k))
+        raw_total = float(inv.get("total_amount", inv.get("gross_total", 0)))
+        raw_bal = float(inv.get("balance_due", 0))
+        m["billed"] += raw_total
         m["received"] += float(inv.get("amount_paid", 0))
-        m["balance"] += float(inv.get("balance_due", 0))
+        m["balance"] += raw_bal
+        m["billed_effective"] += float(inv.get("effective_total_amount", raw_total))
+        m["balance_effective"] += float(inv.get("effective_balance_due", raw_bal))
         # count payments in the same month based on payment date
         for p in (inv.get("payments") or []):
             pk = _key(p.get("date"))
@@ -913,8 +994,9 @@ async def monthly_balances(cid: str, request: Request, user=Depends(get_current_
 
     rows = list(months.values())
     for m in rows:
-        for k in ("quantity", "freight", "billed", "received", "balance"):
-            m[k] = round(m[k], 2)
+        for k in ("quantity", "freight", "billed", "received", "balance",
+                  "billed_effective", "balance_effective"):
+            m[k] = round(m.get(k, 0.0), 2)
     rows.sort(key=lambda x: x["month"], reverse=True)
     return {"months": rows}
 

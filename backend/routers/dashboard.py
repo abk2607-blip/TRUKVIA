@@ -32,7 +32,6 @@ async def dashboard(request: Request, user=Depends(get_current_user)):
     cid = await _active_company_id(request, user)
     # Iter86 — LIVE_ONLY_FILTER excludes historical/imported records from KPIs.
     trips = await db.trips.find({"user_id": uid, "company_id": cid, **LIVE_ONLY_FILTER}, {"_id": 0, "user_id": 0}).to_list(5000)
-    invoices = await db.invoices.find({"user_id": uid, "company_id": cid, **LIVE_ONLY_FILTER}, {"_id": 0, "user_id": 0}).to_list(2000)
     customers = await db.customers.find({"user_id": uid, "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(2000)
 
     total_revenue = round(sum(t.get("freight_amount", 0.0) for t in trips), 2)
@@ -42,37 +41,84 @@ async def dashboard(request: Request, user=Depends(get_current_user)):
     pending_trips = len([t for t in trips if t.get("status") == "pending"])
     invoiced_trips = trip_count - pending_trips
 
-    total_billed = round(sum(i.get("total_amount", 0.0) for i in invoices), 2)
-    total_received = round(sum(i.get("amount_paid", 0.0) for i in invoices), 2)
-    total_receivable = round(total_billed - total_received, 2)
+    # Iter132c C1 · B1 — streaming aggregation avoids to_list(2000) truncation
+    # on companies with >2000 invoices. Pre-fetch issued notes ONCE for the
+    # company, group by invoice_id, then stream invoices via async cursor.
+    # Two DB queries total (notes + invoices); no N+1. Cancelled notes are
+    # naturally excluded via status="issued". Persisted invoice fields untouched.
+    notes_by_inv: dict = {}
+    async for n in db.credit_debit_notes.find(
+        {"user_id": uid, "company_id": cid, "status": "issued"},
+        {"_id": 0, "invoice_id": 1, "kind": 1, "total_amount": 1},
+    ):
+        notes_by_inv.setdefault(n.get("invoice_id"), []).append(n)
 
-    # Customer-wise receivables (with phone + oldest invoice for overdue calc)
     cust_map = {c["id"]: c for c in customers}
-    receivables = {}
+    receivables: dict = {}
     today = now_utc().date()
-    for i in invoices:
-        cust_id = i["customer_id"]
-        bal = i.get("balance_due", 0.0)
-        if bal <= 0:
-            continue
-        c = cust_map.get(cust_id, {})
-        rec = receivables.setdefault(cust_id, {
-            "customer_id": cust_id,
-            "customer_name": c.get("name", "Unknown"),
-            "customer_phone": c.get("phone", ""),
-            "balance": 0.0,
-            "invoices": 0,
-            "oldest_days": 0,
-        })
-        rec["balance"] = round(rec["balance"] + bal, 2)
-        rec["invoices"] += 1
-        try:
-            inv_date = datetime.fromisoformat(i["invoice_date"]).date()
-            days = (today - inv_date).days
-            if days > rec["oldest_days"]:
-                rec["oldest_days"] = days
-        except Exception:
-            pass
+    total_billed = 0.0
+    total_received = 0.0
+    total_billed_effective = 0.0
+    total_receivable_effective = 0.0
+    total_credits = 0.0
+    total_debits = 0.0
+    invoice_count = 0
+
+    async for i in db.invoices.find(
+        {"user_id": uid, "company_id": cid, **LIVE_ONLY_FILTER},
+        {"_id": 0, "user_id": 0},
+    ):
+        invoice_count += 1
+        raw_total = float(i.get("total_amount", 0.0))
+        paid = float(i.get("amount_paid", 0.0))
+        raw_bal = float(i.get("balance_due", 0.0))
+        notes = notes_by_inv.get(i.get("id"), [])
+        credits = sum(float(n.get("total_amount") or 0) for n in notes if n.get("kind") == "credit")
+        debits = sum(float(n.get("total_amount") or 0) for n in notes if n.get("kind") == "debit")
+        eff_total = raw_total - credits + debits
+        eff_bal = eff_total - paid
+
+        total_billed += raw_total
+        total_received += paid
+        total_billed_effective += eff_total
+        total_receivable_effective += eff_bal
+        total_credits += credits
+        total_debits += debits
+
+        if raw_bal > 0 or eff_bal > 0:
+            cust_id = i.get("customer_id")
+            c = cust_map.get(cust_id, {})
+            rec = receivables.setdefault(cust_id, {
+                "customer_id": cust_id,
+                "customer_name": c.get("name", "Unknown"),
+                "customer_phone": c.get("phone", ""),
+                "balance": 0.0,
+                "balance_effective": 0.0,
+                "invoices": 0,
+                "oldest_days": 0,
+            })
+            rec["balance"] += raw_bal
+            rec["balance_effective"] += eff_bal
+            rec["invoices"] += 1
+            try:
+                inv_date = datetime.fromisoformat(i["invoice_date"]).date()
+                days = (today - inv_date).days
+                if days > rec["oldest_days"]:
+                    rec["oldest_days"] = days
+            except Exception:
+                pass
+
+    for rec in receivables.values():
+        rec["balance"] = round(rec["balance"], 2)
+        rec["balance_effective"] = round(rec["balance_effective"], 2)
+
+    total_billed = round(total_billed, 2)
+    total_received = round(total_received, 2)
+    total_receivable = round(total_billed - total_received, 2)
+    total_billed_effective = round(total_billed_effective, 2)
+    total_receivable_effective = round(total_receivable_effective, 2)
+    total_credits = round(total_credits, 2)
+    total_debits = round(total_debits, 2)
 
     receivables_list = sorted(receivables.values(), key=lambda x: -x["balance"])
 
@@ -104,10 +150,14 @@ async def dashboard(request: Request, user=Depends(get_current_user)):
         "pending_trips": pending_trips,
         "invoiced_trips": invoiced_trips,
         "total_billed": total_billed,
+        "total_billed_effective": total_billed_effective,
         "total_received": total_received,
         "total_receivable": total_receivable,
+        "total_receivable_effective": total_receivable_effective,
+        "credits_total": total_credits,
+        "debits_total": total_debits,
         "customer_count": len(customers),
-        "invoice_count": len(invoices),
+        "invoice_count": invoice_count,
         "receivables": receivables_list,
         "recent_trips": recent_trips,
         "expiry_alerts": expiry_alerts,

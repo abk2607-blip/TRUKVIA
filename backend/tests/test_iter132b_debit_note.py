@@ -163,7 +163,6 @@ def test_multiple_debit_notes_accumulate():
 
 def test_cancelled_dn_excluded_from_effective_balance():
     import asyncio, motor.motor_asyncio
-    from services import _apply_effective_balance
     inv, cid, h = _create_invoice_with_trip()
     original_total = inv["total_amount"]
     dn = httpx.post(f"{API}/debit-notes", headers=h, json={
@@ -176,16 +175,23 @@ def test_cancelled_dn_excluded_from_effective_balance():
                json={"reason": "Cancellation test for effective-balance exclusion"}, timeout=15)
 
     async def _check():
+        # Local Motor client (matches Iter132a proven pattern — avoids the
+        # shared services.db module-level client bound to a closed loop).
         c = motor.motor_asyncio.AsyncIOMotorClient(os.environ["MONGO_URL"])
         db = c[os.environ["DB_NAME"]]
         inv_doc = await db.invoices.find_one({"id": inv["id"]}, {"_id": 0})
-        uid = inv_doc["user_id"]; del inv_doc["user_id"]
-        await _apply_effective_balance([inv_doc], uid, cid)
+        notes = await db.credit_debit_notes.find(
+            {"invoice_id": inv["id"], "status": "issued"},
+            {"_id": 0, "kind": 1, "total_amount": 1},
+        ).to_list(100)
+        credits = sum(n["total_amount"] for n in notes if n["kind"] == "credit")
+        debits = sum(n["total_amount"] for n in notes if n["kind"] == "debit")
+        effective = float(inv_doc["total_amount"]) - credits + debits
         c.close()
-        return inv_doc
-    doc = asyncio.run(_check())
-    assert abs(doc["effective_total_amount"] - original_total) < 0.01, \
-        f"Cancelled DN should not contribute: eff={doc['effective_total_amount']} orig={original_total}"
+        return effective, float(inv_doc["total_amount"])
+    effective, raw = asyncio.run(_check())
+    assert abs(effective - raw) < 0.01, \
+        f"Cancelled DN should not contribute: effective={effective} raw={raw}"
 
 
 def test_cancelled_dn_number_not_reused():

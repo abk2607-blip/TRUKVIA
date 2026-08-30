@@ -36,6 +36,13 @@ async def list_invoices(request: Request, user=Depends(get_current_user)):
     cid = await _active_company_id(request, user)
     await _backfill_to_default(user["user_id"])
     docs = await db.invoices.find({"user_id": user["user_id"], "company_id": cid}, {"_id": 0, "user_id": 0}).sort("created_at", -1).to_list(1000)
+    # Iter132c C1 · R6 — additive effective keys (effective_total_amount,
+    # effective_balance_due, credits_total, debits_total). Existing keys unchanged.
+    try:
+        from services import _apply_effective_balance
+        await _apply_effective_balance(docs, user["user_id"], cid)
+    except Exception:
+        pass
     return docs
 
 @router.get("/invoices/overdue")
@@ -50,6 +57,14 @@ async def list_overdue_invoices(request: Request, days: int = 30, user=Depends(g
         "balance_due": {"$gt": 0.01},
         "invoice_date": {"$lte": cutoff},
     }, {"_id": 0, "user_id": 0}).sort("invoice_date", 1).to_list(500)
+    # Iter132c C1 · R7 — enrich then drop invoices whose CN has fully offset balance.
+    try:
+        from services import _apply_effective_balance
+        await _apply_effective_balance(docs, uid, cid)
+    except Exception:
+        pass
+    docs = [d for d in docs
+            if float(d.get("effective_balance_due", d.get("balance_due", 0))) > 0.01]
     customers = await db.customers.find({"user_id": uid, "company_id": cid}, {"_id": 0}).to_list(2000)
     cmap = {c["id"]: c for c in customers}
     today = now_utc().date()
@@ -79,6 +94,12 @@ async def get_invoice(iid: str, user=Depends(get_current_user)):
     doc = await db.invoices.find_one({"id": iid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Invoice not found")
+    # Iter132c C1 · R8 — enrich single-doc response with effective keys.
+    try:
+        from services import _apply_effective_balance
+        await _apply_effective_balance([doc], user["user_id"], doc.get("company_id", ""))
+    except Exception:
+        pass
     return doc
 
 

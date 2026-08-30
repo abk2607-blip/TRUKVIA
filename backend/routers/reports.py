@@ -41,11 +41,16 @@ async def report_ledger(
     customer = await db.customers.find_one({"id": customer_id, "user_id": uid, "company_id": cid}, {"_id": 0})
     if not customer:
         raise HTTPException(status_code=404, detail="Customer not found")
-    invoices = await db.invoices.find({"user_id": uid, "company_id": cid, "customer_id": customer_id}, {"_id": 0, "user_id": 0}).to_list(2000)
 
-    # Build entries: invoice (debit), payment (credit)
+    # Iter132c-agg-fix H1 · streaming aggregation avoids the pre-existing
+    # to_list(2000) truncation for customers with >2000 invoices. Single DB
+    # cursor; no N+1; entries + opening_balance computed in one pass.
     entries = []
-    for inv in invoices:
+    opening = 0.0
+    async for inv in db.invoices.find(
+        {"user_id": uid, "company_id": cid, "customer_id": customer_id},
+        {"_id": 0, "user_id": 0},
+    ):
         idt = inv.get("invoice_date", "")
         if _in_range(idt, start, end):
             entries.append({
@@ -57,6 +62,11 @@ async def report_ledger(
                 "credit": 0.0,
                 "invoice_id": inv["id"],
             })
+        # Opening balance semantic (preserved from pre-Iter132c-agg-fix):
+        # invoices dated < start add to opening; payments dated < start
+        # subtract from opening — regardless of their parent invoice's date.
+        if start and idt < start:
+            opening += inv["total_amount"]
         for p in inv.get("payments", []):
             pdt = p.get("date", "")
             if _in_range(pdt, start, end):
@@ -69,19 +79,11 @@ async def report_ledger(
                     "credit": p["amount"],
                     "invoice_id": inv["id"],
                 })
+            if start and pdt < start:
+                opening -= p["amount"]
 
     # Sort by date, then type (invoice before payment on same day)
     entries.sort(key=lambda x: (x["date"], 0 if x["type"] == "invoice" else 1))
-
-    # Opening balance = balances before 'start'
-    opening = 0.0
-    if start:
-        for inv in invoices:
-            if inv.get("invoice_date", "") < start:
-                opening += inv["total_amount"]
-            for p in inv.get("payments", []):
-                if p.get("date", "") < start:
-                    opening -= p["amount"]
 
     running = opening
     for e in entries:
@@ -194,7 +196,6 @@ async def report_balance_sheet(
     cid = await _active_company_id(request, user)
     as_of = as_of or now_utc().date().isoformat()
     trips = await db.trips.find({"user_id": uid, "company_id": cid, **LIVE_ONLY_FILTER}, {"_id": 0}).to_list(5000)
-    invoices = await db.invoices.find({"user_id": uid, "company_id": cid, **LIVE_ONLY_FILTER}, {"_id": 0}).to_list(2000)
 
     # Cumulative net profit up to as_of (from trips dated <= as_of)
     trips_todate = [t for t in trips if t.get("date", "") <= as_of]
@@ -202,16 +203,38 @@ async def report_balance_sheet(
     expenses = sum(t.get("total_expense", 0) for t in trips_todate)
     net_profit = round(revenue - expenses, 2)
 
-    # Cash & Bank (approximate) = total payments received up to as_of
+    # Iter132c C1 · B1 — streaming aggregation with as-of-date correctness.
+    # Pre-fetch issued notes with note_date <= as_of, group by invoice_id,
+    # then stream invoices without the pre-existing to_list(2000) truncation.
+    # Two DB queries total; no N+1. Notes issued AFTER as_of correctly excluded
+    # from the historical balance sheet (previously leaked via unfiltered
+    # _apply_effective_balance). Persisted invoice fields untouched.
+    notes_by_inv: dict = {}
+    async for n in db.credit_debit_notes.find(
+        {"user_id": uid, "company_id": cid, "status": "issued",
+         "note_date": {"$lte": as_of}},
+        {"_id": 0, "invoice_id": 1, "kind": 1, "total_amount": 1},
+    ):
+        notes_by_inv.setdefault(n.get("invoice_id"), []).append(n)
+
     cash_bank = 0.0
     receivables = 0.0
-    payments_by_customer = {}
-    for inv in invoices:
-        if inv.get("invoice_date", "") <= as_of:
-            billed = inv.get("total_amount", 0)
-            paid_upto = sum(p["amount"] for p in inv.get("payments", []) if p.get("date", "") <= as_of)
-            cash_bank += paid_upto
-            receivables += max(billed - paid_upto, 0)
+    receivables_effective = 0.0
+    async for inv in db.invoices.find(
+        {"user_id": uid, "company_id": cid, **LIVE_ONLY_FILTER,
+         "invoice_date": {"$lte": as_of}},
+        {"_id": 0, "id": 1, "invoice_date": 1, "total_amount": 1, "payments": 1},
+    ):
+        raw_total = float(inv.get("total_amount", 0))
+        paid_upto = sum(p["amount"] for p in inv.get("payments", [])
+                        if p.get("date", "") <= as_of)
+        cash_bank += paid_upto
+        receivables += max(raw_total - paid_upto, 0)
+        notes = notes_by_inv.get(inv.get("id"), [])
+        credits = sum(float(n.get("total_amount") or 0) for n in notes if n.get("kind") == "credit")
+        debits = sum(float(n.get("total_amount") or 0) for n in notes if n.get("kind") == "debit")
+        eff_total = raw_total - credits + debits
+        receivables_effective += max(eff_total - paid_upto, 0)
 
     total_assets = round(cash_bank + receivables, 2)
 
@@ -223,6 +246,7 @@ async def report_balance_sheet(
         "assets": {
             "cash_and_bank": round(cash_bank, 2),
             "sundry_debtors": round(receivables, 2),
+            "sundry_debtors_effective": round(receivables_effective, 2),
             "total": total_assets,
         },
         "liabilities": {
