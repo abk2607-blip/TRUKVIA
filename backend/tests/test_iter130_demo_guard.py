@@ -134,14 +134,24 @@ def test_auth_module_reloads_to_fail_secure_when_flag_missing(monkeypatch):
 
 def test_demo_login_endpoint_module_returns_404_without_preview(monkeypatch):
     """Call the demo_login handler directly with IS_PREVIEW_ENV unset —
-    it must raise HTTPException(404) before any DB work."""
-    monkeypatch.delenv("IS_PREVIEW_ENV", raising=False)
+    it must raise HTTPException(404) before any DB work.
+
+    Iter132c-agg-fix P1c: use setenv("0") instead of delenv, mirroring the
+    sibling test at L114-118. `from routers import auth_router` transitively
+    imports db.py which calls load_dotenv(); that re-populates IS_PREVIEW_ENV=1
+    from /app/backend/.env and defeats monkeypatch.delenv. The auth-router
+    gate is `== "1"` so any other value is equivalent to absence.
+    """
+    monkeypatch.setenv("IS_PREVIEW_ENV", "0")
     from fastapi import HTTPException
     from routers import auth_router
     import asyncio
-    with pytest.raises(HTTPException) as excinfo:
-        asyncio.get_event_loop().run_until_complete(auth_router.demo_login())
-    assert excinfo.value.status_code == 404
+    try:
+        with pytest.raises(HTTPException) as excinfo:
+            asyncio.get_event_loop().run_until_complete(auth_router.demo_login())
+        assert excinfo.value.status_code == 404
+    finally:
+        monkeypatch.setenv("IS_PREVIEW_ENV", "1")
 
 
 # ─── E · Tenant isolation & Google-OAuth flow unchanged ─────────────────
