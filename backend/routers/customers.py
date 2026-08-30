@@ -878,8 +878,19 @@ async def customer_statement_pdf(
     dn_sum = round(sum(float(n.get("total_amount") or 0) for n in dn_notes), 2)
 
     if issued_notes:
-        story.append(Spacer(1, 12))
-        story.append(Paragraph("<b>Balance Bridge</b>", styles["Heading3"]))
+        # Iter133 L2c · Section rule + DejaVu heading (shared local styles).
+        _sect_rule = Table([[""]], colWidths=[178 * mm], rowHeights=[1])
+        _sect_rule.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#B45309"))]))
+        _sect_head = ParagraphStyle(
+            "sect_head", parent=styles["Normal"],
+            fontName=_UNI_FONT_BOLD, fontSize=11,
+            textColor=colors.HexColor("#B45309"), spaceAfter=4,
+        )
+
+        story.append(Spacer(1, 8))
+        story.append(_sect_rule)
+        story.append(Spacer(1, 4))
+        story.append(Paragraph("Balance Bridge", _sect_head))
         bridge_rows = [
             ["Original Invoiced Total",            f"₹{total_billed:,.2f}"],
             [f"Less: Credit Notes ({len(cn_notes)})", f"− ₹{cn_sum:,.2f}"],
@@ -887,7 +898,7 @@ async def customer_statement_pdf(
             [f"Less: Payments Received",              f"− ₹{total_received:,.2f}"],
             ["Balance Due",                        f"₹{outstanding:,.2f}"],
         ]
-        bt = Table(bridge_rows, hAlign="LEFT", colWidths=[100 * mm, 60 * mm])
+        bt = Table(bridge_rows, hAlign="LEFT", colWidths=[118 * mm, 60 * mm])
         bt.setStyle(TableStyle([
             ("FONTNAME", (0, 0), (-1, -1), _UNI_FONT),
             ("FONTSIZE", (0, 0), (-1, -1), 9),
@@ -895,12 +906,21 @@ async def customer_statement_pdf(
             ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#FEF3C7")),
             ("FONTNAME", (0, -1), (-1, -1), _UNI_FONT_BOLD),
             ("TEXTCOLOR", (0, -1), (-1, -1), colors.HexColor("#B45309")),
+            ("FONTSIZE", (0, -1), (-1, -1), 10),
+            ("LINEABOVE", (0, -1), (-1, -1), 1.5, colors.HexColor("#B45309")),
+            ("LINEABOVE", (1, -2), (1, -2), 0.5, colors.HexColor("#111827")),
             ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
         ]))
         story.append(bt)
-        story.append(Spacer(1, 10))
 
-        story.append(Paragraph("<b>Adjustments (Credit / Debit Notes)</b>", styles["Heading3"]))
+        story.append(Spacer(1, 8))
+        story.append(_sect_rule)
+        story.append(Spacer(1, 4))
+        story.append(Paragraph("Adjustments (Credit / Debit Notes)", _sect_head))
         adj_hdr = ["Date", "Note #", "Type", "Ref Invoice", "Reason", "Amount"]
         adj_rows = [adj_hdr]
         for n in issued_notes:
@@ -913,7 +933,7 @@ async def customer_statement_pdf(
                 f"₹{float(n.get('total_amount') or 0):,.2f}",
             ])
         at = Table(adj_rows, hAlign="LEFT", repeatRows=1,
-                   colWidths=[22 * mm, 32 * mm, 12 * mm, 34 * mm, 40 * mm, 22 * mm])
+                   colWidths=[20 * mm, 30 * mm, 12 * mm, 32 * mm, 60 * mm, 24 * mm])
         astyle = [
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#111827")),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
@@ -933,7 +953,7 @@ async def customer_statement_pdf(
         story.append(at)
 
     # Iter133 L2b · Amount-in-Words + Authorised Signatory before build.
-    story.append(Spacer(1, 6 * mm))
+    story.append(Spacer(1, 4 * mm))
     _bal_words = _num_to_words_inr(abs(float(outstanding)))
     story.append(Paragraph(
         f"<b>Amount in Words:</b> {_bal_words} ({'Dr' if float(outstanding) >= 0 else 'Cr'})",

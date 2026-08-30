@@ -278,3 +278,30 @@ def test_l2b_statement_pdf_balance_bridge_and_adjustments_still_correct():
     assert cn_kept["note_number"] in text
     assert dn_kept["note_number"] in text
     assert cn_cancelled["note_number"] not in text
+
+
+# ================= L2c · Visual-polish guard tests =================
+
+def test_l2c_ledger_pdf_still_renders_all_columns_and_totals():
+    _cid, h = _headers(); cust = _fresh_customer(h); inv = _invoice(h, cust)
+    _cn(h, inv, 500); _dn(h, inv, 700)
+    _, text = _ledger_pdf(h, cust)
+    for hdr in ("Date", "Ref", "Particulars", "Debit", "Credit", "Balance"):
+        assert hdr in text, f"Ledger column '{hdr}' missing"
+    for lbl in ("Opening Balance", "TOTAL", "Closing Balance"):
+        assert lbl in text, f"Ledger row '{lbl}' missing"
+    assert "\u20b9" in text
+
+
+def test_l2c_statement_pdf_bridge_and_adjustments_columns_render():
+    _cid, h = _headers(); cust = _fresh_customer(h); inv = _invoice(h, cust)
+    _cn(h, inv, 450); _dn(h, inv, 1175)
+    _, text = _statement_pdf(h, cust)
+    for lbl in ("Balance Bridge", "Original Invoiced Total",
+                "Less: Credit Notes", "Add: Debit Notes",
+                "Less: Payments Received", "Balance Due"):
+        assert lbl in text, f"Bridge label missing: {lbl}"
+    for hdr in ("Date", "Note #", "Type", "Ref Invoice", "Reason", "Amount"):
+        assert hdr in text, f"Adjustments column '{hdr}' missing"
+    assert "Adjustments (Credit / Debit Notes)" in text
+    assert "\u20b9" in text

@@ -212,24 +212,33 @@ def build_ledger_pdf(company: dict, ledger: dict) -> bytes:
     rows.append(["", "", "Closing Balance", "", "", _fmt(ledger.get("closing_balance", 0))])
     row_types.extend(["_total", "_close"])
 
-    tbl = Table(rows, colWidths=[20 * mm, 30 * mm, 70 * mm, 22 * mm, 22 * mm, 22 * mm], repeatRows=1)
+    tbl = Table(rows, colWidths=[19 * mm, 26 * mm, 61 * mm, 24 * mm, 24 * mm, 24 * mm], repeatRows=1)
     tstyle = [
         ("GRID", (0, 0), (-1, -1), 0.4, BORDER),
         ("BACKGROUND", (0, 0), (-1, 0), ACCENT),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("FONTNAME", (0, 0), (-1, 0), _UNI_FONT_BOLD),
+        ("TOPPADDING", (0, 0), (-1, 0), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, 0), 6),
         ("FONTNAME", (0, 1), (-1, -1), _UNI_FONT),
-        ("FONTNAME", (0, -1), (-1, -1), _UNI_FONT_BOLD),
-        ("FONTNAME", (0, -2), (-1, -2), _UNI_FONT_BOLD),
         ("FONTNAME", (0, 1), (-1, 1), _UNI_FONT_BOLD),
-        ("BACKGROUND", (0, -1), (-1, -1), ACCENT_LIGHT),
+        ("BACKGROUND", (0, 1), (-1, 1), colors.HexColor("#F9FAFB")),
+        ("FONTNAME", (0, -2), (-1, -2), _UNI_FONT_BOLD),
         ("BACKGROUND", (0, -2), (-1, -2), colors.HexColor("#F9FAFB")),
-        ("FONTSIZE", (0, 0), (-1, -1), 8),
+        ("LINEABOVE", (0, -2), (-1, -2), 1, BORDER),
+        ("FONTNAME", (0, -1), (-1, -1), _UNI_FONT_BOLD),
+        ("FONTSIZE", (0, -1), (-1, -1), 10),
+        ("BACKGROUND", (0, -1), (-1, -1), ACCENT_LIGHT),
+        ("LINEABOVE", (0, -1), (-1, -1), 1.5, ACCENT),
+        ("TOPPADDING", (0, -1), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, -1), (-1, -1), 6),
+        ("FONTSIZE", (0, 0), (-1, -2), 8),
         ("ALIGN", (3, 1), (5, -1), "RIGHT"),
         ("LEFTPADDING", (0, 0), (-1, -1), 4),
         ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-        ("TOPPADDING", (0, 0), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ("RIGHTPADDING", (3, 0), (5, -1), 6),
+        ("TOPPADDING", (0, 1), (-1, -3), 3),
+        ("BOTTOMPADDING", (0, 1), (-1, -3), 3),
     ]
     # Per-row background tint for CN/DN entries
     for idx, rt in enumerate(row_types):
@@ -250,7 +259,7 @@ def build_ledger_pdf(company: dict, ledger: dict) -> bytes:
     ))
 
     # Signatory
-    story.append(Spacer(1, 10 * mm))
+    story.append(Spacer(1, 6 * mm))
     sig = Table([[
         "",
         [Paragraph(f"For <b>{_co.get('name','')}</b>", body),
