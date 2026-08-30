@@ -147,6 +147,7 @@ def build_debit_note_pdf(company, customer, invoice, note):
         ("BACKGROUND",(0,0),(-1,0),ACCENT),
         ("TEXTCOLOR",(0,0),(-1,0),colors.white),
         ("FONTNAME",(0,0),(-1,0),_UNI_FONT_BOLD),
+        ("FONTNAME",(0,1),(-1,-1),_UNI_FONT),
         ("FONTSIZE",(0,0),(-1,-1),8),
         ("ALIGN",(0,0),(0,-1),"CENTER"),
         ("ALIGN",(3,0),(5,-1),"RIGHT"),

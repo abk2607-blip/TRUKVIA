@@ -720,6 +720,7 @@ async def customer_statement_pdf(
     ]
     st = Table(smy, hAlign="LEFT", colWidths=[35 * mm, 45 * mm, 35 * mm, 45 * mm])
     st.setStyle(TableStyle([
+        ("FONTNAME", (0, 0), (-1, -1), _UNI_FONT),
         ("FONTSIZE", (0, 0), (-1, -1), 9),
         ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d1d5db")),
         ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f3f4f6")),
@@ -756,6 +757,7 @@ async def customer_statement_pdf(
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#111827")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("FONTNAME", (0, 0), (-1, 0), _UNI_FONT_BOLD),
+        ("FONTNAME", (0, 1), (-1, -1), _UNI_FONT),
         ("FONTSIZE", (0, 0), (-1, -1), 8),
         ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d1d5db")),
         ("ALIGN", (4, 0), (5, -1), "RIGHT"),
@@ -777,6 +779,7 @@ async def customer_statement_pdf(
         ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#111827")),
         ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
         ("FONTNAME", (0, 0), (-1, 0), _UNI_FONT_BOLD),
+        ("FONTNAME", (0, 1), (-1, -1), _UNI_FONT),
         ("FONTSIZE", (0, 0), (-1, -1), 8),
         ("GRID", (0, 0), (-1, -1), 0.4, colors.HexColor("#d1d5db")),
         ("ALIGN", (2, 0), (4, -1), "RIGHT"),
