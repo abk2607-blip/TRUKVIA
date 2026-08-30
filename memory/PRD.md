@@ -143,6 +143,62 @@ User communicates in English. Respond in English. (Prior bilingual reference ret
   - **STOP RULE compliance**: halted twice mid-iteration when tests failed (test-helper bugs, then xdist parallel-run artefacts); RCA-only reports; test-only fixes applied strictly after explicit user GO. No autonomous product-code changes.
   - **Not shipped (deferred)**: remaining `to_list(2000)` sites in `ai.py` (M1/M2/M3 LLM tools — Iter132c-ai-agg-fix candidate), `add_payment`/`bulk_auto_allocate` write path (explicit scope exclusion), `/reports/gstr-1` statutory export (separate controlled scope), CN/DN rows in ledger (separate presentation-change slice), Slice C2 (Frontend UI), Slice C3 (GSTR-1 Section 9B), Slice C4 (CN/DN Register report).
 
+## Iter132c C2 · CN/DN Frontend UI + PDF endpoints + Customer-entry flow + GST Treatment + PDF font/RCM/GSTIN refinements — 🔒 LOCKED (2026-08-30 UAT approved)
+
+### Slice C2 — Frontend UI + 2 PDF backend endpoints — 🔒 LOCKED
+- **What shipped**
+  - New dedicated **Notes list page** (`/app/frontend/src/pages/Notes.jsx`) with kind pill (Red=Credit, Blue=Debit), status filter (all / draft / issued / cancelled), search, RBAC-gated Cancel action, and download links.
+  - New **create dialog** (`components/NoteCreateDialog.jsx`) launched from Invoice detail (`RelatedNotesSection.jsx`) — inherits invoice's GST posture, over-credit guard is server-enforced.
+  - **Feature probe** via `useCdnEnabled()` hook (React-Query `staleTime: Infinity`, `retry: false`) hitting the existing gated `/credit-notes` list endpoint — fail-secure: sidebar link + list route + all mount points hidden when the backend flag is off.
+  - New backend read-only endpoints: `GET /api/credit-notes/{nid}/pdf` and `GET /api/debit-notes/{nid}/pdf` (StreamingResponse of the redesigned builders; tenant-scoped, 404 on cross-tenant lookup, 400 on `status="draft"`).
+- **Non-goals honoured**: numbering, `_compute_note_totals`, sign convention, over-credit guard, statutory-deadline validator, RBAC roles, feature flag surface, `_effective_balance`, invoice schema, invoice numbering, `pdf/invoice.py` — all untouched.
+
+### Slice C2b — Customer-scoped CN/DN entry + Professional PDF redesign — 🔒 LOCKED
+- **Customer entry flow**: `components/NoteCreateFromCustomerDialog.jsx` (invoice picker on top of `/api/customers/{cid}/transactions`) + 2 gated action buttons (`customer-add-credit-note-btn`, `customer-add-debit-note-btn`) wired into `pages/CustomerHistory.jsx`. Reuses the existing C1-enriched customer transactions endpoint (with `effective_balance_due`, `credits_total`, `debits_total`); zero new backend endpoints.
+- **Redesigned PDFs** (`pdf/credit_note.py`, `pdf/debit_note.py`) — A4 portrait, top accent bar (Red `#B91C1C` / Blue `#1D4ED8`), company logo, dedicated "CREDIT TO" / "DEBIT TO" + "REFERENCE INVOICE" grid, coloured reason banner, professional line-item table with white-on-accent header, right-aligned totals with accent-underlined final row, amount-in-words, RCM notice, authorised-signatory block.
+- **PDF byte tests** via `pdfminer.six==20260107` (added to `requirements.txt`) covering all header, customer, reference-invoice, reason, line, tax, total, amount-in-words and RCM elements.
+- **Non-goals honoured**: `pdf/invoice.py`, `pdf/lr.py`, `pdf/owner.py`, `pdf/_base.py` — all untouched. C1 effective-balance semantics and CN/DN business logic — all untouched.
+
+### GST Treatment (parity slice under C2b) — 🔒 LOCKED
+- **Additive `apply_gst: bool = True` field** on `CreditDebitNote` and `CDNCreateRequest` (models.py). Backward-compat: reads default `True` when field missing on legacy docs (no migration required).
+- **`_compute_note_totals(payload_lines, invoice, apply_gst=True)`** in `routers/notes.py` — when `apply_gst=False`, zeroes CGST/SGST/IGST/total_tax but retains invoice-inherited `gst_type` and rate metadata for reporting parity; `gross = subtotal` in that path (matches RCM parity).
+- **Statutory validators untouched**: 30-Nov FY deadline guard, over-credit guard, note_date validators, tenant isolation, RBAC — all still enforced regardless of `apply_gst`.
+- **UI**: `NoteCreateDialog.jsx` adds a **GST Treatment** radio fieldset (defaults to "Proceed with GST — inherit from invoice") with a warning banner when "Proceed without GST" is selected, plus `apply_gst` in the POST payload.
+- **PDF**: when `apply_gst=False`, both CN and DN builders render a prominent red-bordered "**GST NOT APPLIED**" pill directly under the reason block, replace the CGST/SGST/IGST/Total-Tax rows with a single "GST · Not Applied" row, and preserve the standard "TOTAL …" footer.
+- **Regression**: 5 new tests (`test_iter132c_c2b_pdf_redesign.py`) — zero-tax path, PDF-badge presence, PDF-tax-rows absence, DN parity, and past-deadline block still fires with `apply_gst=False`.
+
+### Slice C2c — ₹ Unicode-font fix · RCM presentation clarifier · Empty-GSTIN presentation guard — 🔒 LOCKED
+- **₹ Unicode-font fix**: swapped default Helvetica → registered `DejaVuSans` / `DejaVuSans-Bold` (`pdf/_base.py::_UNI_FONT`) across every ParagraphStyle **and** every raw-string body cell in the four PDF paths: `pdf/credit_note.py`, `pdf/debit_note.py`, `pdf/ledger.py`, and the inline builder inside `routers/customers.py::customer_statement_pdf`. Follow-up patch after initial C2c iteration added `("FONTNAME", (0, body_start), (-1, -1), _UNI_FONT)` to CN/DN line-item tables, ledger data rows, and all 3 tables of `customer_statement_pdf` (summary / trips / invoices) to guarantee U+20B9 renders on **every** currency-bearing cell — not just Paragraph-wrapped ones. Verified: **₹ count = 4** on CN + DN + Ledger PDFs, **₹ count = 10** on STMT PDF for a single-invoice tenant; no Helvetica remains anywhere in the 4 changed builder paths.
+- **RCM presentation clarifier** — CN/DN totals now show `"Total Tax (RCM — not collected)"` label (only when `rcm=True` and `apply_gst=True`), a new explicit "GST under Reverse Charge · Not included in Payable" row, and the final total label becomes `"TOTAL CREDIT NOTE (excl. RCM GST)"` / `"TOTAL DEBIT NOTE (excl. RCM GST)"`. The legacy one-line muted footer `"RCM applicable —"` is elevated to a bordered accent-coloured box under the totals: *"REVERSE CHARGE MECHANISM (RCM) — GST on this Credit/Debit Note is to be paid by the recipient under Notification No. 08/2017. The tax amount shown above is not included in the payable total."* **Zero calculation change** — persisted totals, `total_amount`, tax fields, and `_compute_note_totals` untouched.
+- **Empty-GSTIN presentation guard** — when a company's stored `gstin` is empty/whitespace, the CN/DN PDF renders `"GSTIN: —"` in place of the previous `"GSTIN:  · State: …"` double-space artifact. No schema change, no hard-coded GSTIN, no data-side write.
+- **Non-goals honoured**: `pdf/invoice.py`, `pdf/lr.py`, `pdf/owner.py`, `pdf/_base.py`, `services.py`, `routers/invoices.py`, `auth.py`, `server.py`, invoice numbering, `_effective_balance`, `_compute_note_totals` sign convention, RBAC, feature flags, `AKB/26-27//26-27/0004` anomalous invoice number (belongs to a separate future Invoice-Number Hygiene one-off), and the entire Customer-Ledger CN/DN row-integration (deferred to Iter133 L1/L2) — all untouched.
+
+### Final regression evidence (2026-08-30 lock day)
+- **Serial targeted matrix (`-n0`)**: Iter132a **10/10**, Iter132b **11/11**, Iter132c C1 **15/15**, Iter132c-agg-fix H1 **4/4**, C2 PDF endpoints **6/6**, C2b + GST + C2c **19/19**, Iter130 **11/11**, Iter131 **6/6**, Iter51 deploy-guard **10/10**, Iter128 badge **8/8** — **total 100 passed / 0 failed / 0 skipped / exit 0** in ~48.85 s.
+- **Full Deploy Guard (`/api/admin/deploy-readiness/run-now`)** — user-triggered fresh run at `2026-08-30T11:06:29Z` (`triggered_by: "manual"`): **503 passed / 1 skipped / 0 failed / exit 0 / elapsed 723.91 s (12:03)**. `consecutive_failures=0`, `next_check_at=2026-08-30T12:06:29Z`, `strict_mode=true`. Deploy Readiness Badge: **🟢 Ready**.
+- **Combined-run false positives** (documented, not regressions): 4 tests flap under xdist parallelism or shared-loop pollution (`test_r5/r9_effective_balance`, `test_effective_balance_increases_with_debit_note`, `test_demo_login_endpoint_module_returns_404_without_preview`) — all **pass in isolation** per the handoff-summary guidance. Same behaviour observed on prior locked iterations; not caused by C2b/C2c code changes.
+- **Product-behaviour spot verifications**: ₹ renders in all 4 PDFs, `apply_gst=True/False` both round-trip correctly, RCM clarifier + `(excl. RCM GST)` label + no legacy line, `GSTIN: —` on empty issuer GSTIN, over-credit + past-deadline validators enforced regardless of GST treatment, `git diff HEAD` on invoices.py/services.py = 0 lines.
+
+### Files changed in C2 + C2b + GST + C2c (final inventory)
+- **New**: `frontend/src/pages/Notes.jsx`, `frontend/src/components/NoteCreateDialog.jsx`, `frontend/src/components/NoteCreateFromCustomerDialog.jsx`, `frontend/src/components/RelatedNotesSection.jsx`, `frontend/src/hooks/useCdnEnabled.js`, `backend/pdf/credit_note.py`, `backend/pdf/debit_note.py`, `backend/tests/test_iter132c_c2_pdf_endpoints.py`, `backend/tests/test_iter132c_c2b_pdf_redesign.py`.
+- **Modified**: `backend/models.py` (+8 lines for `apply_gst`), `backend/routers/notes.py` (+21 lines threading `apply_gst`, +2 PDF endpoints), `backend/routers/customers.py` (+17 lines font swap in `customer_statement_pdf`), `backend/pdf/ledger.py` (+8 lines font swap), `frontend/src/pages/CustomerHistory.jsx` (+36 lines buttons + dialog mount), `frontend/src/components/Sidebar.jsx` (+CN/DN link), `backend/requirements.txt` (+`pdfminer.six==20260107` for test-only PDF text extraction).
+- **Zero touches**: `pdf/invoice.py`, `pdf/lr.py`, `pdf/owner.py`, `pdf/_base.py`, `services.py`, `routers/invoices.py`, `auth.py`, `auth_router.py`, `server.py`, `.env`, `pytest.ini`, `run_regression.sh`, invoice numbering helpers, `_effective_balance`, `_compute_note_totals` sign convention, RBAC roles, feature-flag env, Iter130/131/132a/132b/132c-C1/H1 code, Save-Health, Google OAuth, `AKB/26-27//26-27/0004` anomalous invoice number.
+
+### Restarts used
+- **3 authorised backend restarts** across the full C2 → C2b → C2c → C2c-follow-up arc. Zero unauthorised restarts.
+
+### STOP RULE compliance
+- Halted twice mid-iteration when targeted tests failed (once for STMT-PDF body-cell font gap, once for xdist/asyncio-loop pollution). RCA-only reports; fixes applied strictly after explicit user GO. No autonomous product-code changes.
+
+### Not shipped (deferred, awaiting separate approvals)
+- **Iter133 L1/L2** — Customer Ledger CN/DN row integration (data-layer merge + PDF presentation).
+- **Slice C3** — GSTR-1 Section 9B statutory export.
+- **Slice C4** — CN/DN Register report.
+- **Iter132c-ai-agg-fix** — remaining `to_list(2000)` truncation in `ai.py` LLM tools (M1/M2/M3).
+- **Invoice-Number Hygiene one-off** — the single anomalous `AKB/26-27//26-27/0004` invoice row (data-only, tenant-approved rewrite pathway).
+- **Phase 2 Security Hardening** — Save-Health role-gating, `/run-now` role-gating, localStorage-token removal, global 500-error sanitisation.
+- **Trip Sheet redesign / rebrand / other backlog** — untouched.
+
 ## Frozen — do NOT start without explicit instruction
 - **Phase 2 security items** 🧊 (pending separate approvals):
   - Save Health role-gating
