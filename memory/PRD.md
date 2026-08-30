@@ -241,6 +241,34 @@ User communicates in English. Respond in English. (Prior bilingual reference ret
   - **Invoice-Number Hygiene one-off** — anomalous `AKB/26-27//26-27/0004`.
   - **Phase-2 Security Hardening**, Trip Sheet redesign, other backlog — all untouched.
 
+## Iter133 L2 + L2b + L2c · Customer Ledger & Statement Presentation — 🔒 LOCKED (2026-08-30 UAT + Deploy-Guard approved)
+
+- **L2 · Ledger UI + PDF branded presentation** — Redesigned `pdf/ledger.py` (84 → ~240 lines) with company logo + Bill-To/Period/Closing card + `totals_by_type` pill row (invoiced/DN/CN/payments) + adjustments summary line + per-row tint (CN=red-50, DN=blue-50) + Amount-in-Words + Authorised Signatory + `Page X of Y` footer via a two-pass `NumberedCanvas`. Frontend `Reports.jsx` LedgerReport: per-type coloured pills in the Ref column (INV/PMT/CN/DN), row-level red/blue tint for CN/DN, `totals_by_type` mini-cards, "Adjustments this period" strip. Frontend `CustomerHistory.jsx` passbook: presentational aggregate strip using existing `summary.credits_total` / `summary.debits_total` — no backend change.
+- **L2b · Customer Statement PDF branding parity** — Same branded hero band + logo + company GSTIN with empty-guard + Bill-To / Statement-Period / Outstanding info card + Amount-in-Words + Authorised Signatory + Page X of Y — for `customer_statement_pdf`. Balance Bridge + Adjustments table preserved unchanged.
+- **L2c · Visual polish (15-item plan)** — Ledger table column widths rebalanced to 178 mm (`19/26/61/24/24/24`), header padding lifted, tabular number breathing room, subtle Opening-Balance grey, divider above TOTAL, Closing Balance row emphasised with amber accent + top-rule + 10-pt bold. Statement Balance Bridge widened to 178 mm (`118/60`), payments/Balance-Due divider hierarchy, DejaVu heading style, Adjustments table widened (`20/30/12/32/60/24`) so `post_invoice_discount` doesn't overflow, thin amber section rules above Balance Bridge and Adjustments, tightened inter-section spacing, signatory spacer trimmed from 10 mm → 6 mm.
+- **Master Principle upheld** — *Enter Once → Calculate Once → Reflect Everywhere → Report Ready → No Manual Reconciliation.* A single issued CN/DN now propagates automatically to effective invoice balance (C1) → dashboard/balance-sheet → `/reports/ledger` JSON entries + `totals_by_type` (L1) → Reports → Ledger UI → `/reports/ledger/pdf` → `/customers/{cid}/statement.pdf` (with Balance Bridge + per-note Adjustments) → CustomerHistory passbook aggregate strip. Zero customer-side manual reconciliation.
+- **Non-goals honoured (zero touches)** — `pdf/invoice.py`, `pdf/credit_note.py`, `pdf/debit_note.py`, `pdf/lr.py`, `pdf/owner.py`, `pdf/_base.py`, `routers/reports.py` (L1 LOCKED), `routers/notes.py`, `routers/invoices.py`, `routers/dashboard.py`, `routers/ai.py`, `models.py`, `services.py`, `auth.py`, `server.py`. Invoice numbering, `_effective_balance`, `_compute_note_totals`, effective-balance semantics, tax/GST calculations, RBAC, feature flags, `AKB/26-27//26-27/0004` anomalous invoice, statutory validators, L1 payload contract — all unchanged.
+- **Regression evidence (2026-08-30 lock day)**
+  - **Targeted matrix (serial `-n0`)**: L2/L2b/L2c 18 + L1 7 + C2b/C2c 19 + C2 endpoints 6 + H1 4 + C1 15 + Iter132a 10 + Iter132b 11 = **90 / 90** in isolation (combined-run flap on `test_l1_t3_cn_before_start_folds_into_opening` and `test_effective_balance_increases_with_debit_note` — known cross-file test-data pollution documented since L1 lock, both pass in isolation).
+  - **Full Deploy Guard** at `2026-08-30T15:09:17Z`: **503 passed / 1 skipped / 0 failed / exit 0** in 736.27 s (~12 min 16 s), `consecutive_failures=0`, `strict_mode=true`, `next_check_at=2026-08-30T16:09:17Z`, `failed_tests=[]`. Iter128 badge **🟢 Ready**.
+  - **PDF spot verifications** (fresh tenant, real CN + DN): Ledger PDF `₹×9-10` · all 6 cols visible · no numeric wrap · Opening/TOTAL/Closing highlighted · CN/DN row tint · Amount-in-Words · Signatory · `Page 1 of 1`. Statement PDF `₹×17-18` · CUSTOMER STATEMENT hero · BILL TO / STATEMENT PERIOD / OUTSTANDING blocks · Balance Bridge (5 rows with dividers) · Adjustments (6 columns, `post_invoice_discount` fits) · cancelled notes absent · Signatory · `Page 1 of 1`.
+- **Files changed (final L2 + L2b + L2c inventory)**
+  - `backend/pdf/ledger.py` — 84 → ~242 lines (full redesign in L2, table tuning in L2c).
+  - `backend/routers/customers.py` — +178 lines total (L2 Bridge+Adjustments, L2b branded header/AmtWords/Signatory, L2c widths/dividers/heading style/spacing, final spacer trim).
+  - `backend/tests/test_iter133_l2_ledger_statement_presentation.py` — NEW · 451 lines · 18 tests (9 L2 + 7 L2b + 2 L2c).
+  - `frontend/src/pages/Reports.jsx` — +60 / −16 lines (type pills, row tint, `totals_by_type` cards, adjustments strip).
+  - `frontend/src/pages/CustomerHistory.jsx` — +22 lines (passbook aggregate adjustment strip).
+- **Restarts used**: 3 authorised backend restarts across the L2 → L2b → L2c → L2c-spacer arc. Zero unauthorised restarts.
+- **STOP RULE compliance**: no autonomous product-code fixes; known xdist/asyncio-loop pollution flagged and confirmed as false positives via `-n0` isolation runs.
+- **Not shipped (deferred, awaiting separate approvals)**
+  - **L1.5** — Passbook UI per-note CN/DN row integration on `/customers/{cid}/transactions`.
+  - **AI `customer_ledger` tool** — CN/DN parity micro-slice.
+  - **C3** — GSTR-1 §9B statutory export.
+  - **C4** — CN/DN Register report.
+  - **Iter132c-ai-agg-fix** — `to_list(2000)` truncation in `ai.py` LLM tools.
+  - **Invoice-Number Hygiene** one-off (anomalous `AKB/26-27//26-27/0004`).
+  - **Phase-2 Security Hardening**, Trip Sheet redesign, other backlog — all untouched.
+
 ## Frozen — do NOT start without explicit instruction
 - **Phase 2 security items** 🧊 (pending separate approvals):
   - Save Health role-gating
