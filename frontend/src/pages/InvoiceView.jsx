@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { ArrowLeft, Download, Printer, Trash2, Plus, MessageCircle, Mail } from "lucide-react";
 import VoiceButton from "@/components/VoiceButton";
 import InvoicePdfPreview from "@/components/InvoicePdfPreview";
+import RelatedNotesSection from "@/components/RelatedNotesSection";
 
 export default function InvoiceView() {
   const { id } = useParams();
@@ -509,6 +510,9 @@ export default function InvoiceView() {
           </div>
         </div>
       )}
+
+      {/* Iter132c C2 · Related Notes section (renders nothing when ENABLE_CDN off) */}
+      <RelatedNotesSection invoice={invoice} />
     </div>
   );
 }

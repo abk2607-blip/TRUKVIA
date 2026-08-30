@@ -27,6 +27,7 @@ import Parties from "@/pages/Parties";
 import Invoices from "@/pages/Invoices";
 import InvoiceCreate from "@/pages/InvoiceCreate";
 import InvoiceView from "@/pages/InvoiceView";
+import Notes from "@/pages/Notes";
 import DeployHistoryPage from "@/pages/DeployHistoryPage";
 import Settings from "@/pages/Settings";
 import TripImport from "@/pages/TripImport";
@@ -85,6 +86,7 @@ function AppRouter() {
       <Route path="/invoices" element={<Protected><Invoices /></Protected>} />
       <Route path="/invoices/new" element={<Protected><InvoiceCreate /></Protected>} />
       <Route path="/invoices/:id" element={<Protected><InvoiceView /></Protected>} />
+      <Route path="/notes" element={<Protected><Notes /></Protected>} />
       <Route path="/settings" element={<Protected><Settings /></Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

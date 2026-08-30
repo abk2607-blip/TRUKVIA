@@ -4,10 +4,11 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/context/AuthContext";
 import { api, getActiveCompanyId, setActiveCompanyId } from "@/api";
 import {
-  LayoutDashboard, Truck, Users, FileText, Settings as SettingsIcon, LogOut, UserCog, Package, BarChart3, Car, Fuel as FuelIcon, FolderArchive, History, ShieldCheck, MapPin, AlertCircle, Building2, LayoutTemplate, Handshake, Menu, X, MoreHorizontal,
+  LayoutDashboard, Truck, Users, FileText, Settings as SettingsIcon, LogOut, UserCog, Package, BarChart3, Car, Fuel as FuelIcon, FolderArchive, History, ShieldCheck, MapPin, AlertCircle, Building2, LayoutTemplate, Handshake, Menu, X, MoreHorizontal, FileMinus,
 } from "lucide-react";
 import AIChatBubble from "@/components/AIChatBubble";
 import DeployReadinessBadge from "@/components/DeployReadinessBadge";
+import { useCdnEnabled } from "@/hooks/useCdnEnabled";
 
 const nav = [
   { to: "/dashboard", te: "డ్యాష్‌బోర్డ్", en: "Dashboard", icon: LayoutDashboard, testid: "nav-dashboard" },
@@ -24,6 +25,7 @@ const nav = [
   { to: "/fuel", te: "డీజిల్", en: "Fuel", icon: FuelIcon, testid: "nav-fuel" },
   { to: "/invoices", te: "ఇన్వాయిస్‌లు", en: "Invoices", icon: FileText, testid: "nav-invoices" },
   { to: "/invoices/overdue", te: "బకాయిలు", en: "Overdue", icon: AlertCircle, testid: "nav-overdue" },
+  { to: "/notes", te: "క్రెడిట్ / డెబిట్ నోట్‌లు", en: "Credit / Debit Notes", icon: FileMinus, testid: "nav-notes", cdnOnly: true },
   { to: "/reports", te: "రిపోర్ట్‌లు", en: "Reports", icon: BarChart3, testid: "nav-reports" },
   { to: "/files", te: "ఫైల్‌లు", en: "Files", icon: FolderArchive, testid: "nav-files" },
   { to: "/team", te: "టీమ్", en: "Team", icon: ShieldCheck, testid: "nav-team" },
@@ -62,9 +64,11 @@ function CompanySwitcher({ companies, activeCid, active, onSwitch }) {
 }
 
 function NavList({ onNavigate }) {
+  const cdnEnabled = useCdnEnabled();
+  const visibleNav = nav.filter((n) => !n.cdnOnly || cdnEnabled);
   return (
     <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-      {nav.map((n) => (
+      {visibleNav.map((n) => (
         <NavLink
           key={n.to}
           to={n.to}

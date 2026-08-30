@@ -580,3 +580,56 @@ async def get_debit_note(nid: str, user=Depends(get_current_user)):
     if not d:
         raise HTTPException(status_code=404, detail="Not found")
     return d
+
+
+# ============================================================================
+# Iter132c C2 · CN/DN PDF endpoints (additive, read-only).
+# Thin wrappers over the existing pdf/credit_note.py and pdf/debit_note.py
+# builders (both Iter132a/b LOCKED). Zero business-logic change.
+# ============================================================================
+
+async def _render_note_pdf(nid: str, kind: str, user: dict):
+    """Shared logic for CN and DN PDF endpoints. Returns StreamingResponse."""
+    from fastapi.responses import StreamingResponse
+    from io import BytesIO
+    q = {"id": nid, "user_id": user["user_id"], "kind": kind}
+    note = await db.credit_debit_notes.find_one(q, {"_id": 0, "user_id": 0})
+    if not note:
+        raise HTTPException(status_code=404, detail="Not found")
+    inv = await db.invoices.find_one(
+        {"id": note.get("invoice_id"), "user_id": user["user_id"]},
+        {"_id": 0, "user_id": 0},
+    )
+    if not inv:
+        raise HTTPException(status_code=404, detail="Linked invoice not found")
+    company = await db.companies.find_one(
+        {"id": note.get("company_id"), "user_id": user["user_id"]},
+        {"_id": 0, "user_id": 0},
+    ) or {}
+    customer = await db.customers.find_one(
+        {"id": note.get("customer_id"), "user_id": user["user_id"]},
+        {"_id": 0, "user_id": 0},
+    ) or {}
+    if kind == "credit":
+        from pdf.credit_note import build_credit_note_pdf as _build
+    else:
+        from pdf.debit_note import build_debit_note_pdf as _build
+    pdf_bytes = _build(company, customer, inv, note)
+    fname = f"{note.get('note_number') or note.get('id')}.pdf".replace("/", "-")
+    return StreamingResponse(
+        BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{fname}"'},
+    )
+
+
+@router.get("/credit-notes/{nid}/pdf")
+async def credit_note_pdf(nid: str, user=Depends(get_current_user)):
+    _require_flag()
+    return await _render_note_pdf(nid, "credit", user)
+
+
+@router.get("/debit-notes/{nid}/pdf")
+async def debit_note_pdf(nid: str, user=Depends(get_current_user)):
+    _require_flag()
+    return await _render_note_pdf(nid, "debit", user)
