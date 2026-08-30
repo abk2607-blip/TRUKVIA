@@ -8,6 +8,10 @@ import {
   Download, Share2, Filter, X, ChevronRight, ChevronDown, Bell, Plus, Send, Pencil, History
 } from "lucide-react";
 import PolicyChangeHistory from "@/components/PolicyChangeHistory";
+import NoteCreateFromCustomerDialog from "@/components/NoteCreateFromCustomerDialog";
+import { useCdnEnabled } from "@/hooks/useCdnEnabled";
+import { useAuth } from "@/context/AuthContext";
+import { FileMinus, FilePlus } from "lucide-react";
 
 const inputCls = "w-full border border-zinc-300 px-2.5 py-1.5 rounded-sm text-xs focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none bg-white";
 const chipCls = "inline-flex items-center gap-1 text-[10px] uppercase tracking-wider font-bold px-2 py-0.5 rounded-full border";
@@ -745,6 +749,9 @@ export default function CustomerHistory() {
   const [showPayment, setShowPayment] = useState(false);
   const [showBulk, setShowBulk] = useState(false);
   const [sharing, setSharing] = useState(false);
+  // Iter132c C2b — Customer-based CN/DN entry (gated by cdnEnabled probe).
+  const [noteKind, setNoteKind] = useState(null); // "credit" | "debit" | null
+  const cdnEnabled = useCdnEnabled();
 
   const { data: customers = [], isLoading: loadingCust } = useQuery({
     queryKey: ["customers", "with-balance"],
@@ -856,6 +863,24 @@ export default function CustomerHistory() {
                   </button>
                   <button data-testid="add-payment-btn" onClick={() => setShowPayment(true)} className="inline-flex items-center gap-1.5 text-xs uppercase tracking-wider px-3 py-2 bg-blue-600 text-white rounded-sm hover:bg-blue-700 font-bold"><Plus size={12} /> Add Payment</button>
                   <button data-testid="add-trip-btn" onClick={() => nav(`/trips/new?customer_id=${selectedId}`)} className="inline-flex items-center gap-1.5 text-xs uppercase tracking-wider px-3 py-2 bg-emerald-600 text-white rounded-sm hover:bg-emerald-700 font-bold"><Plus size={12} /> Add Trip</button>
+                  {cdnEnabled && (
+                    <>
+                      <button
+                        data-testid="customer-add-credit-note-btn"
+                        onClick={() => setNoteKind("credit")}
+                        title="Issue a Credit Note against one of this customer's invoices"
+                        className="inline-flex items-center gap-1.5 text-xs uppercase tracking-wider px-3 py-2 border border-emerald-600 text-emerald-700 bg-white rounded-sm hover:bg-emerald-600 hover:text-white font-bold">
+                        <FileMinus size={12} /> Credit Note
+                      </button>
+                      <button
+                        data-testid="customer-add-debit-note-btn"
+                        onClick={() => setNoteKind("debit")}
+                        title="Issue a Debit Note against one of this customer's invoices"
+                        className="inline-flex items-center gap-1.5 text-xs uppercase tracking-wider px-3 py-2 border border-orange-600 text-orange-700 bg-white rounded-sm hover:bg-orange-600 hover:text-white font-bold">
+                        <FilePlus size={12} /> Debit Note
+                      </button>
+                    </>
+                  )}
                   <button data-testid="download-statement-btn" onClick={downloadStatement} className="inline-flex items-center gap-1.5 text-xs uppercase tracking-wider px-3 py-2 border border-zinc-950 text-zinc-950 rounded-sm hover:bg-zinc-950 hover:text-white font-bold"><Download size={12} /> PDF</button>
                   <button data-testid="share-statement-btn" onClick={shareStatement} disabled={sharing} className="inline-flex items-center gap-1.5 text-xs uppercase tracking-wider px-3 py-2 border border-emerald-500 bg-emerald-50 text-emerald-800 rounded-sm hover:bg-emerald-100 font-bold disabled:opacity-50">{sharing ? <Loader2 size={12} className="animate-spin" /> : <Share2 size={12} />} WhatsApp</button>
                 </div>
@@ -911,6 +936,17 @@ export default function CustomerHistory() {
         />
       )}
       {showBulk && <BulkReminderModal onClose={() => setShowBulk(false)} />}
+      {noteKind && selectedId && (
+        <NoteCreateFromCustomerDialog
+          kind={noteKind}
+          customerId={selectedId}
+          onClose={() => {
+            setNoteKind(null);
+            qc.invalidateQueries({ queryKey: ["customer-history", selectedId] });
+            qc.invalidateQueries({ queryKey: ["customers", "with-balance"] });
+          }}
+        />
+      )}
     </div>
   );
 }

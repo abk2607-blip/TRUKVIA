@@ -1,152 +1,181 @@
-"""Iter132b · Debit Note PDF renderer.
-
-Self-contained — mirrors Iter132a Credit Note structure but with a blue
-"DEBIT NOTE" banner. Does NOT share helpers with pdf/invoice.py so
-Iter127b page-of-pages logic is untouched.
+"""Iter132c C2 refinement · Professional Debit Note PDF (A4 portrait).
+Mirror of credit_note.py with blue accent (#1D4ED8) and TOTAL DEBIT NOTE label.
 """
+from reportlab.lib import colors
+from pdf.credit_note import (
+    build_credit_note_pdf as _cn_impl,
+)
+
+# Delegate to a parametrised variant by monkey-patching the accent/label per call.
+# Simpler: re-import the module and swap constants in a local function.
+
+import base64
 from io import BytesIO
 from reportlab.lib.pagesizes import A4
-from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet
 from reportlab.lib.units import mm
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Table, TableStyle, Spacer
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import (
+    SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image,
+)
 
-from pdf._base import _fmt, _num_to_words_inr, _UNI_FONT, _UNI_FONT_BOLD, _fmt_ind_date
-
-
-def _footer(canvas, doc):
-    canvas.saveState()
-    canvas.setFont(_UNI_FONT, 7.5)
-    canvas.setFillColor(colors.HexColor("#64748B"))
-    canvas.drawRightString(A4[0] - 10 * mm, 5 * mm, f"Page {canvas.getPageNumber()} · Debit Note")
-    canvas.drawString(10 * mm, 5 * mm, "This is a computer-generated document.")
-    canvas.restoreState()
+ACCENT = colors.HexColor("#1D4ED8")  # Debit Note blue
+ACCENT_LIGHT = colors.HexColor("#DBEAFE")
+INK = colors.HexColor("#111827")
+MUTED = colors.HexColor("#6B7280")
+BORDER = colors.HexColor("#D1D5DB")
 
 
-def build_debit_note_pdf(company: dict, customer: dict, invoice: dict, note: dict) -> bytes:
-    """Iter132b · Debit-note PDF. Portrait A4 with blue banner."""
+def _inr(v):
+    try: return f"₹{float(v):,.2f}"
+    except Exception: return "₹0.00"
+
+
+def _logo_flowable(company):
+    logo_data = (company or {}).get("logo") or ""
+    if not logo_data.startswith("data:image"):
+        return None
+    try:
+        raw = base64.b64decode(logo_data.split(",", 1)[1])
+        return Image(BytesIO(raw), width=22 * mm, height=22 * mm, kind="proportional")
+    except Exception:
+        return None
+
+
+def build_debit_note_pdf(company, customer, invoice, note):
+    from pdf.credit_note import _amount_in_words
     buf = BytesIO()
-    doc = SimpleDocTemplate(
-        buf, pagesize=A4,
-        leftMargin=12 * mm, rightMargin=12 * mm,
-        topMargin=12 * mm, bottomMargin=15 * mm,
-        title=f"Debit Note {note.get('note_number','')}",
-    )
+    doc = SimpleDocTemplate(buf, pagesize=A4, leftMargin=12*mm, rightMargin=12*mm,
+                            topMargin=10*mm, bottomMargin=12*mm)
     styles = getSampleStyleSheet()
+    small = ParagraphStyle("s", parent=styles["Normal"], fontSize=8, textColor=INK, leading=10)
+    muted = ParagraphStyle("m", parent=styles["Normal"], fontSize=8, textColor=MUTED, leading=10)
+    title = ParagraphStyle("t", parent=styles["Heading1"], fontSize=18, textColor=ACCENT, alignment=2, leading=22)
+    label = ParagraphStyle("l", parent=styles["Normal"], fontSize=7, textColor=MUTED, leading=9, spaceAfter=1)
+    body = ParagraphStyle("b", parent=styles["Normal"], fontSize=9, textColor=INK, leading=12)
+
     story = []
-    company_name = company.get("name", "")
-    company_addr = "\n".join(x for x in [
-        company.get("address", ""),
-        f"GSTIN: {company.get('gstin','')}",
-        f"State: {company.get('state','')}",
-    ] if x)
-    header_left = Paragraph(
-        f"<b><font size=13>{company_name}</font></b><br/>"
-        f"<font size=8>{company_addr.replace(chr(10), '<br/>')}</font>",
-        styles["Normal"],
-    )
-    header_right = Paragraph(
-        "<b><font color='#1D4ED8' size=22>DEBIT NOTE</font></b><br/>"
-        f"<font size=9>Note No: <b>{note.get('note_number','—')}</b><br/>"
-        f"Date: {_fmt_ind_date(note.get('note_date',''))}<br/>"
-        f"<font color='#64748B'>Ref Invoice: {note.get('invoice_number_snapshot','')}"
-        f" ({_fmt_ind_date(invoice.get('invoice_date',''))})</font></font>",
-        styles["Normal"],
-    )
-    hdr = Table([[header_left, header_right]], colWidths=[110 * mm, 76 * mm])
-    hdr.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("BOX", (0, 0), (-1, -1), 0.4, colors.HexColor("#1D4ED8")),
-        ("INNERGRID", (0, 0), (-1, -1), 0.2, colors.HexColor("#E5E7EB")),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ("TOPPADDING", (0, 0), (-1, -1), 8), ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
-    ]))
-    story.append(hdr); story.append(Spacer(1, 6))
+    bar = Table([[""]], colWidths=[186*mm], rowHeights=[3*mm])
+    bar.setStyle(TableStyle([("BACKGROUND", (0,0), (-1,-1), ACCENT)]))
+    story.append(bar); story.append(Spacer(1, 4*mm))
 
-    reason_labels = {
-        "rate_correction": "Rate Correction", "short_delivery": "Short Delivery",
-        "quality_claim": "Quality Claim", "post_invoice_discount": "Post-Invoice Discount",
-        "under_charge": "Under Charge", "missed_halting": "Missed Halting",
-        "freight_escalation": "Freight Escalation", "sales_return": "Sales Return",
-        "other": "Other",
-    }
-    bill_to = Paragraph(
-        f"<b>Debit To:</b><br/><font size=9>{customer.get('name','')}<br/>"
-        f"{customer.get('address','')}<br/>"
-        f"GSTIN: {customer.get('gstin','')}<br/>State: {customer.get('state','')}</font>",
-        styles["Normal"],
-    )
-    reason_block = Paragraph(
-        f"<b>Reason:</b> {reason_labels.get(note.get('reason_code','other'),'Other')}<br/>"
-        f"<font size=8>{(note.get('reason_text') or '').replace(chr(10),'<br/>')}</font>",
-        styles["Normal"],
-    )
-    btbl = Table([[bill_to, reason_block]], colWidths=[95 * mm, 91 * mm])
-    btbl.setStyle(TableStyle([
-        ("VALIGN", (0, 0), (-1, -1), "TOP"),
-        ("BOX", (0, 0), (-1, -1), 0.3, colors.HexColor("#D1D5DB")),
-        ("LEFTPADDING", (0, 0), (-1, -1), 8), ("RIGHTPADDING", (0, 0), (-1, -1), 8),
-        ("TOPPADDING", (0, 0), (-1, -1), 6), ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
-    ]))
-    story.append(btbl); story.append(Spacer(1, 8))
-
-    line_rows = [["#", "Description", "HSN/SAC", "Qty", "Rate", "Taxable Value"]]
-    for i, l in enumerate(note.get("lines", []), start=1):
-        line_rows.append([str(i), l.get("description", ""), l.get("hsn_sac", ""),
-                          _fmt(l.get("quantity", 0)), _fmt(l.get("rate", 0)),
-                          _fmt(l.get("taxable_value", 0))])
-    ltbl = Table(line_rows, colWidths=[10 * mm, 78 * mm, 20 * mm, 20 * mm, 25 * mm, 33 * mm])
-    ltbl.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#DBEAFE")),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#1E3A8A")),
-        ("FONTNAME", (0, 0), (-1, 0), _UNI_FONT_BOLD),
-        ("FONTSIZE", (0, 0), (-1, -1), 8),
-        ("ALIGN", (3, 1), (-1, -1), "RIGHT"),
-        ("GRID", (0, 0), (-1, -1), 0.2, colors.HexColor("#E5E7EB")),
-        ("LEFTPADDING", (0, 0), (-1, -1), 4), ("RIGHTPADDING", (0, 0), (-1, -1), 4),
-    ]))
-    story.append(ltbl); story.append(Spacer(1, 6))
-
-    if note.get("gst_type") == "cgst_sgst":
-        tax_rows = [
-            [f"CGST @ {note.get('cgst_rate',2.5)}%", _fmt(note.get("cgst_amount", 0))],
-            [f"SGST @ {note.get('sgst_rate',2.5)}%", _fmt(note.get("sgst_amount", 0))],
-        ]
-    else:
-        tax_rows = [[f"IGST @ {note.get('igst_rate',5)}%", _fmt(note.get("igst_amount", 0))]]
-    tot_rows = [
-        ["Subtotal", _fmt(note.get("subtotal", 0))], *tax_rows,
-        ["Total Tax", _fmt(note.get("total_tax", 0))],
-        ["Round Off", _fmt(note.get("round_off", 0))],
-        ["Total (Debit Note)", _fmt(note.get("total_amount", 0))],
+    logo = _logo_flowable(company)
+    company_lines = [
+        Paragraph(f"<b>{(company or {}).get('name','')}</b>", body),
+        Paragraph((company or {}).get("address",""), small),
+        Paragraph(f"GSTIN: {(company or {}).get('gstin','')} · State: {(company or {}).get('state','')}", muted),
     ]
-    ttbl = Table(tot_rows, colWidths=[60 * mm, 40 * mm], hAlign="RIGHT")
-    ttbl.setStyle(TableStyle([
-        ("FONTSIZE", (0, 0), (-1, -1), 9),
-        ("ALIGN", (1, 0), (1, -1), "RIGHT"),
-        ("BACKGROUND", (0, -1), (-1, -1), colors.HexColor("#DBEAFE")),
-        ("FONTNAME", (0, -1), (-1, -1), _UNI_FONT_BOLD),
-        ("BOX", (0, 0), (-1, -1), 0.2, colors.HexColor("#D1D5DB")),
-        ("INNERGRID", (0, 0), (-1, -1), 0.2, colors.HexColor("#E5E7EB")),
-        ("LEFTPADDING", (0, 0), (-1, -1), 6), ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+    left = Table([[logo or "", company_lines]], colWidths=[24*mm, 100*mm]) if logo else Table([[company_lines]], colWidths=[124*mm])
+    left.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"TOP")]))
+
+    right_rows = [
+        [Paragraph("DEBIT NOTE", title)],
+        [Paragraph(f"<font color='#6B7280'>Note #</font>  <b>{note.get('note_number','')}</b>", small)],
+        [Paragraph(f"<font color='#6B7280'>Date</font>  {note.get('note_date','')}", small)],
+        [Paragraph(f"<font color='#6B7280'>Ref Invoice</font>  <b>{invoice.get('invoice_number','')}</b>", small)],
+        [Paragraph(f"<font color='#6B7280'>Ref Inv Date</font>  {invoice.get('invoice_date','')}", small)],
+    ]
+    right = Table(right_rows, colWidths=[60*mm])
+    right.setStyle(TableStyle([("ALIGN",(0,0),(-1,-1),"RIGHT")]))
+    header = Table([[left, right]], colWidths=[124*mm, 62*mm])
+    header.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"TOP")]))
+    story.append(header); story.append(Spacer(1, 4*mm))
+
+    cust = [
+        Paragraph("DEBIT TO", label),
+        Paragraph(f"<b>{(customer or {}).get('name','')}</b>", body),
+        Paragraph(f"GSTIN: {(customer or {}).get('gstin','—')}", small),
+        Paragraph(f"State: {(customer or {}).get('state','')}", small),
+    ]
+    refb = [
+        Paragraph("REFERENCE INVOICE", label),
+        Paragraph(f"<b>{invoice.get('invoice_number','')}</b>", body),
+        Paragraph(f"Invoice Date: {invoice.get('invoice_date','')}", small),
+        Paragraph(f"Original Amount: {_inr(invoice.get('total_amount',0))}", small),
+    ]
+    bx = Table([[cust, refb]], colWidths=[93*mm, 93*mm])
+    bx.setStyle(TableStyle([
+        ("VALIGN",(0,0),(-1,-1),"TOP"),
+        ("BOX",(0,0),(-1,-1),0.5,BORDER),
+        ("INNERGRID",(0,0),(-1,-1),0.5,BORDER),
+        ("LEFTPADDING",(0,0),(-1,-1),6), ("RIGHTPADDING",(0,0),(-1,-1),6),
+        ("TOPPADDING",(0,0),(-1,-1),6), ("BOTTOMPADDING",(0,0),(-1,-1),6),
     ]))
-    story.append(ttbl); story.append(Spacer(1, 6))
-    story.append(Paragraph(
-        f"<font size=8><b>Amount in words:</b> {_num_to_words_inr(note.get('total_amount', 0))}</font>",
-        styles["Normal"]))
+    story.append(bx); story.append(Spacer(1, 4*mm))
+
+    reason = Table([[Paragraph("REASON", label),
+                     Paragraph(f"<b>{note.get('reason_code','')}</b> — {note.get('reason_text','')}", body)]],
+                   colWidths=[24*mm, 162*mm])
+    reason.setStyle(TableStyle([
+        ("VALIGN",(0,0),(-1,-1),"TOP"),
+        ("BACKGROUND",(0,0),(-1,-1),ACCENT_LIGHT),
+        ("BOX",(0,0),(-1,-1),0.5,BORDER),
+        ("LEFTPADDING",(0,0),(-1,-1),6), ("RIGHTPADDING",(0,0),(-1,-1),6),
+        ("TOPPADDING",(0,0),(-1,-1),4), ("BOTTOMPADDING",(0,0),(-1,-1),4),
+    ]))
+    story.append(reason); story.append(Spacer(1, 4*mm))
+
+    hdr = ["#", "Description", "HSN/SAC", "Qty", "Rate", "Taxable Value"]
+    lines_data = [hdr]
+    for i, ln in enumerate((note.get("lines") or []), 1):
+        lines_data.append([
+            str(i),
+            Paragraph(ln.get("description",""), small),
+            ln.get("hsn_sac","") or "—",
+            f"{float(ln.get('quantity',0)):g}",
+            _inr(ln.get("rate",0)),
+            _inr(ln.get("taxable_value", ln.get("rate",0))),
+        ])
+    lt = Table(lines_data, colWidths=[10*mm, 80*mm, 22*mm, 15*mm, 28*mm, 31*mm], repeatRows=1)
+    lt.setStyle(TableStyle([
+        ("BACKGROUND",(0,0),(-1,0),ACCENT),
+        ("TEXTCOLOR",(0,0),(-1,0),colors.white),
+        ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),
+        ("FONTSIZE",(0,0),(-1,-1),8),
+        ("ALIGN",(0,0),(0,-1),"CENTER"),
+        ("ALIGN",(3,0),(5,-1),"RIGHT"),
+        ("VALIGN",(0,0),(-1,-1),"TOP"),
+        ("BOX",(0,0),(-1,-1),0.5,BORDER),
+        ("INNERGRID",(0,0),(-1,-1),0.3,BORDER),
+        ("LEFTPADDING",(0,0),(-1,-1),4), ("RIGHTPADDING",(0,0),(-1,-1),4),
+        ("TOPPADDING",(0,0),(-1,-1),3), ("BOTTOMPADDING",(0,0),(-1,-1),3),
+    ]))
+    story.append(lt); story.append(Spacer(1, 3*mm))
+
+    tot_rows = [["Subtotal", _inr(note.get("subtotal",0))]]
+    if float(note.get("cgst_amount",0) or 0) > 0:
+        tot_rows.append([f"CGST @ {note.get('cgst_rate',0)}%", _inr(note.get("cgst_amount",0))])
+    if float(note.get("sgst_amount",0) or 0) > 0:
+        tot_rows.append([f"SGST @ {note.get('sgst_rate',0)}%", _inr(note.get("sgst_amount",0))])
+    if float(note.get("igst_amount",0) or 0) > 0:
+        tot_rows.append([f"IGST @ {note.get('igst_rate',0)}%", _inr(note.get("igst_amount",0))])
+    tot_rows.append(["Total Tax", _inr(note.get("total_tax",0))])
+    tot_rows.append(["Round Off", _inr(note.get("round_off",0))])
+    tot_rows.append(["TOTAL DEBIT NOTE", _inr(note.get("total_amount",0))])
+    tot = Table(tot_rows, colWidths=[38*mm, 34*mm])
+    tot.setStyle(TableStyle([
+        ("ALIGN",(0,0),(-1,-1),"RIGHT"),
+        ("FONTSIZE",(0,0),(-1,-1),9),
+        ("LINEABOVE",(0,-1),(-1,-1),1,ACCENT),
+        ("FONTNAME",(0,-1),(-1,-1),"Helvetica-Bold"),
+        ("TEXTCOLOR",(0,-1),(-1,-1),ACCENT),
+        ("TOPPADDING",(0,-1),(-1,-1),4),
+    ]))
+    wrap = Table([["", tot]], colWidths=[114*mm, 72*mm])
+    wrap.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"TOP")]))
+    story.append(wrap); story.append(Spacer(1, 4*mm))
+
+    story.append(Paragraph(f"<b>Amount in Words:</b> {_amount_in_words(note.get('total_amount',0))}", small))
     if note.get("rcm"):
-        story.append(Spacer(1, 4))
-        story.append(Paragraph(
-            "<font size=8 color='#1D4ED8'><b>Tax on Reverse Charge Basis — not collected.</b></font>",
-            styles["Normal"]))
-    story.append(Spacer(1, 12))
-    story.append(Paragraph(
-        "<font size=8 color='#64748B'>This is a computer-generated Debit Note "
-        "issued under §34 of the CGST Act, 2017. Please retain for GST records.</font>",
-        styles["Normal"]))
-    story.append(Spacer(1, 22))
-    story.append(Paragraph(
-        f"<div align='right'><font size=8>For <b>{company_name}</b><br/><br/><br/>"
-        "Authorised Signatory</font></div>", styles["Normal"]))
-    doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
+        story.append(Spacer(1, 2*mm))
+        story.append(Paragraph("<b>RCM applicable</b> — Tax to be paid by recipient under Reverse Charge Mechanism.", muted))
+    story.append(Spacer(1, 3*mm))
+    story.append(Paragraph("Computer-generated document · Valid without physical signature.", muted))
+    story.append(Spacer(1, 10*mm))
+
+    sig = Table([["", Paragraph(f"<b>For {(company or {}).get('name','')}</b><br/><br/><br/>Authorised Signatory", small)]],
+                colWidths=[114*mm, 72*mm])
+    sig.setStyle(TableStyle([("ALIGN",(1,0),(1,-1),"RIGHT"), ("VALIGN",(0,0),(-1,-1),"TOP")]))
+    story.append(sig)
+
+    doc.build(story)
     return buf.getvalue()
