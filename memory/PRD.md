@@ -116,6 +116,32 @@ User communicates in English. Respond in English. (Prior bilingual reference ret
   - **Restarts used**: 1 authorised backend restart (after B1 streaming rewrites landed). Zero unauthorised restarts.
   - **STOP RULE compliance**: halted twice mid-iteration when tests failed (once on initial pollution, once on pre-existing bug exposure); RCA-only reports with explicit fix proposals; both fixes applied only after user GO. No autonomous scope expansion.
   - **Not shipped (deferred to future iterations)**: CN/DN frontend UIs (Slice C2), GSTR-1 Section 9B export (Slice C3), CN/DN Register report (Slice C4), remaining `to_list(2000)` sites outside the 2 C1-scope endpoints (see Iter132c-agg-fix proposal), User Manual chapter, Customer Statement CN/DN rows in the invoice table (line-items, not the summary line — a stricter presentation change deferred).
+- **Iter132c-agg-fix · H1 · `/reports/ledger` Streaming** — 🔒 LOCKED · UAT approved 2026-08-30
+  - Removes the pre-existing `to_list(2000)` truncation on `/reports/ledger` and `/reports/ledger/pdf` (which reuses the JSON endpoint). Same B1 streaming pattern proven in Iter132c C1 for `/dashboard` and `/reports/balance-sheet`. Read-side correctness fix — zero write-path, zero schema, zero contract change.
+  - **Root cause of pre-existing bug**: `reports.py:44` used `await db.invoices.find({...}).to_list(2000)` for a per-customer T-account ledger. For any customer with more than 2,000 invoices (real-world risk for large fleets and long tenure), the oldest invoices were silently dropped from `entries[]`, `opening_balance`, `total_debit`, `total_credit`, and `closing_balance`. Latent in demo (top customer had 696) but a statutory audit-trail risk.
+  - **Fix approach**: replaced `to_list(2000)` with a single `async for` Motor cursor and a **single-pass** aggregation that computes `entries[]` (in-range invoices + in-range payments) AND `opening_balance` (pre-start invoices minus pre-start payments) in the same loop. Two DB queries per call (customer master lookup + invoice cursor); no N+1; MongoDB cursor auto-batches at 101 docs (Motor default) so peak memory scales only with the in-range entries returned in the response, not the full cursor size.
+  - **Semantic preservation**: opening-balance rule preserved exactly — pre-start invoices add their `total_amount` to opening, pre-start payments subtract regardless of parent-invoice date. Entry sort order preserved (date ascending; invoice before payment on same day). Response shape byte-identical (same keys, same order).
+  - **CN/DN scope discipline**: ledger continues to NOT surface CN/DN as entries (deliberately deferred — adding CN/DN rows would be a separate presentation-change slice with PDF-layout implications). Cancelled and draft notes automatically excluded.
+  - **Downstream PDF (`/reports/ledger/pdf`)**: reuses `report_ledger` and passes its return dict to `build_ledger_pdf` (pdf/ledger.py). Inherits the fix automatically. `pdf/ledger.py` NOT touched.
+  - **Tests (new)**: `test_iter132c_agg_fix_ledger.py` — 4 tests.
+    - **T1** small-dataset ground-truth: endpoint totals equal Mongo `$group` aggregation over the same customer.
+    - **T2** ⭐ **core H1 regression**: direct-seeds 2,100 invoice docs (unique `seed_tag`) into MongoDB for a fresh isolated customer, calls the real `/reports/ledger` endpoint, asserts `len(entries)==2100` and `closing_balance==₹210,000`, then guaranteed cleanup via `finally:` + post-cleanup verification that zero orphan docs remain. Direct Mongo seed shortcut used ONLY for the volume fixture; the ledger API is still exercised end-to-end.
+    - **T3** opening-balance semantic preservation: pre-start invoices + pre-start payments handled correctly with `?start=... &end=...` filter.
+    - **T4** PDF-consumer regression: `/reports/ledger/pdf` returns 200, `application/pdf`, non-trivial size after the JSON streaming rewrite.
+  - **Test isolation**: per-test unique customer via `POST /api/customers`; direct-Mongo docs tagged with unique `seed_tag=H1TEST-<uuid>` for surgical cleanup; test process fetches `user_id` via `/api/auth/me` (P2 helper `_current_uid()`).
+  - **Test-only fix P1c** (applied to `test_iter130_demo_guard.py` L135-156): the pre-existing Iter130 test used `monkeypatch.delenv("IS_PREVIEW_ENV", ...)` — the SAME file's earlier test at L114-118 already documents that this pattern is defeated by `load_dotenv()` in the `db.py` import chain re-populating the value from `.env`. P1c aligns L135's test with the documented workaround (`setenv("IS_PREVIEW_ENV", "0")` + `finally:` restore), producing consistent 11/11 pass. Zero product-code touched.
+  - **Verified**:
+    - H1 targeted: **4/4 in 2.93 s** · exit 0
+    - Iter132c C1: **15/15** · Iter132a: **10/10** · Iter132b: **11/11** · Iter130: **11/11** · Iter131: **6/6** (all pass in isolation)
+    - **Deploy-Guard: 503 passed / 1 skipped / 0 failed / exit 0 / 1077.55 s (17:57)**
+    - Iter128 badge: **🟢 Ready** · `elapsed_s=1078.3` · `next_check_at +60 min` · `consecutive_failures=0` · **4 consecutive passes** at 02:42, 03:14, 04:35, 05:05 UTC (Iter131 hourly cadence intact throughout)
+    - `/api/auth/health` **200** · new demo token **200** · legacy demo token **401** · unauth **401**
+    - Live ledger sanity on production data: top customer (`cust_1c232a355617455d`, **696 invoices**) → `/reports/ledger` returns all **696 entries**, closing `₹20,587,680`, no truncation.
+    - Invoice numbering intact: `INV/26-27/0900` — sequential FY-scoped pattern preserved.
+  - **Zero touches** to: `services.py`, `models.py`, `server.py`, `pdf/invoice.py`, `pdf/credit_note.py`, `pdf/debit_note.py`, `pdf/ledger.py`, `routers/notes.py`, `routers/customers.py`, `routers/dashboard.py`, `routers/invoices.py`, `auth.py`, `auth_router.py`, Iter132a/b core, Iter132c C1 code, Save Health, Iter130/131 scheduler product code, Google OAuth, invoice numbering (`_next_invoice_number*`, `_compose_invoice_number`), invoice schema, RBAC/perms, `run_regression.sh`, `predeploy_check.sh`, `pytest.ini`, `.env`, `requirements.txt`, `ai.py`, all frontend files, and every other `to_list(2000)` occurrence outside `/reports/ledger`.
+  - **Restarts used**: 1 authorised backend restart (after H1 streaming rewrite landed). Zero unauthorised restarts.
+  - **STOP RULE compliance**: halted twice mid-iteration when tests failed (test-helper bugs, then xdist parallel-run artefacts); RCA-only reports; test-only fixes applied strictly after explicit user GO. No autonomous product-code changes.
+  - **Not shipped (deferred)**: remaining `to_list(2000)` sites in `ai.py` (M1/M2/M3 LLM tools — Iter132c-ai-agg-fix candidate), `add_payment`/`bulk_auto_allocate` write path (explicit scope exclusion), `/reports/gstr-1` statutory export (separate controlled scope), CN/DN rows in ledger (separate presentation-change slice), Slice C2 (Frontend UI), Slice C3 (GSTR-1 Section 9B), Slice C4 (CN/DN Register report).
 
 ## Frozen — do NOT start without explicit instruction
 - **Phase 2 security items** 🧊 (pending separate approvals):
@@ -128,8 +154,8 @@ User communicates in English. Respond in English. (Prior bilingual reference ret
 - Preview Uptime Chip 🧊
 - LR Register Email Digest 🧊
 - User Manual footer distribution link 🧊
-- CN/DN Frontend UI, GSTR-1 Section 9B export, CN/DN Register report, Customer Statement CN/DN row-items, remaining `to_list(2000)` truncation sites (Iter132c-agg-fix candidate) 🧊
-- All Iter126 / Iter127a-c / Iter128 / Iter129 Phase 1 / Iter130 / Iter131 / Iter132a / Iter132b / Iter132c C1 / P0 locked functionality 🔒
+- CN/DN Frontend UI, GSTR-1 Section 9B export, CN/DN Register report, Customer Statement CN/DN row-items, remaining `to_list(2000)` truncation sites (`ai.py` LLM tools · Iter132c-ai-agg-fix candidate) 🧊
+- All Iter126 / Iter127a-c / Iter128 / Iter129 Phase 1 / Iter130 / Iter131 / Iter132a / Iter132b / Iter132c C1 / Iter132c-agg-fix H1 / P0 locked functionality 🔒
 
 ## Backlog (later, on user's call only)
 - **P2** Trip 8279 missing-Ship-To data-hygiene nudge
