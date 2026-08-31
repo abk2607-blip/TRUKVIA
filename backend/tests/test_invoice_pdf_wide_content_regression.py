@@ -430,3 +430,35 @@ def test_invoice_pdf_bottom_tbl_declared_width_under_frame():
     m4 = re.search(r"tc_inline_tbl\s*=\s*Table\([\s\S]*?colWidths=\[(\d+)\s*\*\s*mm\]\)", src)
     assert m4 and int(m4.group(1)) <= 147, \
         f"tc_inline_tbl width regressed: {m4 and m4.group(1)}"
+
+
+# =====================================================================
+# TEST 6 — Large-volume 30-trip invoice (end-to-end HTTP, multi-page)
+# =====================================================================
+
+def test_invoice_pdf_renders_30_trip_multipage_invoice():
+    """30-trip invoice must render successfully via the real HTTP router
+    path — proves the Story-factory refactor (Iter133 L2d v3) eliminates
+    the two-pass flowable-state pollution that broke dense invoices."""
+    _cid, h = _headers()
+    cust = _seed_customer(h, prefix="MULTI30")
+    trip_ids = []
+    for i in range(30):
+        t = _seed_trip(h, cust["id"], i=i, tons=25.0, rate=1000.0,
+                       halting=(i % 7 == 0))  # halting on 5 trips
+        trip_ids.append(t["id"])
+    inv = _seed_invoice(h, cust["id"], trip_ids, rcm=False)
+
+    r = _fetch_invoice_pdf(h, inv["id"])
+    assert r.status_code == 200, (
+        f"30-trip PDF failed with {r.status_code}: {r.text[:400]}"
+    )
+    _assert_valid_pdf(r.content, "30-trip HTTP PDF")
+    text = _extract(r.content)
+    assert inv["invoice_number"] in text
+    assert "AMOUNT IN WORDS" in text.upper()
+    # At least 25 of 30 vehicle identifiers should appear (allow for a few
+    # to be truncated in split rows across page boundaries — but core data
+    # must persist).
+    hits = sum(1 for i in range(30) if f"AP39VB{4600 + i}" in text)
+    assert hits >= 25, f"only {hits}/30 trip vehicles found in PDF"
