@@ -118,26 +118,27 @@ def _parse_money(s):
 
 
 def _parse_bridge(text):
-    """Return dict {original, credits, debits, payments, balance_due}
-    parsed from the Balance Bridge section of the Statement PDF."""
-    # Bridge lines look like:
-    #   Original Invoiced Total     ₹X,XXX.XX
-    #   Less: Credit Notes (n)      − ₹X,XXX.XX
-    #   Add: Debit Notes (n)        + ₹X,XXX.XX
-    #   Less: Payments Received     − ₹X,XXX.XX
-    #   Balance Due                 ₹X,XXX.XX
-    out = {}
-    for label, key in [
-        ("Original Invoiced Total", "original"),
-        ("Less: Credit Notes",       "credits"),
-        ("Add: Debit Notes",         "debits"),
-        ("Less: Payments Received",  "payments"),
-        ("Balance Due",              "balance_due"),
-    ]:
-        m = re.search(rf"{re.escape(label)}[^\d]*([\d,]+\.\d{{2}})", text)
-        assert m, f"Bridge row '{label}' not found in Statement text.\nText excerpt:\n{text[-1500:]}"
-        out[key] = _parse_money(m.group(1))
-    return out
+    """Bridge is 5 rows × 2 cols; pdfminer emits col-major:
+    5 labels then 5 amounts."""
+    m = re.search(
+        r"Balance Bridge(.+?)(?:Adjustments|Amount in Words|$)",
+        text,
+        re.DOTALL,
+    )
+    assert m, "Balance Bridge section not found in Statement PDF"
+    section = m.group(1)
+    amounts = re.findall(r"([\d,]+\.\d{2})", section)
+    assert len(amounts) >= 5, (
+        f"expected ≥5 amounts in Bridge, got {len(amounts)}"
+    )
+    v = [_parse_money(a) for a in amounts[:5]]
+    return {
+        "original": v[0],
+        "credits": v[1],
+        "debits": v[2],
+        "payments": v[3],
+        "balance_due": v[4],
+    }
 
 
 def _amount_in_words_line(text):
