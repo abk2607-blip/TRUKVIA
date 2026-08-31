@@ -403,9 +403,10 @@ def test_invoice_pdf_bottom_tbl_declared_width_under_frame():
     )
     assert m, "could not locate bottom_tbl colWidths in invoice.py"
     a, b = int(m.group(1)), int(m.group(2))
-    assert a + b <= 273, (
-        f"bottom_tbl declared width {a + b} mm > 273 mm safe budget "
-        f"(frame content width after 12pt padding). Regression of L2d fix."
+    assert a + b <= 270, (
+        f"bottom_tbl declared width {a + b} mm > 270 mm safe budget "
+        f"(frame content width after 12pt padding, with 2.77mm safety "
+        f"margin). Regression of L2d v2 fix."
     )
 
     # Extract sig_tbl colWidths
@@ -416,16 +417,16 @@ def test_invoice_pdf_bottom_tbl_declared_width_under_frame():
     )
     assert m2, "could not locate sig_tbl colWidths (L2d-marked) in invoice.py"
     c, d = int(m2.group(1)), int(m2.group(2))
-    assert c + d <= 273, (
-        f"sig_tbl declared width {c + d} mm > 273 mm safe budget"
+    assert c + d <= 270, (
+        f"sig_tbl declared width {c + d} mm > 270 mm safe budget"
     )
 
     # left_bank_tbl and tc_inline_tbl must match the reduced envelope
     m3 = re.search(r"left_bank_tbl\s*=\s*Table\(\[\[bank_lines\]\],\s*"
                    r"colWidths=\[(\d+)\s*\*\s*mm\]\)", src)
-    assert m3 and int(m3.group(1)) <= 165, \
+    assert m3 and int(m3.group(1)) <= 163, \
         f"left_bank_tbl width regressed: {m3 and m3.group(1)}"
 
     m4 = re.search(r"tc_inline_tbl\s*=\s*Table\([\s\S]*?colWidths=\[(\d+)\s*\*\s*mm\]\)", src)
-    assert m4 and int(m4.group(1)) <= 149, \
+    assert m4 and int(m4.group(1)) <= 147, \
         f"tc_inline_tbl width regressed: {m4 and m4.group(1)}"

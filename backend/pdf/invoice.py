@@ -698,11 +698,11 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
 
     terms_html = "<br/>".join([f"<b>{i}.</b> {t}" for i, t in enumerate(terms, start=1)])
     # Nested T&C mini-table sized to fit the LEFT column of the bottom row
-    # (Iter133 L2d · 165mm cell inner width ≈ 149mm after L/R padding).
+    # (Iter133 L2d v2 · 163mm cell inner width ≈ 147mm after L/R padding).
     tc_inline_tbl = Table([
         [Paragraph("TERMS &amp; CONDITIONS", styles["SectLbl"])],
         [Paragraph(terms_html, styles["Small"])],
-    ], colWidths=[149 * mm])
+    ], colWidths=[147 * mm])
     tc_inline_tbl.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#FFFBEB")),
         ("BOX", (0, 0), (-1, -1), 0.6, C_ACCENT),
@@ -731,7 +731,7 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
         Spacer(1, 6),
         tc_inline_tbl,
     ]
-    left_bank_tbl = Table([[bank_lines]], colWidths=[165 * mm])
+    left_bank_tbl = Table([[bank_lines]], colWidths=[163 * mm])
     left_bank_tbl.setStyle(TableStyle([
         ("BACKGROUND", (0, 0), (-1, -1), C_BILL),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
@@ -742,11 +742,13 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
         ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
     ]))
 
-    # Iter133 L2d · Reduce composite table width from 277mm to 273mm so it
-    # fits inside reportlab's frame content area (page inner width 277mm
-    # minus 12pt / 4.23mm default frame padding = 272.77mm usable).
+    # Iter133 L2d v2 · Reduce composite table width from 273mm → 270mm.
+    # The v1 attempt at 273mm left a sub-pixel (~0.66pt) overshoot that
+    # reportlab enforced strictly for tall left-block content (multi-trip
+    # invoices with long amount-in-words). 270mm leaves a comfortable
+    # 2.77mm safety margin below the true 272.77mm frame content width.
     # Layout-only; zero business calc / data change.
-    bottom_tbl = Table([[left_bank_tbl, totals_tbl]], colWidths=[165 * mm, 108 * mm])
+    bottom_tbl = Table([[left_bank_tbl, totals_tbl]], colWidths=[163 * mm, 107 * mm])
     bottom_tbl.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("LEFTPADDING", (0, 0), (-1, -1), 0),
@@ -761,7 +763,7 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
           Paragraph(f"<b>For {company_name}</b>", styles["SmallB"])],
          [Paragraph("<font color='#94A3B8'>Customer Signature &amp; Stamp</font>", styles["Tiny"]),
           Paragraph("Authorised Signatory", styles["Tiny"])]],
-        colWidths=[163 * mm, 110 * mm],   # Iter133 L2d · 277mm → 273mm safe budget
+        colWidths=[161 * mm, 109 * mm],   # Iter133 L2d v2 · 273mm → 270mm safe budget
     )
     sig_tbl.setStyle(TableStyle([
         ("ALIGN", (1, 0), (1, -1), "RIGHT"),
