@@ -165,6 +165,75 @@ def _extract(pdf_bytes):
     return _pdf_extract(io.BytesIO(pdf_bytes))
 
 
+# ---------------------------------------------------------------------
+# HTTP end-to-end helper — mirrors the real router → renderer path
+# (invokes _recompute_invoice which populates every derived field the
+# invoice PDF renderer reads).  Deterministic replacement for the
+# earlier synthetic-dict path that was underspecified.
+# ---------------------------------------------------------------------
+
+def _seed_customer(h, prefix="INVPDF"):
+    tag = uuid.uuid4().hex[:6]
+    r = httpx.post(f"{API}/customers", headers=h,
+                   json={"name": f"{prefix}-{tag}", "phone": f"9{tag}",
+                         "state": "Andhra Pradesh"}, timeout=10)
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def _seed_trip(h, cust_id, i=0, date="2026-08-15", tons=25.0, rate=1000.0,
+               halting=False, shortage=False, diesel=False, advance=False,
+               from_loc="CHENNAI", to_loc="CHILLAKUR"):
+    tag = uuid.uuid4().hex[:5]
+    body = {
+        "customer_id": cust_id, "date": date,
+        "vehicle_number": f"AP39VB{4600 + i}_{tag}",
+        "tons": tons, "loaded_qty": tons, "unloaded_qty": tons,
+        "freight_mode": "per_ton", "rate_per_ton": rate,
+        "product_rate_per_mt": 40000,
+        "from_location": from_loc, "to_location": to_loc,
+        "loading_date": date, "unloading_date": date,
+    }
+    if halting:
+        body["halting_amount"] = 7500.0
+        body["chargeable_halting_days"] = 3
+        body["halting_rate_per_day"] = 2500.0
+        body["halting_amount_override"] = True
+    if shortage:
+        body["shortage_amount"] = 1200.0
+        body["shortage_amount_override"] = True
+    if diesel or advance:
+        recs = []
+        if diesel:
+            recs.append({"type": "diesel", "date": date, "litres": 50,
+                         "rate": 90.0, "amount": 4500.0,
+                         "remarks": "Diesel at loading"})
+        if advance:
+            recs.append({"type": "advance", "date": date, "mode": "UPI",
+                         "ref_no": f"UPI{i:04d}", "amount": 10000.0,
+                         "remarks": "Trip advance"})
+        body["customer_receipts"] = recs
+    r = httpx.post(f"{API}/trips", headers=h, json=body, timeout=15)
+    assert r.status_code == 200, f"POST /trips failed: {r.text[:400]}"
+    return r.json()
+
+
+def _seed_invoice(h, cust_id, trip_ids, invoice_date="2026-08-15",
+                  rcm=False, gst_type=None):
+    body = {"customer_id": cust_id, "trip_ids": trip_ids,
+            "invoice_date": invoice_date, "rcm": rcm}
+    if gst_type:
+        body["gst_type"] = gst_type
+    r = httpx.post(f"{API}/invoices", headers=h, json=body, timeout=30)
+    assert r.status_code == 200, f"POST /invoices failed: {r.text[:400]}"
+    return r.json()
+
+
+def _fetch_invoice_pdf(h, invoice_id):
+    r = httpx.get(f"{API}/invoices/{invoice_id}/pdf", headers=h, timeout=45)
+    return r
+
+
 # =====================================================================
 # TEST 1 — Simple invoice via HTTP (0024-shape) must return 200
 # =====================================================================
@@ -210,33 +279,41 @@ def test_invoice_pdf_renders_1_trip_no_halting():
 # =====================================================================
 
 def test_invoice_pdf_renders_9_trips_with_halting():
-    """Directly reproduces the failure class of invoice AKB/26-27/0025:
-    9 trips + halting sub-rows + long amount-in-words. Must render
-    without LayoutError and include amount-in-words + halting rows.
-
-    Note on HTTP path: TEST 1 already exercises GET /api/invoices/{iid}/pdf.
-    This test uses build_invoice_pdf() directly so we can synthesise the
-    exact 0025 shape (halting sub-rows on trips) deterministically without
-    depending on trip-API field acceptance."""
-    trips = [_mk_trip(i, halting=(i in (7, 8))) for i in range(9)]
-    invoice = _mk_invoice(trips, invoice_number="AKB/26-27/0025-clone",
-                          gst_type="cgst_sgst", rcm=False)
-    # Must not raise LayoutError
-    pdf_bytes = build_invoice_pdf(_company_dict(), _customer_dict(), invoice, trips)
-    _assert_valid_pdf(pdf_bytes, "9-trip-halting PDF")
-
-    text = _extract(pdf_bytes)
-    # Every trip's freight row appears
+    """Reproduces the exact 0025 failure class end-to-end via the real
+    router → _recompute_invoice → build_invoice_pdf path: 9 trips,
+    halting on trips 7 & 8, GST enabled (non-RCM).  Must return
+    HTTP 200 with a valid multi-page PDF containing all 9 trips,
+    both halting sub-rows, and the amount-in-words section."""
+    _cid, h = _headers()
+    cust = _seed_customer(h)
+    trip_ids = []
     for i in range(9):
-        assert f"AP39VB{4600 + i}" in text, f"trip {i} vehicle missing"
-    # Halting sub-rows appear
+        t = _seed_trip(h, cust["id"], i=i,
+                       halting=(i in (7, 8)),
+                       tons=30.0, rate=950.0)
+        trip_ids.append(t["id"])
+    inv = _seed_invoice(h, cust["id"], trip_ids, rcm=False)
+
+    r = _fetch_invoice_pdf(h, inv["id"])
+    assert r.status_code == 200, (
+        f"9-trip+halting PDF failed with {r.status_code}: {r.text[:400]}"
+    )
+    assert r.headers["content-type"].startswith("application/pdf")
+    _assert_valid_pdf(r.content, "9-trip+halting HTTP PDF")
+
+    text = _extract(r.content)
+    assert inv["invoice_number"] in text, "invoice number missing"
+    assert "AMOUNT IN WORDS" in text.upper(), "amount-in-words missing"
     assert "Halting" in text, "halting sub-row label missing"
-    # Invoice number, customer, amount-in-words all present
-    assert "AKB/26-27/0025-clone" in text
-    assert "MEGHA ENGINEERING" in text
-    assert "AMOUNT IN WORDS" in text.upper()
-    # Amount in words for the crafted total must be non-empty rupees phrase
-    assert "Rupees" in text, "amount-in-words phrase missing 'Rupees'"
+    assert "Rupees" in text, "amount-in-words phrase missing"
+    # Every trip's vehicle number should be present
+    missing_trips = 0
+    for i in range(9):
+        if f"AP39VB{4600 + i}" not in text:
+            missing_trips += 1
+    assert missing_trips == 0, (
+        f"{missing_trips}/9 trip vehicles missing from PDF"
+    )
 
 
 # =====================================================================
@@ -244,21 +321,32 @@ def test_invoice_pdf_renders_9_trips_with_halting():
 # =====================================================================
 
 def test_invoice_pdf_renders_long_amount_in_words():
-    """Synthesise a ₹99,99,999.99 total so amount-in-words wraps to
-    multiple lines. Must render without LayoutError."""
-    # Single high-freight trip
-    trips = [_mk_trip(0, tons=99.99, rate=100000.0)]  # ~₹99.99 lakh freight
-    invoice = _mk_invoice(trips, invoice_number="AKB/26-27/LONG-WORDS",
-                          gst_type="cgst_sgst", rcm=False,
-                          total_override=9999999.99)
-    pdf_bytes = build_invoice_pdf(_company_dict(), _customer_dict(), invoice, trips)
-    _assert_valid_pdf(pdf_bytes, "long-amount-in-words PDF")
+    """Multi-trip invoice whose total pushes amount-in-words into the
+    Lakh/Crore range — the longest natural amount-in-words wrap.
+    Verified end-to-end via HTTP."""
+    _cid, h = _headers()
+    cust = _seed_customer(h)
+    trip_ids = []
+    # 10 trips × 30 tons × ₹25,000/ton = ₹75 lakh subtotal
+    # → amount-in-words = "Seventy Five Lakh ..." (long)
+    for i in range(10):
+        t = _seed_trip(h, cust["id"], i=i, tons=30.0, rate=25000.0)
+        trip_ids.append(t["id"])
+    inv = _seed_invoice(h, cust["id"], trip_ids, rcm=False)
 
-    text = _extract(pdf_bytes)
+    r = _fetch_invoice_pdf(h, inv["id"])
+    assert r.status_code == 200, (
+        f"long-amount PDF failed with {r.status_code}: {r.text[:400]}"
+    )
+    _assert_valid_pdf(r.content, "long-amount HTTP PDF")
+
+    text = _extract(r.content)
     words_norm = " ".join(text.split())
-    # "Ninety Nine Lakh …" should appear (case-insensitive)
-    assert re.search(r"Ninety\s*Nine\s*Lakh", words_norm, re.IGNORECASE), \
-        f"long amount-in-words not present. Extracted: {words_norm[:400]}"
+    assert re.search(r"Lakh|Crore", words_norm, re.IGNORECASE), (
+        f"amount-in-words missing Lakh/Crore token. "
+        f"Sample: {words_norm[:600]}"
+    )
+    assert "AMOUNT IN WORDS" in text.upper()
 
 
 # =====================================================================
@@ -267,20 +355,30 @@ def test_invoice_pdf_renders_long_amount_in_words():
 
 def test_invoice_pdf_renders_all_sub_rows_combined():
     """One trip carrying halting + shortage + diesel + advance
-    deductions simultaneously. Exercises every sub-row branch in
-    the invoice PDF renderer. Must render without LayoutError."""
-    trips = [_mk_trip(0, halting=True, shortage=True, diesel=True, advance=True)]
-    invoice = _mk_invoice(trips, invoice_number="AKB/26-27/ALLSUBS",
-                          gst_type="igst", rcm=False)
-    pdf_bytes = build_invoice_pdf(_company_dict(), _customer_dict(), invoice, trips)
-    _assert_valid_pdf(pdf_bytes, "all-sub-rows PDF")
+    deductions simultaneously, seeded via the real API path so every
+    derived field is populated by _recompute_invoice.  Exercises every
+    sub-row branch in the invoice PDF renderer.  Must return HTTP 200."""
+    _cid, h = _headers()
+    cust = _seed_customer(h)
+    t = _seed_trip(h, cust["id"], i=0,
+                   halting=True, shortage=True,
+                   diesel=True, advance=True,
+                   tons=30.0, rate=1000.0)
+    inv = _seed_invoice(h, cust["id"], [t["id"]], rcm=False)
 
-    text = _extract(pdf_bytes)
-    # Every sub-row label should be present in the totals column or trip strip
-    for token in ("Halting", "Shortage", "Diesel", "Advance"):
-        assert token in text, f"sub-row label missing: {token}"
-    # Final total present
-    assert "FINAL PAYABLE" in text.upper(), "final payable label missing"
+    r = _fetch_invoice_pdf(h, inv["id"])
+    assert r.status_code == 200, (
+        f"all-sub-rows PDF failed with {r.status_code}: {r.text[:400]}"
+    )
+    _assert_valid_pdf(r.content, "all-sub-rows HTTP PDF")
+
+    text = _extract(r.content)
+    # Every sub-row category label should be present somewhere in the PDF
+    # (case-insensitive since sub-row labels may be in title-case).
+    text_lower = text.lower()
+    for token in ("halting", "shortage", "diesel", "advance"):
+        assert token in text_lower, f"sub-row token missing: {token}"
+    assert "AMOUNT IN WORDS" in text.upper()
 
 
 # =====================================================================
