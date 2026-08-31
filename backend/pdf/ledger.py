@@ -199,10 +199,15 @@ def build_ledger_pdf(company: dict, ledger: dict) -> bytes:
     rows.append(["", "", "Opening Balance", "", "", _fmt(ledger.get("opening_balance", 0))])
     row_types = ["_open"]
     for e in ledger.get("entries", []):
+        # Iter133 L2d · Wrap Ref + Particulars in Paragraph so long invoice
+        # numbers (e.g., "AKB/26-27//26-27/0004") and long CN/DN narrations
+        # wrap gracefully within their column instead of spilling into the
+        # adjacent Debit / numeric columns. Numeric columns stay raw for
+        # right-alignment fidelity.
         rows.append([
             e.get("date", ""),
-            e.get("reference", ""),
-            e.get("particulars", ""),
+            Paragraph(str(e.get("reference", "") or ""), small),
+            Paragraph(str(e.get("particulars", "") or ""), small),
             _fmt(e.get("debit", 0)) if e.get("debit", 0) else "",
             _fmt(e.get("credit", 0)) if e.get("credit", 0) else "",
             _fmt(e.get("balance", 0)),
@@ -212,7 +217,10 @@ def build_ledger_pdf(company: dict, ledger: dict) -> bytes:
     rows.append(["", "", "Closing Balance", "", "", _fmt(ledger.get("closing_balance", 0))])
     row_types.extend(["_total", "_close"])
 
-    tbl = Table(rows, colWidths=[19 * mm, 26 * mm, 61 * mm, 24 * mm, 24 * mm, 24 * mm], repeatRows=1)
+    # Iter133 L2d · Rebalance: give Ref 8mm more (26→34) so long invoice
+    # numbers fit; reclaim from Particulars (61→53). Numeric columns and
+    # total table width unchanged.
+    tbl = Table(rows, colWidths=[19 * mm, 34 * mm, 53 * mm, 24 * mm, 24 * mm, 24 * mm], repeatRows=1)
     tstyle = [
         ("GRID", (0, 0), (-1, -1), 0.4, BORDER),
         ("BACKGROUND", (0, 0), (-1, 0), ACCENT),

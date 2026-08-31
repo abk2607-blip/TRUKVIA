@@ -224,6 +224,7 @@ def build_credit_note_pdf(company, customer, invoice, note):
     tot = Table(tot_rows, colWidths=[38*mm, 34*mm])
     tot.setStyle(TableStyle([
         ("ALIGN",(0,0),(-1,-1),"RIGHT"),
+        ("FONTNAME",(0,0),(-1,-1),_UNI_FONT),
         ("FONTSIZE",(0,0),(-1,-1),9),
         ("LINEABOVE",(0,-1),(-1,-1),1,ACCENT),
         ("FONTNAME",(0,-1),(-1,-1),_UNI_FONT_BOLD),

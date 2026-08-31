@@ -772,6 +772,24 @@ async def customer_statement_pdf(
     title_st = ParagraphStyle("t", parent=styles["Title"], fontName=_UNI_FONT_BOLD, fontSize=15, leading=18)  # kept for legacy consumers
     hdr_st = ParagraphStyle("h", parent=styles["Normal"], fontName=_UNI_FONT, fontSize=10, textColor=colors.grey)  # kept for legacy consumers
 
+    # Iter133 L2d · Shared branded section-head + accent rule so every
+    # section (Trip Sheets, Invoices, Balance Bridge, Adjustments) uses
+    # the same visual hierarchy. Definitions hoisted from the L2 block
+    # so they are available BEFORE the Trip Sheets section too.
+    _sect_rule = Table([[""]], colWidths=[178 * mm], rowHeights=[1])
+    _sect_rule.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), ACCENT)]))
+    _sect_head = ParagraphStyle(
+        "sect_head", parent=styles["Normal"],
+        fontName=_UNI_FONT_BOLD, fontSize=11,
+        textColor=ACCENT, spaceAfter=4,
+    )
+
+    def _section(label: str):
+        story.append(Spacer(1, 4 * mm))
+        story.append(_sect_rule)
+        story.append(Spacer(1, 2 * mm))
+        story.append(Paragraph(label, _sect_head))
+
     # Iter133 L2b · Branded header (logo + company info + hero band).
     _co       = company or {}
     _co_gst   = (_co.get("gstin") or "").strip() or "—"
@@ -857,15 +875,17 @@ async def customer_statement_pdf(
             adj_st,
         ))
 
-    story.append(Spacer(1, 12))
+    story.append(Spacer(1, 4 * mm))
 
     # Trip table
-    story.append(Paragraph("<b>Trip Sheets</b>", styles["Heading3"]))
+    _section("Trip Sheets")
     trip_rows = [["Date", "LR No.", "Vehicle", "Route", "MT", "Freight", "Status"]]
     for t in trips:
         trip_rows.append([
             t.get("date", ""), t.get("lr_number", "") or "—", t.get("vehicle_number", ""),
-            f"{t.get('from_location', '') or '?'} → {t.get('to_location', '') or '?'}",
+            # Iter133 L2d · Wrap long "FROM → TO" strings in Paragraph so they
+            # never spill into the neighbouring MT column.
+            Paragraph(f"{t.get('from_location', '') or '?'} → {t.get('to_location', '') or '?'}", small_st),
             f"{float(t.get('tons', 0)):.2f}",
             f"₹{float(t.get('freight_amount', 0)):,.2f}",
             t.get("status", "").upper(),
@@ -881,14 +901,16 @@ async def customer_statement_pdf(
         ("ALIGN", (4, 0), (5, -1), "RIGHT"),
     ]))
     story.append(tt)
-    story.append(Spacer(1, 10))
 
     # Invoice table
-    story.append(Paragraph("<b>Invoices</b>", styles["Heading3"]))
+    _section("Invoices")
     inv_rows = [["Date", "Invoice #", "Total", "Paid", "Balance", "Status"]]
     for i in invoices:
         inv_rows.append([
-            i.get("date", ""), i.get("invoice_number", ""),
+            i.get("date", ""),
+            # Iter133 L2d · Wrap long invoice numbers so anomalous entries
+            # like "AKB/26-27//26-27/0004" wrap inside the Invoice # column.
+            Paragraph(i.get("invoice_number", "") or "", small_st),
             f"₹{float(i.get('total_amount') or i.get('gross_total', 0)):,.2f}", f"₹{float(i.get('amount_paid', 0)):,.2f}",
             f"₹{float(i.get('balance_due', 0)):,.2f}", str(i.get("payment_status", "")).upper(),
         ])
@@ -924,7 +946,8 @@ async def customer_statement_pdf(
     issued_notes = await db.credit_debit_notes.find(
         notes_q,
         {"_id": 0, "id": 1, "kind": 1, "note_date": 1, "note_number": 1,
-         "total_amount": 1, "invoice_number_snapshot": 1, "reason_code": 1},
+         "total_amount": 1, "invoice_number_snapshot": 1,
+         "reason_code": 1, "reason_text": 1},
     ).sort("note_date", 1).to_list(5000)
     cn_notes = [n for n in issued_notes if n.get("kind") == "credit"]
     dn_notes = [n for n in issued_notes if n.get("kind") == "debit"]
@@ -932,19 +955,12 @@ async def customer_statement_pdf(
     dn_sum = round(sum(float(n.get("total_amount") or 0) for n in dn_notes), 2)
 
     if issued_notes:
-        # Iter133 L2c · Section rule + DejaVu heading (shared local styles).
-        _sect_rule = Table([[""]], colWidths=[178 * mm], rowHeights=[1])
-        _sect_rule.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#B45309"))]))
-        _sect_head = ParagraphStyle(
-            "sect_head", parent=styles["Normal"],
-            fontName=_UNI_FONT_BOLD, fontSize=11,
-            textColor=colors.HexColor("#B45309"), spaceAfter=4,
-        )
+        # Iter133 L2d · Section rule + heads now come from the module-level
+        # `_section()` helper defined at the top of this function so every
+        # section (Trip Sheets, Invoices, Balance Bridge, Adjustments) uses
+        # the same branded rule + amber head.
 
-        story.append(Spacer(1, 8))
-        story.append(_sect_rule)
-        story.append(Spacer(1, 4))
-        story.append(Paragraph("Balance Bridge", _sect_head))
+        _section("Balance Bridge")
         bridge_rows = [
             ["Original Invoiced Total",            f"₹{total_billed:,.2f}"],
             [f"Less: Credit Notes ({len(cn_notes)})", f"− ₹{cn_sum:,.2f}"],
@@ -971,19 +987,22 @@ async def customer_statement_pdf(
         ]))
         story.append(bt)
 
-        story.append(Spacer(1, 8))
-        story.append(_sect_rule)
-        story.append(Spacer(1, 4))
-        story.append(Paragraph("Adjustments (Credit / Debit Notes)", _sect_head))
+        _section("Adjustments (Credit / Debit Notes)")
         adj_hdr = ["Date", "Note #", "Type", "Ref Invoice", "Reason", "Amount"]
         adj_rows = [adj_hdr]
         for n in issued_notes:
+            # Iter133 L2d · Wrap Ref Invoice; include BOTH reason_code and
+            # reason_text so the customer never has to ask "what does OTHER
+            # mean?" — matches Passbook UI info parity.
+            _code = (n.get("reason_code", "") or "").replace("_", " ")
+            _text = (n.get("reason_text", "") or "").strip()
+            _reason_display = f"{_code} — {_text}" if (_code and _text) else (_code or _text or "")
             adj_rows.append([
                 n.get("note_date", ""),
                 n.get("note_number", ""),
                 "CN" if n.get("kind") == "credit" else "DN",
-                n.get("invoice_number_snapshot", "") or "—",
-                (n.get("reason_code", "") or "").replace("_", " "),
+                Paragraph(n.get("invoice_number_snapshot", "") or "—", small_st),
+                Paragraph(_reason_display, small_st),
                 f"₹{float(n.get('total_amount') or 0):,.2f}",
             ])
         at = Table(adj_rows, hAlign="LEFT", repeatRows=1,
