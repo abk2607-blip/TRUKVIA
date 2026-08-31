@@ -78,6 +78,10 @@ def _seed_trip_invoice(h, cust_id, tons=25, rate=1000, date="2026-07-15"):
 
 def _issue_note(h, kind, invoice, amount, note_date="2026-07-25",
                 reason_code="other", reason_text=None):
+    """Create + issue a CN/DN.  In tenants where `require_cdn_approval`
+    is True the POST creates a draft — we then explicitly call the
+    `/issue` endpoint to move it to status="issued" so the Ledger and
+    Statement Bridge include it."""
     endpoint = "credit-notes" if kind == "credit" else "debit-notes"
     r = httpx.post(
         f"{API}/{endpoint}", headers=h,
@@ -89,7 +93,16 @@ def _issue_note(h, kind, invoice, amount, note_date="2026-07-25",
         timeout=15,
     )
     assert r.status_code == 200, r.text
-    return r.json()
+    note = r.json()
+    if note.get("status") != "issued":
+        r2 = httpx.post(f"{API}/{endpoint}/{note['id']}/issue",
+                        headers=h, timeout=15)
+        assert r2.status_code == 200, r2.text
+        note = r2.json()
+    assert note.get("status") == "issued", (
+        f"note failed to reach issued status: {note}"
+    )
+    return note
 
 
 def _statement_pdf(h, cust_id):
