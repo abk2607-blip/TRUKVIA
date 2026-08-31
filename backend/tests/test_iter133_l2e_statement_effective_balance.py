@@ -130,28 +130,74 @@ def _parse_money(s):
     return float(s.replace(",", ""))
 
 
-def _parse_bridge(text):
-    """Bridge is 5 rows × 2 cols; pdfminer emits col-major:
-    5 labels then 5 amounts."""
-    m = re.search(
-        r"Balance Bridge(.+?)(?:Adjustments|Amount in Words|$)",
-        text,
-        re.DOTALL,
-    )
-    assert m, "Balance Bridge section not found in Statement PDF"
-    section = m.group(1)
-    amounts = re.findall(r"([\d,]+\.\d{2})", section)
-    assert len(amounts) >= 5, (
-        f"expected ≥5 amounts in Bridge, got {len(amounts)}"
-    )
-    v = [_parse_money(a) for a in amounts[:5]]
-    return {
-        "original": v[0],
-        "credits": v[1],
-        "debits": v[2],
-        "payments": v[3],
-        "balance_due": v[4],
-    }
+def _parse_bridge(pdf_bytes):
+    """Structural Bridge extraction via pymupdf's `find_tables()`.
+
+    Robust against pdfminer's global column-major reading order: we
+    identify the Bridge table by its labels ("Original Invoiced Total"
+    + "Balance Due") and read the two-column rows in order. Amount
+    cells may carry a leading sign ("− ", "+ ") and a ₹ glyph — we
+    strip everything except digits, comma and dot before parsing.
+    """
+    import fitz  # pymupdf — already used elsewhere in this suite
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        target_labels = [
+            ("Original Invoiced Total", "original"),
+            ("Less: Credit Notes",       "credits"),
+            ("Add: Debit Notes",         "debits"),
+            ("Less: Payments Received",  "payments"),
+            ("Balance Due",              "balance_due"),
+        ]
+
+        def _clean_money(cell):
+            if cell is None:
+                return None
+            s = str(cell)
+            digits = re.sub(r"[^\d.,]", "", s)
+            digits = digits.replace(",", "")
+            if not digits or digits == ".":
+                return None
+            try:
+                return float(digits)
+            except ValueError:
+                return None
+
+        for page in doc:
+            tables = page.find_tables()
+            for tbl in tables:
+                rows = tbl.extract() or []
+                # Bridge = a 2-col table containing both anchor labels
+                joined_col0 = " | ".join(
+                    (r[0] or "") for r in rows if r and len(r) >= 2
+                )
+                if ("Original Invoiced Total" not in joined_col0
+                        or "Balance Due" not in joined_col0):
+                    continue
+                out = {}
+                for row in rows:
+                    if not row or len(row) < 2:
+                        continue
+                    label_cell = (row[0] or "").strip()
+                    for label_prefix, key in target_labels:
+                        if key in out:
+                            continue
+                        if label_cell.startswith(label_prefix):
+                            val = _clean_money(row[1])
+                            if val is not None:
+                                out[key] = val
+                            break
+                missing = [k for _, k in target_labels if k not in out]
+                assert not missing, (
+                    f"Bridge table found but missing keys {missing}. "
+                    f"Rows: {rows}"
+                )
+                return out
+        raise AssertionError(
+            "Balance Bridge table not found on any page of the Statement PDF"
+        )
+    finally:
+        doc.close()
 
 
 def _amount_in_words_line(text):
@@ -172,7 +218,7 @@ def test_l2e_t1_cn_only_statement_balance_reduces_by_credit():
     _issue_note(h, "credit", inv, 2000.0)
 
     text = _extract(_statement_pdf(h, cust))
-    br = _parse_bridge(text)
+    br = _parse_bridge(_statement_pdf(h, cust))
     assert br["original"]    == pytest.approx(25000.0)
     assert br["credits"]     == pytest.approx(2000.0)
     assert br["debits"]      == pytest.approx(0.0)
@@ -194,7 +240,7 @@ def test_l2e_t2_dn_only_statement_balance_increases_by_debit():
     _issue_note(h, "debit", inv, 1500.0)
 
     text = _extract(_statement_pdf(h, cust))
-    br = _parse_bridge(text)
+    br = _parse_bridge(_statement_pdf(h, cust))
     assert br["original"]    == pytest.approx(25000.0)
     assert br["credits"]     == pytest.approx(0.0)
     assert br["debits"]      == pytest.approx(1500.0)
@@ -220,7 +266,7 @@ def test_l2e_t3_cn_and_dn_statement_matches_ledger_closing_balance():
     assert ledger_closing == pytest.approx(27500.0)
 
     text = _extract(_statement_pdf(h, cust))
-    br = _parse_bridge(text)
+    br = _parse_bridge(_statement_pdf(h, cust))
     assert br["original"]    == pytest.approx(25000.0)
     assert br["credits"]     == pytest.approx(500.0)
     assert br["debits"]      == pytest.approx(3000.0)
@@ -272,7 +318,7 @@ def test_l2e_t5_bridge_arithmetic_is_self_consistent():
     _issue_note(h, "debit",  inv, 4250.0)
 
     text = _extract(_statement_pdf(h, cust))
-    br = _parse_bridge(text)
+    br = _parse_bridge(_statement_pdf(h, cust))
     computed = round(
         br["original"] - br["credits"] + br["debits"] - br["payments"], 2
     )
