@@ -144,10 +144,18 @@ def test_7_source_guardrail_footer_font_and_position():
 
 def test_8_source_guardrail_two_pass_wiring():
     src = open("/app/backend/pdf/invoice.py").read()
-    # Two-pass render present.
-    assert "_count_doc.build(list(story))" in src
-    # Final build uses footer callbacks.
-    assert "doc.build(story, onFirstPage=_footer_cb, onLaterPages=_footer_cb)" in src
+    # Two-pass render present — accept either the original inline pattern
+    # or the Iter133 L2d v3 fresh-story-per-pass pattern (fresh flowables
+    # per build eliminate reportlab state pollution on dense invoices).
+    assert (
+        "_count_doc.build(list(story))" in src
+        or "_count_doc.build(_make_story())" in src
+    ), "two-pass count build missing"
+    # Final build uses footer callbacks (accept both story shapes).
+    assert (
+        "doc.build(story, onFirstPage=_footer_cb, onLaterPages=_footer_cb)" in src
+        or "doc.build(_make_story(), onFirstPage=_footer_cb, onLaterPages=_footer_cb)" in src
+    ), "two-pass render build with footer callbacks missing"
     # Old single-call form must be gone.
     assert "\n    doc.build(story)\n" not in src
 
