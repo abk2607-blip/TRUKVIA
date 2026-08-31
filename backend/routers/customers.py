@@ -743,7 +743,16 @@ async def customer_statement_pdf(
     total_freight = sum(float(t.get("freight_amount", 0)) for t in trips)
     total_billed = sum(float(inv.get("total_amount", inv.get("gross_total", 0))) for inv in invoices)
     total_received = sum(float(inv.get("amount_paid", 0)) for inv in invoices)
-    outstanding = sum(float(inv.get("balance_due", 0)) for inv in invoices)
+    # Iter133 L2e · Use the CN/DN-adjusted effective balance so the Statement
+    # OUTSTANDING / Summary / Balance-Bridge / Amount-in-Words all agree with
+    # the Ledger PDF closing balance. `_apply_effective_balance` above has
+    # already populated `effective_balance_due`; we now consume it (matches
+    # the same fallback pattern used by dashboard / reminders / customer
+    # list / per-invoice API). Persisted `invoice.balance_due` stays raw.
+    outstanding = sum(
+        float(inv.get("effective_balance_due", inv.get("balance_due", 0)))
+        for inv in invoices
+    )
     total_credits = sum(float(inv.get("credits_total", 0)) for inv in invoices)
     total_debits = sum(float(inv.get("debits_total", 0)) for inv in invoices)
 
