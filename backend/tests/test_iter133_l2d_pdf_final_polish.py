@@ -206,7 +206,11 @@ def test_l2d_ledger_pdf_ref_column_fits_long_invoice_number():
     }]
     pdf_bytes = _build_ledger_pdf_with_entries(entries)
     text = _extract_all_text(pdf_bytes)
-    assert "AKB/26-27" in text and "26-27/0004" in text, "long ref missing from ledger PDF"
+    # Paragraph wrapping preserves all chars but pdfminer inserts newlines
+    # at soft-wrap points. Normalise whitespace before asserting the full
+    # ref is intact.
+    compact = "".join(text.split())
+    assert "AKB/26-27//26-27/0004" in compact, "long ref missing from ledger PDF"
     assert len(pdf_bytes) > 1000, "Ledger PDF suspiciously small"
 
 
