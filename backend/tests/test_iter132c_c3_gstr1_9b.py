@@ -149,8 +149,9 @@ def test_t2_invalid_month_returns_400():
 
 def test_t3_cdnr_b2b_intra_state_cn_row_shape():
     cid, h = _company_header()
-    # Intra-state → customer state matches company state (Andhra Pradesh is default in company)
-    cust_id, _ = _fresh_customer(h, gstin="37AAAAA0000A1Z5", state="Andhra Pradesh")
+    # Intra-state — QORVENA demo company is Telangana (state_code 36), so
+    # customer must also be Telangana with a matching-state GSTIN prefix.
+    cust_id, _ = _fresh_customer(h, gstin="36AAAAA0000A1Z5", state="Telangana")
     inv = _create_invoice_via_api(h, cust_id, date="2026-06-10", gst_type="cgst_sgst", rcm=False)
     note = _issue_note(h, "credit", inv["id"], amount=500.0, note_date="2026-06-15",
                        reason_code="rate_correction")
@@ -168,7 +169,7 @@ def test_t3_cdnr_b2b_intra_state_cn_row_shape():
                 break
     assert found is not None, f"CN not found in cdnr: {body['cdnr']}"
     grp, nt = found
-    assert grp["ctin"] == "37AAAAA0000A1Z5"
+    assert grp["ctin"] == "36AAAAA0000A1Z5"
     assert nt["ntty"] == "C"
     assert nt["inv_typ"] == "R"
     assert nt["rchrg"] == "N"
@@ -215,7 +216,8 @@ def test_t4_cdnr_b2b_inter_state_dn_igst():
 
 def test_t5_cdnr_rcm_cn_reports_correctly():
     cid, h = _company_header()
-    cust_id, _ = _fresh_customer(h, gstin="37AAAAA0000A2Z4", state="Andhra Pradesh")
+    # Intra-state RCM — customer must be Telangana (matches demo company state)
+    cust_id, _ = _fresh_customer(h, gstin="36AAAAA0000A2Z4", state="Telangana")
     inv = _create_invoice_via_api(h, cust_id, date="2026-06-12", gst_type="cgst_sgst", rcm=True)
     note = _issue_note(h, "credit", inv["id"], amount=200.0, note_date="2026-06-17",
                        reason_code="quality_claim")
