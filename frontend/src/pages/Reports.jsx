@@ -588,7 +588,7 @@ function SupplierStatementWABtn({ name, start, end }) {
   );
 }
 
-/* ------------------ GSTR-1 ------------------ */
+/* ------------------ GSTR-1 (§9A · Iter127a + C3.5 exports) ------------------ */
 function GSTR1Report() {
   const now = new Date();
   const defaultMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
@@ -618,23 +618,80 @@ function GSTR1Report() {
     URL.revokeObjectURL(url);
   };
 
+  // C3.5 · JSON / XLSX / PDF downloads — pure projections of the same
+  // canonical payload served by /reports/gstr1. The backend endpoints
+  // set Content-Disposition; the browser saves the returned Blob.
+  const doDownload = async (kind) => {
+    const t = toast.loading(`Preparing ${kind.toUpperCase()}\u2026`);
+    try {
+      const resp = await api.get(`/reports/gstr1.${kind}`, {
+        params: { month }, responseType: "blob",
+      });
+      const cd = resp.headers?.["content-disposition"] || "";
+      const m = cd.match(/filename="?([^"]+)"?/);
+      const fname = m ? m[1] : `gstr1_${month}.${kind}`;
+      const url = URL.createObjectURL(resp.data);
+      const a = document.createElement("a");
+      a.href = url; a.download = fname; a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`${kind.toUpperCase()} downloaded`, { id: t });
+    } catch (e) {
+      toast.error(`${kind.toUpperCase()} download failed`, { id: t });
+    }
+  };
+
+  const dlDisabled = isFetching || !data;
+
   return (
     <div className="space-y-4" data-testid="gstr1-tab">
-      <div className="border border-zinc-200 bg-white rounded-sm p-4 grid grid-cols-1 md:grid-cols-3 gap-3">
+      <div className="border border-zinc-200 bg-white rounded-sm p-4 grid grid-cols-1 md:grid-cols-6 gap-3">
         <FieldWrap label="Month">
           <input data-testid="gstr1-month" type="month" value={month} onChange={(e) => setMonth(e.target.value)} className={ic} />
         </FieldWrap>
-        <div className="flex items-end gap-2">
-          <button data-testid="run-gstr1-btn" onClick={() => refetch()} disabled={isFetching} className="flex-1 px-3 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm hover:bg-zinc-800">
-            {isFetching ? "Running..." : "Refresh"}
+        <div className="flex items-end">
+          <button data-testid="run-gstr1-btn" onClick={() => refetch()} disabled={isFetching}
+            className="w-full px-3 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 disabled:opacity-50">
+            {isFetching ? "Running\u2026" : "Refresh"}
           </button>
-          {data && (
-            <button data-testid="gstr1-csv-btn" onClick={downloadCSV} className="p-2 border border-zinc-950 rounded-sm hover:bg-zinc-950 hover:text-white" title="Download CSV">
-              <Download size={16} />
-            </button>
-          )}
+        </div>
+        <div className="flex items-end gap-2 md:col-span-4 justify-end flex-wrap">
+          <button data-testid="gstr1-csv-btn" onClick={downloadCSV} disabled={dlDisabled}
+            title="Download CSV (invoice rows only)"
+            className="px-3 py-2 text-xs uppercase tracking-wider border border-zinc-950 rounded-sm hover:bg-zinc-950 hover:text-white disabled:opacity-40 inline-flex items-center gap-2">
+            <Download size={14} /> Download CSV
+          </button>
+          <button data-testid="gstr1-json-btn" onClick={() => doDownload("json")} disabled={dlDisabled}
+            title="Download canonical JSON (technical)"
+            className="px-3 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm hover:bg-zinc-100 disabled:opacity-40 inline-flex items-center gap-2">
+            <Download size={14} /> Download JSON
+          </button>
+          <button data-testid="gstr1-xlsx-btn" onClick={() => doDownload("xlsx")} disabled={dlDisabled}
+            title="Download 4-sheet accountant workbook"
+            className="px-3 py-2 text-xs uppercase tracking-wider bg-emerald-700 text-white rounded-sm hover:bg-emerald-800 disabled:opacity-40 inline-flex items-center gap-2">
+            <Download size={14} /> Download XLSX
+          </button>
+          <button data-testid="gstr1-pdf-btn" onClick={() => doDownload("pdf")} disabled={dlDisabled}
+            title="Download human-readable working PDF (NOT a portal file)"
+            className="px-3 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 disabled:opacity-40 inline-flex items-center gap-2">
+            <Download size={14} /> Download PDF
+          </button>
         </div>
       </div>
+
+      {data?.reconciliation && (
+        <div data-testid="gstr1-recon-status"
+          className={`border rounded-sm px-4 py-2 flex items-center justify-between text-sm ${
+            data.reconciliation.reconciled ? "border-emerald-300 bg-emerald-50 text-emerald-800"
+                                           : "border-red-300 bg-red-50 text-red-800"
+          }`}>
+          <div className="font-bold">
+            {data.reconciliation.reconciled ? "● RECONCILED YES ✓" : "● RECONCILED NO ✗"}
+          </div>
+          <div className="text-xs font-mono">
+            {data.invoice_count || 0} invoices &middot; total {fmtCurrency(data.totals?.total || 0)}
+          </div>
+        </div>
+      )}
 
       {data && (
         <>
@@ -664,7 +721,7 @@ function GSTR1Report() {
               <tbody className="font-mono">
                 {(data.by_state || []).map((s) => (
                   <tr key={s.state_code} className="border-t border-zinc-100">
-                    <td className="px-4 py-2">{s.state || "—"}</td>
+                    <td className="px-4 py-2">{s.state || "\u2014"}</td>
                     <td className="px-4 py-2 font-semibold">{s.state_code}</td>
                     <td className="px-4 py-2 text-right">{s.invoices}</td>
                     <td className="px-4 py-2 text-right">{fmtCurrency(s.taxable)}</td>

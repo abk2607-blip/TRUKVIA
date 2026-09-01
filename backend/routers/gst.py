@@ -73,9 +73,59 @@ async def gstin_lookup(gstin: str, user=Depends(get_current_user)):
 
 
 
-@router.get("/reports/gstr1")
-async def report_gstr1(month: str, request: Request, user=Depends(get_current_user)):
-    """month format: YYYY-MM"""
+# ============================================================================
+# Iter132c C3.5 · GSTR-1 §9A Export Parity — canonical payload builder.
+#
+# Endpoint (existing, byte-identical shape):
+#     GET /api/reports/gstr1?month=YYYY-MM
+# Export projections (additive · C3.5):
+#     GET /api/reports/gstr1.json    (canonical projection · same body + additive fields)
+#     GET /api/reports/gstr1.xlsx    (4-sheet accountant workbook)
+#     GET /api/reports/gstr1.pdf     (A4 landscape working report)
+#
+# STATUTORY CONTRACT (locked in C3.5 research):
+#   * Source of truth = db.invoices scoped by {user_id, company_id, invoice_date in [start,end]}.
+#     Tax character (cgst_amount/sgst_amount/igst_amount) is PERSISTED at invoice save
+#     via services._recompute_invoice (LOCKED · Iter127a). This endpoint never
+#     recomputes tax.
+#   * POS = customer.state (IGST §12(9) registered-recipient rule). Ship-to state
+#     is deliberately NOT used because tax character is persisted at invoice save
+#     time on customer.state basis. Any B2C-unregistered POS correction is
+#     out of scope — see backlog C6.
+#   * Bill-To (customer) is the authoritative reporting identity/state source
+#     for GSTR-1. Ship-To is operational and never overrides POS silently.
+#   * B2B / B2C split = presence of customer.gstin (non-blank ⇒ B2B).
+#   * NOT emitted by this endpoint (out of scope for C3.5):
+#       - B2CL (inter-state B2C > ₹2.5 L) split — historical scope
+#       - HSN Summary (Table 12) — historical scope
+#       - Docs Summary (Table 13) — historical scope
+#       - Amendments (Tables 9A / 9B / 9C) — §9B is separate (C3.1/C3.2 LOCKED);
+#         §9C is future C5.
+#   * The generated PDF/XLSX are a WORKING REPORT, not a portal upload file.
+#
+# HIGH-VOLUME CONTRACT (C3.5 mandatory):
+#   * Invoice iteration uses a streaming Motor cursor with an in-Mongo
+#     invoice_date range filter — NO to_list(5000).
+#   * Customer preload is bounded by the unique customer_ids referenced by the
+#     month's invoices, fetched via $in — NO to_list(2000).
+#   * 10 000 invoices in a single month must render without silent truncation
+#     (guardrail test: test_streaming_10k_invoices).
+#
+# RECONCILIATION (fail-loud):
+#   * additive `reconciliation` dict compares endpoint totals to a Mongo $group
+#     ground truth over the identical filter — any delta ⇒ reconciled=False +
+#     a warning row. Never silently disappears.
+# ============================================================================
+
+
+async def _gstr1_payload(month: str, request: Request, user: dict) -> dict:
+    """C3.5.1 · Internal canonical builder — SINGLE SOURCE OF TRUTH for the
+    /reports/gstr1 · .json · .xlsx · .pdf endpoints.
+
+    Streaming cursor. Bounded customer preload. Deliberately additive
+    (issuer_gstin / reconciliation / warnings) on top of the Iter127a shape,
+    which is preserved byte-identically.
+    """
     try:
         year_str, mo_str = month.split("-")
         y = int(year_str); m = int(mo_str)
@@ -88,19 +138,47 @@ async def report_gstr1(month: str, request: Request, user=Depends(get_current_us
 
     uid = user["user_id"]
     cid = await _active_company_id(request, user)
-    invoices = await db.invoices.find({"user_id": uid, "company_id": cid}, {"_id": 0, "user_id": 0}).to_list(5000)
-    invoices = [i for i in invoices if start <= i.get("invoice_date", "") <= end]
-    customers = await db.customers.find({"user_id": uid, "company_id": cid}, {"_id": 0}).to_list(2000)
-    cmap = {c["id"]: c for c in customers}
+
+    # ── (A) Streaming invoice iteration (Mongo-side date filter, no cap) ──
+    inv_filter = {
+        "user_id": uid,
+        "company_id": cid,
+        "invoice_date": {"$gte": start, "$lte": end},
+    }
+    invoice_docs: list = []
+    seen_customer_ids: set = set()
+    async for inv in db.invoices.find(inv_filter, {"_id": 0, "user_id": 0}):
+        invoice_docs.append(inv)
+        cust_id = inv.get("customer_id")
+        if cust_id:
+            seen_customer_ids.add(cust_id)
+
+    # ── (B) Bounded customer preload — only referenced ids, no cap ────────
+    cmap: dict = {}
+    if seen_customer_ids:
+        async for c in db.customers.find(
+            {"user_id": uid, "company_id": cid, "id": {"$in": list(seen_customer_ids)}},
+            {"_id": 0},
+        ):
+            cmap[c["id"]] = c
+
     company = await db.companies.find_one({"id": cid, "user_id": uid}, {"_id": 0}) or {}
     home_state_code = _state_code(company.get("state", ""))
 
-    b2b_rows = []
-    b2c_rows = []
+    warnings: list = []
+
+    b2b_rows: list = []
+    b2c_rows: list = []
     totals = {"taxable": 0.0, "cgst": 0.0, "sgst": 0.0, "igst": 0.0, "total": 0.0}
-    for inv in invoices:
-        c = cmap.get(inv["customer_id"], {})
-        gstin = c.get("gstin", "").strip()
+    for inv in invoice_docs:
+        cust_id = inv.get("customer_id")
+        c = cmap.get(cust_id)
+        if c is None:
+            warnings.append(
+                f"invoice {inv.get('invoice_number','?')} references missing customer_id={cust_id or '(blank)'}"
+            )
+            c = {}
+        gstin = (c.get("gstin") or "").strip()
         st = c.get("state", "")
         sc = _state_code(st)
         row = {
@@ -129,8 +207,8 @@ async def report_gstr1(month: str, request: Request, user=Depends(get_current_us
     for k in totals:
         totals[k] = round(totals[k], 2)
 
-    # Group by state
-    by_state = {}
+    # ── By State (POS) grouping ───────────────────────────────────────────
+    by_state: dict = {}
     for r in b2b_rows + b2c_rows:
         key = r.get("state_code") or "N/A"
         s = by_state.setdefault(key, {"state_code": key, "state": r["state"], "invoices": 0, "taxable": 0.0, "cgst": 0.0, "sgst": 0.0, "igst": 0.0, "total": 0.0})
@@ -144,7 +222,47 @@ async def report_gstr1(month: str, request: Request, user=Depends(get_current_us
         for k in ("taxable", "cgst", "sgst", "igst", "total"):
             s[k] = round(s[k], 2)
 
+    invoice_count = len(invoice_docs)
+
+    # ── Additive: issuer GSTIN (from company doc; may be blank on legacy tenants) ──
+    issuer_gstin = (company.get("gstin") or "").strip().upper()
+
+    # ── Additive: fail-loud reconciliation against Mongo $group ground truth ──
+    gt_agg_cursor = db.invoices.aggregate([
+        {"$match": inv_filter},
+        {"$group": {
+            "_id": None,
+            "gt_count":   {"$sum": 1},
+            "gt_taxable": {"$sum": {"$ifNull": ["$subtotal", 0]}},
+            "gt_cgst":    {"$sum": {"$ifNull": ["$cgst_amount", 0]}},
+            "gt_sgst":    {"$sum": {"$ifNull": ["$sgst_amount", 0]}},
+            "gt_igst":    {"$sum": {"$ifNull": ["$igst_amount", 0]}},
+            "gt_total":   {"$sum": {"$ifNull": ["$total_amount", 0]}},
+        }},
+    ])
+    gt_docs = await gt_agg_cursor.to_list(1)
+    gt = gt_docs[0] if gt_docs else {
+        "gt_count": 0, "gt_taxable": 0.0, "gt_cgst": 0.0, "gt_sgst": 0.0,
+        "gt_igst": 0.0, "gt_total": 0.0,
+    }
+    gt_count = int(gt.get("gt_count", 0))
+    gt_total = round(float(gt.get("gt_total", 0.0)), 2)
+    gt_taxable = round(float(gt.get("gt_taxable", 0.0)), 2)
+
+    reconciled = (
+        gt_count == invoice_count
+        and abs(gt_total - totals["total"]) < 0.01
+        and abs(gt_taxable - totals["taxable"]) < 0.01
+    )
+    if not reconciled:
+        warnings.append(
+            f"reconciliation mismatch: endpoint(count={invoice_count},total={totals['total']},"
+            f"taxable={totals['taxable']}) vs ground_truth(count={gt_count},"
+            f"total={gt_total},taxable={gt_taxable})"
+        )
+
     return {
+        # ── Iter127a-shape (byte-identical) ──
         "month": month,
         "period": {"start": start, "end": end},
         "company_state": company.get("state", ""),
@@ -153,8 +271,138 @@ async def report_gstr1(month: str, request: Request, user=Depends(get_current_us
         "b2c": b2c_rows,
         "by_state": sorted(by_state.values(), key=lambda x: -x["total"]),
         "totals": totals,
-        "invoice_count": len(invoices),
+        "invoice_count": invoice_count,
+        # ── C3.5 additive fields ──
+        "company_id": cid,
+        "company_name": company.get("name", ""),
+        "issuer_gstin": issuer_gstin,
+        "reconciliation": {
+            "endpoint_invoice_count": invoice_count,
+            "ground_truth_invoice_count": gt_count,
+            "endpoint_total": totals["total"],
+            "ground_truth_total": gt_total,
+            "endpoint_taxable": totals["taxable"],
+            "ground_truth_taxable": gt_taxable,
+            "reconciled": reconciled,
+        },
+        "warnings": warnings,
     }
+
+
+@router.get("/reports/gstr1")
+async def report_gstr1(month: str, request: Request, user=Depends(get_current_user)):
+    """Iter127a GSTR-1 report · byte-identical to pre-C3.5 for existing keys.
+
+    Delegates to _gstr1_payload(). The additive keys (company_id, company_name,
+    issuer_gstin, reconciliation, warnings) are appended without disturbing
+    any pre-existing key or value.
+    """
+    return await _gstr1_payload(month, request, user)
+
+
+@router.get("/reports/gstr1.json")
+async def report_gstr1_json(month: str, request: Request, user=Depends(get_current_user)):
+    """C3.5 · Downloadable canonical GSTR-1 §9A JSON.
+
+    Returns the same body as GET /reports/gstr1, wrapped in an attachment
+    Content-Disposition so browsers save it as a file. Emits one
+    audit_logs.gstr_export/download row.
+    """
+    payload = await _gstr1_payload(month, request, user)
+    code = payload.get("company_name", "").strip() or "company"
+    code = "".join(c if c.isalnum() else "_" for c in code)[:24] or "company"
+    fname = f"GSTR1_{code}_{month}.json"
+    recon = payload.get("reconciliation") or {}
+    await _log_audit(
+        user, "gstr_export", "download",
+        entity_id="", entity_ref=fname,
+        changes={
+            "format": "json",
+            "period": payload.get("period"),
+            "row_count": payload.get("invoice_count", 0),
+            "gst_total": payload.get("totals", {}).get("total"),
+            "reconciled": recon.get("reconciled"),
+        },
+    )
+    import json as _json
+    return StreamingResponse(
+        io.BytesIO(_json.dumps(payload).encode("utf-8")),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.get("/reports/gstr1.xlsx")
+async def report_gstr1_xlsx(month: str, request: Request, user=Depends(get_current_user)):
+    """C3.5 · XLSX projection of the C3.5 canonical payload.
+
+    Four accountant-friendly sheets: Summary / B2B / B2C / By_State.
+    Never recomputes tax, totals, POS, or GST routing.
+    """
+    payload = await _gstr1_payload(month, request, user)
+    company = await db.companies.find_one(
+        {"id": payload["company_id"], "user_id": user["user_id"]}, {"_id": 0}
+    ) or {}
+
+    from xlsx.gstr1 import build_gstr1_xlsx
+    data = build_gstr1_xlsx(company, payload)
+
+    code = (company.get("company_code") or "company")
+    fname = f"GSTR1_{code}_{month}.xlsx"
+    recon = payload.get("reconciliation") or {}
+    await _log_audit(
+        user, "gstr_export", "download",
+        entity_id="", entity_ref=fname,
+        changes={
+            "format": "xlsx",
+            "period": payload.get("period"),
+            "row_count": payload.get("invoice_count", 0),
+            "gst_total": payload.get("totals", {}).get("total"),
+            "reconciled": recon.get("reconciled"),
+        },
+    )
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.get("/reports/gstr1.pdf")
+async def report_gstr1_pdf(month: str, request: Request, user=Depends(get_current_user)):
+    """C3.5 · PDF projection of the C3.5 canonical payload (A4 landscape).
+
+    Human-readable working report — NOT a portal upload file. Uses the
+    L2d v3 fresh-flowable two-pass render pattern to survive unlimited
+    row volume without HTTP 500 / LayoutError.
+    """
+    payload = await _gstr1_payload(month, request, user)
+    company = await db.companies.find_one(
+        {"id": payload["company_id"], "user_id": user["user_id"]}, {"_id": 0}
+    ) or {}
+
+    from pdf.gstr1 import build_gstr1_pdf
+    data = build_gstr1_pdf(company, payload)
+
+    code = (company.get("company_code") or "company")
+    fname = f"GSTR1_{code}_{month}.pdf"
+    recon = payload.get("reconciliation") or {}
+    await _log_audit(
+        user, "gstr_export", "download",
+        entity_id="", entity_ref=fname,
+        changes={
+            "format": "pdf",
+            "period": payload.get("period"),
+            "row_count": payload.get("invoice_count", 0),
+            "gst_total": payload.get("totals", {}).get("total"),
+            "reconciled": recon.get("reconciled"),
+        },
+    )
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{fname}"'},
+    )
 
 # ==================== E-Way Bill JSON ====================
 
