@@ -685,3 +685,35 @@ async def _next_lr_number(user_id: str, company_id: str = "") -> str:
     )
     return num
 
+
+
+# ============================================================================
+# Iter132c C3.1 · GSTR-1 §9B (CDNR / CDNUR) statutory reason-code mapping.
+#
+# Statutory enum (GSTN portal contextual help + offline utility V3.2):
+#   01 Sales Return
+#   02 Post Sale Discount
+#   03 Deficiency in service
+#   04 Correction in Invoice
+#   05 Change in POS
+#   06 Finalization of Provisional assessment
+#   07 Others
+#   08 Not Applicable
+#
+# The QORVENA → GSTN map is deterministic and locked for C3.1. Unknown
+# QORVENA codes fall through to "07 Others" with an explicit warning
+# surfaced in the endpoint payload. `rsn` is portal-optional in the CDNR
+# JSON V3.2 schema (used only in the offline-utility XLSX column), so
+# there is no portal-side risk from this mapping.
+# ============================================================================
+_GSTR1_9B_REASON_MAP: dict = {
+    "sales_return":          "01",  # direct match — physical return of supply
+    "post_invoice_discount": "02",  # direct match — §15(3) post-sale discount
+    "short_delivery":        "03",  # freight-service deficiency (default per C3.1 GO)
+    "quality_claim":         "03",  # freight/product quality shortfall
+    "rate_correction":       "04",  # invoice value corrected via note
+    "under_charge":          "04",  # invoice under-charge corrected
+    "missed_halting":        "04",  # additional halting charge → invoice correction
+    "freight_escalation":    "04",  # freight rate escalation → invoice correction
+    "other":                 "07",  # catch-all
+}
