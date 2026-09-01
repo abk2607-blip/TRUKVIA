@@ -2,9 +2,11 @@ import React, { useState, useEffect, useRef } from "react";
 import { NavLink, Routes, Route, Navigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api, API, fmtCurrency, fmtDate } from "@/api";
-import { FileText, TrendingUp, Scale, Download, Landmark, Handshake, Clock, MessageCircle, Truck, Printer, ClipboardList, Archive, CheckCircle2 } from "lucide-react";
+import { FileText, TrendingUp, Scale, Download, Landmark, Handshake, Clock, MessageCircle, Truck, Printer, ClipboardList, Archive, CheckCircle2, FileWarning, AlertTriangle, ChevronDown, Info } from "lucide-react";
 import HaltingReport from "@/pages/HaltingReport";
 import { downloadBulkAllCopiesZip } from "@/utils/pdfDownload";
+import { useCdnEnabled } from "@/hooks/useCdnEnabled";
+import { toast } from "sonner";
 
 const tabs = [
   { to: "ledger", te: "లెడ్జర్", en: "Ledger", icon: FileText, testid: "tab-ledger" },
@@ -15,9 +17,12 @@ const tabs = [
   { to: "halting", te: "హాల్టింగ్", en: "Halting", icon: Clock, testid: "tab-halting" },
   { to: "balance-sheet", te: "బ్యాలెన్స్ షీట్", en: "Balance Sheet", icon: Scale, testid: "tab-balance-sheet" },
   { to: "gstr1", te: "GSTR-1", en: "GSTR-1", icon: Landmark, testid: "tab-gstr1" },
+  { to: "gstr1-9b", te: "GSTR-1 §9B", en: "GSTR-1 §9B (CN/DN)", icon: FileWarning, testid: "tab-gstr1-9b", requiresCdn: true },
 ];
 
 export default function Reports() {
+  const cdnEnabled = useCdnEnabled();
+  const visibleTabs = tabs.filter((t) => !t.requiresCdn || cdnEnabled);
   return (
     <div className="space-y-6" data-testid="reports-page">
       <header className="border-b border-zinc-200 pb-4">
@@ -29,7 +34,7 @@ export default function Reports() {
       </header>
 
       <nav className="flex gap-2 border-b border-zinc-200">
-        {tabs.map((t) => (
+        {visibleTabs.map((t) => (
           <NavLink
             key={t.to}
             to={`/reports/${t.to}`}
@@ -57,6 +62,7 @@ export default function Reports() {
         <Route path="halting" element={<HaltingReport />} />
         <Route path="balance-sheet" element={<BalanceSheetReport />} />
         <Route path="gstr1" element={<GSTR1Report />} />
+        <Route path="gstr1-9b" element={<GSTR19BReport />} />
       </Routes>
     </div>
   );
@@ -1317,3 +1323,396 @@ function FieldWrap({ label, children }) {
     </div>
   );
 }
+
+/* ------------------ GSTR-1 §9B (CN/DN) — Iter132c C3.3 ------------------ */
+// Pure projection of the LOCKED C3.1 canonical JSON (GET /api/reports/gstr1-9b).
+// XLSX/PDF are pass-through downloads (C3.2 endpoints). Zero client calculation.
+function GSTR19BReport() {
+  const cdnEnabled = useCdnEnabled();
+  const now = new Date();
+  const defaultMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+  const [month, setMonth] = useState(defaultMonth);
+  const [section, setSection] = useState("cdnr");
+  const [showJson, setShowJson] = useState(false);
+
+  const { data, refetch, isFetching, isError, error } = useQuery({
+    queryKey: ["gstr1-9b", month],
+    queryFn: async () => (await api.get("/reports/gstr1-9b", { params: { month } })).data,
+    enabled: Boolean(month) && cdnEnabled,
+    staleTime: 60_000,
+    retry: false,
+  });
+
+  if (!cdnEnabled) return <Navigate to="/reports/ledger" replace />;
+
+  const reconMismatch =
+    isError && error?.response?.status === 500 &&
+    error?.response?.data?.detail?.error === "gstr1_9b_reconciliation_mismatch";
+  const deltas = reconMismatch ? (error.response.data.detail.deltas || []) : [];
+  const recon = data?.reconciliation;
+  const reconciled = recon?.reconciled === true;
+  const downloadsDisabled = isFetching || !data || !reconciled;
+
+  const doDownload = async (kind) => {
+    const t = toast.loading(`Preparing ${kind.toUpperCase()}…`);
+    try {
+      const resp = await api.get(`/reports/gstr1-9b.${kind}`, {
+        params: { month }, responseType: "blob",
+      });
+      const cd = resp.headers?.["content-disposition"] || "";
+      const m = cd.match(/filename="?([^"]+)"?/);
+      const fname = m ? m[1] : `gstr1_9b_${month}.${kind}`;
+      const url = URL.createObjectURL(resp.data);
+      const a = document.createElement("a");
+      a.href = url; a.download = fname; a.click();
+      URL.revokeObjectURL(url);
+      toast.success(`${kind.toUpperCase()} downloaded`, { id: t });
+    } catch (e) {
+      toast.error(`${kind.toUpperCase()} download failed`, { id: t });
+    }
+  };
+
+  const doJsonDownload = () => {
+    if (!data) return;
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `gstr1_9b_${month}.json`; a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const totals = data?.totals || {};
+  const cdnrRows = (data?.cdnr || []).flatMap((g) =>
+    (g.nt || []).map((nt) => ({ ...nt, _ctin: g.ctin, _customer_name: nt.customer_name || g.customer_name }))
+  );
+  const cdnurRows = data?.cdnur || [];
+  const b2csRows = data?.b2cs_adjustments || [];
+  const commercialRows = data?.commercial_notes || [];
+  const cancelledRows = data?.cancelled_after_export || [];
+  const warnings = data?.warnings || [];
+  const isEmpty = data && (data.note_count || 0) === 0 && cancelledRows.length === 0;
+
+  return (
+    <div className="space-y-4" data-testid="gstr1-9b-tab">
+      {/* Filter bar */}
+      <div className="border border-zinc-200 bg-white rounded-sm p-4 grid grid-cols-1 md:grid-cols-4 gap-3">
+        <FieldWrap label="Month">
+          <input data-testid="g9b-month" type="month" value={month}
+            onChange={(e) => setMonth(e.target.value)} className={ic} />
+        </FieldWrap>
+        <div className="flex items-end">
+          <button data-testid="g9b-refresh-btn" onClick={() => refetch()} disabled={isFetching}
+            className="w-full px-3 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 disabled:opacity-50">
+            {isFetching ? "Refreshing…" : "Refresh"}
+          </button>
+        </div>
+        <div className="flex items-end gap-2 md:col-span-2 justify-end">
+          <button data-testid="g9b-download-pdf-btn" onClick={() => doDownload("pdf")} disabled={downloadsDisabled}
+            title="Download human-readable statutory PDF"
+            className="px-3 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 disabled:opacity-40 inline-flex items-center gap-2">
+            <Download size={14} /> Download PDF
+          </button>
+          <button data-testid="g9b-download-xlsx-btn" onClick={() => doDownload("xlsx")} disabled={downloadsDisabled}
+            title="Download 6-sheet accountant workbook"
+            className="px-3 py-2 text-xs uppercase tracking-wider bg-emerald-700 text-white rounded-sm hover:bg-emerald-800 disabled:opacity-40 inline-flex items-center gap-2">
+            <Download size={14} /> Download XLSX
+          </button>
+          <button data-testid="g9b-view-json-btn" onClick={() => setShowJson((v) => !v)} disabled={!data}
+            title="Technical JSON view"
+            className="px-3 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm hover:bg-zinc-100 disabled:opacity-40 inline-flex items-center gap-1">
+            View JSON <ChevronDown size={12} />
+          </button>
+        </div>
+      </div>
+
+      {/* Loading */}
+      {isFetching && !data && (
+        <div data-testid="g9b-loading" className="border border-zinc-200 bg-white rounded-sm p-6 text-sm text-zinc-500">
+          Loading GSTR-1 §9B report…
+        </div>
+      )}
+
+      {/* Recon mismatch */}
+      {reconMismatch && (
+        <div data-testid="g9b-recon-mismatch" className="border border-red-300 bg-red-50 rounded-sm p-4">
+          <div className="flex items-center gap-2 text-red-700 font-bold text-sm">
+            <AlertTriangle size={16} /> RECONCILIATION MISMATCH — downloads disabled
+          </div>
+          <div className="mt-2 text-xs text-red-800 space-y-1 font-mono">
+            {deltas.map((d, i) => (
+              <div key={i}>• {d.invariant}: endpoint={String(d.endpoint)} · ground_truth={String(d.ground_truth)} · delta={String(d.delta)}</div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Error (non-mismatch) */}
+      {isError && !reconMismatch && (
+        <div data-testid="g9b-error" className="border border-red-300 bg-red-50 rounded-sm p-4 text-sm text-red-700">
+          Could not load GSTR-1 §9B report. {error?.response?.data?.detail || error?.message || ""}
+          <button onClick={() => refetch()} className="ml-3 underline">Retry</button>
+        </div>
+      )}
+
+      {data && (
+        <>
+          {/* Reconciliation banner */}
+          <div data-testid="g9b-recon-status"
+            className={`border rounded-sm px-4 py-2 flex items-center justify-between text-sm ${
+              reconciled ? "border-emerald-300 bg-emerald-50 text-emerald-800"
+                         : "border-red-300 bg-red-50 text-red-800"
+            }`}>
+            <div className="font-bold">
+              {reconciled ? "● RECONCILED YES ✓" : "● RECONCILED NO ✗"}
+            </div>
+            <div className="text-xs font-mono">
+              {data.note_count || 0} notes · CN {fmtCurrency(recon?.cn_total || 0)} · DN {fmtCurrency(recon?.dn_total || 0)}
+            </div>
+          </div>
+
+          {/* KPI cards */}
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+            <G9bKpi testid="g9b-kpi-cdnr"       label="CDNR (B2B)"        count={totals.cdnr?.note_count}       val={totals.cdnr?.val} />
+            <G9bKpi testid="g9b-kpi-cdnur"      label="CDNUR (B2CL)"      count={totals.cdnur?.note_count}      val={totals.cdnur?.val} />
+            <G9bKpi testid="g9b-kpi-b2cs"       label="B2CS (Table 7)"    count={totals.b2cs_adjustments?.note_count} val={totals.b2cs_adjustments?.val} />
+            <G9bKpi testid="g9b-kpi-commercial" label="Commercial (§34)"  count={totals.commercial_notes?.note_count} val={totals.commercial_notes?.val} />
+            <G9bKpi testid="g9b-kpi-cancelled"  label="§9C due"           count={totals.cancelled_after_export?.note_count} val={null} />
+          </div>
+
+          {isEmpty && (
+            <div data-testid="g9b-empty-state" className="border border-zinc-200 bg-white rounded-sm p-8 text-center text-sm text-zinc-500">
+              No CN/DN issued in {month}. Change the month or refresh.
+            </div>
+          )}
+
+          {/* Section tabs */}
+          <div className="flex flex-wrap gap-2 border-b border-zinc-200">
+            {[
+              ["cdnr", "CDNR", cdnrRows.length, "g9b-section-cdnr"],
+              ["cdnur", "CDNUR", cdnurRows.length, "g9b-section-cdnur"],
+              ["b2cs", "B2CS", b2csRows.length, "g9b-section-b2cs"],
+              ["commercial", "Commercial", commercialRows.length, "g9b-section-commercial"],
+              ["cancelled", "§9C", cancelledRows.length, "g9b-section-cancelled"],
+            ].map(([key, lbl, cnt, tid]) => (
+              <button key={key} data-testid={tid} onClick={() => setSection(key)}
+                className={`px-3 py-2 text-xs font-semibold border-b-2 -mb-px ${
+                  section === key ? "border-zinc-950 text-zinc-950" : "border-transparent text-zinc-500 hover:text-zinc-950"
+                }`}>
+                {lbl} <span className="ml-1 text-zinc-400">({cnt})</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Active section table */}
+          {section === "cdnr"       && <G9bCdnTable testid="g9b-table-cdnr"       rows={cdnrRows}      showCtin />}
+          {section === "cdnur"      && <G9bCdnTable testid="g9b-table-cdnur"      rows={cdnurRows}     banner="B2CL — Unregistered high-value inter-state" />}
+          {section === "b2cs"       && <G9bCdnTable testid="g9b-table-b2cs"       rows={b2csRows}      banner="Report NET-OF in Table 7 · not part of §9B" bannerTone="warn" />}
+          {section === "commercial" && <G9bCommercialTable testid="g9b-table-commercial" rows={commercialRows} />}
+          {section === "cancelled"  && <G9bCancelledTable  testid="g9b-table-cancelled"  rows={cancelledRows} />}
+
+          {/* Warnings */}
+          {warnings.length > 0 && (
+            <div data-testid="g9b-warnings" className="border border-amber-300 bg-amber-50 rounded-sm p-3 text-xs text-amber-800">
+              <div className="font-bold uppercase tracking-wider mb-1 flex items-center gap-1"><Info size={12} /> Warnings</div>
+              <ul className="list-disc list-inside space-y-0.5 font-mono">
+                {warnings.map((w, i) => <li key={i}>{w}</li>)}
+              </ul>
+            </div>
+          )}
+
+          {/* JSON panel */}
+          {showJson && (
+            <div data-testid="g9b-json-panel" className="border border-zinc-300 bg-zinc-50 rounded-sm p-3">
+              <div className="flex items-center justify-between mb-2">
+                <div className="text-xs uppercase tracking-wider font-bold text-zinc-500">Canonical JSON (technical)</div>
+                <button onClick={doJsonDownload} className="text-xs underline hover:text-zinc-950">Download JSON</button>
+              </div>
+              <pre className="text-[10px] leading-tight font-mono overflow-auto max-h-96 bg-white p-2 border border-zinc-200 rounded-sm">
+{JSON.stringify(data, null, 2)}
+              </pre>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function G9bKpi({ testid, label, count, val }) {
+  return (
+    <div data-testid={testid} className="border border-zinc-200 bg-white rounded-sm p-3">
+      <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold">{label}</div>
+      <div className="mt-1 text-lg font-black tracking-tight tabular-nums">{count ?? 0}</div>
+      {val !== null && val !== undefined && (
+        <div className="text-[11px] text-zinc-500 font-mono">{fmtCurrency(val || 0)}</div>
+      )}
+    </div>
+  );
+}
+
+function G9bSectionBanner({ text, tone = "info" }) {
+  const cls = tone === "warn"
+    ? "border-amber-300 bg-amber-50 text-amber-800"
+    : "border-zinc-300 bg-zinc-50 text-zinc-700";
+  return <div className={`border rounded-sm px-3 py-2 text-xs italic ${cls}`}>{text}</div>;
+}
+
+function G9bCdnTable({ testid, rows, showCtin = false, banner, bannerTone }) {
+  if (!rows.length) {
+    return (
+      <div data-testid={testid} className="border border-zinc-200 bg-white rounded-sm p-6 text-sm text-zinc-500 text-center">
+        No records for this section.
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-2" data-testid={testid}>
+      {banner && <G9bSectionBanner text={banner} tone={bannerTone} />}
+      <div className="border border-zinc-200 bg-white rounded-sm overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead className="bg-zinc-50 text-[10px] uppercase tracking-wider text-zinc-500">
+            <tr>
+              {showCtin && <th className="text-left px-3 py-2">Ctin</th>}
+              <th className="text-left px-3 py-2">Recipient</th>
+              <th className="text-left px-3 py-2">Note #</th>
+              <th className="text-left px-3 py-2">Date</th>
+              <th className="text-center px-3 py-2">T</th>
+              <th className="text-right px-3 py-2">Value ₹</th>
+              <th className="text-left px-3 py-2">POS</th>
+              <th className="text-center px-3 py-2">RCM</th>
+              <th className="text-right px-3 py-2">Rate%</th>
+              <th className="text-right px-3 py-2">Taxable ₹</th>
+              <th className="text-right px-3 py-2">CGST</th>
+              <th className="text-right px-3 py-2">SGST</th>
+              <th className="text-right px-3 py-2">IGST</th>
+              <th className="text-left px-3 py-2">Invoice #</th>
+              <th className="text-left px-3 py-2">Reason</th>
+            </tr>
+          </thead>
+          <tbody className="font-mono">
+            {rows.map((nt) => {
+              const itm = nt.itms?.[0]?.itm_det || {};
+              const bg = nt.kind === "credit" ? "bg-red-50" : "bg-blue-50";
+              return (
+                <tr key={nt.note_id} className={`border-t border-zinc-100 ${bg}`}>
+                  {showCtin && <td className="px-3 py-1.5 whitespace-nowrap">{nt._ctin || ""}</td>}
+                  <td className="px-3 py-1.5">{nt._customer_name || nt.customer_name || ""}</td>
+                  <td className="px-3 py-1.5 whitespace-nowrap font-semibold">{nt.nt_num}</td>
+                  <td className="px-3 py-1.5 whitespace-nowrap">{nt.nt_dt}</td>
+                  <td className="px-3 py-1.5 text-center font-bold">{nt.ntty}</td>
+                  <td className="px-3 py-1.5 text-right">{fmtCurrency(nt.val || 0)}</td>
+                  <td className="px-3 py-1.5">{nt.pos || ""}</td>
+                  <td className="px-3 py-1.5 text-center">
+                    {nt.rchrg === "Y" ? <span className="inline-block px-1.5 py-0.5 bg-zinc-900 text-white text-[9px] rounded-sm font-bold">Y</span> : ""}
+                  </td>
+                  <td className="px-3 py-1.5 text-right">{Number(itm.rt || 0).toFixed(2)}</td>
+                  <td className="px-3 py-1.5 text-right">{fmtCurrency(itm.txval || 0)}</td>
+                  <td className="px-3 py-1.5 text-right">{fmtCurrency(itm.camt || 0)}</td>
+                  <td className="px-3 py-1.5 text-right">{fmtCurrency(itm.samt || 0)}</td>
+                  <td className="px-3 py-1.5 text-right">{fmtCurrency(itm.iamt || 0)}</td>
+                  <td className="px-3 py-1.5 whitespace-nowrap">{nt.inum || ""}</td>
+                  <td className="px-3 py-1.5">{nt.rsn} · {nt.reason_code_qorvena || ""}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function G9bCommercialTable({ testid, rows }) {
+  return (
+    <div className="space-y-2" data-testid={testid}>
+      <G9bSectionBanner text="Financial/Commercial note — NOT reported in GSTR-1 per CGST §34/§15(3)(b)" tone="warn" />
+      {rows.length === 0 ? (
+        <div className="border border-zinc-200 bg-white rounded-sm p-6 text-sm text-zinc-500 text-center">
+          No commercial notes for this period.
+        </div>
+      ) : (
+        <div className="border border-zinc-200 bg-white rounded-sm overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-zinc-50 text-[10px] uppercase tracking-wider text-zinc-500">
+              <tr>
+                <th className="text-left px-3 py-2">Note #</th>
+                <th className="text-left px-3 py-2">Date</th>
+                <th className="text-center px-3 py-2">T</th>
+                <th className="text-left px-3 py-2">Recipient</th>
+                <th className="text-left px-3 py-2">GSTIN</th>
+                <th className="text-left px-3 py-2">Invoice #</th>
+                <th className="text-right px-3 py-2">Subtotal ₹</th>
+                <th className="text-right px-3 py-2">Total ₹</th>
+                <th className="text-left px-3 py-2">Reason</th>
+              </tr>
+            </thead>
+            <tbody className="font-mono">
+              {rows.map((nt) => (
+                <tr key={nt.note_id} className={`border-t border-zinc-100 ${nt.kind === "credit" ? "bg-red-50" : "bg-blue-50"}`}>
+                  <td className="px-3 py-1.5 whitespace-nowrap font-semibold">{nt.note_number}</td>
+                  <td className="px-3 py-1.5 whitespace-nowrap">{nt.note_date}</td>
+                  <td className="px-3 py-1.5 text-center font-bold">{nt.ntty}</td>
+                  <td className="px-3 py-1.5">{nt.customer_name}</td>
+                  <td className="px-3 py-1.5 whitespace-nowrap">{nt.customer_gstin || "—"}</td>
+                  <td className="px-3 py-1.5 whitespace-nowrap">{nt.invoice_number || ""}</td>
+                  <td className="px-3 py-1.5 text-right">{fmtCurrency(nt.subtotal || 0)}</td>
+                  <td className="px-3 py-1.5 text-right">{fmtCurrency(nt.total_amount || 0)}</td>
+                  <td className="px-3 py-1.5">{nt.reason_code_qorvena} · {nt.reason_text || ""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function G9bCancelledTable({ testid, rows }) {
+  return (
+    <div className="space-y-2" data-testid={testid}>
+      <G9bSectionBanner text="Requires GSTR-1 §9C (CDNRA/CDNURA) amendment in a subsequent filing period" tone="warn" />
+      {rows.length === 0 ? (
+        <div className="border border-zinc-200 bg-white rounded-sm p-6 text-sm text-zinc-500 text-center">
+          No cancelled-after-export notes for this period.
+        </div>
+      ) : (
+        <div className="border border-zinc-200 bg-white rounded-sm overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-zinc-50 text-[10px] uppercase tracking-wider text-zinc-500">
+              <tr>
+                <th className="text-left px-3 py-2">Note #</th>
+                <th className="text-left px-3 py-2">Date</th>
+                <th className="text-center px-3 py-2">T</th>
+                <th className="text-left px-3 py-2">Recipient</th>
+                <th className="text-left px-3 py-2">GSTIN</th>
+                <th className="text-left px-3 py-2">Invoice #</th>
+                <th className="text-right px-3 py-2">Total ₹</th>
+                <th className="text-left px-3 py-2">Cancelled At</th>
+                <th className="text-left px-3 py-2">Reason</th>
+                <th className="text-left px-3 py-2">Advisory</th>
+              </tr>
+            </thead>
+            <tbody className="font-mono">
+              {rows.map((nt) => (
+                <tr key={nt.note_id} className="border-t border-zinc-100 bg-red-50">
+                  <td className="px-3 py-1.5 whitespace-nowrap font-semibold">{nt.note_number}</td>
+                  <td className="px-3 py-1.5 whitespace-nowrap">{nt.note_date}</td>
+                  <td className="px-3 py-1.5 text-center font-bold">{nt.ntty}</td>
+                  <td className="px-3 py-1.5">{nt.customer_name}</td>
+                  <td className="px-3 py-1.5 whitespace-nowrap">{nt.customer_gstin || "—"}</td>
+                  <td className="px-3 py-1.5 whitespace-nowrap">{nt.invoice_number || ""}</td>
+                  <td className="px-3 py-1.5 text-right">{fmtCurrency(nt.total_amount || 0)}</td>
+                  <td className="px-3 py-1.5 whitespace-nowrap">{(nt.cancelled_at || "").slice(0, 10)}</td>
+                  <td className="px-3 py-1.5">{nt.cancelled_reason || ""}</td>
+                  <td className="px-3 py-1.5 text-[11px]">{nt._advisory || ""}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
