@@ -55,22 +55,23 @@ _CONTENT_W_MM = 273.0
 
 # 13 columns · sum = 273 mm. Invoice # widened 28 → 34 mm so long numbers
 # like `AKB/26-27//26-27/0004` (21 chars) stay on ONE visual line (mirrors
-# the LOCKED §9B Note # 28 mm fix pattern). Width reclaimed from Customer
-# (42 → 36 mm) and GST Type (26 → 22 mm) — both remain readable.
+# the LOCKED §9B Note # 28 mm fix pattern). Date widened 16 → 18 mm so
+# ISO `YYYY-MM-DD` stays on ONE line at 7pt DejaVu. Width reclaimed from
+# Customer (36 → 34 mm) and GST Type (26 → 21 mm) — both remain readable.
 B2B_COL_HEADERS = [
     "Invoice #", "Date", "Customer", "GSTIN", "State", "POS",
     "RCM", f"Taxable ({_RUPEE})", f"CGST ({_RUPEE})", f"SGST ({_RUPEE})",
     f"IGST ({_RUPEE})", f"Total ({_RUPEE})", "GST Type",
 ]
-B2B_COL_WIDTHS_MM = [34, 16, 36, 26, 22, 12, 8, 22, 18, 18, 18, 22, 21]
+B2B_COL_WIDTHS_MM = [34, 18, 32, 28, 22, 12, 8, 22, 18, 18, 18, 22, 21]
 
-# 12 columns · sum = 272 mm.
+# 12 columns · sum = 268 mm.
 B2C_COL_HEADERS = [
     "Invoice #", "Date", "Customer", "State", "POS",
     "RCM", f"Taxable ({_RUPEE})", f"CGST ({_RUPEE})", f"SGST ({_RUPEE})",
     f"IGST ({_RUPEE})", f"Total ({_RUPEE})", "GST Type",
 ]
-B2C_COL_WIDTHS_MM = [34, 16, 42, 24, 12, 8, 24, 18, 18, 18, 24, 30]
+B2C_COL_WIDTHS_MM = [34, 18, 40, 24, 12, 8, 24, 18, 18, 18, 24, 30]
 
 BY_STATE_COL_HEADERS = [
     "State", "Code", "Invoices", f"Taxable ({_RUPEE})",
