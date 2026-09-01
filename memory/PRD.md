@@ -49,6 +49,96 @@ User communicates in English. Respond in English. (Prior bilingual reference ret
   - **Existing locks preserved**: Iter126, Iter127a-c, Iter128, Iter129, Iter130, Iter131, Iter132a/b, Iter132c C1/H1/C2/C2b/C2c, Iter133 L1/L1.5/L2/L2b/L2c/L2d/L2e — all remain locked and untouched.
   - **Backlog frozen**: C3 GSTR-1 §9B · C4 CN/DN Register · Statement Email Delivery · Iter132c-agg-fix · Phase 2 Security · `AKB/26-27//26-27/0004` hygiene · Preview Uptime Chip · LR Digest · Trip Templates · Trip Sheet redesign · Tyre · Driver Salary · Expense/Vehicle Cost ERP · Maintenance.
 
+
+## Iter132c · C3.2 · GSTR-1 §9B XLSX + PDF Export — 🔒 LOCKED (2026-09-01 · UAT approved · Full Deploy Guard GREEN · pytest 503 pass / 1 skip / 0 fail)
+- **Scope shipped in C3.2**: two additive projection endpoints — `GET /api/reports/gstr1-9b.xlsx?month=YYYY-MM` (accountant-friendly 6-sheet workbook) and `GET /api/reports/gstr1-9b.pdf?month=YYYY-MM` (A4-landscape human-readable statutory working report). Both are PURE PROJECTIONS of the C3.1 canonical JSON.
+- **Architecture (LOCKED · ONE SOURCE OF TRUTH)**:
+  ```
+                    credit_debit_notes  (authoritative, LOCKED)
+                            │
+                    _compute_note_totals (Iter132a, LOCKED — calculated once at issue)
+                            │
+              ┌────────────▼─────────────┐
+              │  _gstr1_9b_payload(...)  │  ← shared internal helper
+              │     (C3.2.1 · LOCKED)    │     (C3.1 canonical payload builder)
+              └────────────┬─────────────┘
+                           │
+                ┌──────────┼──────────┐
+                ▼          ▼          ▼
+        JSON endpoint  XLSX endpoint  PDF endpoint
+        (C3.1)         (C3.2)         (C3.2)
+                                 │
+                                 └── audit_logs.gstr_export/download {format,period,row_count,gst_true_total,gst_false_total}
+  ```
+  Each of the three public endpoints delegates to `_gstr1_9b_payload` and emits its own `gstr_export/download` audit row with the served `format`. **Neither XLSX nor PDF ever recomputes tax, totals, POS, routing, reconciliation, or statutory classification.**
+- **Zero duplicate statutory calculation**: XLSX and PDF read `payload["cdnr"|"cdnur"|"b2cs_adjustments"|"commercial_notes"|"cancelled_after_export"|"totals"|"reconciliation"|"warnings"]` and render — no recomputation, no re-classification, no second dataset. Zero re-entry for the accountant.
+- **XLSX contract (LOCKED)**:
+  - Six sheets: `Summary` · `CDNR` · `CDNUR` · `B2CS_Adjustments` · `Commercial_Notes` · `Cancelled_After_Export`.
+  - Frozen header row on every data sheet (row 4 header; row 5+ data).
+  - CN rows tinted red-50 (`FEF2F2`), DN rows tinted blue-50 (`EFF6FF`) — parity with Ledger PDF (L2 LOCKED).
+  - Currency format `#,##0.00 ₹`; date format `dd-mm-yyyy` (matches CDNR JSON V3.2 portal shape).
+  - Deterministic row order (already sorted by `note_date` in the C3.1 cursor).
+  - Reconciliation status cell tinted green when `reconciled=true`, red otherwise (Summary sheet).
+  - Locked column-header lists as module constants: `CDNR_HEADERS · CDNUR_HEADERS · B2CS_HEADERS · COMMERCIAL_HEADERS · CANCELLED_HEADERS` (referenced by T5 static-header assertion).
+  - No row cap; no `to_list(N)` truncation.
+  - Content-Type `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`; Content-Disposition `attachment; filename="GSTR1_9B_<company_code>_<YYYY-MM>.xlsx"`.
+- **PDF contract (LOCKED)**:
+  - **A4 landscape** (297 × 210 mm) · 12 mm L/R margins · 273 mm content-width envelope.
+  - Two-pass build with **L2d v3 fresh-flowable `_make_story()` closure** — proven pattern from Invoice PDF regression suite; fresh Flowables per pass eliminates ReportLab state pollution at high row density.
+  - `NumberedCanvas` footer: `GSTR-1 §9B · CN/DN Register · Computer-generated · Page X of Y · Printed YYYY-MM-DD UTC`.
+  - Sections in order: Header band (logo + company + GSTIN + state) → Accent divider → Period + row count + Reconciled ✓/✗ badge → 5-row Summary table → CDNR → CDNUR → B2CS Adjustments (banner: `net-of Table 7`) → Commercial Notes (banner: `§34/§15(3)(b) excluded from §9B`) → Cancelled After Export (banner: `§9C amendment due`) → Warnings.
+  - Every data table uses `repeatRows=1` (header repeats on page break).
+  - Empty sections render `No <section> records for this period.` placeholder — never crash on empty `platypus.Table`.
+  - CN rows tint red-50, DN rows tint blue-50 — parity with Ledger PDF.
+  - `Paragraph` cells for long text (Recipient, Reason) — wrap gracefully.
+- **16-character Note # readability fix (LOCKED)**: PDF column widths tuned so the full 16-character statutory `nt_num` renders as a single visual token (was wrapping under the initial 20 mm Note # column at 7 pt Helvetica → 21.7 mm required content width vs 18 mm available → wrap). Fix widens Note # to **28 mm across all five landscape tables**; space reclaimed from the widest text column (Reason/Info/Advisory) in each table. Column-width sums post-fix (all ≤ 273 mm envelope):
+  - `CDNR` = 268 mm · `CDNUR` = 270 mm · `B2CS` = 270 mm · `COMMERCIAL` = 270 mm · `CANCELLED` = 272 mm
+  - Enforced by T15 static-width regression (`_all_col_widths_mm()` helper + `_CONTENT_W_MM = 273.0` module constant).
+  - Verified visually via `fitz.search_for("T14-<uuid>-00001")` — 1 match post-fix (0 matches pre-fix).
+- **Parity guarantees (fail-loud)**:
+  - **XLSX ↔ JSON parity** (T6): every CDNR row's `ctin · nt_dt · ntty · val · pos · inum · txval · camt · samt · iamt · rsn · reason_code_qorvena` compared cell-by-cell against the JSON payload. Lookup key = `(customer_name, nt_num)` (tenant-unique) because `nt_num` alone is per-customer-monotonic under the LOCKED Iter132a numbering — NOT globally unique.
+  - **PDF ↔ JSON semantic parity** (T14 dense-period 30 CN/DN mix; T17 high-volume 2,100 notes) — every seeded note number retrievable via `fitz.search_for(...)` at every scale.
+  - Summary reconciliation cell (T7) matches JSON `reconciliation.reconciled` and `endpoint_gst_true_total`.
+  - Payload-shape completeness (T19 under C3.1) — every top-level key present including on empty periods.
+- **High-volume streaming behaviour (LOCKED)**:
+  - No `to_list(N)` anywhere in the payload builder or the exporters (openpyxl writes row-by-row, reportlab consumes flowables lazily).
+  - **XLSX 2,100 notes** (T9) — direct-Mongo seed → HTTP 200 → openpyxl reader confirms all 2,100 rows present in CDNR sheet → cleanup verified 0 orphans.
+  - **PDF 2,100 notes** (T17) — direct-Mongo seed → HTTP 200 → valid `%PDF-` header + `%%EOF` → page count ≥ 10 → sampled note numbers (first, middle, last) all found via `fitz.search_for` → cleanup verified 0 orphans.
+  - No LayoutError; no HTTP 500 by volume; no clipped rows; no lost final rows.
+- **PDF multi-page behaviour (LOCKED)**:
+  - CONTENT GROWS → PAGES GROW → PDF STILL SUCCEEDS.
+  - `NumberedCanvas` two-pass ensures `Page X of Y` is accurate.
+  - `repeatRows=1` on every table means the header re-prints on every new page.
+  - Empty period → 1 page with placeholder text (never empty-table crash).
+  - Dense 30-note period → 2 pages (verified by T14 `fitz.page_count`).
+  - 2,100-note period → ≥ 10 pages (verified by T17).
+- **Audit logging (LOCKED)**:
+  - Every download emits ONE `audit_logs {module:"gstr_export", action:"download", entity_ref:"GSTR1_9B_<code>_<month>.<ext>", changes:{format,period,row_count,gst_true_total,gst_false_total}}` row.
+  - JSON endpoint logs `format:"json"` (entity_ref `gstr1_9b_<month>`); XLSX logs `format:"xlsx"`; PDF logs `format:"pdf"` (both with full filename ref).
+  - Verified by T18 for both XLSX and PDF (before/after counts increment).
+- **Verification evidence (authoritative, measured)**:
+  - C3.2 targeted `test_iter132c_c3_2_gstr1_9b_export.py`: **18/18 passed · 0 failed · 0 skipped · exit 0 · 12.57 s** (post-guard confirmation run, three consecutive greens).
+  - C3.1 regression `test_iter132c_c3_gstr1_9b.py`: **19/19 passed** (post-guard confirmation).
+  - Full Deploy Guard (auto-triggered at 2026-09-01T08:48 UTC after the manual `POST /run-now` returned `already_running` due to hourly cadence overlap): `checked_at=2026-09-01T09:01:30.633739+00:00 · status=pass · elapsed_s=788.8 · exit_code=0 · consecutive_failures=0 · strict_mode=true · next_check_at=2026-09-01T10:01:30.633745+00:00 · pytest_summary="503 passed, 1 skipped, 8 warnings in 788.38s (0:13:08)"`. Iter128 Deploy Readiness Badge **🟢 GREEN**.
+  - Deploy-history context — 6 consecutive green runs on 2026-09-01 (`05:21 manual, 06:02, 07:15, 07:31, 08:44, 09:01`).
+  - Live JSON/XLSX/PDF smoke on preview tenant (`2026-09`, 100 notes): JSON `HTTP 200 · reconciled=true · all 5 buckets present`; XLSX `HTTP 200 · 20,472 bytes · openxmlformats MIME`; PDF `HTTP 200 · 64,543 bytes · %PDF- + %%EOF valid`.
+- **Files changed (additive-only)**:
+  - `backend/routers/gst.py` — extracted `_gstr1_9b_payload(month, request, user) -> dict` (side-effect-free canonical builder); added 3 endpoint wrappers `report_gstr1_9b` / `report_gstr1_9b_xlsx` / `report_gstr1_9b_pdf` (each 25–35 LOC · each emits its own `gstr_export/download` audit row).
+  - `backend/xlsx/__init__.py` — new · empty package marker.
+  - `backend/xlsx/gstr1_9b.py` — new · `build_gstr1_9b_xlsx(company, payload) -> bytes` + 5 sheet builders + locked header-list constants (`CDNR_HEADERS · CDNUR_HEADERS · B2CS_HEADERS · COMMERCIAL_HEADERS · CANCELLED_HEADERS`) + shared style helpers.
+  - `backend/pdf/gstr1_9b.py` — new · `build_gstr1_9b_pdf(company, payload) -> bytes` + `NumberedCanvas` + `_make_story()` closure + 5 section builders + locked column-width constants (`CDNR_COL_WIDTHS_MM · CDNUR_COL_WIDTHS_MM · B2CS_COL_WIDTHS_MM · COMMERCIAL_COL_WIDTHS_MM · CANCELLED_COL_WIDTHS_MM`) + `_all_col_widths_mm()` regression helper.
+  - `backend/tests/test_iter132c_c3_2_gstr1_9b_export.py` — new · 18 hermetic tests · re-runnable via uuid-derived `_fake_gstin` helper against LOCKED Iter127a duplicate-master guard.
+- **Zero touches** to: `models.py`, `routers/notes.py`, `routers/invoices.py`, `routers/customers.py`, `routers/reports.py`, existing `pdf/*.py` (invoice / ledger / credit_note / debit_note / lr / owner), `services.py` (only additive `_GSTR1_9B_REASON_MAP` from C3.1), `auth.py`, `server.py`, `.env`, invoice numbering, invoice/note schemas, `_compute_note_totals`, `_effective_invoice_totals`, `_apply_effective_balance`, RBAC, feature flags, and every LOCKED Iter132a/b/c and Iter133 L1/L1.5/L2/L2b/L2c/L2d/L2e path. C3.1 lock remains intact.
+- **Restarts used**: **1 authorised backend restart** (after PDF column-width tune). Zero unauthorised restarts.
+- **STOP RULE compliance**: two failure cycles surfaced during C3.2 development (Python-3.11 f-string SyntaxError from `\uXXXX` escapes; T6 nt_num-collision + T14/T17 PDF column overflow) — each escalated with full RCA + product-vs-test classification; fixes applied strictly after explicit user GO. Zero autonomous product-code changes across the entire slice.
+- **Known limitations (documented, not blocking C3.2 lock)**:
+  - **Portal offline-utility JSON** (`b2b`/`cdnr`/`cdnur` GSTN offline-utility upload structure) — deliberately out of C3.2 scope, deferred to future **C3.4**. C3.2 ships human-readable PDF + accountant-friendly XLSX only.
+  - **§9C amendment emission (CDNRA / CDNURA)** — deferred to future **C5**. C3.2 surfaces cancelled-after-export notes with `_advisory` text in every downstream (JSON / XLSX / PDF) but does not emit §9C rows.
+  - **Recipient identity snapshot** — CN/DN carry `invoice_number_snapshot` but not a customer-GSTIN/state snapshot at issue time. XLSX and PDF reflect the *current* customer record for `ctin`/`pos` (parity with LOCKED `/reports/gstr1` invoice-side and LOCKED `/reports/gstr1-9b` JSON). Documented pre-existing latent gap; NOT a C3.2 regression.
+  - **PDF template drift** — column-width constants match GSTR-1 Offline Utility **V3.2 (Aug 2026)** shape. Annual GSTN template refresh may require a width-constant refresh in a future micro-slice.
+- **Rollback boundary**: revertable by (a) deleting `backend/xlsx/__init__.py`, `backend/xlsx/gstr1_9b.py`, `backend/pdf/gstr1_9b.py`, `backend/tests/test_iter132c_c3_2_gstr1_9b_export.py`; (b) restoring the pre-C3.2 `backend/routers/gst.py` (single `report_gstr1_9b` endpoint with inline body and inline audit — remove the two new XLSX/PDF endpoints and the `_gstr1_9b_payload` extraction wrapper, inlining the payload body back into `report_gstr1_9b`). No DB migration performed; no persisted-schema change; no new dependency added (`openpyxl` and `reportlab` were both already pinned; `fitz`/PyMuPDF was already used by L2e). A rollback restores the codebase byte-for-byte to the C3.1-only baseline at Deploy Guard `checked_at=2026-09-01T05:21:36Z`.
+- **Deferred (still frozen, awaiting explicit GO)**: C3.3 Frontend Reports UI · C3.4 Portal offline-utility JSON · C4 CN/DN Register · C5 §9C emission · Statement Email Delivery · Iter132c-ai-agg-fix (`to_list(2000/5000)` truncation) · Phase-2 Security Hardening · LR Register Email Digest · Trip Templates · new modules (Tyre / Driver Salary / Expense / Maintenance) · every other backlog item.
+
 ## Iter132c · C3.1 · GSTR-1 §9B Canonical Statutory JSON Feed — 🔒 LOCKED (2026-09-01 · Full Deploy Guard GREEN · pytest 503 pass / 1 skip / 0 fail)
 - **Scope shipped in C3.1**: canonical statutory JSON feed for GSTR-1 §9B (CDNR / CDNUR / B2CS-net-of / Financial-commercial / cancelled-after-export). *Zero re-entry, zero recomputation.* The feed reads the same authoritative issued CN/DN records already used by Ledger, Statement and Passbook (`ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE`).
 - **Endpoint**: `GET /api/reports/gstr1-9b?month=YYYY-MM` · `ENABLE_CDN=1` feature-gate · RBAC parity with `/reports/gstr1`.
