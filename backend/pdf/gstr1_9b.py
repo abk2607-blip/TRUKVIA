@@ -47,18 +47,18 @@ _CONTENT_W_MM = 273.0
 # 12 columns · widths sum = 268 mm ≤ 273
 CDNR_COL_HEADERS = [
     "Note #", "Date", "T", "Ctin", "Recipient",
-    "Invoice #", "Rate %", "Taxable \u20B9",
-    "CGST \u20B9", "SGST \u20B9", "IGST \u20B9",
-    "Note Value \u20B9", "Reason",
+    "Invoice #", "Rate %", "Taxable ₹",
+    "CGST ₹", "SGST ₹", "IGST ₹",
+    "Note Value ₹", "Reason",
 ]
 CDNR_COL_WIDTHS_MM = [20, 16, 6, 26, 30, 20, 10, 22, 16, 16, 16, 22, 48]
 
 # 11 columns
 CDNUR_COL_HEADERS = [
     "Note #", "Date", "T", "Recipient",
-    "Invoice #", "Rate %", "Taxable \u20B9",
-    "CGST \u20B9", "SGST \u20B9", "IGST \u20B9",
-    "Note Value \u20B9", "Reason",
+    "Invoice #", "Rate %", "Taxable ₹",
+    "CGST ₹", "SGST ₹", "IGST ₹",
+    "Note Value ₹", "Reason",
 ]
 CDNUR_COL_WIDTHS_MM = [20, 16, 6, 38, 22, 10, 22, 16, 16, 16, 22, 66]
 
@@ -68,14 +68,14 @@ B2CS_COL_WIDTHS_MM = CDNUR_COL_WIDTHS_MM[:]
 
 COMMERCIAL_COL_HEADERS = [
     "Note #", "Date", "T", "Recipient",
-    "Invoice #", "Subtotal \u20B9", "Total \u20B9",
+    "Invoice #", "Subtotal ₹", "Total ₹",
     "QORVENA Reason", "Info",
 ]
 COMMERCIAL_COL_WIDTHS_MM = [22, 16, 6, 40, 22, 22, 22, 40, 80]
 
 CANCELLED_COL_HEADERS = [
     "Note #", "Date", "T", "Recipient",
-    "Invoice #", "Total \u20B9",
+    "Invoice #", "Total ₹",
     "Cancelled At", "Reason", "Advisory",
 ]
 CANCELLED_COL_WIDTHS_MM = [22, 16, 6, 38, 22, 22, 26, 40, 78]
@@ -119,8 +119,8 @@ class NumberedCanvas(Canvas):
         pw, _ = landscape(A4)
         self.drawCentredString(
             pw / 2, 8 * mm,
-            f"GSTR-1 \u00a79B \u00b7 CN/DN Register \u00b7 Computer-generated \u00b7 "
-            f"Page {self._pageNumber} of {total} \u00b7 Printed {stamp} UTC",
+            f"GSTR-1 §9B · CN/DN Register · Computer-generated · "
+            f"Page {self._pageNumber} of {total} · Printed {stamp} UTC",
         )
 
 
@@ -184,8 +184,8 @@ def build_gstr1_9b_pdf(company: dict, payload: dict) -> bytes:
             Paragraph(f"<b>{_co.get('name','')}</b>", body),
             Paragraph(_co.get("address", "") or "", small),
             Paragraph(
-                f"GSTIN: {payload.get('issuer_gstin') or '\u2014'}  \u00b7  "
-                f"State: {payload.get('company_state') or '\u2014'} ({payload.get('company_state_code') or '\u2014'})",
+                f"GSTIN: {payload.get('issuer_gstin') or '—'}  ·  "
+                f"State: {payload.get('company_state') or '—'} ({payload.get('company_state_code') or '—'})",
                 muted,
             ),
         ]
@@ -219,8 +219,8 @@ def build_gstr1_9b_pdf(company: dict, payload: dict) -> bytes:
         )
         period_line = Paragraph(
             f"<b>Period:</b> {period.get('start','')} to {period.get('end','')}  "
-            f"\u00b7  <b>Month:</b> {payload.get('month','')}  "
-            f"\u00b7  <b>Note count:</b> {payload.get('note_count', 0)}",
+            f"·  <b>Month:</b> {payload.get('month','')}  "
+            f"·  <b>Note count:</b> {payload.get('note_count', 0)}",
             body,
         )
         story.append(period_line)
@@ -229,12 +229,12 @@ def build_gstr1_9b_pdf(company: dict, payload: dict) -> bytes:
         story.append(Spacer(1, 3 * mm))
 
         summary_rows = [
-            ["Bucket", "Note Count", "Total \u20B9", "Credit \u20B9", "Debit \u20B9"],
+            ["Bucket", "Note Count", "Total ₹", "Credit ₹", "Debit ₹"],
             ["CDNR (Registered B2B)",              t["cdnr"]["note_count"],             _fmt_money(t["cdnr"]["val"]),             _fmt_money(t["cdnr"]["cn"]),             _fmt_money(t["cdnr"]["dn"])],
             ["CDNUR (Unregistered B2CL)",          t["cdnur"]["note_count"],            _fmt_money(t["cdnur"]["val"]),            _fmt_money(t["cdnur"]["cn"]),            _fmt_money(t["cdnur"]["dn"])],
             ["B2CS Adjustments (net-of Table 7)",  t["b2cs_adjustments"]["note_count"], _fmt_money(t["b2cs_adjustments"]["val"]), _fmt_money(t["b2cs_adjustments"]["cn"]), _fmt_money(t["b2cs_adjustments"]["dn"])],
-            ["Commercial Notes (\u00a734 excluded)", t["commercial_notes"]["note_count"], _fmt_money(t["commercial_notes"]["val"]), _fmt_money(t["commercial_notes"]["cn"]), _fmt_money(t["commercial_notes"]["dn"])],
-            ["Cancelled After Export (\u00a79C due)", t["cancelled_after_export"]["note_count"], "", "", ""],
+            ["Commercial Notes (§34 excluded)", t["commercial_notes"]["note_count"], _fmt_money(t["commercial_notes"]["val"]), _fmt_money(t["commercial_notes"]["cn"]), _fmt_money(t["commercial_notes"]["dn"])],
+            ["Cancelled After Export (§9C due)", t["cancelled_after_export"]["note_count"], "", "", ""],
         ]
         summary_tbl = Table(summary_rows,
                             colWidths=[80 * mm, 25 * mm, 55 * mm, 55 * mm, 55 * mm])
@@ -317,7 +317,7 @@ def _cdn_table(rows, widths_mm, cell_style):
 
 
 def _append_cdnr_section(story, payload, h2, banner, body, small):
-    story.append(Paragraph("CDNR \u00b7 Registered Recipients (Table 9B)", h2))
+    story.append(Paragraph("CDNR · Registered Recipients (Table 9B)", h2))
     cdnr = payload.get("cdnr", []) or []
     if not cdnr:
         story.append(_empty_placeholder("CDNR", small))
@@ -340,7 +340,7 @@ def _append_cdnr_section(story, payload, h2, banner, body, small):
                 _para(_fmt_money(itm.get("samt", 0)), small),
                 _para(_fmt_money(itm.get("iamt", 0)), small),
                 _para(_fmt_money(nt.get("val", 0)), small),
-                _para(f"{nt.get('rsn','')} \u00b7 {nt.get('reason_code_qorvena','') or ''}", small),
+                _para(f"{nt.get('rsn','')} · {nt.get('reason_code_qorvena','') or ''}", small),
             ])
             row_kinds.append(nt.get("kind"))
     tbl = _cdn_table(rows, CDNR_COL_WIDTHS_MM, small)
@@ -353,7 +353,7 @@ def _append_cdnr_section(story, payload, h2, banner, body, small):
 
 
 def _append_cdnur_section(story, payload, h2, banner, body, small):
-    story.append(Paragraph("CDNUR \u00b7 Unregistered Recipients (Table 9B)", h2))
+    story.append(Paragraph("CDNUR · Unregistered Recipients (Table 9B)", h2))
     rows_src = payload.get("cdnur", []) or []
     if not rows_src:
         story.append(_empty_placeholder("CDNUR", small))
@@ -374,7 +374,7 @@ def _append_cdnur_section(story, payload, h2, banner, body, small):
             _para(_fmt_money(itm.get("samt", 0)), small),
             _para(_fmt_money(itm.get("iamt", 0)), small),
             _para(_fmt_money(nt.get("val", 0)), small),
-            _para(f"{nt.get('rsn','')} \u00b7 {nt.get('reason_code_qorvena','') or ''}", small),
+            _para(f"{nt.get('rsn','')} · {nt.get('reason_code_qorvena','') or ''}", small),
         ])
         row_kinds.append(nt.get("kind"))
     tbl = _cdn_table(rows, CDNUR_COL_WIDTHS_MM, small)
@@ -386,9 +386,9 @@ def _append_cdnur_section(story, payload, h2, banner, body, small):
 
 
 def _append_b2cs_section(story, payload, h2, banner, body, small):
-    story.append(Paragraph("B2CS Adjustments \u00b7 Report NET-OF in Table 7", h2))
+    story.append(Paragraph("B2CS Adjustments · Report NET-OF in Table 7", h2))
     story.append(Paragraph(
-        "Not statutorily part of \u00a79B \u00b7 surfaced here for audit \u00b7 "
+        "Not statutorily part of §9B · surfaced here for audit · "
         "accountant must net these into Table 7 of GSTR-1.",
         banner,
     ))
@@ -412,7 +412,7 @@ def _append_b2cs_section(story, payload, h2, banner, body, small):
             _para(_fmt_money(itm.get("samt", 0)), small),
             _para(_fmt_money(itm.get("iamt", 0)), small),
             _para(_fmt_money(nt.get("val", 0)), small),
-            _para(f"{nt.get('rsn','')} \u00b7 {nt.get('reason_code_qorvena','') or ''}", small),
+            _para(f"{nt.get('rsn','')} · {nt.get('reason_code_qorvena','') or ''}", small),
         ])
         row_kinds.append(nt.get("kind"))
     tbl = _cdn_table(rows, B2CS_COL_WIDTHS_MM, small)
@@ -426,7 +426,7 @@ def _append_b2cs_section(story, payload, h2, banner, body, small):
 def _append_commercial_section(story, payload, h2, banner, body, small):
     story.append(Paragraph("Commercial / Financial Notes", h2))
     story.append(Paragraph(
-        "Excluded from GSTR-1 \u00a79B per CGST \u00a734 / \u00a715(3)(b) \u00b7 "
+        "Excluded from GSTR-1 §9B per CGST §34 / §15(3)(b) · "
         "commercial notes do NOT adjust GST liability and are NOT reported.",
         banner,
     ))
@@ -460,8 +460,8 @@ def _append_commercial_section(story, payload, h2, banner, body, small):
 def _append_cancelled_section(story, payload, h2, banner_r, body, small):
     story.append(Paragraph("Cancelled After Export", h2))
     story.append(Paragraph(
-        "Requires GSTR-1 \u00a79C (CDNRA / CDNURA) amendment in a subsequent "
-        "filing period \u00b7 \u00a79C emission itself is out of scope for C3.",
+        "Requires GSTR-1 §9C (CDNRA / CDNURA) amendment in a subsequent "
+        "filing period · §9C emission itself is out of scope for C3.",
         banner_r,
     ))
     rows_src = payload.get("cancelled_after_export", []) or []

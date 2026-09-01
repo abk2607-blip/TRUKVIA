@@ -25,7 +25,7 @@ INFO_FILL = PatternFill("solid", fgColor="FEF3C7")
 _thin     = Side(border_style="thin", color="CBD5E1")
 BORDER    = Border(left=_thin, right=_thin, top=_thin, bottom=_thin)
 
-CURRENCY_FMT = '#,##0.00" \u20B9"'
+CURRENCY_FMT = '#,##0.00" ₹"'
 NUM_FMT      = "#,##0.00"
 
 
@@ -64,20 +64,20 @@ def _apply_widths(ws, widths):
 def _build_summary(ws, company: dict, payload: dict):
     ws.cell(row=1, column=1, value=company.get("name", "")).font = Font(bold=True, size=14)
     ws.cell(row=2, column=1, value=(
-        f"GSTR-1 \u00a79B \u00b7 CN/DN Register  \u00b7  {payload['month']}  \u00b7  "
-        f"GSTIN {payload.get('issuer_gstin') or '\u2014'}  \u00b7  "
+        f"GSTR-1 §9B · CN/DN Register  ·  {payload['month']}  ·  "
+        f"GSTIN {payload.get('issuer_gstin') or '—'}  ·  "
         f"generated {datetime.now(timezone.utc).strftime('%d-%b-%Y %H:%M UTC')}"
     )).font = Font(italic=True, color="475569")
 
-    _write_header(ws, ["Bucket", "Note Count", "Total \u20B9", "Credit \u20B9", "Debit \u20B9"], row=4)
+    _write_header(ws, ["Bucket", "Note Count", "Total ₹", "Credit ₹", "Debit ₹"], row=4)
 
     t = payload["totals"]
     rows_out = [
         ("CDNR (Registered B2B)",           t["cdnr"]["note_count"],             t["cdnr"]["val"],             t["cdnr"]["cn"],             t["cdnr"]["dn"]),
         ("CDNUR (Unregistered B2CL)",       t["cdnur"]["note_count"],            t["cdnur"]["val"],            t["cdnur"]["cn"],            t["cdnur"]["dn"]),
         ("B2CS Adjustments (net-of Table 7)", t["b2cs_adjustments"]["note_count"], t["b2cs_adjustments"]["val"], t["b2cs_adjustments"]["cn"], t["b2cs_adjustments"]["dn"]),
-        ("Commercial Notes (\u00a734 excluded)", t["commercial_notes"]["note_count"], t["commercial_notes"]["val"], t["commercial_notes"]["cn"], t["commercial_notes"]["dn"]),
-        ("Cancelled After Export (\u00a79C due)", t["cancelled_after_export"]["note_count"], "", "", ""),
+        ("Commercial Notes (§34 excluded)", t["commercial_notes"]["note_count"], t["commercial_notes"]["val"], t["commercial_notes"]["cn"], t["commercial_notes"]["dn"]),
+        ("Cancelled After Export (§9C due)", t["cancelled_after_export"]["note_count"], "", "", ""),
     ]
     for i, r in enumerate(rows_out, start=5):
         _write_row(ws, i, list(r), currency_cols=(3, 4, 5))
@@ -92,12 +92,12 @@ def _build_summary(ws, company: dict, payload: dict):
     rc.font = Font(bold=True)
 
     labels = [
-        ("Endpoint \u00b7 GST-true total",     recon["endpoint_gst_true_total"]),
-        ("Ground truth \u00b7 GST-true total", recon["ground_truth_gst_true"]),
-        ("Endpoint \u00b7 GST-false total",    recon["endpoint_gst_false_total"]),
-        ("Ground truth \u00b7 GST-false total",recon["ground_truth_gst_false"]),
-        ("Endpoint \u00b7 issued row count",   recon["endpoint_row_count"]),
-        ("Ground truth \u00b7 issued count",   recon["ground_truth_issued_count"]),
+        ("Endpoint · GST-true total",     recon["endpoint_gst_true_total"]),
+        ("Ground truth · GST-true total", recon["ground_truth_gst_true"]),
+        ("Endpoint · GST-false total",    recon["endpoint_gst_false_total"]),
+        ("Ground truth · GST-false total",recon["ground_truth_gst_false"]),
+        ("Endpoint · issued row count",   recon["endpoint_row_count"]),
+        ("Ground truth · issued count",   recon["ground_truth_issued_count"]),
         ("CN total (all)",                     recon["cn_total"]),
         ("DN total (all)",                     recon["dn_total"]),
     ]
@@ -126,39 +126,39 @@ def _build_summary(ws, company: dict, payload: dict):
 
 CDNR_HEADERS = [
     "Ctin", "Recipient Name", "Note Number", "Note Date", "Type",
-    "Note Value \u20B9", "POS", "Pre-GST", "Reverse Charge",
+    "Note Value ₹", "POS", "Pre-GST", "Reverse Charge",
     "Note Supply Type", "Invoice Number", "Invoice Date",
-    "Rate %", "Taxable Value \u20B9", "CGST \u20B9", "SGST \u20B9",
-    "IGST \u20B9", "Cess \u20B9", "Statutory Reason",
+    "Rate %", "Taxable Value ₹", "CGST ₹", "SGST ₹",
+    "IGST ₹", "Cess ₹", "Statutory Reason",
     "QORVENA Reason Code", "Reason Text", "Warnings",
 ]
 CDNUR_HEADERS = [
     "Type (B2CL/EXP)", "Recipient Name", "Note Number", "Note Date", "Type",
-    "Note Value \u20B9", "POS", "Pre-GST",
+    "Note Value ₹", "POS", "Pre-GST",
     "Invoice Number", "Invoice Date",
-    "Rate %", "Taxable Value \u20B9", "CGST \u20B9", "SGST \u20B9",
-    "IGST \u20B9", "Cess \u20B9", "Statutory Reason",
+    "Rate %", "Taxable Value ₹", "CGST ₹", "SGST ₹",
+    "IGST ₹", "Cess ₹", "Statutory Reason",
     "QORVENA Reason Code", "Reason Text", "Warnings",
 ]
 B2CS_HEADERS = [
     "Recipient Name", "Note Number", "Note Date", "Type",
-    "Note Value \u20B9", "POS",
+    "Note Value ₹", "POS",
     "Invoice Number", "Invoice Date",
-    "Rate %", "Taxable Value \u20B9", "CGST \u20B9", "SGST \u20B9",
-    "IGST \u20B9", "Cess \u20B9", "Statutory Reason",
+    "Rate %", "Taxable Value ₹", "CGST ₹", "SGST ₹",
+    "IGST ₹", "Cess ₹", "Statutory Reason",
     "QORVENA Reason Code", "Reason Text", "Advisory",
 ]
 COMMERCIAL_HEADERS = [
     "Note Number", "Note Date", "Type",
     "Recipient Name", "Recipient GSTIN",
     "Invoice Number", "Invoice Date",
-    "Subtotal \u20B9", "Total Amount \u20B9",
+    "Subtotal ₹", "Total Amount ₹",
     "QORVENA Reason", "Reason Text", "Info",
 ]
 CANCELLED_HEADERS = [
     "Note Number", "Note Date", "Type",
     "Recipient Name", "Recipient GSTIN",
-    "Invoice Number", "Total Amount \u20B9",
+    "Invoice Number", "Total Amount ₹",
     "Cancelled At", "Cancelled Reason", "Advisory",
 ]
 
@@ -169,7 +169,7 @@ def _fill_for(kind: str):
 
 def _build_cdnr(ws, payload):
     ws.cell(row=1, column=1, value=(
-        f"CDNR \u00b7 Registered Recipients (Table 9B) \u00b7 Period {payload['month']}"
+        f"CDNR · Registered Recipients (Table 9B) · Period {payload['month']}"
     )).font = Font(bold=True, size=12)
     _write_header(ws, CDNR_HEADERS)
     r = 5
@@ -207,7 +207,7 @@ def _build_cdnr(ws, payload):
 
 def _build_cdnur(ws, payload):
     ws.cell(row=1, column=1, value=(
-        f"CDNUR \u00b7 Unregistered Recipients (Table 9B) \u00b7 Period {payload['month']}"
+        f"CDNUR · Unregistered Recipients (Table 9B) · Period {payload['month']}"
     )).font = Font(bold=True, size=12)
     _write_header(ws, CDNUR_HEADERS)
     r = 5
@@ -242,8 +242,8 @@ def _build_cdnur(ws, payload):
 
 def _build_b2cs(ws, payload):
     ws.cell(row=1, column=1, value=(
-        f"B2CS Adjustments \u00b7 Report NET-OF in Table 7 \u00b7 Period {payload['month']}"
-        f"  \u00b7  Not part of \u00a79B statutorily; surfaced here for audit."
+        f"B2CS Adjustments · Report NET-OF in Table 7 · Period {payload['month']}"
+        f"  ·  Not part of §9B statutorily; surfaced here for audit."
     )).font = Font(italic=True, color="B45309", size=10)
     _write_header(ws, B2CS_HEADERS)
     r = 5
@@ -276,8 +276,8 @@ def _build_b2cs(ws, payload):
 
 def _build_commercial(ws, payload):
     ws.cell(row=1, column=1, value=(
-        f"Commercial / Financial Notes \u00b7 Excluded from GSTR-1 \u00a79B "
-        f"per CGST \u00a734 / \u00a715(3)(b) \u00b7 Period {payload['month']}"
+        f"Commercial / Financial Notes · Excluded from GSTR-1 §9B "
+        f"per CGST §34 / §15(3)(b) · Period {payload['month']}"
     )).font = Font(italic=True, color="B45309", size=10)
     _write_header(ws, COMMERCIAL_HEADERS)
     r = 5
@@ -302,8 +302,8 @@ def _build_commercial(ws, payload):
 
 def _build_cancelled(ws, payload):
     ws.cell(row=1, column=1, value=(
-        f"Cancelled After Export \u00b7 GSTR-1 \u00a79C (CDNRA/CDNURA) amendment due "
-        f"\u00b7 Period {payload['month']}"
+        f"Cancelled After Export · GSTR-1 §9C (CDNRA/CDNURA) amendment due "
+        f"· Period {payload['month']}"
     )).font = Font(italic=True, color="B91C1C", size=10)
     _write_header(ws, CANCELLED_HEADERS)
     r = 5
