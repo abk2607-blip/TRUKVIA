@@ -49,6 +49,42 @@ User communicates in English. Respond in English. (Prior bilingual reference ret
   - **Existing locks preserved**: Iter126, Iter127a-c, Iter128, Iter129, Iter130, Iter131, Iter132a/b, Iter132c C1/H1/C2/C2b/C2c, Iter133 L1/L1.5/L2/L2b/L2c/L2d/L2e — all remain locked and untouched.
   - **Backlog frozen**: C3 GSTR-1 §9B · C4 CN/DN Register · Statement Email Delivery · Iter132c-agg-fix · Phase 2 Security · `AKB/26-27//26-27/0004` hygiene · Preview Uptime Chip · LR Digest · Trip Templates · Trip Sheet redesign · Tyre · Driver Salary · Expense/Vehicle Cost ERP · Maintenance.
 
+## Iter132c · C3.1 · GSTR-1 §9B Canonical Statutory JSON Feed — 🔒 LOCKED (2026-09-01 · Full Deploy Guard GREEN · pytest 503 pass / 1 skip / 0 fail)
+- **Scope shipped in C3.1**: canonical statutory JSON feed for GSTR-1 §9B (CDNR / CDNUR / B2CS-net-of / Financial-commercial / cancelled-after-export). *Zero re-entry, zero recomputation.* The feed reads the same authoritative issued CN/DN records already used by Ledger, Statement and Passbook (`ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE`).
+- **Endpoint**: `GET /api/reports/gstr1-9b?month=YYYY-MM` · `ENABLE_CDN=1` feature-gate · RBAC parity with `/reports/gstr1`.
+- **Statutory routing (locked per authoritative GSTN validation — GSTN Contextual Help + Offline Utility V3.2, CGST §34 / §15(3) / Rule 53(1A), delinking 14-Sep-2020)**:
+  - `apply_gst=True` + valid recipient GSTIN → `cdnr[]` (grouped by `ctin`, `inv_typ="R"`).
+  - `apply_gst=True` + no GSTIN + inter-state (`gst_type=igst`) + invoice > ₹2.5 L → `cdnur[]` (`typ="B2CL"`).
+  - `apply_gst=True` + neither of the above → `b2cs_adjustments[]` with `_warnings=["report_net_of_in_table_7"]` (statutorily net-of in Table 7, surfaced here for audit visibility, NOT part of §9B).
+  - `apply_gst=False` → `commercial_notes[]` (statutorily EXCLUDED from §9B per §34 / §15(3)(b) — financial/commercial notes are NOT reported in GSTR-1).
+  - Cancelled with `cancelled_at > period_end` → `cancelled_after_export[]` with `_advisory` for §9C amendment (§9C emission itself deferred to future C5).
+  - Draft, and cancelled-in-period, and cancelled-never-issued → silent drop.
+- **RCM handling**: `rchrg="Y"`, tax fields **populated** from the persisted note (not zeroed), `val = note.total_amount` (RCM tax excluded per `_compute_note_totals` line 91).
+- **Filing period**: driven by `note.note_date` (issue date), not by original invoice date. Boundary: last-day-in / first-day-next-out.
+- **Reason-code map (deterministic, locked)**: `sales_return→01, post_invoice_discount→02, short_delivery→03, quality_claim→03, rate_correction/under_charge/missed_halting/freight_escalation→04, other→07`. Unknown → `07` + `reason_remapped_to_others` warning. `rsn` is portal-optional in CDNR JSON V3.2 (used only in the offline-utility XLSX column).
+- **Fail-loud reconciliation invariant (locked)**: endpoint totals reconciled against a Mongo `$group` ground truth on every call: `Σ cdnr.val + Σ cdnur.val + Σ b2cs.val == Σ issued(apply_gst=True).total_amount` and `Σ commercial.total_amount == Σ issued(apply_gst=False).total_amount` and `row_count == count(issued in period)`. Any delta → HTTP 500 with offending IDs. Never silently disappears.
+- **Streaming**: `async for` cursor over `credit_debit_notes` (no `to_list(N)` truncation) — verified against 2,100-note seeded volume with 0 truncation and 0 orphans post-cleanup.
+- **Auditability**: every call emits `audit_logs {module:"gstr_export", action:"download", entity_ref:f"gstr1_9b_{month}", changes:{format,period,row_count,gst_true_total,gst_false_total,cancelled_after_export_count}}`.
+- **Zero touches** to: `models.py`, `routers/notes.py`, `routers/invoices.py`, `routers/customers.py`, `routers/reports.py`, `pdf/*.py`, `auth.py`, `server.py`, `.env`, invoice numbering/schema, `_compute_note_totals`, `_effective_invoice_totals`, `_apply_effective_balance`, RBAC/perms, feature flags, and every locked Iter132a/b/c and Iter133 L1/L1.5/L2/L2b/L2c/L2d/L2e path.
+- **Verification evidence (authoritative, measured)**:
+  - Targeted `test_iter132c_c3_gstr1_9b.py` — Run #1 **19/19 pass · 7.16 s · exit 0** · Run #2 immediate re-run **19/19 pass · 7.26 s · exit 0** (proves idempotency after fixture uniqueness fix) · Run #3 post-guard **19/19 pass · 7.43 s · exit 0**.
+  - Full Deploy Guard (manual trigger for C3.1 lock): `checked_at=2026-09-01T05:21:36.501471+00:00 · status=pass · elapsed_s=773.9 · exit_code=0 · consecutive_failures=0 · strict_mode=true · next_check_at=2026-09-01T06:21:36.501478+00:00 · triggered_by=manual · pytest_summary="503 passed, 1 skipped, 8 warnings in 773.48s (0:12:53)"`. Iter128 Deploy Readiness Badge 🟢 GREEN.
+  - Live JSON smoke on preview tenant (2026-09): `HTTP 200 · note_count=40 · reconciled=true`; all 5 buckets present; bad-month `2026-13 → HTTP 400`.
+- **Files changed (additive-only)**:
+  - `backend/routers/gst.py` — +265 LOC (new endpoint `report_gstr1_9b` + `_dd_mm_yyyy` + `_gstr1_reason_for` helpers + 1 import line).
+  - `backend/services.py` — +30 LOC (`_GSTR1_9B_REASON_MAP` deterministic dict; placed after all existing helpers at end of file).
+  - `backend/tests/test_iter132c_c3_gstr1_9b.py` — NEW · 19 hermetic tests · `_fake_gstin(state_prefix)` helper for re-runnability against the LOCKED Iter127a duplicate-master guard.
+- **Restarts used**: 1 authorised backend restart (after endpoint code landed). Zero unauthorised restarts.
+- **STOP RULE compliance**: three test-side failure cycles surfaced (Telangana↔AP state mismatch → GSTIN idempotency 409 → day-1-of-month date boundary). Each escalated with RCA + product-vs-test classification; fixes applied strictly after explicit user GO. Zero autonomous product-code changes across the entire slice.
+- **Known limitations (documented, not blocking C3.1 lock)**:
+  - **§9C amendments** — cancelled-after-export notes surface in an advisory bucket with `_advisory` text; actual §9C (CDNRA/CDNURA) emission itself is deferred to a possible future **C5** slice.
+  - **Recipient identity snapshot** — CN/DN carry `invoice_number_snapshot` but not a customer-GSTIN/state snapshot at issue time; the endpoint uses the *current* customer record for `ctin`/`pos` (parity with the LOCKED `/reports/gstr1` invoice-side behaviour). Documented pre-existing latent gap; NOT a C3.1 regression.
+  - **Portal template drift** — the deterministic reason-code map and the CDNR/CDNUR schema shape match GSTR-1 Offline Utility **V3.2 (Aug 2026)**. Annual GSTN template refresh may require a 1-line reason-map update or `itms` header list update in a future micro-slice.
+  - **CDNR `nt_num`** ceiling on the portal is 16 chars; QORVENA notes are 13 chars → safe up to 99,999/yr; no action needed.
+- **Rollback boundary**: revertable by deleting `_GSTR1_9B_REASON_MAP` from `services.py`, removing the C3.1 block in `gst.py` (routes `report_gstr1_9b` + the two module-level helpers `_dd_mm_yyyy`, `_gstr1_reason_for`), and deleting `backend/tests/test_iter132c_c3_gstr1_9b.py`. No DB migration performed; no persisted-schema change; no dependency added (`openpyxl` was already in `requirements.txt` for LR Register XLSX). A rollback restores the codebase byte-for-byte to the pre-C3.1 Deploy Guard baseline at `checked_at=2026-08-31T14:17:04Z`.
+- **Deferred (still frozen, awaiting explicit GO)**: C3.2 GSTR-1 §9B XLSX + PDF exports · C3.3 Frontend Reports UI tile · C4 CN/DN Register · C5 §9C emission · Statement Email Delivery · Iter132c-ai-agg-fix · Phase-2 Security Hardening · every other backlog item.
+
+
 - **Iter133 · L2e · Statement Effective-Balance Parity** — 🔒 LOCKED · UAT approved 2026-08-31
 - **Iter133 · L1.5 · Passbook CN/DN Row Detail** — 🔒 **LOCKED · UAT approved 2026-08-30**
   - Extends `GET /api/customers/{cid}/transactions` to surface issued Credit / Debit notes as individual rows in the unified `transactions[]` list. Scope strictly `{user_id, company_id, customer_id, status:"issued"}`; draft + cancelled notes excluded. `date_from` / `date_to` filters apply on `note_date`. New `txn_type` values accepted: `credit_note`, `debit_note`.
