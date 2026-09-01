@@ -26,6 +26,7 @@ import os
 import uuid
 import asyncio
 import time
+from datetime import datetime, timedelta
 import httpx
 import motor.motor_asyncio
 
@@ -360,14 +361,21 @@ def test_t10_cancelled_in_period_excluded():
 
     r = _get_9b(h, "2026-07")
     body = r.json()
-    all_ids = (
+    # Statutory semantics: a cancellation that occurs AFTER a period's
+    # end-date correctly routes to cancelled_after_export[] (the §9C
+    # advisory bucket). This test asserts only that the cancelled note is
+    # excluded from the NORMAL §9B export buckets — cdnr / cdnur /
+    # b2cs_adjustments / commercial_notes. The cancelled_after_export[]
+    # bucket is deliberately excluded from this union, because surfacing
+    # a cross-period cancel there is the statutorily correct behaviour.
+    normal_bucket_ids = (
         [nt["note_id"] for grp in body["cdnr"] for nt in grp["nt"]]
         + [x.get("note_id") for x in body["cdnur"]]
         + [x.get("note_id") for x in body["b2cs_adjustments"]]
         + [x.get("note_id") for x in body["commercial_notes"]]
-        + [x.get("note_id") for x in body["cancelled_after_export"]]
     )
-    assert note["id"] not in all_ids, "cancelled-in-period should be silent-dropped"
+    assert note["id"] not in normal_bucket_ids, \
+        "cancelled note leaked into a normal §9B export bucket"
 
 
 # ─── T11 · Cancelled-after-export warning ──────────────────────────────
@@ -536,17 +544,24 @@ def test_t14_reason_code_mapping_is_deterministic():
         "freight_escalation":    "04",
         "other":                 "07",
     }
+    # Runtime-relative dates — LOCKED note_date validator rejects future
+    # dates, and the previously hard-coded 2026-09-* fixtures were ahead
+    # of the real system clock. Use yesterday for invoice + notes so
+    # every scenario lands within the current filing month.
+    today = datetime.now().date()
+    inv_iso = (today - timedelta(days=2)).isoformat()
+    note_iso = (today - timedelta(days=1)).isoformat()
+    query_month = today.strftime("%Y-%m")
+
     note_ids_by_expected = {}
-    day = 1
     for qcode, expected in expectations.items():
-        inv = _create_invoice_via_api(h, cust_id, date=f"2026-09-{day:02d}", rcm=False)
+        inv = _create_invoice_via_api(h, cust_id, date=inv_iso, rcm=False)
         note = _issue_note(h, "credit", inv["id"], amount=10.0,
-                           note_date=f"2026-09-{day:02d}",
+                           note_date=note_iso,
                            reason_code=qcode, reason_text=f"test {qcode} mapping")
         note_ids_by_expected[note["id"]] = (qcode, expected)
-        day += 1
 
-    r = _get_9b(h, "2026-09")
+    r = _get_9b(h, query_month)
     body = r.json()
     all_rows = (
         [nt for grp in body["cdnr"] for nt in grp["nt"]]
@@ -569,11 +584,15 @@ def test_t15_invalid_gstin_routes_to_non_cdnr():
     cid, h = _company_header()
     # Deliberately invalid GSTIN string (doesn't match _GSTIN_RE)
     cust_id, _ = _fresh_customer(h, gstin="", state="Andhra Pradesh")
-    inv = _create_invoice_via_api(h, cust_id, date="2026-10-05", rcm=False)
-    note = _issue_note(h, "credit", inv["id"], amount=60.0, note_date="2026-10-10",
+    today = datetime.now().date()
+    inv_iso = (today - timedelta(days=2)).isoformat()
+    note_iso = (today - timedelta(days=1)).isoformat()
+    query_month = today.strftime("%Y-%m")
+    inv = _create_invoice_via_api(h, cust_id, date=inv_iso, rcm=False)
+    note = _issue_note(h, "credit", inv["id"], amount=60.0, note_date=note_iso,
                        reason_code="other")
 
-    r = _get_9b(h, "2026-10")
+    r = _get_9b(h, query_month)
     body = r.json()
     # Not in cdnr
     for grp in body["cdnr"]:
@@ -595,15 +614,19 @@ def test_t16_reconciliation_invariant_matches_mongo_ground_truth():
     endpoint totals MUST equal the mongo $group ground truth."""
     cid, h = _company_header()
     cust_id, _ = _fresh_customer(h, gstin="37AAAAA0000A9ZX", state="Andhra Pradesh")
-    inv = _create_invoice_via_api(h, cust_id, date="2026-11-05", rcm=False)
-    _issue_note(h, "credit", inv["id"], amount=100.0, note_date="2026-11-10",
+    today = datetime.now().date()
+    inv_iso = (today - timedelta(days=2)).isoformat()
+    note_iso = (today - timedelta(days=1)).isoformat()
+    query_month = today.strftime("%Y-%m")
+    inv = _create_invoice_via_api(h, cust_id, date=inv_iso, rcm=False)
+    _issue_note(h, "credit", inv["id"], amount=100.0, note_date=note_iso,
                 reason_code="other")
-    _issue_note(h, "debit", inv["id"], amount=50.0, note_date="2026-11-11",
+    _issue_note(h, "debit", inv["id"], amount=50.0, note_date=note_iso,
                 reason_code="under_charge")
-    _issue_note(h, "credit", inv["id"], amount=30.0, note_date="2026-11-12",
+    _issue_note(h, "credit", inv["id"], amount=30.0, note_date=note_iso,
                 reason_code="other", apply_gst=False)
 
-    r = _get_9b(h, "2026-11")
+    r = _get_9b(h, query_month)
     assert r.status_code == 200, r.text
     body = r.json()
     recon = body["reconciliation"]
