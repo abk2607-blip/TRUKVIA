@@ -573,3 +573,189 @@ def test_t22_audit_log_row_per_download():
         client.close()
 
     asyncio.run(_check())
+
+
+# ─── C3.5 UAT presentation polish — Feb 2026 ─────────────────────────────
+
+def test_t23_pdf_summary_has_rupee_glyph_and_no_tofu():
+    """Summary values must carry a real U+20B9 (₹) followed by the amount.
+    reportlab draws a filled square (\ufffd/black box) when a glyph is
+    absent — we assert the U+20B9 character *is* present next to a
+    formatted numeric string on page 1."""
+    _, h = _company_header()
+    r = _get_pdf(h, "2026-08")
+    assert r.status_code == 200
+    import fitz as _fitz
+    d = _fitz.open(stream=r.content, filetype="pdf")
+    page1 = d[0].get_text()
+    assert "\u20b9" in page1, "U+20B9 (₹) glyph missing from PDF Summary"
+    # Must not contain the well-known unicode replacement character.
+    assert "\ufffd" not in page1, "PDF page 1 contains replacement chars"
+    # Numeric line like `₹ 32,75,68,793.00` or `₹ 32,754,368,342.80` must exist.
+    j = _get_json(h, "2026-08").json()
+    tot = f"{float(j['totals']['total']):,.2f}"
+    # Find "₹ <total>" as a substring — tolerates layout spacing collapse.
+    normalized = " ".join(page1.split())
+    assert f"\u20b9 {tot}" in normalized or f"\u20b9  {tot}" in normalized, \
+        f"₹-prefixed grand total not found in normalized text (expected '₹ {tot}')"
+
+
+def test_t24_pdf_table_headers_use_rupee_suffix_not_prefix_in_cells():
+    """Column headers must carry `(₹)` and data cells must NOT repeat ₹.
+    Enforced structurally on the module constants."""
+    from pdf.gstr1 import B2B_COL_HEADERS, B2C_COL_HEADERS, BY_STATE_COL_HEADERS
+    for hdrs in (B2B_COL_HEADERS, B2C_COL_HEADERS, BY_STATE_COL_HEADERS):
+        for h_ in hdrs:
+            # The four monetary column headers must end with "(₹)".
+            if any(word in h_ for word in ("Taxable", "CGST", "SGST", "IGST", "Total")) \
+                    and h_ not in ("GST Type", "Grand Total"):
+                assert h_.endswith("(\u20b9)"), \
+                    f"monetary header {h_!r} does not end with (₹)"
+
+
+def test_t25_pdf_invoice_number_column_width_at_least_34mm():
+    """AKB/26-27//26-27/0004 (21 chars) must fit as a single visual token.
+    34 mm is the minimum measured width for 7pt DejaVu."""
+    from pdf.gstr1 import B2B_COL_WIDTHS_MM, B2C_COL_WIDTHS_MM
+    assert B2B_COL_WIDTHS_MM[0] >= 34, f"B2B Invoice # width {B2B_COL_WIDTHS_MM[0]} < 34mm"
+    assert B2C_COL_WIDTHS_MM[0] >= 34, f"B2C Invoice # width {B2C_COL_WIDTHS_MM[0]} < 34mm"
+
+
+def test_t26_pdf_stays_a4_landscape():
+    """A4 landscape = ~842 × 595 pt. Enforced by inspection of page 1."""
+    _, h = _company_header()
+    r = _get_pdf(h, "2026-08")
+    import fitz as _fitz
+    d = _fitz.open(stream=r.content, filetype="pdf")
+    rect = d[0].rect
+    # Landscape ⇒ width > height.
+    assert rect.width > rect.height, \
+        f"page 1 is not landscape: width={rect.width} height={rect.height}"
+    # ±5 pt tolerance around A4 landscape (842 × 595).
+    assert abs(rect.width - 842) < 5 and abs(rect.height - 595) < 5, \
+        f"page size {rect.width}×{rect.height} not A4 landscape"
+
+
+def test_t27_pdf_page_x_of_y_still_present_after_polish():
+    """Presentation polish must not break the two-pass Page X of Y footer."""
+    _, h = _company_header()
+    r = _get_pdf(h, "2026-08")
+    import fitz as _fitz
+    d = _fitz.open(stream=r.content, filetype="pdf")
+    for i in range(min(d.page_count, 3)):
+        txt = d[i].get_text()
+        assert f"Page {i+1} of {d.page_count}" in txt, \
+            f"page {i+1} missing 'Page X of Y'"
+
+
+def test_t28_pdf_disclosure_banner_still_present():
+    """`NOT a GST portal upload file` must remain on the PDF."""
+    _, h = _company_header()
+    r = _get_pdf(h, "2026-08")
+    import fitz as _fitz
+    d = _fitz.open(stream=r.content, filetype="pdf")
+    combined = "\n".join(d[i].get_text() for i in range(min(d.page_count, 2)))
+    assert "NOT a GST portal upload file" in combined, \
+        "statutory disclosure banner disappeared"
+
+
+def test_t29_xlsx_currency_format_is_rupee_prefix():
+    """Custom number format must render `₹ 12,345.67`, not `12,345.67 ₹`."""
+    from xlsx.gstr1 import CURRENCY_FMT
+    # Format string must place ₹ BEFORE the number placeholder.
+    rupee_pos = CURRENCY_FMT.find("\u20b9")
+    hash_pos  = CURRENCY_FMT.find("#")
+    assert 0 <= rupee_pos < hash_pos, \
+        f"CURRENCY_FMT places ₹ after digits: {CURRENCY_FMT!r}"
+
+
+def test_t30_xlsx_headers_use_rupee_suffix():
+    """Column headers must carry `(₹)` suffix, not raw `₹`."""
+    from xlsx.gstr1 import B2B_HEADERS, B2C_HEADERS, BY_STATE_HEADERS
+    for hdrs in (B2B_HEADERS, B2C_HEADERS, BY_STATE_HEADERS):
+        for h_ in hdrs:
+            if h_ in ("Invoice", "Date", "Customer", "GSTIN", "State",
+                      "State Code", "POS", "RCM", "GST Type", "Code",
+                      "Invoices"):
+                continue
+            assert h_.endswith("(\u20b9)"), \
+                f"XLSX header {h_!r} does not end with (₹)"
+
+
+def test_t31_xlsx_summary_totals_still_match_json_after_polish():
+    """Presentation polish must not disturb summary numeric values."""
+    _, h = _company_header()
+    j = _get_json(h, "2026-08").json()
+    r = _get_xlsx(h, "2026-08")
+    wb = openpyxl.load_workbook(io.BytesIO(r.content))
+    ws = wb["Summary"]
+    assert int(ws.cell(5, 2).value) == int(j["invoice_count"])
+    assert abs(float(ws.cell(6, 2).value) - float(j["totals"]["taxable"])) < 0.01
+    assert abs(float(ws.cell(10, 2).value) - float(j["totals"]["total"])) < 0.01
+    # Cell format string must be the ₹-prefix pattern.
+    from xlsx.gstr1 import CURRENCY_FMT
+    assert ws.cell(6, 2).number_format == CURRENCY_FMT
+
+
+def test_t32_xlsx_still_four_sheets_and_json_unchanged():
+    """Post-polish: JSON values are byte-identical (no business change).
+    XLSX still carries the same 4 sheets."""
+    _, h = _company_header()
+    j1 = _get_ui(h, "2026-08").json()
+    j2 = _get_json(h, "2026-08").json()
+    # JSON UI ≡ JSON attachment (same values, same keys).
+    for k in ("invoice_count", "totals", "b2b", "b2c", "by_state",
+              "issuer_gstin", "reconciliation"):
+        assert j1.get(k) == j2.get(k), f"JSON drift on {k}"
+    r = _get_xlsx(h, "2026-08")
+    wb = openpyxl.load_workbook(io.BytesIO(r.content))
+    assert wb.sheetnames == ["Summary", "B2B", "B2C", "By_State"]
+
+
+def test_t33_pdf_long_invoice_number_stays_single_line():
+    """Seed one invoice with an ultra-long number and verify it appears
+    intact (no space or line break inserted) in the PDF text stream."""
+    import asyncio
+    import motor.motor_asyncio
+
+    async def _seed_and_check():
+        _, h = _company_header()
+        uid = _current_uid()
+        client = motor.motor_asyncio.AsyncIOMotorClient(os.environ["MONGO_URL"])
+        db = client[os.environ["DB_NAME"]]
+        # Pick company from same header.
+        cr = httpx.get(f"{API}/companies", headers=HDR, timeout=15).json()
+        cid = cr[0]["id"]
+        # Seed a customer with GSTIN so it hits the B2B section.
+        cust = _fresh_customer(h, state="Karnataka", gstin=_fake_gstin("29"))
+        month = "2050-04"
+        inv_num = "AKB/26-27//26-27/0004"
+        inv_id  = f"inv_c35_longnum_{uuid.uuid4().hex[:8]}"
+        # Clean any prior copies for idempotency.
+        await db.invoices.delete_many({"user_id": uid, "company_id": cid,
+                                       "invoice_number": inv_num})
+        await db.invoices.insert_one({
+            "id": inv_id, "user_id": uid, "company_id": cid,
+            "invoice_number": inv_num,
+            "invoice_date": "2050-04-15",
+            "customer_id": cust, "trip_ids": [],
+            "subtotal": 1000.0, "cgst_amount": 0.0, "sgst_amount": 0.0,
+            "igst_amount": 50.0, "total_amount": 1050.0, "total_tax": 50.0,
+            "gst_type": "igst", "rcm": False, "status": "issued",
+            "amount_paid": 0.0, "balance_due": 1050.0, "payments": [],
+        })
+        try:
+            r = _get_pdf(h, month)
+            assert r.status_code == 200
+            import fitz as _fitz
+            d = _fitz.open(stream=r.content, filetype="pdf")
+            all_txt = "".join(d[i].get_text() for i in range(d.page_count))
+            # The exact 21-char string must appear (no split by whitespace).
+            assert inv_num in all_txt, \
+                f"long invoice number split across lines. Sample: {all_txt[-2000:]}"
+        finally:
+            await db.invoices.delete_many({"user_id": uid, "company_id": cid,
+                                           "invoice_number": inv_num})
+            client.close()
+
+    asyncio.run(_seed_and_check())

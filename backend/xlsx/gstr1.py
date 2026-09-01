@@ -31,7 +31,7 @@ DISC_FILL = PatternFill("solid", fgColor="FEF9C3")
 _thin     = Side(border_style="thin", color="CBD5E1")
 BORDER    = Border(left=_thin, right=_thin, top=_thin, bottom=_thin)
 
-CURRENCY_FMT = '#,##0.00" \u20b9"'   # ` ₹` via unicode escape (avoid f-string backslash)
+CURRENCY_FMT = '"\u20b9 "#,##0.00'   # ` ₹ ` prefix (unicode escape avoids f-string backslash)
 NUM_FMT      = "#,##0.00"
 
 # Unicode literals hoisted to module constants — Python 3.11 forbids
@@ -43,19 +43,21 @@ _SECTION = "\u00a7"
 
 
 # Column headers — LOCKED as of C3.5. Tests reference these lists.
+# ₹ appears ONLY in column headers via "(₹)" suffix; data cells carry
+# plain numbers formatted via CURRENCY_FMT which prefixes ₹.
 B2B_HEADERS = [
     "Invoice", "Date", "Customer", "GSTIN", "State", "State Code", "POS",
-    "RCM", "Taxable \u20b9", "CGST \u20b9", "SGST \u20b9", "IGST \u20b9",
-    "Total \u20b9", "GST Type",
+    "RCM", "Taxable (\u20b9)", "CGST (\u20b9)", "SGST (\u20b9)", "IGST (\u20b9)",
+    "Total (\u20b9)", "GST Type",
 ]
 B2C_HEADERS = [
     "Invoice", "Date", "Customer", "State", "State Code", "POS",
-    "RCM", "Taxable \u20b9", "CGST \u20b9", "SGST \u20b9", "IGST \u20b9",
-    "Total \u20b9", "GST Type",
+    "RCM", "Taxable (\u20b9)", "CGST (\u20b9)", "SGST (\u20b9)", "IGST (\u20b9)",
+    "Total (\u20b9)", "GST Type",
 ]
 BY_STATE_HEADERS = [
-    "State", "Code", "Invoices", "Taxable \u20b9", "CGST \u20b9",
-    "SGST \u20b9", "IGST \u20b9", "Total \u20b9",
+    "State", "Code", "Invoices", "Taxable (\u20b9)", "CGST (\u20b9)",
+    "SGST (\u20b9)", "IGST (\u20b9)", "Total (\u20b9)",
 ]
 
 
@@ -100,12 +102,12 @@ def _build_summary(ws, company: dict, payload: dict):
 
     t = payload["totals"]
     rows_out = [
-        ("Invoices",              payload.get("invoice_count", 0)),
-        ("Taxable value \u20b9",  t.get("taxable", 0.0)),
-        ("CGST \u20b9",           t.get("cgst", 0.0)),
-        ("SGST \u20b9",           t.get("sgst", 0.0)),
-        ("IGST \u20b9",           t.get("igst", 0.0)),
-        ("Grand total \u20b9",    t.get("total", 0.0)),
+        ("Invoices",             payload.get("invoice_count", 0)),
+        (f"Taxable value ({_RUPEE})", t.get("taxable", 0.0)),
+        (f"CGST ({_RUPEE})",          t.get("cgst", 0.0)),
+        (f"SGST ({_RUPEE})",          t.get("sgst", 0.0)),
+        (f"IGST ({_RUPEE})",          t.get("igst", 0.0)),
+        (f"Grand total ({_RUPEE})",   t.get("total", 0.0)),
     ]
     for i, r in enumerate(rows_out, start=5):
         c1 = ws.cell(row=i, column=1, value=r[0])
@@ -130,10 +132,10 @@ def _build_summary(ws, company: dict, payload: dict):
     labels = [
         (f"Endpoint {_DOT} invoice count",     recon.get("endpoint_invoice_count", 0)),
         (f"Ground truth {_DOT} invoice count", recon.get("ground_truth_invoice_count", 0)),
-        (f"Endpoint {_DOT} total {_RUPEE}",       recon.get("endpoint_total", 0.0)),
-        (f"Ground truth {_DOT} total {_RUPEE}",   recon.get("ground_truth_total", 0.0)),
-        (f"Endpoint {_DOT} taxable {_RUPEE}",     recon.get("endpoint_taxable", 0.0)),
-        (f"Ground truth {_DOT} taxable {_RUPEE}", recon.get("ground_truth_taxable", 0.0)),
+        (f"Endpoint {_DOT} total ({_RUPEE})",       recon.get("endpoint_total", 0.0)),
+        (f"Ground truth {_DOT} total ({_RUPEE})",   recon.get("ground_truth_total", 0.0)),
+        (f"Endpoint {_DOT} taxable ({_RUPEE})",     recon.get("endpoint_taxable", 0.0)),
+        (f"Ground truth {_DOT} taxable ({_RUPEE})", recon.get("ground_truth_taxable", 0.0)),
     ]
     for i, (lbl, val) in enumerate(labels, start=r0 + 2):
         ws.cell(row=i, column=1, value=lbl)

@@ -53,25 +53,28 @@ _BULLET  = "\u2022"
 _CONTENT_W_MM = 273.0
 
 
-# 14 columns · sum = 272 mm. Invoice # >= 28 mm, Customer >= 40 mm.
+# 13 columns · sum = 273 mm. Invoice # widened 28 → 34 mm so long numbers
+# like `AKB/26-27//26-27/0004` (21 chars) stay on ONE visual line (mirrors
+# the LOCKED §9B Note # 28 mm fix pattern). Width reclaimed from Customer
+# (42 → 36 mm) and GST Type (26 → 22 mm) — both remain readable.
 B2B_COL_HEADERS = [
-    f"Invoice #", "Date", "Customer", "GSTIN", "State", "POS",
-    "RCM", f"Taxable {_RUPEE}", f"CGST {_RUPEE}", f"SGST {_RUPEE}",
-    f"IGST {_RUPEE}", f"Total {_RUPEE}", "GST Type",
+    "Invoice #", "Date", "Customer", "GSTIN", "State", "POS",
+    "RCM", f"Taxable ({_RUPEE})", f"CGST ({_RUPEE})", f"SGST ({_RUPEE})",
+    f"IGST ({_RUPEE})", f"Total ({_RUPEE})", "GST Type",
 ]
-B2B_COL_WIDTHS_MM = [28, 16, 42, 26, 22, 12, 8, 22, 16, 16, 16, 22, 26]
+B2B_COL_WIDTHS_MM = [34, 16, 36, 26, 22, 12, 8, 22, 18, 18, 18, 22, 21]
 
 # 12 columns · sum = 272 mm.
 B2C_COL_HEADERS = [
-    f"Invoice #", "Date", "Customer", "State", "POS",
-    "RCM", f"Taxable {_RUPEE}", f"CGST {_RUPEE}", f"SGST {_RUPEE}",
-    f"IGST {_RUPEE}", f"Total {_RUPEE}", "GST Type",
+    "Invoice #", "Date", "Customer", "State", "POS",
+    "RCM", f"Taxable ({_RUPEE})", f"CGST ({_RUPEE})", f"SGST ({_RUPEE})",
+    f"IGST ({_RUPEE})", f"Total ({_RUPEE})", "GST Type",
 ]
-B2C_COL_WIDTHS_MM = [28, 16, 48, 24, 12, 8, 24, 18, 18, 18, 24, 30]
+B2C_COL_WIDTHS_MM = [34, 16, 42, 24, 12, 8, 24, 18, 18, 18, 24, 30]
 
 BY_STATE_COL_HEADERS = [
-    "State", "Code", "Invoices", f"Taxable {_RUPEE}",
-    f"CGST {_RUPEE}", f"SGST {_RUPEE}", f"IGST {_RUPEE}", f"Total {_RUPEE}",
+    "State", "Code", "Invoices", f"Taxable ({_RUPEE})",
+    f"CGST ({_RUPEE})", f"SGST ({_RUPEE})", f"IGST ({_RUPEE})", f"Total ({_RUPEE})",
 ]
 BY_STATE_COL_WIDTHS_MM = [50, 14, 20, 40, 30, 30, 30, 40]
 
@@ -251,29 +254,36 @@ def build_gstr1_pdf(company: dict, payload: dict) -> bytes:
 
         # ── Summary totals card ───────────────────────────────────
         t = payload["totals"]
+        # Summary rows: ₹ prefixed values (data cells use _UNI_FONT via
+        # TableStyle below so the ₹ glyph renders correctly — otherwise
+        # reportlab's default Helvetica emits a missing-glyph square).
+        _rupee_val = lambda v: f"{_RUPEE} {_fmt_money(v)}"
         summary_rows = [
             ["Metric", "Value"],
-            ["Invoices",             str(payload.get("invoice_count", 0))],
-            [f"Taxable {_RUPEE}",       _fmt_money(t.get("taxable", 0))],
-            [f"CGST {_RUPEE}",          _fmt_money(t.get("cgst", 0))],
-            [f"SGST {_RUPEE}",          _fmt_money(t.get("sgst", 0))],
-            [f"IGST {_RUPEE}",          _fmt_money(t.get("igst", 0))],
-            [f"Grand Total {_RUPEE}",   _fmt_money(t.get("total", 0))],
+            ["Invoices",       str(payload.get("invoice_count", 0))],
+            ["Taxable",        _rupee_val(t.get("taxable", 0))],
+            ["CGST",           _rupee_val(t.get("cgst", 0))],
+            ["SGST",           _rupee_val(t.get("sgst", 0))],
+            ["IGST",           _rupee_val(t.get("igst", 0))],
+            ["Grand Total",    _rupee_val(t.get("total", 0))],
         ]
         summary_tbl = Table(summary_rows, colWidths=[80 * mm, 60 * mm])
         summary_tbl.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), ACCENT),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            # DejaVu on EVERY cell so the ₹ glyph in value column renders
+            # (reportlab's default Helvetica has no U+20B9 → tofu box).
+            ("FONTNAME", (0, 0), (-1, -1), _UNI_FONT),
             ("FONTNAME", (0, 0), (-1, 0), _UNI_FONT_BOLD),
-            ("FONTSIZE", (0, 0), (-1, -1), 8),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
             ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
             ("ALIGN", (1, 0), (1, -1), "RIGHT"),
             ("BOX", (0, 0), (-1, -1), 0.5, BORDER),
             ("INNERGRID", (0, 0), (-1, -1), 0.3, BORDER),
-            ("LEFTPADDING", (0, 0), (-1, -1), 5),
-            ("RIGHTPADDING", (0, 0), (-1, -1), 5),
-            ("TOPPADDING", (0, 0), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
         ]))
         story.append(summary_tbl)
         story.append(Spacer(1, 4 * mm))
