@@ -191,10 +191,26 @@ def test_t5_xlsx_headers_match_locked_schema():
 def test_t6_xlsx_json_parity_seeded_data():
     """Seed one CN and one DN in a fresh window, download XLSX + JSON for
     the same period, and assert the CDNR sheet's row values match the JSON
-    payload row-for-row."""
+    payload row-for-row.
+
+    NOTE: `nt_num` is per-customer (LOCKED Iter132a behaviour) and is NOT
+    globally unique across the tenant. Lookup MUST combine the seeded
+    customer identity with the note number — the fresh `_fresh_customer`
+    name is uuid-tagged and therefore unique per test run."""
     cid, h = _company_header()
     tg = _fake_gstin("36")
-    cust_id = _fresh_customer(h, gstin=tg, state="Telangana")
+    tag_marker = uuid.uuid4().hex[:8]
+    tag_body = {
+        "name": f"C3.2-T6-{tag_marker}",
+        "phone": f"9{tag_marker[:9]}",
+        "email": f"{tag_marker}@iter132c-c3-2-t6.test",
+        "state": "Telangana", "gstin": tg,
+    }
+    r_cust = httpx.post(f"{API}/customers", headers=h, json=tag_body, timeout=15)
+    assert r_cust.status_code == 200, r_cust.text
+    cust_id = r_cust.json()["id"]
+    uniq_name = tag_body["name"]  # tenant-unique for this test run
+
     today = datetime.now().date()
     inv_iso = today.isoformat()
     note_iso = today.isoformat()
@@ -209,24 +225,29 @@ def test_t6_xlsx_json_parity_seeded_data():
     rj = _get_json(h, month); assert rj.status_code == 200, rj.text
     rx = _get_xlsx(h, month); assert rx.status_code == 200, rx.text
     body = rj.json()
-    wb = openpyxl.load_workbook(io.BytesIO(rx.content), read_only=True)
-    ws = wb["CDNR"]
 
-    # Find rows in CDNR sheet matching our two seeded notes
+    # Build the parity map keyed by (customer_name, nt_num) — tenant-unique
+    # even though `nt_num` alone is per-customer.
     json_map = {}
     for grp in body["cdnr"]:
         for nt in grp["nt"]:
             if nt["note_id"] in (n1["id"], n2["id"]):
-                json_map[nt["nt_num"]] = (grp["ctin"], nt)
+                json_map[(nt["customer_name"], nt["nt_num"])] = (grp["ctin"], nt)
+
+    assert len(json_map) == 2, \
+        f"expected 2 seeded notes in JSON cdnr, got {len(json_map)}"
+
+    wb = openpyxl.load_workbook(io.BytesIO(rx.content), read_only=True)
+    ws = wb["CDNR"]
 
     matched = 0
     for row in ws.iter_rows(min_row=5, values_only=True):
-        nt_num = row[2]  # column 3 = Note Number
-        if nt_num in json_map:
+        key = (row[1], row[2])  # (customer_name, nt_num)
+        if key in json_map:
             matched += 1
-            expected_ctin, nt_j = json_map[nt_num]
-            assert row[0] == expected_ctin
-            assert row[1] == nt_j["customer_name"]
+            expected_ctin, nt_j = json_map[key]
+            assert row[0] == expected_ctin, \
+                f"CDNR ctin mismatch for {key}: xlsx={row[0]!r} json={expected_ctin!r}"
             assert row[3] == nt_j["nt_dt"]
             assert row[4] == nt_j["ntty"]
             assert abs(float(row[5]) - float(nt_j["val"])) < 0.01
@@ -239,7 +260,8 @@ def test_t6_xlsx_json_parity_seeded_data():
             assert abs(float(row[16]) - float(itm["iamt"])) < 0.01
             assert row[18] == nt_j["rsn"]
             assert row[19] == nt_j["reason_code_qorvena"]
-    assert matched == 2, f"expected 2 seeded rows in CDNR, matched {matched}"
+    assert matched == 2, \
+        f"expected 2 seeded rows in CDNR (name={uniq_name!r}), matched {matched}"
 
 
 def test_t7_xlsx_summary_reconciliation_matches_json():

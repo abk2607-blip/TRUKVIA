@@ -44,41 +44,46 @@ INFO         = colors.HexColor("#B45309")
 _CONTENT_W_MM = 273.0
 
 
-# 12 columns · widths sum = 268 mm ≤ 273
+# 13 columns · widths sum = 268 mm ≤ 273. Note# widened from 20 → 28 mm
+# so the full 16-char statutory nt_num renders as a single visual token
+# (est. content width 22.3 mm + padding vs old 18 mm inside cell = wrapped).
+# Space reclaimed from Ctin (26→26), Recipient (30→28), Reason (48→42).
 CDNR_COL_HEADERS = [
     "Note #", "Date", "T", "Ctin", "Recipient",
     "Invoice #", "Rate %", "Taxable ₹",
     "CGST ₹", "SGST ₹", "IGST ₹",
     "Note Value ₹", "Reason",
 ]
-CDNR_COL_WIDTHS_MM = [20, 16, 6, 26, 30, 20, 10, 22, 16, 16, 16, 22, 48]
+CDNR_COL_WIDTHS_MM = [28, 16, 6, 26, 28, 20, 10, 22, 16, 16, 16, 22, 42]
 
-# 11 columns
+# 12 columns · sum = 270 mm ≤ 273. Recipient 38→36, Reason 66→60.
 CDNUR_COL_HEADERS = [
     "Note #", "Date", "T", "Recipient",
     "Invoice #", "Rate %", "Taxable ₹",
     "CGST ₹", "SGST ₹", "IGST ₹",
     "Note Value ₹", "Reason",
 ]
-CDNUR_COL_WIDTHS_MM = [20, 16, 6, 38, 22, 10, 22, 16, 16, 16, 22, 66]
+CDNUR_COL_WIDTHS_MM = [28, 16, 6, 36, 22, 10, 22, 16, 16, 16, 22, 60]
 
 # B2CS shares layout with CDNUR
 B2CS_COL_HEADERS = CDNUR_COL_HEADERS[:]
 B2CS_COL_WIDTHS_MM = CDNUR_COL_WIDTHS_MM[:]
 
+# 9 columns · sum = 270 mm ≤ 273. Recipient 40→38, Info 80→76.
 COMMERCIAL_COL_HEADERS = [
     "Note #", "Date", "T", "Recipient",
     "Invoice #", "Subtotal ₹", "Total ₹",
     "QORVENA Reason", "Info",
 ]
-COMMERCIAL_COL_WIDTHS_MM = [22, 16, 6, 40, 22, 22, 22, 40, 80]
+COMMERCIAL_COL_WIDTHS_MM = [28, 16, 6, 38, 22, 22, 22, 40, 76]
 
+# 9 columns · sum = 272 mm ≤ 273. Recipient 38→36, Advisory 78→76.
 CANCELLED_COL_HEADERS = [
     "Note #", "Date", "T", "Recipient",
     "Invoice #", "Total ₹",
     "Cancelled At", "Reason", "Advisory",
 ]
-CANCELLED_COL_WIDTHS_MM = [22, 16, 6, 38, 22, 22, 26, 40, 78]
+CANCELLED_COL_WIDTHS_MM = [28, 16, 6, 36, 22, 22, 26, 40, 76]
 
 
 def _all_col_widths_mm():
