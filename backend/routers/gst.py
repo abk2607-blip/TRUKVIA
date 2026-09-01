@@ -219,10 +219,14 @@ def _gstr1_reason_for(qorvena_code: str) -> tuple:
     return ("07", True)
 
 
-@router.get("/reports/gstr1-9b")
-async def report_gstr1_9b(month: str, request: Request, user=Depends(get_current_user)):
-    """C3.1 · GSTR-1 §9B canonical statutory feed. Feature-flag gated
-    (ENABLE_CDN=1). Streaming-safe. Fail-loud reconciliation."""
+async def _gstr1_9b_payload(month: str, request: Request, user: dict) -> dict:
+    """C3.2.1 · Internal canonical statutory-feed builder.
+
+    ONE SOURCE OF TRUTH for the JSON / XLSX / PDF endpoints. Feature-flag
+    gated (ENABLE_CDN=1). Streaming-safe. Fail-loud reconciliation.
+    Deliberately no audit-log emission here — each public endpoint
+    (JSON / XLSX / PDF) logs its own `gstr_export/download` row with
+    the format it served. Keeps the payload builder side-effect-free."""
     if os.environ.get("ENABLE_CDN") != "1":
         raise HTTPException(status_code=404, detail="Not Found")
     try:
@@ -530,19 +534,6 @@ async def report_gstr1_9b(month: str, request: Request, user=Depends(get_current
         "dn_gst_false": gt_false_dn,
     }
 
-    await _log_audit(
-        user, "gstr_export", "download",
-        entity_id="", entity_ref=f"gstr1_9b_{month}",
-        changes={
-            "format": "json",
-            "period": {"start": start, "end": end},
-            "row_count": endpoint_count,
-            "gst_true_total": endpoint_gst_true,
-            "gst_false_total": endpoint_gst_false,
-            "cancelled_after_export_count": len(cancelled_after_export_rows),
-        },
-    )
-
     return {
         "month": month,
         "period": {"start": start, "end": end},
@@ -560,4 +551,104 @@ async def report_gstr1_9b(month: str, request: Request, user=Depends(get_current
         "warnings": warnings + row_warnings_total,
         "note_count": endpoint_count,
     }
+
+
+# ============================================================================
+# C3.1 / C3.2 · Public endpoints wrapping the shared `_gstr1_9b_payload`
+# helper. Each endpoint emits its own gstr_export/download audit row with
+# the served format (json / xlsx / pdf). ONE SOURCE OF TRUTH — every
+# endpoint returns a projection of the identical canonical payload.
+# ============================================================================
+
+@router.get("/reports/gstr1-9b")
+async def report_gstr1_9b(month: str, request: Request, user=Depends(get_current_user)):
+    """C3.1 · Canonical statutory JSON feed."""
+    payload = await _gstr1_9b_payload(month, request, user)
+    recon = payload.get("reconciliation") or {}
+    await _log_audit(
+        user, "gstr_export", "download",
+        entity_id="", entity_ref=f"gstr1_9b_{month}",
+        changes={
+            "format": "json",
+            "period": payload.get("period"),
+            "row_count": payload.get("note_count", 0),
+            "gst_true_total": recon.get("endpoint_gst_true_total"),
+            "gst_false_total": recon.get("endpoint_gst_false_total"),
+            "cancelled_after_export_count":
+                (payload.get("totals", {}).get("cancelled_after_export", {}) or {}).get("note_count", 0),
+        },
+    )
+    return payload
+
+
+@router.get("/reports/gstr1-9b.xlsx")
+async def report_gstr1_9b_xlsx(month: str, request: Request, user=Depends(get_current_user)):
+    """C3.2 · XLSX projection of the C3.1 canonical payload.
+
+    Six accountant-friendly sheets: Summary / CDNR / CDNUR /
+    B2CS_Adjustments / Commercial_Notes / Cancelled_After_Export.
+    Never recomputes tax, totals, routing or reconciliation."""
+    payload = await _gstr1_9b_payload(month, request, user)
+    company = await db.companies.find_one(
+        {"id": payload["company_id"], "user_id": user["user_id"]}, {"_id": 0}
+    ) or {}
+
+    from xlsx.gstr1_9b import build_gstr1_9b_xlsx
+    data = build_gstr1_9b_xlsx(company, payload)
+
+    code = (company.get("company_code") or "company")
+    fname = f"GSTR1_9B_{code}_{month}.xlsx"
+    recon = payload.get("reconciliation") or {}
+    await _log_audit(
+        user, "gstr_export", "download",
+        entity_id="", entity_ref=fname,
+        changes={
+            "format": "xlsx",
+            "period": payload.get("period"),
+            "row_count": payload.get("note_count", 0),
+            "gst_true_total": recon.get("endpoint_gst_true_total"),
+            "gst_false_total": recon.get("endpoint_gst_false_total"),
+        },
+    )
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.get("/reports/gstr1-9b.pdf")
+async def report_gstr1_9b_pdf(month: str, request: Request, user=Depends(get_current_user)):
+    """C3.2 · PDF projection of the C3.1 canonical payload (A4 landscape).
+
+    Human-readable statutory working document — NOT a portal upload file.
+    Uses the L2d v3 fresh-flowable two-pass render pattern to survive
+    unlimited row volume without HTTP 500 / LayoutError."""
+    payload = await _gstr1_9b_payload(month, request, user)
+    company = await db.companies.find_one(
+        {"id": payload["company_id"], "user_id": user["user_id"]}, {"_id": 0}
+    ) or {}
+
+    from pdf.gstr1_9b import build_gstr1_9b_pdf
+    data = build_gstr1_9b_pdf(company, payload)
+
+    code = (company.get("company_code") or "company")
+    fname = f"GSTR1_9B_{code}_{month}.pdf"
+    recon = payload.get("reconciliation") or {}
+    await _log_audit(
+        user, "gstr_export", "download",
+        entity_id="", entity_ref=fname,
+        changes={
+            "format": "pdf",
+            "period": payload.get("period"),
+            "row_count": payload.get("note_count", 0),
+            "gst_true_total": recon.get("endpoint_gst_true_total"),
+            "gst_false_total": recon.get("endpoint_gst_false_total"),
+        },
+    )
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{fname}"'},
+    )
 
