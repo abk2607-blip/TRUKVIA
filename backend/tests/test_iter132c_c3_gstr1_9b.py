@@ -50,6 +50,31 @@ def _current_uid() -> str:
     return r.json()["user_id"]
 
 
+def _fake_gstin(state_prefix: str) -> str:
+    """Return a run-unique GSTIN that matches _GSTIN_RE and uses the
+    given 2-digit state prefix (36 = Telangana, 37 = Andhra Pradesh,
+    29 = Karnataka, ...). The middle segment is derived from a fresh
+    UUID so every test run gets a unique GSTIN — this prevents the
+    Iter127a duplicate-master guard from blocking re-runs of this suite.
+
+    NOT checksum-valid on purpose — the routing logic uses _GSTIN_RE
+    format-only, checksum is a separate lookup helper (`/gstin/lookup`)
+    that this suite does not exercise.
+
+    Shape (mirrors _GSTIN_RE `^([0-9]{2})([A-Z]{5}[0-9]{4}[A-Z])([0-9A-Z])(Z)([0-9A-Z])$`):
+      SS + 5 letters + 4 digits + 1 letter + 1 alnum + Z + 1 alnum = 15 chars
+    """
+    hx = uuid.uuid4().hex.upper()  # 32 hex chars: A-F, 0-9
+    letters_pool = "".join(c for c in hx if c.isalpha()) + "AAAAAAAA"
+    digits_pool = "".join(c for c in hx if c.isdigit()) + "00000000"
+    letters5 = letters_pool[:5]                     # [A-Z]{5}
+    digits4 = digits_pool[:4]                       # [0-9]{4}
+    letter1 = letters_pool[5]                       # [A-Z]
+    entity = hx[10]                                 # [0-9A-Z]
+    checksum = hx[11]                               # [0-9A-Z]
+    return f"{state_prefix}{letters5}{digits4}{letter1}{entity}Z{checksum}"
+
+
 def _fresh_customer(h, *, gstin: str = "", state: str = "Andhra Pradesh") -> tuple:
     tag = uuid.uuid4().hex[:8]
     body = {
@@ -152,7 +177,8 @@ def test_t3_cdnr_b2b_intra_state_cn_row_shape():
     cid, h = _company_header()
     # Intra-state — QORVENA demo company is Telangana (state_code 36), so
     # customer must also be Telangana with a matching-state GSTIN prefix.
-    cust_id, _ = _fresh_customer(h, gstin="36AAAAA0000A1Z5", state="Telangana")
+    tg_gstin = _fake_gstin("36")
+    cust_id, _ = _fresh_customer(h, gstin=tg_gstin, state="Telangana")
     inv = _create_invoice_via_api(h, cust_id, date="2026-06-10", gst_type="cgst_sgst", rcm=False)
     note = _issue_note(h, "credit", inv["id"], amount=500.0, note_date="2026-06-15",
                        reason_code="rate_correction")
@@ -170,7 +196,7 @@ def test_t3_cdnr_b2b_intra_state_cn_row_shape():
                 break
     assert found is not None, f"CN not found in cdnr: {body['cdnr']}"
     grp, nt = found
-    assert grp["ctin"] == "36AAAAA0000A1Z5"
+    assert grp["ctin"] == tg_gstin
     assert nt["ntty"] == "C"
     assert nt["inv_typ"] == "R"
     assert nt["rchrg"] == "N"
@@ -189,7 +215,7 @@ def test_t3_cdnr_b2b_intra_state_cn_row_shape():
 
 def test_t4_cdnr_b2b_inter_state_dn_igst():
     cid, h = _company_header()
-    cust_id, _ = _fresh_customer(h, gstin="29BVMPK0275K1Z3", state="Karnataka")
+    cust_id, _ = _fresh_customer(h, gstin=_fake_gstin("29"), state="Karnataka")
     inv = _create_invoice_via_api(h, cust_id, date="2026-06-11", gst_type="igst", rcm=False)
     note = _issue_note(h, "debit", inv["id"], amount=300.0, note_date="2026-06-16",
                        reason_code="missed_halting")
@@ -218,7 +244,7 @@ def test_t4_cdnr_b2b_inter_state_dn_igst():
 def test_t5_cdnr_rcm_cn_reports_correctly():
     cid, h = _company_header()
     # Intra-state RCM — customer must be Telangana (matches demo company state)
-    cust_id, _ = _fresh_customer(h, gstin="36AAAAA0000A2Z4", state="Telangana")
+    cust_id, _ = _fresh_customer(h, gstin=_fake_gstin("36"), state="Telangana")
     inv = _create_invoice_via_api(h, cust_id, date="2026-06-12", gst_type="cgst_sgst", rcm=True)
     note = _issue_note(h, "credit", inv["id"], amount=200.0, note_date="2026-06-17",
                        reason_code="quality_claim")
@@ -295,7 +321,7 @@ def test_t7_b2cs_adjustment_surfaces_in_dedicated_bucket():
 
 def test_t8_apply_gst_false_excluded_from_9b():
     cid, h = _company_header()
-    cust_id, _ = _fresh_customer(h, gstin="37AAAAA0000A3Z3", state="Andhra Pradesh")
+    cust_id, _ = _fresh_customer(h, gstin=_fake_gstin("37"), state="Andhra Pradesh")
     inv = _create_invoice_via_api(h, cust_id, date="2026-06-15", gst_type="cgst_sgst", rcm=False)
     note = _issue_note(h, "credit", inv["id"], amount=400.0, note_date="2026-06-20",
                        reason_code="post_invoice_discount", apply_gst=False)
@@ -330,7 +356,7 @@ def test_t9_draft_note_excluded():
                   json={"require_cdn_approval": True}, timeout=15)
     try:
         assert r.status_code == 200, r.text
-        cust_id, _ = _fresh_customer(h, gstin="37AAAAA0000A4Z2", state="Andhra Pradesh")
+        cust_id, _ = _fresh_customer(h, gstin=_fake_gstin("37"), state="Andhra Pradesh")
         inv = _create_invoice_via_api(h, cust_id, date="2026-06-21", rcm=False)
         note = _issue_note(h, "credit", inv["id"], amount=50.0, note_date="2026-06-22",
                            reason_code="other")
@@ -353,7 +379,7 @@ def test_t9_draft_note_excluded():
 
 def test_t10_cancelled_in_period_excluded():
     cid, h = _company_header()
-    cust_id, _ = _fresh_customer(h, gstin="37AAAAA0000A5Z1", state="Andhra Pradesh")
+    cust_id, _ = _fresh_customer(h, gstin=_fake_gstin("37"), state="Andhra Pradesh")
     inv = _create_invoice_via_api(h, cust_id, date="2026-07-05", rcm=False)
     note = _issue_note(h, "credit", inv["id"], amount=75.0, note_date="2026-07-10",
                        reason_code="other")
@@ -387,7 +413,7 @@ def test_t11_cancelled_after_export_surfaces_in_warning_bucket():
     """
     cid, h = _company_header()
     uid = _current_uid()
-    cust_id, cust = _fresh_customer(h, gstin="37AAAAA0000A6Z0", state="Andhra Pradesh")
+    cust_id, cust = _fresh_customer(h, gstin=_fake_gstin("37"), state="Andhra Pradesh")
     inv = _create_invoice_via_api(h, cust_id, date="2026-08-05", rcm=False)
 
     # Issue the note in Aug via API so it has a proper note_number
@@ -429,7 +455,7 @@ def test_t11_cancelled_after_export_surfaces_in_warning_bucket():
 
 def test_t12_period_boundary_last_day_included_next_day_excluded():
     cid, h = _company_header()
-    cust_id, _ = _fresh_customer(h, gstin="37AAAAA0000A7ZZ", state="Andhra Pradesh")
+    cust_id, _ = _fresh_customer(h, gstin=_fake_gstin("37"), state="Andhra Pradesh")
     # Invoice dated 2026-06-30 for the boundary test
     inv = _create_invoice_via_api(h, cust_id, date="2026-06-30", rcm=False)
     note_last = _issue_note(h, "credit", inv["id"], amount=25.0, note_date="2026-06-30",
@@ -531,7 +557,7 @@ def test_t14_reason_code_mapping_is_deterministic():
     """Every QORVENA reason_code that maps to a specific GSTR-1 code must
     map correctly. Unknown QORVENA codes fall through to '07' + warning."""
     cid, h = _company_header()
-    cust_id, _ = _fresh_customer(h, gstin="37AAAAA0000A8ZY", state="Andhra Pradesh")
+    cust_id, _ = _fresh_customer(h, gstin=_fake_gstin("37"), state="Andhra Pradesh")
 
     expectations = {
         "sales_return":          "01",
@@ -546,11 +572,12 @@ def test_t14_reason_code_mapping_is_deterministic():
     }
     # Runtime-relative dates — LOCKED note_date validator rejects future
     # dates, and the previously hard-coded 2026-09-* fixtures were ahead
-    # of the real system clock. Use yesterday for invoice + notes so
-    # every scenario lands within the current filing month.
+    # of the real system clock. Use TODAY for invoice + notes so every
+    # scenario lands within the current filing month even on the day-1
+    # boundary (today-1 day would cross the previous month).
     today = datetime.now().date()
-    inv_iso = (today - timedelta(days=2)).isoformat()
-    note_iso = (today - timedelta(days=1)).isoformat()
+    inv_iso = today.isoformat()
+    note_iso = today.isoformat()
     query_month = today.strftime("%Y-%m")
 
     note_ids_by_expected = {}
@@ -585,8 +612,8 @@ def test_t15_invalid_gstin_routes_to_non_cdnr():
     # Deliberately invalid GSTIN string (doesn't match _GSTIN_RE)
     cust_id, _ = _fresh_customer(h, gstin="", state="Andhra Pradesh")
     today = datetime.now().date()
-    inv_iso = (today - timedelta(days=2)).isoformat()
-    note_iso = (today - timedelta(days=1)).isoformat()
+    inv_iso = today.isoformat()
+    note_iso = today.isoformat()
     query_month = today.strftime("%Y-%m")
     inv = _create_invoice_via_api(h, cust_id, date=inv_iso, rcm=False)
     note = _issue_note(h, "credit", inv["id"], amount=60.0, note_date=note_iso,
@@ -613,10 +640,10 @@ def test_t16_reconciliation_invariant_matches_mongo_ground_truth():
     returns 200, the reconciliation.reconciled flag MUST be True and the
     endpoint totals MUST equal the mongo $group ground truth."""
     cid, h = _company_header()
-    cust_id, _ = _fresh_customer(h, gstin="37AAAAA0000A9ZX", state="Andhra Pradesh")
+    cust_id, _ = _fresh_customer(h, gstin=_fake_gstin("37"), state="Andhra Pradesh")
     today = datetime.now().date()
-    inv_iso = (today - timedelta(days=2)).isoformat()
-    note_iso = (today - timedelta(days=1)).isoformat()
+    inv_iso = today.isoformat()
+    note_iso = today.isoformat()
     query_month = today.strftime("%Y-%m")
     inv = _create_invoice_via_api(h, cust_id, date=inv_iso, rcm=False)
     _issue_note(h, "credit", inv["id"], amount=100.0, note_date=note_iso,
@@ -644,7 +671,7 @@ def test_t17_high_volume_2100_notes_streaming():
     cleanup via finally + post-cleanup verify."""
     cid, h = _company_header()
     uid = _current_uid()
-    cust_id, _ = _fresh_customer(h, gstin="37AAAAA0000B1ZW", state="Andhra Pradesh")
+    cust_id, _ = _fresh_customer(h, gstin=_fake_gstin("37"), state="Andhra Pradesh")
 
     SEED = 2100
     seed_tag = f"C3T17-{uuid.uuid4().hex[:10]}"
