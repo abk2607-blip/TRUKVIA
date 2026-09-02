@@ -51,6 +51,8 @@ from routers import (
     vendor_bills as vendor_bills_r,
     mechanic_work_orders as mechanic_work_orders_r,
     expenses as expenses_r,
+    # Iter133 · Turn 2B — Vehicle Cost + Repair History read-only reports
+    vehicle_reports as vehicle_reports_r,
 )
 
 ROOT_DIR = Path(__file__).parent
@@ -117,9 +119,10 @@ for r in (
     templates_r, ai_r, expenditure_types_r, suppliers_r,
     saved_filters_r, driver_shortage_policies_r,
     driver_ledger_r, policy_changes_r,
-    # Iter133 · Expense / Vehicle Cost — Turn 1
+    # Iter133 · Expense / Vehicle Cost — Turn 1 + Turn 2B
     vendors_r, mechanics_r, repair_events_r,
     vendor_bills_r, mechanic_work_orders_r, expenses_r,
+    vehicle_reports_r,
 ):
     app.include_router(r.router)
 

@@ -3,6 +3,87 @@
 ## Product summary
 QORVENA is a Bitumen transport ERP tracking LRs, Trips, Freight, Shortage, Invoices, Payments, Suppliers, Customers, Vehicles, Drivers, Products, Fuel, and Reports. FastAPI + React + MongoDB. Auth via Emergent-managed Google, with a dev-only demo token.
 
+## Iter133 · Expense / Vehicle Cost Management — Turn 2B COMPLETE — NOT READY FOR UAT (2026-09-02)
+
+**Status:** Vehicle Cost + Vehicle Repair History reports are live (backend read-only + minimal UI). No stored totals. Turn 2C (Vendor + Mechanic Ledger UI) awaiting explicit GO.
+
+### Turn 2B source-of-truth map (FROZEN)
+| Report / View | Reads from (single source) | Never reads |
+|---|---|---|
+| Vehicle Cost (total, categories, monthly, drill list) | canonical `Expense` (+ legacy `Trip.expenses/other_expenditures` XOR fallback for trips where `has_canonical_expenses=false`) | VendorBill · MechanicWO · Payment · RepairEvent |
+| Vehicle Repair History (per-event derived total, parts, labour) | canonical `Expense` where `repair_event_id != ""` for the parts/labour split; **RepairEvent** row for envelope fields only | RepairEvent.total_cost (does not exist) · VendorBill amount as cost · MechanicWO amount as cost |
+| Vendor / Mechanic payable + outstanding *displayed inside repair history rows* | `VendorBill` − `VendorPayment` / `MechanicWO` − `MechanicPayment` | Expense (never used for payables) |
+| Cost date | `Expense.date` | never mixed with Payment.date |
+| Payment date | `Payment.date` (Turn 2D scope) | never used for Vehicle Cost |
+
+### Files added
+- `backend/routers/vehicle_reports.py` — NEW · two GET endpoints, streaming iteration, no `to_list(2000)` caps.
+- `frontend/src/pages/VehicleCostReport.jsx` — NEW · minimal UI with KPIs, category breakdown, monthly, repair history drill-down.
+- `backend/tests/test_iter133_expense_turn2b.py` — NEW · 22 tests (T2B.1 – T2B.22).
+
+### Files edited (additive only)
+- `backend/server.py` — wired new router into mount loop.
+- `frontend/src/App.js` — added `/vehicles/:vid/cost` route.
+- `frontend/src/pages/Vehicles.jsx` — added a "Cost" action link on each vehicle row.
+
+### APIs (read-only, `/api` prefix, tenant-scoped)
+- `GET /api/vehicles/{vid}/cost-summary?from=&to=&category=&trip_linked=yes|no`
+- `GET /api/vehicles/{vid}/repair-history?from=&to=&status=&vendor_id=&mechanic_id=&trip_linked=yes|no`
+
+### Duplicate-prevention proof
+- Repair envelope has no monetary total field → RepairEvent contribution is always derived from linked Expenses (verified T2B.10, T2B.11).
+- Vehicle Cost aggregates `Expense` only; VendorBill/MechanicWO amounts are surfaced as separate "payable" fields inside history rows, never summed into cost (T2B.11, T2B.15).
+- Legacy XOR: `has_canonical_expenses=false` trips fall back to `Trip.expenses.*` + `other_expenditures[]`; modern trips read Expense only. No additive double-count (T2B.6, T2B.7).
+- Payments never touched by cost report (T2B.14).
+
+### Repair ₹18k + ₹7k proof
+Live test fixture: Vendor bill ₹18,000 + Mechanic WO ₹7,000 + twin Expenses ₹18,000 + ₹7,000
+→ `total_repair_cost = 25000.00`  ✓  (not ₹36,000 / ₹43,000 / ₹50,000)
+→ `vendor_payable = 18000.00`, `mechanic_payable = 7000.00` ✓
+After a ₹10,000 vendor payment: `vendor_paid=10000, vendor_outstanding=8000`, vehicle cost UNCHANGED ✓ (T2B.14).
+
+### Filters supported
+- Vehicle Cost: `from`, `to`, `category`, `trip_linked=yes|no`.
+- Repair History: `from`, `to`, `status`, `vendor_id`, `mechanic_id`, `trip_linked=yes|no`.
+
+### Pagination / high-volume
+- Both endpoints use async cursor iteration; no `to_list(N)` caps. Bill/WO/Payment children preloaded via a single `$in` query — no N+1.
+- Totals returned always represent the ENTIRE filtered set (T2B.20, T2B.21 — 30 repair events aggregate perfectly, 50 OE rows aggregate perfectly).
+
+### Test evidence
+- `test_iter133_expense_turn2b.py`: **22 / 22 PASS** in 4.27 s.
+- Turn 1 + Turn 2A: **40 / 40 PASS** (3.61 s).
+- Trip / Supplier / Idempotency regressions (`iter49, iter56, iter91, iter45, iter111, iter126b`): **50 / 50 PASS** (14.27 s).
+
+### Live API smoke
+- `GET /api/vehicles/{vid}/cost-summary` → `total=0 count=0 cats=0` (fresh vehicle) ✓
+- `GET /api/vehicles/{vid}/repair-history` → `count=0 total_repair=0.0` (fresh vehicle) ✓
+- Fixture trip with `toll=1000, repair=500` on vehicle → cost summary returns `total_cost=1500`, `by_category=[Toll:1000, Repair:500]`, `repair_total=500` (Repair legacy sits in Vehicle Cost but not in RepairEvent history) ✓
+
+### Live UI smoke
+- Route `/vehicles/:vid/cost` renders KPIs + Category-wise + Monthly + Repair History with drill-down `<details>` per event.
+- "Cost" link added to each row on `/vehicles`.
+
+### Known limitations
+- No Vendor / Mechanic Ledger UI or Paid/Outstanding report — Turn 2C.
+- No cost-date vs payment-date parametrised reports — Turn 2D.
+- No supplier-settlement projection into Supplier Ledger — Turn 2C or later.
+- Legacy supplier-owned Trip semantics still project via `Trip.expenses.*` fallback with `supplier_settlement_mode='n/a'` (as materialised in Turn 2A). Explicit supplier-owned rule handling on Vehicle Cost UI is Turn 2C scope.
+- Report caps: none. Uses streaming cursor; production-safe.
+
+### Locked-area untouched
+✅ C3.1 / C3.2 / C3.4 / C3.5 / C4 untouched.
+✅ C5 (deferred) untouched.
+✅ DG-STABILITY-1 · `pytest.ini` · `scripts/run_regression.sh` untouched.
+✅ `services._compute_trip`, driver ledger sync, invoice recompute, Supplier Ledger (`_build_ledger`) — all UNCHANGED.
+✅ Fuel collection standalone (as approved).
+
+### Next sub-turn (awaiting GO)
+**Turn 2C — Vendor Ledger + Mechanic Ledger (read-only backend + UI).**
+
+### Final status
+**EXPENSE TURN 2B COMPLETE — NOT READY FOR UAT — NOT READY FOR LOCK.**
+
 ## Iter133 · Expense / Vehicle Cost Management — Turn 2A COMPLETE — NOT READY FOR UAT (2026-09-02)
 
 **Status:** Trip → canonical Expense materialisation is live. Turn 2A only. Turn 2B (Vehicle Cost + Repair History reports) awaiting explicit GO.

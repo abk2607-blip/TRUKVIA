@@ -225,6 +225,14 @@ export default function Vehicles() {
                   );
                 })}
                 <td className="px-3 py-3 text-right whitespace-nowrap">
+                  <a
+                    data-testid={`vehicle-cost-${v.id}`}
+                    href={`/vehicles/${v.id}/cost`}
+                    className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-zinc-200 rounded-sm mr-2 hover:bg-zinc-950 hover:text-white"
+                    title="Vehicle Cost & Repair History"
+                  >
+                    Cost
+                  </a>
                   <button data-testid={`edit-vehicle-${v.id}`} onClick={() => openEdit(v)} className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-zinc-200 rounded-sm mr-2 hover:bg-zinc-950 hover:text-white">
                     <Pencil size={12} /> Edit
                   </button>
