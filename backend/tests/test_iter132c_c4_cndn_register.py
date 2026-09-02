@@ -532,48 +532,105 @@ def test_t14_by_reason_carries_gstr1_9b_remap():
     asyncio.run(_run())
 
 
-# ─── T15 · XLSX endpoint + 4 sheets named correctly ─────────────────────
+# ─── T15 · XLSX endpoint + 4 sheets named correctly (approved spec) ─────
 
 def test_t15_xlsx_endpoint_and_four_sheets():
+    """Approved C4 spec locks the sheet names + order to EXACTLY:
+        Summary · Register · By_Customer · By_Reason
+    NO Credit_Notes / Debit_Notes sheets."""
     _, h = _company_header()
     r = _get_xlsx(h, **{"from": "2030-03-01", "to": "2030-03-31"})
     assert r.status_code == 200
     assert r.headers["content-type"] == \
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     wb = openpyxl.load_workbook(io.BytesIO(r.content))
-    assert wb.sheetnames == ["Summary", "Credit_Notes", "Debit_Notes", "By_Reason"]
+    assert wb.sheetnames == ["Summary", "Register", "By_Customer", "By_Reason"], \
+        f"XLSX sheet names drifted from approved C4 spec: {wb.sheetnames}"
 
 
-# ─── T16 · XLSX row counts match JSON credit/debit splits ───────────────
+# ─── T16 · XLSX Register + By_Customer + By_Reason parity vs JSON ───────
 
-def test_t16_xlsx_row_counts_match_json_kind_split():
+def test_t16_xlsx_register_and_by_customer_parity_with_json():
+    """Register sheet row count MUST equal len(payload['rows']) — flat
+    register, both credit and debit rows in one sheet. By_Customer sheet
+    row count MUST equal len(payload['by_customer']). By_Reason sheet
+    row count MUST equal len(payload['by_reason'])."""
     async def _run():
         cid, h = _company_header()
         uid = _current_uid()
         client, db = _mongo()
         try:
-            cust = await _seed_customer(db, uid, cid, name=f"{_tag()}-XL", state="Karnataka")
-            iid, inum = await _seed_invoice(db, uid, cid, cust, date="2030-04-01")
-            await _seed_note(db, uid, cid, iid, inum, cust, kind="credit",
+            tag = _tag()
+            # Seed across two customers so By_Customer has >1 group.
+            cA = await _seed_customer(db, uid, cid, name=f"{tag}-A", state="Karnataka")
+            cB = await _seed_customer(db, uid, cid, name=f"{tag}-B", state="Karnataka")
+            iA, iAn = await _seed_invoice(db, uid, cid, cA, date="2030-04-01")
+            iB, iBn = await _seed_invoice(db, uid, cid, cB, date="2030-04-01")
+            await _seed_note(db, uid, cid, iA, iAn, cA, kind="credit",
                              note_date="2030-04-05", total=1000.0)
-            await _seed_note(db, uid, cid, iid, inum, cust, kind="credit",
+            await _seed_note(db, uid, cid, iA, iAn, cA, kind="credit",
                              note_date="2030-04-06", total=1500.0)
-            await _seed_note(db, uid, cid, iid, inum, cust, kind="debit",
+            await _seed_note(db, uid, cid, iB, iBn, cB, kind="debit",
                              note_date="2030-04-07", total=800.0)
-            params = {"from": "2030-04-01", "to": "2030-04-30", "customer_id": cust}
-            j = _get_json(h, **params).json()
-            r = _get_xlsx(h, **params)
+            params = {"from": "2030-04-01", "to": "2030-04-30"}
+            # Narrow by customer set via two independent queries then
+            # verify each sheet against the payload the endpoint returns
+            # with the wider filter that covers both seeds.
+            paramsAB = {"from": "2030-04-01", "to": "2030-04-30"}
+            j = _get_json(h, **paramsAB).json()
+            r = _get_xlsx(h, **paramsAB)
             wb = openpyxl.load_workbook(io.BytesIO(r.content))
-            cn_rows = max(wb["Credit_Notes"].max_row - 4, 0)
-            dn_rows = max(wb["Debit_Notes"].max_row - 4, 0)
-            br_rows = max(wb["By_Reason"].max_row - 4, 0)
-            assert cn_rows == j["kpis"]["credit_count"] == 2
-            assert dn_rows == j["kpis"]["debit_count"] == 1
-            assert br_rows == len(j["by_reason"])
+
+            reg_rows = max(wb["Register"].max_row - 4, 0)
+            bc_rows  = max(wb["By_Customer"].max_row - 4, 0)
+            br_rows  = max(wb["By_Reason"].max_row - 4, 0)
+
+            # Register row count == flat JSON rows count (CN + DN).
+            assert reg_rows == len(j["rows"]), \
+                f"Register rows {reg_rows} != len(rows) {len(j['rows'])}"
+            # By_Customer row count == canonical by_customer length.
+            assert bc_rows == len(j["by_customer"]), \
+                f"By_Customer rows {bc_rows} != len(by_customer) {len(j['by_customer'])}"
+            # By_Reason row count == canonical by_reason length.
+            assert br_rows == len(j["by_reason"]), \
+                f"By_Reason rows {br_rows} != len(by_reason) {len(j['by_reason'])}"
+
+            # By_Customer VALUES must equal the canonical aggregation
+            # (no independent recomputation in the exporter).
+            ws = wb["By_Customer"]
+            xlsx_bc = []
+            for row_idx in range(5, 5 + bc_rows):
+                xlsx_bc.append({
+                    "customer_name": ws.cell(row_idx, 1).value or "",
+                    "customer_id":   ws.cell(row_idx, 2).value or "",
+                    "count":         int(ws.cell(row_idx, 3).value or 0),
+                    "credit_total":  float(ws.cell(row_idx, 4).value or 0),
+                    "debit_total":   float(ws.cell(row_idx, 5).value or 0),
+                    "signed_amount": float(ws.cell(row_idx, 6).value or 0),
+                })
+            def _key(x): return (x.get("customer_id") or "", x.get("customer_name") or "")
+            xlsx_sorted = sorted(xlsx_bc, key=_key)
+            json_bc = [{
+                "customer_name": bc.get("customer_name") or "\u2014",
+                "customer_id":   bc.get("customer_id") or "",
+                "count":         int(bc.get("count", 0) or 0),
+                "credit_total":  float(bc.get("credit_total", 0) or 0),
+                "debit_total":   float(bc.get("debit_total", 0) or 0),
+                "signed_amount": float(bc.get("signed_amount", 0) or 0),
+            } for bc in j["by_customer"]]
+            json_sorted = sorted(json_bc, key=_key)
+            # Restrict to just our two seeded customer_ids so we don't
+            # collide with any pre-existing demo-tenant notes.
+            wanted = {cA, cB}
+            xlsx_ours = [r for r in xlsx_sorted if r["customer_id"] in wanted]
+            json_ours = [r for r in json_sorted if r["customer_id"] in wanted]
+            assert xlsx_ours == json_ours, \
+                f"By_Customer drift.\n xlsx={xlsx_ours}\n json={json_ours}"
         finally:
-            await db.credit_debit_notes.delete_many({"user_id": uid, "customer_id": cust})
-            await db.invoices.delete_many({"user_id": uid, "id": iid})
-            await db.customers.delete_many({"user_id": uid, "id": cust})
+            await db.credit_debit_notes.delete_many(
+                {"user_id": uid, "customer_id": {"$in": [cA, cB]}})
+            await db.invoices.delete_many({"user_id": uid, "id": {"$in": [iA, iB]}})
+            await db.customers.delete_many({"user_id": uid, "id": {"$in": [cA, cB]}})
             client.close()
     asyncio.run(_run())
 

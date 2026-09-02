@@ -259,16 +259,22 @@ _REG_CURRENCY_COLS = (13, 16, 17, 18, 19, 20, 21)   # taxable, cgst, sgst, igst,
 _REG_NUM_COLS = (15,)                                # rate %
 
 
-def _build_register_sheet(ws, payload: dict, kind: str, title_kind: str, fill):
+def _build_register(ws, payload: dict):
+    """Approved C4 spec · flat Register sheet.
+
+    Renders ALL rows from payload["rows"] (both credit and debit),
+    preserving the CN/DN row tinting per row so accountants still get
+    the visual split without losing the flat register semantics.
+    """
     period = payload.get("period", {})
     ws.cell(row=1, column=1, value=(
-        f"{title_kind} {_DOT} Period {period.get('start','')} to {period.get('end','')}"
+        f"Register {_DOT} Period {period.get('start','')} to {period.get('end','')}"
     )).font = Font(bold=True, size=12)
     _write_header(ws, REGISTER_HEADERS)
     r = 5
     for row in payload.get("rows", []) or []:
-        if kind != "all" and row.get("kind") != kind:
-            continue
+        # Per-row tint: credit -> CN_FILL, debit -> DN_FILL.
+        fill = CN_FILL if row.get("kind") == "credit" else DN_FILL
         _write_row(
             ws, r, _row_values(row),
             tint_fill=fill,
@@ -277,6 +283,37 @@ def _build_register_sheet(ws, payload: dict, kind: str, title_kind: str, fill):
         )
         r += 1
     _apply_widths(ws, _REG_WIDTHS)
+
+
+BY_CUSTOMER_HEADERS = [
+    "Customer", "Customer ID", "Note Count",
+    f"CN Total ({_RUPEE})", f"DN Total ({_RUPEE})", f"Signed Total ({_RUPEE})",
+]
+
+
+def _build_by_customer(ws, payload: dict):
+    """Approved C4 spec · By_Customer aggregation sheet.
+
+    Reads the canonical `payload["by_customer"]` list produced by
+    `_cndn_register_payload()`. NO independent recomputation.
+    """
+    period = payload.get("period", {})
+    ws.cell(row=1, column=1, value=(
+        f"By Customer {_DOT} Period {period.get('start','')} to {period.get('end','')}"
+    )).font = Font(bold=True, size=12)
+    _write_header(ws, BY_CUSTOMER_HEADERS)
+    r = 5
+    for bc in payload.get("by_customer", []) or []:
+        _write_row(ws, r, [
+            bc.get("customer_name", "") or "\u2014",
+            bc.get("customer_id", "") or "",
+            int(bc.get("count", 0) or 0),
+            float(bc.get("credit_total", 0) or 0),
+            float(bc.get("debit_total", 0) or 0),
+            float(bc.get("signed_amount", 0) or 0),
+        ], currency_cols=(4, 5, 6))
+        r += 1
+    _apply_widths(ws, [36, 22, 12, 20, 20, 22])
 
 
 def _build_by_reason(ws, payload: dict):
@@ -300,14 +337,18 @@ def _build_by_reason(ws, payload: dict):
 
 
 def build_cndn_register_xlsx(company: dict, payload: dict) -> bytes:
-    """Build the full 4-sheet workbook and return raw bytes."""
+    """Build the full 4-sheet workbook and return raw bytes.
+
+    Sheet order is LOCKED as of C4 approval:
+        Summary  ·  Register  ·  By_Customer  ·  By_Reason
+    """
     wb = openpyxl.Workbook()
     ws_summary = wb.active
     ws_summary.title = "Summary"
 
     _build_summary(ws_summary, company, payload)
-    _build_register_sheet(wb.create_sheet("Credit_Notes"), payload, "credit", "Credit Notes", CN_FILL)
-    _build_register_sheet(wb.create_sheet("Debit_Notes"),  payload, "debit",  "Debit Notes",  DN_FILL)
+    _build_register(wb.create_sheet("Register"), payload)
+    _build_by_customer(wb.create_sheet("By_Customer"), payload)
     _build_by_reason(wb.create_sheet("By_Reason"), payload)
 
     buf = BytesIO()
