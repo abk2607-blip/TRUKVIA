@@ -25,6 +25,10 @@ from services import (
     _next_lr_number, _in_range, _vehicle_expiry_stats,
     _state_code, _gstin_checksum,
 )
+from services_expense_bridge import (
+    sync_trip_expenses_to_canonical,
+    delete_trip_canonical_expenses,
+)
 
 router = APIRouter(prefix="/api")
 
@@ -558,6 +562,14 @@ async def create_trip(payload: Trip, request: Request, user=Depends(get_current_
         # Never block trip create because of policy issues; log for ops.
         import logging; logging.getLogger(__name__).warning(f"driver_recovery snapshot failed: {_e}")
     await db.trips.insert_one(doc)
+    # Iter133 · Turn 2A — Materialise legacy Trip.expenses + other_expenditures
+    # into canonical Expense rows (idempotent by source_key). Never blocks trip
+    # create on failure — logged for ops.
+    try:
+        has_canon = await sync_trip_expenses_to_canonical(user["user_id"], cid, doc)
+        doc["has_canonical_expenses"] = has_canon
+    except Exception as _e:
+        logger.warning(f"canonical expense sync (create) failed: {_e}")
     # Iter61 · Phase C — Mirror driver_recovery to Driver Ledger (Trip = SSoT)
     try:
         from routers.driver_ledger import sync_trip_recovery_to_ledger
@@ -692,6 +704,14 @@ async def update_trip(tid: str, payload: Trip, request: Request, user=Depends(ge
     except Exception as _e:
         import logging; logging.getLogger(__name__).warning(f"driver_recovery preserve failed: {_e}")
     await db.trips.update_one({"id": tid, "user_id": user["user_id"], "company_id": cid}, {"$set": doc})
+    # Iter133 · Turn 2A — Re-materialise canonical Expenses on every update.
+    # Idempotent by source_key: unchanged lines stay put, changed lines update
+    # in place, removed lines soft-delete. Never duplicates.
+    try:
+        has_canon = await sync_trip_expenses_to_canonical(user["user_id"], cid, {**doc, "id": tid})
+        doc["has_canonical_expenses"] = has_canon
+    except Exception as _e:
+        logger.warning(f"canonical expense sync (update) failed: {_e}")
     # Iter61 · Phase C — Keep Driver Ledger mirror in sync on Trip edit.
     # If driver was reassigned, sync will remove the old-driver row and
     # (re)create under new driver.  If recovery went to 0, the row is
@@ -882,6 +902,11 @@ async def delete_trip(tid: str, request: Request, reason: str = "", user=Depends
         raise HTTPException(status_code=404, detail="Trip not found")
     linked_invoice_id = existing.get("invoice_id")
     await db.trips.delete_one({"id": tid, "user_id": user["user_id"], "company_id": cid})
+    # Iter133 · Turn 2A — Soft-delete all canonical Expenses linked to this trip.
+    try:
+        await delete_trip_canonical_expenses(user["user_id"], cid, tid, reason=f"trip_deleted:{reason[:60]}")
+    except Exception as _e:
+        logger.warning(f"canonical expense sync (delete) failed: {_e}")
     # Iter61 · Phase C — Remove mirrored ledger entry (Trip = SSoT)
     try:
         from routers.driver_ledger import delete_trip_recovery_from_ledger

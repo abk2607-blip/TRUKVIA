@@ -411,6 +411,13 @@ class Trip(BaseModel):
     # Iter99 · Phase 4 — Per-Field Override Audit Trail. Each entry captures
     # the system-computed value vs the final approved value + who/when/why.
     field_overrides: List["FieldOverride"] = Field(default_factory=list)
+    # Iter133 · Turn 2A — Canonical Expense bridge XOR flag.
+    # False = legacy Trip.expenses / other_expenditures scalars are the cost
+    # source for this trip (reports sum them). True = canonical Expense rows
+    # linked by trip_id are the cost source (reports read from Expense).
+    # NEVER additive — exactly ONE side per trip. Set atomically by
+    # services.sync_trip_expenses_to_canonical() at trip write time.
+    has_canonical_expenses: bool = False
     # Iter97 · Phase 2 — Trip-level freight override (authorised users only).
     # When > 0, wins over the method-derived calc. Audit captured by PUT /trips.
     freight_amount_override: float = 0.0
@@ -1072,6 +1079,16 @@ class Expense(BaseModel):
     settlement_mode: Literal["cash_now", "payable"] = "payable"
     reversal_of: str = ""
     is_reversed: bool = False
+    # Iter133 · Turn 2A — Source-line identity for idempotent materialisation
+    # from legacy Trip.expenses / other_expenditures. `source_key` is a
+    # namespaced deterministic string; ONE canonical Expense per source_key.
+    #   trip:{trip_id}:legacy:{field}   for Trip.expenses.*
+    #   trip:{trip_id}:oe:{row_id}      for Trip.other_expenditures[]
+    # Never uses amount/date/vendor heuristics. `source_type='manual'` means
+    # user-typed via the Expense API (no auto-materialisation).
+    source_type: Literal["manual", "trip_legacy", "trip_other_expenditure"] = "manual"
+    source_key: str = ""
+    source_trip_id: str = ""    # denormalised for fast cleanup queries
     file_ids: List[str] = Field(default_factory=list)
     created_by: str = ""
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())

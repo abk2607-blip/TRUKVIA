@@ -1253,6 +1253,17 @@ async def startup_event():
         await db.expenses.create_index([("mechanic_work_order_id", 1)], name="expenses_mwo")
         await db.expenses.create_index([("party_type", 1), ("party_id", 1)], name="expenses_party")
         await db.expenses.create_index([("category", 1)], name="expenses_category")
+        # Iter133 · Turn 2A — deterministic source-line identity.
+        # Partial UNIQUE index so a source_key can never map to two Expense
+        # rows in the same tenant. Blank source_keys (manual entries) are
+        # excluded via partialFilterExpression.
+        await db.expenses.create_index(
+            [("user_id", 1), ("company_id", 1), ("source_key", 1)],
+            name="expenses_source_key_uniq",
+            unique=True,
+            partialFilterExpression={"source_key": {"$type": "string", "$gt": ""}},
+        )
+        await db.expenses.create_index([("source_trip_id", 1)], name="expenses_source_trip")
         # Payments
         await db.vendor_payments.create_index([("user_id", 1), ("company_id", 1), ("date", -1)],
                                               name="vendor_payments_scope_date")

@@ -3,6 +3,84 @@
 ## Product summary
 QORVENA is a Bitumen transport ERP tracking LRs, Trips, Freight, Shortage, Invoices, Payments, Suppliers, Customers, Vehicles, Drivers, Products, Fuel, and Reports. FastAPI + React + MongoDB. Auth via Emergent-managed Google, with a dev-only demo token.
 
+## Iter133 · Expense / Vehicle Cost Management — Turn 2A COMPLETE — NOT READY FOR UAT (2026-09-02)
+
+**Status:** Trip → canonical Expense materialisation is live. Turn 2A only. Turn 2B (Vehicle Cost + Repair History reports) awaiting explicit GO.
+
+### Turn 2A architecture (frozen; MASTER PRINCIPLE preserved)
+- Deterministic source-line identity — never amount/date/vendor heuristic:
+  - Legacy scalars → `trip:{trip_id}:legacy:{diesel|toll|batta|repair|other|firewood}`
+  - other_expenditures[] → `trip:{trip_id}:oe:{row.id}`
+- Partial UNIQUE index `expenses_source_key_uniq` (user_id, company_id, source_key) enforces one canonical Expense per source line. Blank `source_key` = manual entry (unaffected).
+- Sync helper `services_expense_bridge.sync_trip_expenses_to_canonical()` runs after every Trip create/update — idempotent upsert-by-source_key + soft-delete for removed lines. `Trip.has_canonical_expenses` flag is atomically set based on the active count.
+- Trip delete cascades soft-delete on all `source_trip_id=tid` canonical rows via `delete_trip_canonical_expenses()`.
+- `Expense.source_type ∈ {manual, trip_legacy, trip_other_expenditure}` distinguishes provenance for downstream reports.
+- Manual Expenses (`source_key=""`) are never touched by trip sync — proven by test.
+
+### Files added
+- `backend/services_expense_bridge.py` — NEW · sync + cleanup helpers. Pure functions; no side-effect on legacy fields.
+- `backend/tests/test_iter133_expense_turn2a.py` — NEW · 17 tests (T2.1 – T2.20 plus 2 bonus).
+
+### Files edited (additive only)
+- `backend/models.py` — added `Expense.source_type`, `Expense.source_key`, `Expense.source_trip_id`; added `Trip.has_canonical_expenses`. Defaults preserve backward compatibility.
+- `backend/routers/trips.py` — imported bridge helpers; call `sync_trip_expenses_to_canonical` after `db.trips.insert_one` and `db.trips.update_one`; call `delete_trip_canonical_expenses` after `db.trips.delete_one`. Legacy fields, `_compute_trip`, driver ledger sync, invoice recompute — all unchanged.
+- `backend/server.py` — added partial UNIQUE index on `(user_id, company_id, source_key)` + `source_trip_id` index for cleanup speed.
+
+### Turn 2A test evidence
+- `test_iter133_expense_turn2a.py` — **17 / 17 PASS** in 2.90 s.
+  - T2.1 trip toll → exactly one canonical Expense ✓
+  - T2.2 save twice → no duplicate ✓
+  - T2.3 edit toll → same canonical row updated in place ✓
+  - T2.4 remove toll → canonical soft-deleted ✓
+  - T2.5 no-expense trip → has_canonical_expenses=false, backward compat ✓
+  - T2.6 flag deterministic transitions ✓
+  - T2.7 two identical OE rows → two distinct canonicals (via row.id) ✓
+  - T2.8 idempotency retry → no duplicate ✓
+  - T2.9 VendorBill + twin Expense no double-count ✓
+  - T2.10 MechanicWO + twin Expense no double-count ✓
+  - T2.11 VendorPayment never changes Expense total ✓
+  - T2.12 MechanicPayment never changes Expense total ✓
+  - T2.18 Cross-company isolation ✓
+  - T2.19 Trip delete soft-deletes all canonical rows ✓
+  - T2.20 150 OE rows single trip, no truncation, all distinct source_keys ✓
+  - +bonus: all 6 legacy scalars materialise correctly ✓; manual Expense untouched by trip sync ✓
+- **T2.13 – T2.17 deferred to Turn 2B/2D by design** (Vehicle Cost read, Repair History, Vendor/Mechanic Ledgers, cost-vs-payment-date reports — not part of Turn 2A scope).
+
+### Regression evidence
+- Turn 1 suite (`test_iter133_expense_turn1.py`): **23 / 23 PASS**.
+- Trip / customer-ref / supplier suites (`iter49, iter56, iter83, iter91, iter92, iter45`): **33 / 33 PASS** (18.77 s).
+- Supplier freight + idempotency + policy change + multi-trip supplier UAT (`iter111, iter126b, iter102, iter105`): **30 / 30 PASS** (12.08 s).
+
+### Live smoke evidence
+Live POST `/api/trips` with `expenses={toll:1000, repair:500}` returned `has_canonical_expenses=True`; live GET `/api/expenses?trip_id=…` returned exactly 2 rows: `Toll ₹1000 src=trip:{tid}:legacy:toll`, `Repair ₹500 src=trip:{tid}:legacy:repair`.
+
+### Duplicate-counting proof (write-time + read-time)
+- One user action → one canonical Expense per source_key (upsert semantics; partial UNIQUE index).
+- Payments (Vendor / Mechanic) never touch the Expense collection — asserted by tests T2.11 + T2.12.
+- Manual Expenses never touched by trip sync — asserted by dedicated bonus test.
+- Turn 2B / future reports must honour the XOR bridge: `if trip.has_canonical_expenses → read canonical; else → read legacy scalars`. No additive path.
+
+### Locked-area untouched confirmations
+✅ C3.1 / C3.2 / C3.4 / C3.5 / C4 untouched.
+✅ C5 (deferred) untouched.
+✅ DG-STABILITY-1 · `pytest.ini` · `scripts/run_regression.sh` untouched.
+✅ `services._compute_trip` unchanged. Driver-recovery sync unchanged. Invoice recompute unchanged.
+✅ Fuel collection standalone (as approved).
+✅ Batta → Driver Ledger NOT auto-posted (deferred per user decision).
+
+### Known limitations
+- **No** Trip UI change in Turn 2A — legacy Trip form works as-is; server materialises silently in the background.
+- **No** Vehicle Cost report, Repair History, Vendor / Mechanic Ledger UI, Paid/Outstanding — Turn 2B.
+- **No** supplier-settlement projection into supplier ledger — Turn 2C or later.
+- **No** legacy-Trip materialisation of `Trip.expenses` for `vehicle_type='supplier'` treatment (currently materialises as own-side cost; behaviour matches current `services._compute_trip` semantic for own-side scalars but semantic clarification will be visited when Vehicle Cost report is added).
+- **No** mass migration of historical trips — only trips saved AFTER Turn 2A go live receive canonical rows.
+
+### Next sub-turn
+**Turn 2B — Vehicle Cost + Vehicle Repair History (read-only endpoints + minimal UI).** Awaiting explicit GO before starting.
+
+### Final status
+**EXPENSE TURN 2A COMPLETE — NOT READY FOR UAT — NOT READY FOR LOCK.** Full slice (through Turn 2D) required before UAT.
+
 ## Iter133 · Expense / Vehicle Cost Management — Turn 1 COMPLETE — NOT READY FOR UAT (2026-09-02)
 
 **Status:** Foundation slice implemented per FROZEN architecture. Not locked. Not UAT-ready. Turn 2 (Trip write-path integration + reporting) pending.
