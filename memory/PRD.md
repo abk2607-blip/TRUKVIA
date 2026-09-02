@@ -50,6 +50,30 @@ User communicates in English. Respond in English. (Prior bilingual reference ret
   - **Backlog frozen**: C3 GSTR-1 §9B · C4 CN/DN Register · Statement Email Delivery · Iter132c-agg-fix · Phase 2 Security · `AKB/26-27//26-27/0004` hygiene · Preview Uptime Chip · LR Digest · Trip Templates · Trip Sheet redesign · Tyre · Driver Salary · Expense/Vehicle Cost ERP · Maintenance.
 
 
+## Iter132c · C4 · Credit Note / Debit Note Register (JSON + XLSX + PDF) — 🔒 LOCKED / FROZEN (2026-09-02 · UAT approved · XLSX spec-compliance corrected pre-lock · fresh artifact provenance verified)
+
+### FINAL LOCK EVIDENCE (2026-09-02)
+1. **C4 targeted suite**: **21 / 21 PASS** (T1–T21 including T19 10 000-note streaming, T20 landscape column-width envelope, T21 effective-balance parity with `services._effective_invoice_totals`).
+2. **Regression**: **C3.5 + C3.2 = 51 / 51 PASS** — zero cross-contamination.
+3. **High-volume**: 10 000 CN/DN notes streaming verified in T19 (35.7 s). No `to_list()` truncation. No N+1: exactly one `find().sort()` streaming cursor over `credit_debit_notes` + one bounded `$in` per referenced customer set + one bounded `$in` per referenced invoice set.
+4. **Fresh canonical JSON** (active company `co_c2ac839cf8bf4ff4` · `TEST Iter7 Co` · GSTIN `36AAAAA0000A1Z5` · period 2026-09-01→2026-09-02): `note_count=301` · `len(rows)=301` · `len(by_customer)=81` · `len(by_reason)=9` · `tax_summary.total_amount=₹23,811.00` · `reconciliation.reconciled=True` · `warnings=[]`.
+5. **Fresh XLSX** (SHA256 `63c7b9c4eab27dea1b20a77a7c8c8330d06ae43fb0e62bf053c592ed8dbfb5d4`): sheet names EXACTLY `['Summary','Register','By_Customer','By_Reason']` in that order · Register rows 301 == JSON `len(rows)` · By_Customer rows 81 == JSON `len(by_customer)` · By_Reason rows 9 == JSON `len(by_reason)` · numeric currency cells numeric · Register `Total` column format `"₹ "#,##0.00`.
+6. **Fresh PDF** (SHA256 `f06e12800e712d79bc841fb86d29ca00354296fd7b124381a4557dfb5bf6e952`): 17 pages · A4 landscape (841.89 × 595.28 pt) · header shows `TEST Iter7 Co · GSTIN: 36AAAAA0000A1Z5 · State: Telangana (36)` · `Reconciled: YES` on page 1 · U+20B9 (₹) glyph present · zero U+FFFD tofu · "NOT a GST portal upload file" disclosure banner present · `Register` section present · `Page 1 of 17` footer present · `issuer_company_gstin_missing` warning ABSENT (GSTIN configured on this company).
+7. **UI parity**: `/reports/cndn-register` in the same demo session on active company `TEST Iter7 Co · default` renders **301 notes · Total ₹23,811.00 · Credit 261 · Debit 40 · Net Δ ₹-9,091.00** — byte-parity with the fresh JSON/XLSX/PDF.
+8. **PDF warning behavior**: `issuer_company_gstin_missing` logic in `_cndn_register_payload()` UNCHANGED. Remains a legitimate fail-loud data-quality warning that fires only when the *selected* company's profile has an empty `gstin` field. Correctly absent for GSTIN-configured companies and correctly present for GSTIN-less companies (as observed on the earlier 2-page UAT artifact generated against a different company on the same tenant).
+9. **XLSX spec-compliance correction (performed pre-lock, 2026-09-02)**: initial delivery accidentally emitted `Summary / Credit_Notes / Debit_Notes / By_Reason`. Corrected to approved spec `Summary / Register / By_Customer / By_Reason` via XLSX-projection-layer + T15/T16 test assertions only. Zero backend / API / data-model / PDF / frontend / C3.x / DG-STABILITY-1 changes required or made. Approved spec now compliant.
+10. **C3.5**: LOCKED and untouched (verified: `backend/xlsx/gstr1.py`, `backend/pdf/gstr1.py`, `backend/routers/gst.py`, `backend/tests/test_iter132c_c3_5_gstr1_export.py` — zero diff since C3.5 lock).
+11. **DG-STABILITY-1**: untouched · remains separate P1 backlog item · `pytest.ini`, `backend/scripts/run_regression.sh`, `test_iter51_deploy_guard_and_alerts.py`, `test_iter67_extras.py`, `test_iter26_phase1_ai_templates.py` unmodified.
+12. **Official DG definition**: unchanged.
+
+### MASTER PRINCIPLE SATISFACTION (LOCKED CHAIN)
+`db.credit_debit_notes` (authoritative source · `_compute_note_totals` LOCKED Iter132a/C2b) → `_cndn_register_payload()` canonical register dataset (SINGLE COMPUTATION) → CndnRegister UI · XLSX 4-sheet workbook · PDF working report · effective-balance / ledger parity via `_effective_invoice_totals` + `_apply_effective_balance` · GSTR-1 §9B statutory classification parity via `_GSTR1_9B_REASON_MAP`. **ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO MANUAL RECONCILIATION.**
+
+### FROZEN SCOPE
+After this lock: no C4 code changes · no C4 UI changes · no C4 PDF/XLSX presentation changes · no C4 test changes. Any future C4 modification must be a separately approved change.
+
+---
+
 ## Iter132c · C4 · Credit Note / Debit Note Register (JSON + XLSX + PDF) — 🔒 LOCKED (2026-09-02 · pytest 21/21 · live UAT preview verified)
 - **Scope shipped in C4**: three additive endpoints — `GET /api/reports/cndn-register`, `.xlsx`, `.pdf` — all PURE PROJECTIONS of a single canonical `_cndn_register_payload()` helper in `backend/routers/reports.py`. New tab + page under **/reports/cndn-register** with 4-button pattern (View Register · Download JSON · Download XLSX · Download PDF) mirroring the LOCKED GSTR1Report visual language. NO new persisted register collection.
 - **Architecture (LOCKED · ONE SOURCE OF TRUTH)**:
