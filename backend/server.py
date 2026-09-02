@@ -44,6 +44,13 @@ from routers import (
     driver_shortage_policies as driver_shortage_policies_r,
     driver_ledger as driver_ledger_r,
     policy_changes as policy_changes_r,
+    # Iter133 · Expense / Vehicle Cost — Turn 1 foundation
+    vendors as vendors_r,
+    mechanics as mechanics_r,
+    repair_events as repair_events_r,
+    vendor_bills as vendor_bills_r,
+    mechanic_work_orders as mechanic_work_orders_r,
+    expenses as expenses_r,
 )
 
 ROOT_DIR = Path(__file__).parent
@@ -110,6 +117,9 @@ for r in (
     templates_r, ai_r, expenditure_types_r, suppliers_r,
     saved_filters_r, driver_shortage_policies_r,
     driver_ledger_r, policy_changes_r,
+    # Iter133 · Expense / Vehicle Cost — Turn 1
+    vendors_r, mechanics_r, repair_events_r,
+    vendor_bills_r, mechanic_work_orders_r, expenses_r,
 ):
     app.include_router(r.router)
 
@@ -1206,6 +1216,55 @@ async def startup_event():
         )
     except Exception as e:
         logger.warning(f"Iter132a startup backfill failed: {e}")
+
+    # Iter133 · Expense / Vehicle Cost — Turn 1 indexes.
+    # Fast lookup for the derived-view projections that follow in later turns
+    # (Vehicle Cost / Trip Cost / Vendor & Mechanic Ledgers). All idempotent.
+    try:
+        # Party masters
+        await db.vendors.create_index([("user_id", 1), ("company_id", 1), ("name", 1)],
+                                      name="vendors_scope_name")
+        await db.mechanics.create_index([("user_id", 1), ("company_id", 1), ("name", 1)],
+                                        name="mechanics_scope_name")
+        # RepairEvent
+        await db.repair_events.create_index([("user_id", 1), ("company_id", 1), ("event_date", -1)],
+                                            name="repair_events_scope_date")
+        await db.repair_events.create_index([("vehicle_id", 1)], name="repair_events_vehicle")
+        await db.repair_events.create_index([("trip_id", 1)], name="repair_events_trip")
+        # VendorBill
+        await db.vendor_bills.create_index([("user_id", 1), ("company_id", 1), ("bill_date", -1)],
+                                           name="vendor_bills_scope_date")
+        await db.vendor_bills.create_index([("vendor_id", 1)], name="vendor_bills_vendor")
+        await db.vendor_bills.create_index([("repair_event_id", 1)], name="vendor_bills_repair")
+        await db.vendor_bills.create_index([("vehicle_id", 1)], name="vendor_bills_vehicle")
+        # MechanicWorkOrder
+        await db.mechanic_work_orders.create_index([("user_id", 1), ("company_id", 1), ("work_date", -1)],
+                                                   name="mwo_scope_date")
+        await db.mechanic_work_orders.create_index([("mechanic_id", 1)], name="mwo_mechanic")
+        await db.mechanic_work_orders.create_index([("repair_event_id", 1)], name="mwo_repair")
+        await db.mechanic_work_orders.create_index([("vehicle_id", 1)], name="mwo_vehicle")
+        # Expense — the canonical cost collection; multiple projection indexes.
+        await db.expenses.create_index([("user_id", 1), ("company_id", 1), ("date", -1)],
+                                       name="expenses_scope_date")
+        await db.expenses.create_index([("trip_id", 1)], name="expenses_trip")
+        await db.expenses.create_index([("vehicle_id", 1)], name="expenses_vehicle")
+        await db.expenses.create_index([("repair_event_id", 1)], name="expenses_repair")
+        await db.expenses.create_index([("vendor_bill_id", 1)], name="expenses_vendor_bill")
+        await db.expenses.create_index([("mechanic_work_order_id", 1)], name="expenses_mwo")
+        await db.expenses.create_index([("party_type", 1), ("party_id", 1)], name="expenses_party")
+        await db.expenses.create_index([("category", 1)], name="expenses_category")
+        # Payments
+        await db.vendor_payments.create_index([("user_id", 1), ("company_id", 1), ("date", -1)],
+                                              name="vendor_payments_scope_date")
+        await db.vendor_payments.create_index([("vendor_id", 1)], name="vendor_payments_vendor")
+        await db.vendor_payments.create_index([("vendor_bill_id", 1)], name="vendor_payments_bill")
+        await db.mechanic_payments.create_index([("user_id", 1), ("company_id", 1), ("date", -1)],
+                                                name="mechanic_payments_scope_date")
+        await db.mechanic_payments.create_index([("mechanic_id", 1)], name="mechanic_payments_mechanic")
+        await db.mechanic_payments.create_index([("mechanic_work_order_id", 1)], name="mechanic_payments_mwo")
+        logger.info("Iter133 · Expense/Vehicle-Cost indexes ensured")
+    except Exception as e:
+        logger.warning(f"Iter133 index setup failed: {e}")
 
     # Iter127b-UAT-fix v3 — ONLY critical, fast startup work runs synchronously
     # here. Heavy migrations/backfills/index-housekeeping have been moved into

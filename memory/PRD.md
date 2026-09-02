@@ -3,6 +3,116 @@
 ## Product summary
 QORVENA is a Bitumen transport ERP tracking LRs, Trips, Freight, Shortage, Invoices, Payments, Suppliers, Customers, Vehicles, Drivers, Products, Fuel, and Reports. FastAPI + React + MongoDB. Auth via Emergent-managed Google, with a dev-only demo token.
 
+## Iter133 · Expense / Vehicle Cost Management — Turn 1 COMPLETE — NOT READY FOR UAT (2026-09-02)
+
+**Status:** Foundation slice implemented per FROZEN architecture. Not locked. Not UAT-ready. Turn 2 (Trip write-path integration + reporting) pending.
+
+### Architecture (frozen; also see conversation-history freeze reply)
+- **Three distinct parties**: `Supplier` (hired vehicle owner — existing, untouched), `Vendor` (spare-parts / workshop — NEW), `Mechanic` (labour — NEW). Separate masters, separate ledger semantics. No `supplier_kind` polymorphism.
+- **Four roles**:
+  - `RepairEvent` — operational envelope. **NEVER stores a monetary total.** `extra='forbid'` on the Pydantic model — any `total_cost` field triggers 422.
+  - `VendorBill / MechanicWorkOrder` — payable + document evidence.
+  - `Expense` — **canonical authoritative cost transaction.** One real-world cost = one Expense row.
+  - `VendorPayment / MechanicPayment` — cash movement only. **NEVER creates or modifies an Expense.**
+- **Report source map (future turns will read strictly this way)**:
+  - Vehicle Cost / Trip Cost / Expense Register → `Expense` only.
+  - Vendor Ledger → `VendorBill + VendorPayment` only.
+  - Mechanic Ledger → `MechanicWorkOrder + MechanicPayment` only.
+  - Supplier Statement → existing supplier ledger + Expense projections where `supplier_settlement_mode='supplier_settlement_adjustment'`.
+  - No report ever sums both a payable source and its twin Expense source.
+- **Turn-1 hard constraint (frozen)**: `1 VendorBill → at most 1 vehicle_id`. Multi-vehicle split is P1 · DEFERRED.
+- **Legacy Trip.expenses / other_expenditures**: untouched, backward compatible. Bridge via `has_canonical_expenses` XOR flag lands in the Trip-integration turn.
+- **Fuel collection**: untouched (keeps litres/rate/odometer richness).
+- **Batta → Driver Ledger**: DEFERRED to Driver Salary/Advance module (Turn 1 does NOT auto-post).
+- **MaintenanceLog**: retired (dead code; no live rows; no CRUD router). Not migrated. RepairEvent + Expense replaces it.
+
+### Files added (all additive · NO existing router / model / test touched)
+- `backend/routers/vendors.py` — NEW · Vendor master CRUD + minimal VendorPayment CRUD.
+- `backend/routers/mechanics.py` — NEW · Mechanic master CRUD + minimal MechanicPayment CRUD.
+- `backend/routers/repair_events.py` — NEW · RepairEvent envelope CRUD.
+- `backend/routers/vendor_bills.py` — NEW · VendorBill CRUD.
+- `backend/routers/mechanic_work_orders.py` — NEW · MechanicWorkOrder CRUD.
+- `backend/routers/expenses.py` — NEW · Expense CRUD with all Turn-1 invariants (twin-FK XOR, party-mismatch guard, supplier_settlement_mode explicit-choice guard, file_id tenant validation).
+- `backend/tests/test_iter133_expense_turn1.py` — NEW · 23 tests covering party separation, envelope-no-total, 18k+7k repair no-double-count, write-time invariants, mode handling, trip-toll canonical entry, attachments, payment ≠ Expense, partial payments, cross-party rejection, idempotency, soft-delete + RBAC, tenant isolation, audit trail.
+
+### Files edited (additive only)
+- `backend/models.py` — APPEND new models (`Vendor`, `Mechanic`, `RepairEvent`, `VendorBill`, `MechanicWorkOrder`, `Expense`, `VendorPayment`, `MechanicPayment`). No existing model changed.
+- `backend/server.py` — Wire the 6 new routers in the mount loop; add index-creation calls in startup for `vendors / mechanics / repair_events / vendor_bills / mechanic_work_orders / expenses / vendor_payments / mechanic_payments`.
+- `backend/idempotency.py` — Add 10 new Bucket-B POST patterns to the whitelist (vendors/mechanics create + reactivate + payments; repair-events; vendor-bills; mechanic-work-orders; expenses).
+
+### APIs (all `/api` prefixed, company-scoped via `X-Company-Id`)
+- Vendor master: `GET/POST /vendors`, `GET/PUT/DELETE /vendors/{vid}`, `POST /vendors/{vid}/reactivate`
+- Vendor payments (minimal): `GET/POST /vendors/{vid}/payments`, `PUT/DELETE /vendors/{vid}/payments/{pid}`
+- Mechanic master: `GET/POST /mechanics`, `GET/PUT/DELETE /mechanics/{mid}`, `POST /mechanics/{mid}/reactivate`
+- Mechanic payments (minimal): `GET/POST /mechanics/{mid}/payments`, `PUT/DELETE /mechanics/{mid}/payments/{pid}`
+- Repair envelope: `GET/POST /repair-events`, `GET/PUT/DELETE /repair-events/{rid}`
+- Vendor bills: `GET/POST /vendor-bills`, `GET/PUT/DELETE /vendor-bills/{bid}`
+- Mechanic work orders: `GET/POST /mechanic-work-orders`, `GET/PUT/DELETE /mechanic-work-orders/{wid}`
+- Expenses: `GET/POST /expenses` (rich filters: trip/vehicle/repair/party/category/date range), `GET/PUT/DELETE /expenses/{eid}`
+
+### Turn-1 invariants (enforced at write time)
+| Rule | Enforcement |
+|---|---|
+| RepairEvent has no monetary total | `model_config = ConfigDict(extra='forbid')` → 422 on any `total_cost` |
+| Expense.amount > 0 | 400 |
+| Expense.date & category required | 400 |
+| Twin-FK XOR (vendor_bill_id XOR mech_wo_id) | 400 if both |
+| Vendor-bill linkage: party_type='vendor' + party_id = VB.vendor_id | 400 mismatch |
+| Mechanic-WO linkage: party_type='mechanic' + party_id = WO.mechanic_id | 400 mismatch |
+| supplier_owned_vehicle XOR settlement mode: True → mode∈{adjustment,company_borne}; False → 'n/a' | 400 |
+| VendorBill 1 → ≤ 1 vehicle_id | schema (single scalar) |
+| VendorBill duplicate `(vendor_id, bill_number)` | 409 |
+| Payment never creates Expense | Payment routers do NOT touch expenses collection (test-verified) |
+| Payment cross-party | 400 if VP.vendor_id ≠ bill.vendor_id (or same for mechanic) |
+| File attachments must be same-tenant | 400 on invalid file_id |
+| Delete requires audit reason ≥ 3 chars | 422 |
+| RepairEvent / VendorBill / MechanicWO delete blocked while linked live records exist | 400 |
+| Soft-delete only (never hard-delete) | is_deleted=true + deleted_by/at/reason |
+
+### RBAC + tenant isolation
+- Read/Create/Update: any authenticated user (mirrors Supplier module).
+- Delete + Reactivate: Owner / Admin only (`effective_role` check → 403 otherwise).
+- All queries scoped by `user_id + company_id`. `X-Company-Id` header switches active company.
+
+### Audit + idempotency
+- Every create/update/delete logged via `_log_audit()` under modules: `vendor / mechanic / repair_event / vendor_bill / mechanic_work_order / expense / vendor_payment / mechanic_payment`.
+- All 10 new POST endpoints are Bucket-B: send `Idempotency-Key: <string>` and the middleware replays cached response 24 h.
+
+### Indexes (all idempotent, created on backend startup)
+- vendors: `(user_id, company_id, name)` — `vendors_scope_name`
+- mechanics: `(user_id, company_id, name)` — `mechanics_scope_name`
+- repair_events: `(user_id, company_id, event_date DESC)`, `(vehicle_id)`, `(trip_id)`
+- vendor_bills: `(user_id, company_id, bill_date DESC)`, `(vendor_id)`, `(repair_event_id)`, `(vehicle_id)`
+- mechanic_work_orders: `(user_id, company_id, work_date DESC)`, `(mechanic_id)`, `(repair_event_id)`, `(vehicle_id)`
+- expenses: `(user_id, company_id, date DESC)`, `(trip_id)`, `(vehicle_id)`, `(repair_event_id)`, `(vendor_bill_id)`, `(mechanic_work_order_id)`, `(party_type, party_id)`, `(category)`
+- vendor_payments: `(user_id, company_id, date DESC)`, `(vendor_id)`, `(vendor_bill_id)`
+- mechanic_payments: `(user_id, company_id, date DESC)`, `(mechanic_id)`, `(mechanic_work_order_id)`
+
+### Test evidence
+- **Turn-1 targeted suite `test_iter133_expense_turn1.py`: 23 / 23 PASS** in 3.65 s (serial `-n 0`).
+- Regression:
+  - Supplier module: `test_iter45_supplier_module_phase1.py + iter45_multicompany_isolation.py + iter91_supplier_entries.py + iter92_supplier_halting.py + iter47_phase3_supplier_deep.py` → **22 / 22 PASS** (25.82 s).
+  - Trip / Vehicle: `test_iter49_trip_edit_halting_regression.py + iter56_trip_search_filter.py + iter83_trips_list_cust_ref.py + iter90_product_wise_supplier_shortage.py + iter63_supplier_vehicle_master.py` → **30 / 30 PASS** (15.30 s).
+  - Idempotency + supplier freight: `test_iter111_supplier_freight_and_shortage.py + iter127c_supplier_deactivate.py + iter126b_idempotency.py` → **28 / 28 PASS** (8.64 s).
+- Pre-existing failures observed while running `test_iter132a/b/c` (8 failed): all are `ModuleNotFoundError: No module named 'services' / 'xlsx'` — tests use `from services import ...` and `from xlsx.gstr1 import ...` which only resolves under the configured xdist bootstrap (`-n 2 --dist loadscope`) and NOT under isolated targeting. **These failures are xdist-sys.path dependent, pre-existing, and unrelated to Iter133**. Files touched by Turn 1 do not include `services.py`, `pdf/gstr1.py`, `xlsx/gstr1.py`, credit-note flow, or DN flow.
+
+### Confirmations (untouched)
+- C3.1, C3.2, C3.4, C3.5, C4 modules — untouched.
+- C5 — deferred; untouched.
+- DG-STABILITY-1 — untouched.
+- `pytest.ini`, `backend/scripts/run_regression.sh` — untouched.
+- Locked C3/C4 semantics preserved.
+
+### Turn-1 explicit non-goals (deferred; NOT implemented)
+Vehicle Repair Reports · Vehicle Cost Reports · Vendor Ledger UI · Mechanic Ledger UI · Paid/Outstanding reports · Trip Cost reporting · Profitability · Fuel → Expense merge · Driver Ledger Batta integration · Multi-vehicle VendorBill split · Inventory · GST ITC · Tally export · Driver Salary · Tyre · Maintenance module · Spares inventory · Legacy Trip write-path materialisation (materialisation into canonical Expenses lives in a later turn) · Supplier-ledger projection extension.
+
+### Turn 2 proposed scope (awaiting user GO)
+1. Trip write-path integration — flat `Trip.expenses.*` + `other_expenditures[]` submitted through the legacy Trip form get materialised into canonical Expense rows atomically; `Trip.has_canonical_expenses=true` set atomically. XOR reporting switch.
+2. Vehicle Cost / Vehicle Repair History read-only endpoints + minimal UI.
+3. Vendor Ledger / Mechanic Ledger read-only endpoints + UI (mirrors Supplier Ledger).
+4. Supplier-settlement-adjustment projection into existing supplier ledger (CREDIT rows).
+5. Cost-date vs Payment-date parametrised reports.
+
 ## Preferred language
 User communicates in English. Respond in English. (Prior bilingual reference retained only for legacy modules; new work is English-only as of User Manual v1.0.)
 

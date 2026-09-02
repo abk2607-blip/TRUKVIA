@@ -102,6 +102,17 @@ BUCKET_B_PATTERNS: list[re.Pattern] = [re.compile(p) for p in (
     r"^/api/trips/[^/]+/regenerate-lr$",
     r"^/api/trips/bulk-regenerate-lr$",
     r"^/api/trips/bulk-all-copies-zip$",
+    # Iter133 · Expense / Vehicle Cost — Turn 1 write endpoints
+    r"^/api/vendors$",
+    r"^/api/vendors/[^/]+/reactivate$",
+    r"^/api/vendors/[^/]+/payments$",
+    r"^/api/mechanics$",
+    r"^/api/mechanics/[^/]+/reactivate$",
+    r"^/api/mechanics/[^/]+/payments$",
+    r"^/api/repair-events$",
+    r"^/api/vendor-bills$",
+    r"^/api/mechanic-work-orders$",
+    r"^/api/expenses$",
 )]
 
 MAX_STORED_BYTES = 5 * 1024 * 1024   # 5 MiB — bigger responses skip cache

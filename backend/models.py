@@ -874,3 +874,264 @@ class ChatMessage(BaseModel):
     content: str = ""
     tool_calls: list = Field(default_factory=list)
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+
+
+# ============================================================================
+# Iter133 · Expense / Vehicle Cost Management — Turn 1 Foundation
+# ----------------------------------------------------------------------------
+# Party architecture (FROZEN — see /app/memory/PRD.md Iter133 section):
+#   * Supplier  — hired-vehicle owner (existing, untouched)
+#   * Vendor    — spare-parts / workshop parts vendor (new)
+#   * Mechanic  — labour / service provider (new)
+# Roles (FROZEN):
+#   * RepairEvent          — operational envelope; NEVER stores monetary total
+#   * VendorBill / MechWO  — payable + bill/service evidence + document anchor
+#   * Expense              — canonical authoritative cost transaction
+#   * *Payment             — cash movement only; NEVER creates an Expense
+# Master principle: ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE.
+# ============================================================================
+
+class Vendor(BaseModel):
+    """Iter133 · Spare-parts / workshop vendor master (Turn 1). Company-scoped.
+    Distinct identity from Supplier (hired-vehicle owner) and Mechanic (labour)."""
+    id: str = Field(default_factory=lambda: new_id("ven_"))
+    name: str
+    contact_person: str = ""
+    mobile: str = ""
+    alt_mobile: str = ""
+    address: str = ""
+    state: str = ""
+    city: str = ""
+    gst_in: str = ""
+    pan: str = ""
+    msme_number: str = ""
+    bank_name: str = ""
+    account_number: str = ""
+    ifsc: str = ""
+    branch: str = ""
+    payment_terms: str = ""
+    opening_balance: float = 0.0
+    opening_balance_type: Literal["payable", "advance"] = "payable"
+    remarks: str = ""
+    is_active: bool = True
+    created_by: str = ""
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+    modified_by: str = ""
+    modified_at: str = ""
+    deactivated_by: str = ""
+    deactivated_at: str = ""
+    deactivation_reason: str = ""
+    imported_from: str = ""
+    imported_ref: str = ""
+    imported_batch: str = ""
+    is_historical: bool = False
+
+
+class Mechanic(BaseModel):
+    """Iter133 · Labour / service mechanic master (Turn 1). Company-scoped.
+    Distinct from Vendor (parts) and Supplier (hired vehicle)."""
+    id: str = Field(default_factory=lambda: new_id("mec_"))
+    name: str
+    contact_person: str = ""
+    mobile: str = ""
+    alt_mobile: str = ""
+    address: str = ""
+    state: str = ""
+    city: str = ""
+    gst_in: str = ""
+    pan: str = ""
+    skill: str = ""
+    payment_terms: str = ""
+    opening_balance: float = 0.0
+    opening_balance_type: Literal["payable", "advance"] = "payable"
+    remarks: str = ""
+    is_active: bool = True
+    created_by: str = ""
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+    modified_by: str = ""
+    modified_at: str = ""
+    deactivated_by: str = ""
+    deactivated_at: str = ""
+    deactivation_reason: str = ""
+    is_historical: bool = False
+
+
+class RepairEvent(BaseModel):
+    """Iter133 · Repair operational envelope (Turn 1).
+
+    CRITICAL: this model has NO monetary total field. Vehicle Repair Cost is
+    always DERIVED from the linked Expense rows. `extra='forbid'` guarantees
+    a client cannot smuggle a `total_cost` into the payload.
+    """
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(default_factory=lambda: new_id("rev_"))
+    event_date: str
+    vehicle_id: str = ""
+    vehicle_number: str = ""
+    trip_id: str = ""
+    odometer: float = 0.0
+    workshop_name: str = ""
+    description: str = ""
+    status: Literal["open", "closed"] = "open"
+    remarks: str = ""
+    file_ids: List[str] = Field(default_factory=list)
+    created_by: str = ""
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+    modified_by: str = ""
+    modified_at: str = ""
+    is_deleted: bool = False
+    deleted_by: str = ""
+    deleted_at: str = ""
+    deletion_reason: str = ""
+
+
+class VendorBill(BaseModel):
+    """Iter133 · Spare-parts vendor payable + bill document (Turn 1).
+
+    Turn-1 hard constraint (frozen): 1 VendorBill → at most 1 vehicle_id.
+    Multi-vehicle allocation is P1 · DEFERRED.
+    """
+    id: str = Field(default_factory=lambda: new_id("vbl_"))
+    vendor_id: str
+    vendor_name: str = ""
+    bill_number: str = ""
+    bill_date: str
+    bill_amount: float
+    vehicle_id: str = ""
+    vehicle_number: str = ""
+    trip_id: str = ""
+    repair_event_id: str = ""
+    narration: str = ""
+    remarks: str = ""
+    file_ids: List[str] = Field(default_factory=list)
+    created_by: str = ""
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+    modified_by: str = ""
+    modified_at: str = ""
+    is_deleted: bool = False
+    deleted_by: str = ""
+    deleted_at: str = ""
+    deletion_reason: str = ""
+
+
+class MechanicWorkOrder(BaseModel):
+    """Iter133 · Mechanic labour payable + service evidence (Turn 1)."""
+    id: str = Field(default_factory=lambda: new_id("mwo_"))
+    mechanic_id: str
+    mechanic_name: str = ""
+    work_date: str
+    amount: float
+    hours_worked: float = 0.0
+    vehicle_id: str = ""
+    vehicle_number: str = ""
+    trip_id: str = ""
+    repair_event_id: str = ""
+    narration: str = ""
+    remarks: str = ""
+    file_ids: List[str] = Field(default_factory=list)
+    created_by: str = ""
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+    modified_by: str = ""
+    modified_at: str = ""
+    is_deleted: bool = False
+    deleted_by: str = ""
+    deleted_at: str = ""
+    deletion_reason: str = ""
+
+
+class Expense(BaseModel):
+    """Iter133 · Canonical authoritative cost transaction (Turn 1).
+
+    ONE real-world cost = ONE Expense row. Trip Cost, Vehicle Cost, and
+    Expense Register are PROJECTIONS of this row. Never sum this alongside
+    its twin VendorBill/MechanicWorkOrder in a report — the future report
+    source map (see PRD Iter133) is exclusive:
+      Vehicle/Trip/Expense-Register  ← reads Expense ONLY.
+      Vendor/Mechanic Ledger         ← reads Bill/WO + Payment ONLY.
+    """
+    id: str = Field(default_factory=lambda: new_id("exp_"))
+    date: str
+    category: str
+    subcategory: str = ""
+    amount: float
+    narration: str = ""
+    remarks: str = ""
+    vehicle_id: str = ""
+    vehicle_number: str = ""
+    trip_id: str = ""
+    repair_event_id: str = ""
+    party_type: Literal["vendor", "mechanic", "supplier", "driver", "cash", "none"] = "cash"
+    party_id: str = ""
+    party_name: str = ""
+    vendor_bill_id: str = ""
+    mechanic_work_order_id: str = ""
+    supplier_owned_vehicle: bool = False
+    supplier_settlement_mode: Literal[
+        "supplier_settlement_adjustment", "company_borne", "n/a"
+    ] = "n/a"
+    settlement_mode: Literal["cash_now", "payable"] = "payable"
+    reversal_of: str = ""
+    is_reversed: bool = False
+    file_ids: List[str] = Field(default_factory=list)
+    created_by: str = ""
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+    modified_by: str = ""
+    modified_at: str = ""
+    is_deleted: bool = False
+    deleted_by: str = ""
+    deleted_at: str = ""
+    deletion_reason: str = ""
+    is_historical: bool = False
+
+
+class VendorPayment(BaseModel):
+    """Iter133 · Minimal cash-movement record against a Vendor (Turn 1).
+
+    Mirrors SupplierPayment shape. NEVER creates or modifies an Expense
+    (payment ≠ cost). Turn 1 ships schema + basic CRUD only — no ledger UI,
+    no paid/outstanding report, no reconciliation.
+    """
+    id: str = Field(default_factory=lambda: new_id("vpay_"))
+    vendor_id: str
+    date: str
+    amount: float
+    type: Literal["payment_out", "receipt_in"] = "payment_out"
+    mode: Literal["Cash", "Bank", "UPI", "IMPS", "NEFT", "RTGS", "Cheque", "Other"] = "Bank"
+    account_id: str = ""
+    ref_no: str = ""
+    against: Literal["bill", "advance", "outstanding", "other"] = "outstanding"
+    vendor_bill_id: str = ""
+    remarks: str = ""
+    file_ids: List[str] = Field(default_factory=list)
+    created_by: str = ""
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+    modified_by: str = ""
+    modified_at: str = ""
+    is_deleted: bool = False
+    deleted_by: str = ""
+    deleted_at: str = ""
+    deletion_reason: str = ""
+
+
+class MechanicPayment(BaseModel):
+    """Iter133 · Minimal cash-movement record against a Mechanic (Turn 1)."""
+    id: str = Field(default_factory=lambda: new_id("mpay_"))
+    mechanic_id: str
+    date: str
+    amount: float
+    type: Literal["payment_out", "receipt_in"] = "payment_out"
+    mode: Literal["Cash", "Bank", "UPI", "IMPS", "NEFT", "RTGS", "Cheque", "Other"] = "Bank"
+    account_id: str = ""
+    ref_no: str = ""
+    against: Literal["work_order", "advance", "outstanding", "other"] = "outstanding"
+    mechanic_work_order_id: str = ""
+    remarks: str = ""
+    file_ids: List[str] = Field(default_factory=list)
+    created_by: str = ""
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+    modified_by: str = ""
+    modified_at: str = ""
+    is_deleted: bool = False
+    deleted_by: str = ""
+    deleted_at: str = ""
+    deletion_reason: str = ""
