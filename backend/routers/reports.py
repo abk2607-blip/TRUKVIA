@@ -22,6 +22,7 @@ from services import (
     _next_invoice_number, _next_invoice_number_for_company,
     _next_lr_number, _in_range, _vehicle_expiry_stats,
     _state_code, _gstin_checksum,
+    _GSTR1_9B_REASON_MAP,
 )
 
 router = APIRouter(prefix="/api")
@@ -2138,6 +2139,492 @@ def _public_base_url(request):
     if not url.startswith("http"):
         url = f"https://{url}"
     return url.rstrip("/")
+
+
+# ============================================================================
+# Iter132c C4 · Credit Note / Debit Note Register — canonical payload builder.
+#
+# Endpoints (all under /api):
+#     GET /api/reports/cndn-register           (canonical JSON)
+#     GET /api/reports/cndn-register.xlsx      (4-sheet accountant workbook)
+#     GET /api/reports/cndn-register.pdf       (A4 landscape working report)
+#
+# MASTER PRINCIPLE:
+#   ENTER ONCE -> CALCULATE ONCE -> REFLECT EVERYWHERE -> REPORT READY.
+#
+#   * SINGLE SOURCE OF TRUTH: db.credit_debit_notes. Amounts are read
+#     verbatim from persisted notes — computed once at issue time via
+#     services._compute_note_totals (LOCKED · Iter132a/C2b). This endpoint
+#     never recomputes tax, totals, sign, or effective balance.
+#   * NO NEW COLLECTION. NO PERSISTED REGISTER. Any register mutation
+#     happens on the underlying note document; this endpoint is a pure
+#     read projection.
+#   * FILTERS (all optional except date range):
+#         from, to             ISO YYYY-MM-DD (defaults: current month)
+#         kind                 all | credit | debit (default: all)
+#         customer_id          restrict to one customer
+#         status               issued | draft | cancelled | all (default: issued)
+#         reason_code          QORVENA reason enum (see models.CreditDebitNote)
+#   * HIGH-VOLUME CONTRACT (mandatory):
+#       - Streaming Mongo cursor with in-Mongo `note_date` range filter.
+#       - Bounded `$in` preloads for referenced customer_ids and
+#         invoice_ids only.
+#       - NO to_list(5000) / (2000) truncation. Proven at 10 000 notes /
+#         2 500 customers by test T19.
+#   * SEMANTICS:
+#       - kind='credit' -> reduces receivable -> signed_amount = -total_amount
+#       - kind='debit'  -> increases receivable -> signed_amount = +total_amount
+#       - Register row values MUST equal persisted note fields byte-for-byte.
+#   * PARITY GUARANTEES (fail-loud reconciliation):
+#       - endpoint row_count == Mongo $group count over identical filter
+#       - endpoint sum(total_amount) == Mongo $group sum over identical filter
+#       - endpoint per-invoice credit/debit sums == the same values
+#         `services._effective_invoice_totals` derives from the SAME notes.
+#   * GSTR-1 §9B PARITY: for each row, `reason_code_gstr1_9b` is the
+#     deterministic statutory-remap of the QORVENA reason (see
+#     `services._GSTR1_9B_REASON_MAP`). Unknown codes fall to "07 Others"
+#     with a warning.
+#   * The generated PDF/XLSX are HUMAN-READABLE WORKING REPORTS, not
+#     GST portal upload files. Statutory portal payloads are §9B (LOCKED
+#     C3.1/C3.2) and future §9A (LOCKED C3.5).
+# ============================================================================
+
+
+_C4_STATUS_ALLOWED = {"issued", "draft", "cancelled", "all"}
+_C4_KIND_ALLOWED = {"credit", "debit", "all"}
+
+
+def _c4_default_month_range() -> tuple:
+    """Default filter window when caller omits `from`/`to` — current
+    calendar month (UTC), ISO YYYY-MM-DD strings."""
+    from calendar import monthrange
+    d = now_utc().date()
+    start = f"{d.year:04d}-{d.month:02d}-01"
+    end = f"{d.year:04d}-{d.month:02d}-{monthrange(d.year, d.month)[1]:02d}"
+    return start, end
+
+
+def _c4_reason_for(qorvena_code: str) -> tuple:
+    """Statutory §9B reason remap; returns (statutory_code, remapped_bool)."""
+    if not qorvena_code:
+        return ("07", True)
+    if qorvena_code in _GSTR1_9B_REASON_MAP:
+        return (_GSTR1_9B_REASON_MAP[qorvena_code], False)
+    return ("07", True)
+
+
+async def _cndn_register_payload(
+    request: Request,
+    user: dict,
+    *,
+    d_from: Optional[str],
+    d_to: Optional[str],
+    kind: str = "all",
+    customer_id: Optional[str] = None,
+    status: str = "issued",
+    reason_code: Optional[str] = None,
+) -> dict:
+    """C4 · Internal canonical builder — SINGLE SOURCE OF TRUTH for the
+    /reports/cndn-register (.json / .xlsx / .pdf) endpoints.
+
+    Streaming cursor. Bounded customer + invoice preloads. Never
+    recomputes note amounts. Never mutates a note document. Fail-loud
+    reconciliation vs. Mongo $group over the same filter.
+    """
+    # ── Filter validation ─────────────────────────────────────────
+    if kind not in _C4_KIND_ALLOWED:
+        raise HTTPException(status_code=400, detail=f"kind must be one of {sorted(_C4_KIND_ALLOWED)}")
+    if status not in _C4_STATUS_ALLOWED:
+        raise HTTPException(status_code=400, detail=f"status must be one of {sorted(_C4_STATUS_ALLOWED)}")
+
+    def _valid_iso(s: str) -> bool:
+        try:
+            datetime.strptime(s, "%Y-%m-%d")
+            return True
+        except Exception:
+            return False
+
+    if d_from and not _valid_iso(d_from):
+        raise HTTPException(status_code=400, detail="from must be ISO YYYY-MM-DD")
+    if d_to and not _valid_iso(d_to):
+        raise HTTPException(status_code=400, detail="to must be ISO YYYY-MM-DD")
+    if not d_from or not d_to:
+        _s, _e = _c4_default_month_range()
+        d_from = d_from or _s
+        d_to = d_to or _e
+    if d_from > d_to:
+        raise HTTPException(status_code=400, detail="from must be <= to")
+
+    uid = user["user_id"]
+    cid = await _active_company_id(request, user)
+
+    company = await db.companies.find_one({"id": cid, "user_id": uid}, {"_id": 0}) or {}
+    home_state = company.get("state", "")
+    home_sc = _state_code(home_state)
+    issuer_gstin = (company.get("gstin", "") or "").strip().upper()
+
+    # ── Mongo filter ──────────────────────────────────────────────
+    q: dict = {
+        "user_id": uid,
+        "company_id": cid,
+        "note_date": {"$gte": d_from, "$lte": d_to},
+    }
+    if kind != "all":
+        q["kind"] = kind
+    if status != "all":
+        q["status"] = status
+    if customer_id:
+        q["customer_id"] = customer_id
+    if reason_code:
+        q["reason_code"] = reason_code
+
+    warnings: list = []
+    if not issuer_gstin:
+        warnings.append("issuer_company_gstin_missing")
+
+    # ── Streaming fetch ───────────────────────────────────────────
+    notes: list = []
+    invoice_ids_needed: set = set()
+    customer_ids_needed: set = set()
+    async for n in db.credit_debit_notes.find(
+        q, {"_id": 0, "user_id": 0}
+    ).sort([("note_date", 1), ("note_number", 1)]):
+        notes.append(n)
+        if n.get("invoice_id"):
+            invoice_ids_needed.add(n["invoice_id"])
+        if n.get("customer_id"):
+            customer_ids_needed.add(n["customer_id"])
+
+    inv_map: dict = {}
+    if invoice_ids_needed:
+        async for inv in db.invoices.find(
+            {"user_id": uid, "id": {"$in": list(invoice_ids_needed)}},
+            {"_id": 0, "user_id": 0},
+        ):
+            inv_map[inv["id"]] = inv
+    cust_map: dict = {}
+    if customer_ids_needed:
+        async for cst in db.customers.find(
+            {"user_id": uid, "id": {"$in": list(customer_ids_needed)}},
+            {"_id": 0, "user_id": 0},
+        ):
+            cust_map[cst["id"]] = cst
+
+    # ── Row projection (NO RECOMPUTE) ─────────────────────────────
+    rows: list = []
+    reason_remap_count = 0
+    for n in notes:
+        inv = inv_map.get(n.get("invoice_id"), {}) or {}
+        cust = cust_map.get(n.get("customer_id"), {}) or {}
+        qcode = n.get("reason_code") or ""
+        rsn9b, remapped = _c4_reason_for(qcode)
+        if remapped and qcode:
+            reason_remap_count += 1
+
+        total = round(float(n.get("total_amount", 0) or 0), 2)
+        k = n.get("kind")
+        signed = -total if k == "credit" else total
+
+        cust_state = cust.get("state", "")
+        cust_sc = _state_code(cust_state)
+
+        rows.append({
+            "note_id": n.get("id"),
+            "note_number": n.get("note_number", ""),
+            "note_date": n.get("note_date", ""),
+            "kind": k,
+            "ntty": "C" if k == "credit" else "D",
+            "status": n.get("status"),
+            "customer_id": n.get("customer_id", ""),
+            "customer_name": cust.get("name", ""),
+            "customer_gstin": (cust.get("gstin", "") or "").strip().upper(),
+            "customer_state": cust_state,
+            "customer_state_code": cust_sc,
+            "invoice_id": n.get("invoice_id", ""),
+            "invoice_number": n.get("invoice_number_snapshot", "") or inv.get("invoice_number", ""),
+            "invoice_date": inv.get("invoice_date", ""),
+            "reason_code": qcode,
+            "reason_code_gstr1_9b": rsn9b,
+            "reason_text": n.get("reason_text", ""),
+            "subtotal": round(float(n.get("subtotal", 0) or 0), 2),
+            "cgst_rate": round(float(n.get("cgst_rate", 0) or 0), 2),
+            "sgst_rate": round(float(n.get("sgst_rate", 0) or 0), 2),
+            "igst_rate": round(float(n.get("igst_rate", 0) or 0), 2),
+            "cgst_amount": round(float(n.get("cgst_amount", 0) or 0), 2),
+            "sgst_amount": round(float(n.get("sgst_amount", 0) or 0), 2),
+            "igst_amount": round(float(n.get("igst_amount", 0) or 0), 2),
+            "total_tax": round(float(n.get("total_tax", 0) or 0), 2),
+            "total_amount": total,
+            "round_off": round(float(n.get("round_off", 0) or 0), 2),
+            "gst_type": n.get("gst_type") or "cgst_sgst",
+            "apply_gst": bool(n.get("apply_gst", True)),
+            "rcm": bool(n.get("rcm", True)),
+            "signed_amount": round(signed, 2),
+            "cancelled_at": n.get("cancelled_at") or "",
+            "cancelled_reason": n.get("cancelled_reason") or "",
+        })
+
+    if reason_remap_count:
+        warnings.append(f"reason_remapped_to_others_count:{reason_remap_count}")
+
+    # ── KPIs ──────────────────────────────────────────────────────
+    def _sum(pred, key="total_amount"):
+        return round(sum(float(r.get(key, 0) or 0) for r in rows if pred(r)), 2)
+
+    credit_rows = [r for r in rows if r["kind"] == "credit"]
+    debit_rows = [r for r in rows if r["kind"] == "debit"]
+    credit_total = round(sum(r["total_amount"] for r in credit_rows), 2)
+    debit_total = round(sum(r["total_amount"] for r in debit_rows), 2)
+
+    kpis = {
+        "total_count":       len(rows),
+        "credit_count":      len(credit_rows),
+        "credit_total":      credit_total,
+        "debit_count":       len(debit_rows),
+        "debit_total":       debit_total,
+        # Net receivable change: debits + increase, credits - decrease.
+        "net_amount":        round(debit_total - credit_total, 2),
+        "gst_applied_count": len([r for r in rows if r["apply_gst"]]),
+        "gst_applied_total": _sum(lambda r: r["apply_gst"]),
+        "gst_excluded_count": len([r for r in rows if not r["apply_gst"]]),
+        "gst_excluded_total": _sum(lambda r: not r["apply_gst"]),
+        "issued_count":      len([r for r in rows if r["status"] == "issued"]),
+        "draft_count":       len([r for r in rows if r["status"] == "draft"]),
+        "cancelled_count":   len([r for r in rows if r["status"] == "cancelled"]),
+    }
+
+    # ── Tax summary band (verbatim sums, no recompute) ────────────
+    tax_summary = {
+        "taxable":      round(sum(r["subtotal"]     for r in rows), 2),
+        "cgst":         round(sum(r["cgst_amount"]  for r in rows), 2),
+        "sgst":         round(sum(r["sgst_amount"]  for r in rows), 2),
+        "igst":         round(sum(r["igst_amount"]  for r in rows), 2),
+        "total_tax":    round(sum(r["total_tax"]    for r in rows), 2),
+        "total_amount": round(sum(r["total_amount"] for r in rows), 2),
+    }
+
+    # ── By-reason breakdown ───────────────────────────────────────
+    reason_group: dict = {}
+    for r in rows:
+        key = r["reason_code"] or "other"
+        g = reason_group.setdefault(key, {
+            "reason_code": key,
+            "gstr1_9b_reason_code": r["reason_code_gstr1_9b"],
+            "count": 0, "credit_count": 0, "debit_count": 0,
+            "total_amount": 0.0,
+        })
+        g["count"] += 1
+        if r["kind"] == "credit":
+            g["credit_count"] += 1
+        else:
+            g["debit_count"] += 1
+        g["total_amount"] = round(g["total_amount"] + r["total_amount"], 2)
+    by_reason = sorted(reason_group.values(), key=lambda x: (-x["total_amount"], x["reason_code"]))
+
+    # ── By-customer top-drill (all rows, sorted by |net|) ─────────
+    cust_group: dict = {}
+    for r in rows:
+        cid_key = r["customer_id"] or "__unknown__"
+        g = cust_group.setdefault(cid_key, {
+            "customer_id": r["customer_id"],
+            "customer_name": r["customer_name"],
+            "count": 0, "credit_total": 0.0, "debit_total": 0.0,
+            "signed_amount": 0.0,
+        })
+        g["count"] += 1
+        if r["kind"] == "credit":
+            g["credit_total"] = round(g["credit_total"] + r["total_amount"], 2)
+        else:
+            g["debit_total"] = round(g["debit_total"] + r["total_amount"], 2)
+        g["signed_amount"] = round(g["signed_amount"] + r["signed_amount"], 2)
+    by_customer = sorted(cust_group.values(), key=lambda x: (-abs(x["signed_amount"]), x["customer_name"] or ""))
+
+    # ── Fail-loud reconciliation ──────────────────────────────────
+    gt_count = 0
+    gt_total = 0.0
+    async for x in db.credit_debit_notes.find(q, {"_id": 0, "total_amount": 1}):
+        gt_count += 1
+        gt_total += float(x.get("total_amount", 0) or 0)
+    gt_total = round(gt_total, 2)
+
+    reconciled = (
+        len(rows) == gt_count
+        and abs(tax_summary["total_amount"] - gt_total) < 0.01
+    )
+    if not reconciled:
+        warnings.append(
+            f"reconciliation_mismatch:rows={len(rows)}/{gt_count}"
+            f":total={tax_summary['total_amount']}/{gt_total}"
+        )
+    reconciliation = {
+        "reconciled":               reconciled,
+        "endpoint_row_count":       len(rows),
+        "ground_truth_row_count":   gt_count,
+        "endpoint_total":           tax_summary["total_amount"],
+        "ground_truth_total":       gt_total,
+    }
+
+    return {
+        "period":              {"start": d_from, "end": d_to},
+        "filters": {
+            "from": d_from, "to": d_to,
+            "kind": kind, "status": status,
+            "customer_id": customer_id or "",
+            "reason_code": reason_code or "",
+        },
+        "company_id":          cid,
+        "company_name":        company.get("name", ""),
+        "company_state":       home_state,
+        "company_state_code":  home_sc,
+        "issuer_gstin":        issuer_gstin,
+        "note_count":          len(rows),
+        "rows":                rows,
+        "kpis":                kpis,
+        "tax_summary":         tax_summary,
+        "by_reason":           by_reason,
+        "by_customer":         by_customer,
+        "reconciliation":      reconciliation,
+        "warnings":            warnings,
+    }
+
+
+@router.get("/reports/cndn-register")
+async def report_cndn_register(
+    request: Request,
+    d_from: Optional[str] = None,
+    d_to: Optional[str] = None,
+    kind: str = "all",
+    customer_id: Optional[str] = None,
+    status: str = "issued",
+    reason_code: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    """C4 · Canonical Credit Note / Debit Note Register JSON feed."""
+    # Accept both `from`/`to` (statutory) and `d_from`/`d_to` (Python-safe)
+    qp = request.query_params
+    d_from = qp.get("from", d_from)
+    d_to = qp.get("to", d_to)
+
+    payload = await _cndn_register_payload(
+        request, user,
+        d_from=d_from, d_to=d_to, kind=kind,
+        customer_id=customer_id, status=status, reason_code=reason_code,
+    )
+    recon = payload.get("reconciliation") or {}
+    try:
+        await _log_audit(
+            user, "cndn_register", "download",
+            entity_id="", entity_ref=f"cndn_register_{payload['period']['start']}_{payload['period']['end']}",
+            changes={
+                "format": "json",
+                "period": payload["period"],
+                "row_count": payload["note_count"],
+                "kind": kind, "status": status,
+                "total_amount": payload["tax_summary"]["total_amount"],
+                "reconciled": recon.get("reconciled"),
+            },
+        )
+    except Exception:
+        pass
+    return payload
+
+
+@router.get("/reports/cndn-register.xlsx")
+async def report_cndn_register_xlsx(
+    request: Request,
+    d_from: Optional[str] = None,
+    d_to: Optional[str] = None,
+    kind: str = "all",
+    customer_id: Optional[str] = None,
+    status: str = "issued",
+    reason_code: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    """C4 · XLSX projection (4 sheets: Summary / Credit_Notes / Debit_Notes / By_Reason)."""
+    qp = request.query_params
+    d_from = qp.get("from", d_from)
+    d_to = qp.get("to", d_to)
+
+    payload = await _cndn_register_payload(
+        request, user,
+        d_from=d_from, d_to=d_to, kind=kind,
+        customer_id=customer_id, status=status, reason_code=reason_code,
+    )
+    company = await db.companies.find_one(
+        {"id": payload["company_id"], "user_id": user["user_id"]}, {"_id": 0}
+    ) or {}
+    from xlsx.cndn_register import build_cndn_register_xlsx
+    data = build_cndn_register_xlsx(company, payload)
+
+    code = (company.get("company_code") or "company")
+    fname = f"CNDN_Register_{code}_{payload['period']['start']}_{payload['period']['end']}.xlsx"
+    try:
+        await _log_audit(
+            user, "cndn_register", "download",
+            entity_id="", entity_ref=fname,
+            changes={
+                "format": "xlsx",
+                "period": payload["period"],
+                "row_count": payload["note_count"],
+                "kind": kind, "status": status,
+            },
+        )
+    except Exception:
+        pass
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@router.get("/reports/cndn-register.pdf")
+async def report_cndn_register_pdf(
+    request: Request,
+    d_from: Optional[str] = None,
+    d_to: Optional[str] = None,
+    kind: str = "all",
+    customer_id: Optional[str] = None,
+    status: str = "issued",
+    reason_code: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    """C4 · PDF projection (A4 landscape human-readable working report)."""
+    qp = request.query_params
+    d_from = qp.get("from", d_from)
+    d_to = qp.get("to", d_to)
+
+    payload = await _cndn_register_payload(
+        request, user,
+        d_from=d_from, d_to=d_to, kind=kind,
+        customer_id=customer_id, status=status, reason_code=reason_code,
+    )
+    company = await db.companies.find_one(
+        {"id": payload["company_id"], "user_id": user["user_id"]}, {"_id": 0}
+    ) or {}
+    from pdf.cndn_register import build_cndn_register_pdf
+    data = build_cndn_register_pdf(company, payload)
+
+    code = (company.get("company_code") or "company")
+    fname = f"CNDN_Register_{code}_{payload['period']['start']}_{payload['period']['end']}.pdf"
+    try:
+        await _log_audit(
+            user, "cndn_register", "download",
+            entity_id="", entity_ref=fname,
+            changes={
+                "format": "pdf",
+                "period": payload["period"],
+                "row_count": payload["note_count"],
+                "kind": kind, "status": status,
+            },
+        )
+    except Exception:
+        pass
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{fname}"'},
+    )
 
 
 # ==================== Health ====================

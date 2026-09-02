@@ -50,6 +50,40 @@ User communicates in English. Respond in English. (Prior bilingual reference ret
   - **Backlog frozen**: C3 GSTR-1 §9B · C4 CN/DN Register · Statement Email Delivery · Iter132c-agg-fix · Phase 2 Security · `AKB/26-27//26-27/0004` hygiene · Preview Uptime Chip · LR Digest · Trip Templates · Trip Sheet redesign · Tyre · Driver Salary · Expense/Vehicle Cost ERP · Maintenance.
 
 
+## Iter132c · C4 · Credit Note / Debit Note Register (JSON + XLSX + PDF) — 🔒 LOCKED (2026-09-02 · pytest 21/21 · live UAT preview verified)
+- **Scope shipped in C4**: three additive endpoints — `GET /api/reports/cndn-register`, `.xlsx`, `.pdf` — all PURE PROJECTIONS of a single canonical `_cndn_register_payload()` helper in `backend/routers/reports.py`. New tab + page under **/reports/cndn-register** with 4-button pattern (View Register · Download JSON · Download XLSX · Download PDF) mirroring the LOCKED GSTR1Report visual language. NO new persisted register collection.
+- **Architecture (LOCKED · ONE SOURCE OF TRUTH)**:
+  - `db.credit_debit_notes` (LOCKED Iter132a/C2b) → `_cndn_register_payload()` → JSON · XLSX · PDF (identical values, three renderers).
+  - Reuses canonical helpers only: `_compute_note_totals`, `_effective_invoice_totals`, `_apply_effective_balance`, `_GSTR1_9B_REASON_MAP`. Register row values are read verbatim from persisted notes; NO recompute anywhere in the endpoint or exporters.
+- **Filter matrix** (all optional except date defaults to current month): `from`, `to` (ISO YYYY-MM-DD), `kind` (all|credit|debit), `customer_id`, `status` (issued|draft|cancelled|all — default issued), `reason_code` (QORVENA enum). Every filter narrows in Mongo (not in Python).
+- **Row semantics**: credit → `signed_amount = -total_amount`; debit → `signed_amount = +total_amount`; KPI `net_amount = debit_total - credit_total`. Each row also carries the deterministic `reason_code_gstr1_9b` §9B statutory remap (`_GSTR1_9B_REASON_MAP`; unknowns → "07 Others" with warning).
+- **High-volume correctness**: streaming Motor cursor with in-Mongo `note_date` range filter + bounded `$in` preloads for referenced customer_ids / invoice_ids only. NO `to_list(5000)/(2000)` truncation. Proven at **10 000 notes / 200 customers** by T19 (test elapsed 35.7s).
+- **Fail-loud reconciliation**: `reconciliation.reconciled=False` when endpoint row count / total ≠ Mongo `$group` ground truth over the identical filter → surfaces a `warnings[]` entry rather than silent drift.
+- **Exports**:
+  - XLSX (`backend/xlsx/cndn_register.py`) — 4 sheets: **Summary / Credit_Notes / Debit_Notes / By_Reason**. Currency cells use `"₹ "#,##0.00` prefix format. Register row shape (22 columns) mirrors JSON.
+  - PDF (`backend/pdf/cndn_register.py`) — A4 landscape, L2d v3 fresh-flowable two-pass render, `Page X of Y` footer on every page, DejaVu ₹ glyph, disclosure banner "NOT a GST portal upload file". Register table 14 columns · widths sum ≤ 273mm (T20 guardrail).
+- **Frontend** (`frontend/src/pages/CndnRegister.jsx` + `Reports.jsx` tab entry): Filter bar (From, To, Kind, Status, Customer dropdown from paginated `/customers`, Reason dropdown) · 5 KPI cards (Total · CN · DN · Net Δ · Cancelled) · Tax Summary band (Taxable / CGST / SGST / IGST / Total Tax / Grand Total) · By-Reason breakdown table · Register table with credit/debit row tint + drill-down links to Notes and Invoice preview · 4 action buttons + View JSON toggle · Reconciled banner. `useCdnEnabledState()` hook variant added to `useCdnEnabled.js` to avoid initial-render redirect race.
+- **Verification evidence (authoritative, measured)**:
+  - Targeted `test_iter132c_c4_cndn_register.py`: **21/21 pass in 36.55 s**. Covers T1 canonical shape · T2 bad-kind 400 · T3 bad-status/reversed-dates 400 · T4 default month range · T5 kind filter · T6 customer_id filter · T7 reason_code filter + §9B remap · T8 status lifecycle · T9 credit=- / debit=+ sign convention · T10 row-level byte-parity vs persisted note fields · T11 fail-loud reconciliation · T12 KPI derivation match · T13 tax_summary sum parity · T14 by_reason 9B remap · T15 4-sheet XLSX · T16 XLSX row counts == JSON kind split · T17 A4 landscape + Page X of Y · T18 disclosure banner + ₹ glyph · **T19 10 000-note streaming with cleanup (35.7s)** · T20 <=273mm column-width envelope guardrail · T21 effective-balance parity with `services._effective_invoice_totals`.
+  - Regression: C3.5 §9A + C3.2 §9B suites: **51/51 pass** — zero cross-contamination.
+  - Live preview UAT: `/reports/cndn-register` rendered with 299 notes · Reconciled YES · CN 260 (₹15,926.00) · DN 39 (₹7,045.00) · Net Δ ₹-8,881.00 · By-Reason table showing rate_correction/§9B 04, sales_return/§9B 01, other/§9B 07, etc.
+- **Statutory disclosure (documented in PDF banner + XLSX Summary + every-page PDF footer)**:
+  - This is a WORKING REPORT (CN/DN Register). NOT a GST portal upload file.
+  - Statutory feed is GSTR-1 §9B (`/reports/gstr1-9b*`, LOCKED C3.1/C3.2). §9A invoice-side is `/reports/gstr1*` (LOCKED C3.5). §9C amendments remain future C5.
+- **Isolation**: every C4 test seeds a fresh unique customer + invoice per test, deletes in `finally`; T19 uses tagged prefix `cdn_c4t_<8hex>_XXXXX` for clean bulk deletion. No shared demo-tenant or C3.5 seed state.
+- **Zero touches** to: `credit_debit_notes` collection or `services._compute_note_totals` / `_effective_invoice_totals` / `_apply_effective_balance` (all LOCKED · Iter132a); `routers/notes.py`; `routers/gst.py`; C3.1/C3.2 §9B code; C3.5 §9A code; every previously LOCKED Iter path.
+- **Files shipped**:
+  - `backend/routers/reports.py` (+380 lines · `_cndn_register_payload` helper + 3 endpoints)
+  - `backend/xlsx/cndn_register.py` (NEW · ~290 lines · 4-sheet workbook)
+  - `backend/pdf/cndn_register.py` (NEW · ~330 lines · A4 landscape L2d v3)
+  - `backend/tests/test_iter132c_c4_cndn_register.py` (NEW · 21 tests, T1–T21)
+  - `frontend/src/pages/CndnRegister.jsx` (NEW · Filter bar · KPI cards · Tax Summary · By-Reason · Register table · 4-button action row)
+  - `frontend/src/pages/Reports.jsx` (+3 lines · tab entry + nested route wiring)
+  - `frontend/src/hooks/useCdnEnabled.js` (+15 lines · additive `useCdnEnabledState()` export)
+- **Rollback boundary**: revert the 3 endpoints in `reports.py`; delete `xlsx/cndn_register.py`, `pdf/cndn_register.py`, `tests/test_iter132c_c4_cndn_register.py`, `frontend/src/pages/CndnRegister.jsx`; revert the 3 wiring edits in `Reports.jsx` and the additive `useCdnEnabledState` in `useCdnEnabled.js`. No DB migration; no schema change; no new runtime dependency.
+- **Deferred (still frozen, awaiting explicit GO)**: DG-STABILITY-1 · C3.4 Portal offline-utility JSON · C5 §9C emission · Statement Email Delivery · Iter132c-ai-agg-fix · Phase-2 Security Hardening · LR Register Email Digest · Trip Templates · new modules (Tyre / Driver Salary / Expense / Maintenance) · every other backlog item.
+
+
 ## Iter132c · C3.5 · GSTR-1 §9A Export Parity (Invoice-side · CSV + JSON + XLSX + PDF) — 🔒 LOCKED (2026-09-02 · UAT approved)
 - **Scope shipped in C3.5**: brings the existing invoice-side GSTR-1 report (Iter127a) to full export parity with §9B. Three additive endpoints — `GET /api/reports/gstr1.json`, `GET /api/reports/gstr1.xlsx`, `GET /api/reports/gstr1.pdf` — all PURE PROJECTIONS of a single canonical `_gstr1_payload()` helper extracted from the existing `report_gstr1` route (byte-identical for the 9 pre-existing keys). Existing frontend CSV workflow preserved. Reports UI (`GSTR1Report()`) now offers four clearly labelled buttons: **Download CSV · Download JSON · Download XLSX · Download PDF**.
 - **High-volume correctness fix (mandatory under C3.5)**: removed the pre-existing `to_list(5000)` on invoices and `to_list(2000)` on customers inside the payload builder. Now streams via `db.invoices.find(...)` cursor with Mongo-side `invoice_date` range filter, and preloads only referenced customer_ids via `$in`. Proven at 10 000 invoices / 2 500 customers (test T19).

@@ -4,6 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api, API, fmtCurrency, fmtDate } from "@/api";
 import { FileText, TrendingUp, Scale, Download, Landmark, Handshake, Clock, MessageCircle, Truck, Printer, ClipboardList, Archive, CheckCircle2, FileWarning, AlertTriangle, ChevronDown, Info } from "lucide-react";
 import HaltingReport from "@/pages/HaltingReport";
+import CndnRegisterReport from "@/pages/CndnRegister";
 import { downloadBulkAllCopiesZip } from "@/utils/pdfDownload";
 import { useCdnEnabled } from "@/hooks/useCdnEnabled";
 import { toast } from "sonner";
@@ -18,6 +19,7 @@ const tabs = [
   { to: "balance-sheet", te: "బ్యాలెన్స్ షీట్", en: "Balance Sheet", icon: Scale, testid: "tab-balance-sheet" },
   { to: "gstr1", te: "GSTR-1", en: "GSTR-1", icon: Landmark, testid: "tab-gstr1" },
   { to: "gstr1-9b", te: "GSTR-1 §9B", en: "GSTR-1 §9B (CN/DN)", icon: FileWarning, testid: "tab-gstr1-9b", requiresCdn: true },
+  { to: "cndn-register", te: "CN/DN రిజిస్టర్", en: "CN/DN Register", icon: Archive, testid: "tab-cndn-register", requiresCdn: true },
 ];
 
 export default function Reports() {
@@ -63,6 +65,7 @@ export default function Reports() {
         <Route path="balance-sheet" element={<BalanceSheetReport />} />
         <Route path="gstr1" element={<GSTR1Report />} />
         <Route path="gstr1-9b" element={<GSTR19BReport />} />
+        <Route path="cndn-register" element={<CndnRegisterReport />} />
       </Routes>
     </div>
   );

@@ -24,3 +24,19 @@ export function useCdnEnabled() {
   });
   return q.data === true;
 }
+
+/** Same probe but surfaces loading/settled state so pages that want to
+ *  hard-redirect on disabled can avoid the initial-render race where
+ *  q.data is undefined before the query resolves. */
+export function useCdnEnabledState() {
+  const q = useQuery({
+    queryKey: ["cdn-enabled"],
+    queryFn: async () => {
+      const r = await api.get("/credit-notes", { params: { limit: 1 } });
+      return Array.isArray(r.data);
+    },
+    staleTime: Infinity,
+    retry: false,
+  });
+  return { enabled: q.data === true, settled: q.isFetched };
+}
