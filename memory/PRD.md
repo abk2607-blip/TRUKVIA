@@ -50,6 +50,64 @@ User communicates in English. Respond in English. (Prior bilingual reference ret
   - **Backlog frozen**: C3 GSTR-1 §9B · C4 CN/DN Register · Statement Email Delivery · Iter132c-agg-fix · Phase 2 Security · `AKB/26-27//26-27/0004` hygiene · Preview Uptime Chip · LR Digest · Trip Templates · Trip Sheet redesign · Tyre · Driver Salary · Expense/Vehicle Cost ERP · Maintenance.
 
 
+## Iter132c · C3.4 · GSTR-1 §9B Offline Utility JSON — ✅ READY FOR UAT (2026-09-02 · not yet locked)
+
+### Scope shipped
+- Additive endpoint `GET /api/reports/gstr1-9b-offline.json?month=YYYY-MM[&raw=0|1]`. Returns either the QORVENA envelope `{utility_json, advisories, meta}` (default) or the standalone GSTN utility JSON body when `raw=1` (importable file suitable for the GSTN Offline Tool workflow, subject to operator-side portal round-trip verification).
+- Pure adapter `_gstr1_9b_offline_json_projection()` in `backend/routers/gst.py` — takes the LOCKED C3.1 canonical payload and re-shapes it into the exact GSTN GSTR-1 Offline Utility V3.2 envelope for Table 9B (CDNR + CDNUR). NO DB access. NO recompute. NO second calculator.
+- Fail-loud validator `_validate_gstn_utility_envelope()` — enforces envelope key set, GSTIN regex, `fp` = MMYYYY, `nt_num ≤ 16`, CDNUR `pos` is 2-char digit, `typ` in {B2CL, EXPWP, EXPWOP}, duplicate `(ctin, nt_num)` and duplicate CDNUR `nt_num` detection, and the 5 MB portal-ceiling body-size check.
+- New Reports UI button on the existing GSTR-1 §9B tab: **"§9B Offline JSON"** (`data-testid="g9b-download-offline-json-btn"`). Reuses the same month selector and download plumbing; disabled while the C3.1 canonical report is loading or in reconciliation-mismatch state.
+
+### Frozen design decisions
+1. **`version`** default = `"3.2"` per `tutorial.gst.gov.in/downloads/invoiceuploadofflineutility.pdf`. Operator override via env `GSTN_UTILITY_VERSION_STRING` — never permanently hard-coded outside the `_GSTN_UTILITY_VERSION_DEFAULT` constant.
+2. **`gt` / `cur_gt`** emitted as `0` with explicit `advisories.gt_cur_gt_defaulted_to_zero = true` — QORVENA does not persist prior-year / current-year gross turnover; scope not expanded.
+3. **`hash`** emitted as literal `"hash"` (utility-format convention matching every public Excel-to-JSON converter sample). QORVENA does NOT claim to generate the portal's real cryptographic hash — the portal recomputes on import.
+4. **Statutory claim scope**: `"GSTN Offline Utility JSON — schema/shape validated (portal round-trip not performed)"`. NO "portal upload-ready" claim.
+5. **5 MB portal ceiling** (`tutorial.gst.gov.in/downloads/invoiceuploadofflineutility.pdf`): utility body serialised bytes are measured (`meta.utility_json_bytes`) and > 5 MB triggers a HTTP 422 with a fail-loud `utility_json_exceeds_5mb_portal_ceiling` problem — automated chunk generation NOT implemented in this slice.
+
+### Exclusions surfaced via advisories (no silent drop)
+- `commercial_notes_excluded_from_offline_json` — `apply_gst=false` notes (out of §9B statutorily)
+- `b2cs_report_net_of_in_table_7` — B2CS adjustments (net-of in Table 7, out of §9B)
+- `cancelled_after_export_requires_9c_amendment` — §9C CDNRA/CDNURA amendments deferred to C5
+- `rsn_field_omitted_portal_optional_in_v3_2` — reason code preserved in C3.1/XLSX/PDF (audit) but not present in the GSTN utility schema
+- Draft notes and cancelled-within-period notes are already dropped by the LOCKED C3.1 payload — same behaviour preserved
+
+### Test evidence (2026-09-02)
+- **C3.4 targeted suite `test_iter132c_c3_4_gstr1_offline_json.py`: 24 / 24 PASS** (T1 B2B CN → CDNR shape · T2 B2B DN IGST · T3 mixed CN+DN same ctin sorted · T4 fp=MMYYYY + out-of-period excluded · T5 CDNR routing · T6 CDNUR B2CL 2-char pos · T7 B2CS excluded + advisory · T8 GSTIN+POS mapping · T9 RCM Y/N verbatim · T10 commercial excluded + advisory · T11 draft excluded · T12 cancelled-within-period excluded · T13 duplicate prevention · T14 canonical parity vs C3.1 · T15 sum of `val` == C3.1 totals · T16 envelope required keys + types · T17 fail-loud 422 on missing issuer GSTIN · T18 idempotency · **T19 10 000 notes streaming + byte-size measurement** · T20 schema/version compliance · T21 cancelled-after-export advisory only · T22 byte-size fields present and match local serialisation · T23 raw=1 returns utility_json body only · T24 GSTN_UTILITY_VERSION_STRING env override honoured).
+- **C3.1 + C3.2 regression: 37 / 37 PASS** (16.6 s).
+- **C4 + C3.5 regression: 54 / 54 PASS** (212 s).
+- **C3.1 §9B period-boundary flake reproduces DG-STABILITY-1** (unrelated xdist shared-state race): fails under xdist parallel with C4, passes when run solo. NOT a C3.4 defect. LOCKED files unchanged. Ticket already documented under DG-STABILITY-1 P1 backlog.
+
+### Live artifact (2026-09-02 · demo tenant · active company `co_d2ef16a8cf364265` GSTIN `37ZZZZZ9999Z1Z5` · period 2026-08)
+| Artefact | Bytes | SHA256 |
+|---|---|---|
+| Envelope `{utility_json, advisories, meta}` | 970 | `04adf87ec8caa7017616a4b74a6f53729423dfd0e90b2cd40272b6aa5726e275` |
+| Raw utility_json (`?raw=1`) | 110 | `ff294a2e9f6515797a233e73b9d19f343457fbee8974a2d2eb2b566c061419dd` |
+
+Envelope fields verified: `gstin=37ZZZZZ9999Z1Z5`, `fp=082026`, `version=3.2`, `hash="hash"`, `gt=cur_gt=0`, `canonical_reconciled=true`, `utility_json_over_5mb=false` (110 B / 5 242 880 B). Advisories: `gt_cur_gt_defaulted_to_zero=true`, `rsn_field_omitted_portal_optional_in_v3_2=true`, all exclusion counters `0` for this period. Byte-parity confirmed: raw response body == envelope's `utility_json` serialisation.
+
+### Files touched (all additive)
+- `backend/routers/gst.py` — ADD `_GSTN_*` constants, `_gstn_utility_version()`, `_gstn_pos_2char()`, `_gstn_fp()`, `_gstr1_9b_offline_json_projection()` adapter, `_validate_gstn_utility_envelope()` validator, `GET /api/reports/gstr1-9b-offline.json` route. `import json` added to module imports.
+- `backend/tests/test_iter132c_c3_4_gstr1_offline_json.py` — NEW · 24 tests T1–T24.
+- `frontend/src/pages/Reports.jsx` — ADD `doOfflineJsonDownload()` handler + one button in `GSTR19BReport()`. No other visual change.
+
+### Files explicitly UNTOUCHED (LOCKED)
+- `_gstr1_9b_payload()` and every existing C3.1 route in `routers/gst.py`
+- `_GSTR1_9B_REASON_MAP` in `services.py`
+- `backend/xlsx/gstr1_9b.py`, `backend/pdf/gstr1_9b.py` (C3.2)
+- `backend/xlsx/gstr1.py`, `backend/pdf/gstr1.py` (C3.5)
+- `backend/xlsx/cndn_register.py`, `backend/pdf/cndn_register.py`, `frontend/src/pages/CndnRegister.jsx` (C4)
+- `pytest.ini`, `backend/scripts/run_regression.sh`, DG tests
+
+### Known limitations documented
+- Portal-utility import round-trip **not** performed in this sandbox. Claim scope = "schema/shape validated". Any deeper claim requires an operator-side utility import UAT.
+- 5 MB oversize returns fail-loud 422; automated chunk-splitting is out of scope for this slice.
+- `EXPWP`/`EXPWOP` CDNUR variants are validator-permitted but not emitted (QORVENA is transport-domestic — no export data model exists today).
+
+### Status
+**READY FOR UAT — NOT YET LOCKED.** Awaiting explicit LOCK approval after operator-side utility-import UAT.
+
+
 ## Iter132c · C4 · Credit Note / Debit Note Register (JSON + XLSX + PDF) — 🔒 LOCKED / FROZEN (2026-09-02 · UAT approved · XLSX spec-compliance corrected pre-lock · fresh artifact provenance verified)
 
 ### FINAL LOCK EVIDENCE (2026-09-02)

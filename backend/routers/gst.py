@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Request, Response, Depends, Upload
 from fastapi.responses import StreamingResponse
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
-import io, os, uuid, secrets, re, requests, base64
+import io, os, uuid, secrets, re, requests, base64, json
 
 from db import db
 from models import (
@@ -900,3 +900,346 @@ async def report_gstr1_9b_pdf(month: str, request: Request, user=Depends(get_cur
         headers={"Content-Disposition": f'inline; filename="{fname}"'},
     )
 
+
+
+# ============================================================================
+# Iter132c C3.4 · GSTR-1 §9B Offline Utility JSON — adapter + endpoint.
+#
+# MASTER PRINCIPLE:
+#     C3.1 canonical §9B JSON  →  C3.4 pure adapter  →  GSTN utility JSON
+#
+#   * NO second calculator. NO raw-data query. This layer receives the
+#     LOCKED `_gstr1_9b_payload()` output verbatim and re-shapes it into
+#     the exact GSTN GSTR-1 Offline Utility V3.2 envelope for Table 9B
+#     (`cdnr` + `cdnur`).
+#   * `_gstr1_9b_payload()` is UNTOUCHED (LOCKED C3.1). If a field it
+#     emits does not map, the adapter fails loud with a diagnostic —
+#     never silently guesses.
+#   * §9C amendments (CDNRA/CDNURA) are OUT OF SCOPE (future C5).
+#   * `apply_gst=False` commercial notes, `b2cs_adjustments[]`,
+#     `cancelled_after_export[]`, drafts, cancelled-within-period notes
+#     are excluded from the utility_json and surfaced as advisory
+#     counts under `advisories`.
+#
+# STATUTORY SCHEMA (V3.2 — target):
+#   Envelope: {gstin, fp (MMYYYY), gt, cur_gt, version, hash, cdnr[], cdnur[]}
+#   CDNR item: {ctin, nt:[{ntty, nt_num, nt_dt, p_gst, inum, idt, val,
+#                          rchrg, inv_typ, itms:[{num, itm_det:{rt,
+#                          txval, iamt, camt, samt, csamt}}]}]}
+#   CDNUR item: {typ, ntty, nt_num, nt_dt, p_gst, pos (2-char),
+#                val, itms:[...]}
+#
+# NOTES ON THE FROZEN DECISIONS (see C3.4 Phase-2 GO):
+#   * `gt` / `cur_gt` — QORVENA does not persist prior-year / current-year
+#     gross turnover. Emitted as `0` with `advisories.gt_cur_gt_defaulted_to_zero`.
+#   * `version` — default is the currently-verified target `"3.2"` per
+#     `tutorial.gst.gov.in/downloads/invoiceuploadofflineutility.pdf`.
+#     Operator override via env `GSTN_UTILITY_VERSION_STRING` (documented
+#     in PRD). NEVER hard-coded outside this constant.
+#   * `hash` — a portal-computed field. QORVENA emits the literal `"hash"`
+#     (utility-format convention observed on every Excel-to-JSON
+#     converter public sample); QORVENA does NOT claim to generate the
+#     portal's real cryptographic hash.
+#   * File-size ceiling: portal guidance is 5 MB per file. This adapter
+#     measures the serialised UTF-8 byte-size and fails loud > 5 MB —
+#     chunking is out of scope for this slice.
+#   * "GSTN Offline Utility JSON — schema/shape validated" is the ONLY
+#     claim made until an actual utility import round-trip is performed.
+# ============================================================================
+
+
+_GSTN_UTILITY_VERSION_DEFAULT = "3.2"   # per tutorial.gst.gov.in offline-utility PDF
+_GSTN_MAX_UPLOAD_BYTES        = 5 * 1024 * 1024   # 5 MB portal ceiling
+_GSTN_UTILITY_ENVELOPE_KEYS   = ("gstin", "fp", "gt", "cur_gt", "version", "hash", "cdnr", "cdnur")
+
+
+def _gstn_utility_version() -> str:
+    v = os.environ.get("GSTN_UTILITY_VERSION_STRING", "").strip()
+    return v or _GSTN_UTILITY_VERSION_DEFAULT
+
+
+def _gstn_pos_2char(canonical_pos: str) -> str:
+    """C3.1 emits '36-Telangana' style. GSTN CDNUR schema requires the
+    2-char state code only (minLength/maxLength 2)."""
+    if not canonical_pos:
+        return ""
+    return canonical_pos.split("-", 1)[0].strip()[:2]
+
+
+def _gstn_fp(month_yyyy_mm: str) -> str:
+    """'YYYY-MM' → 'MMYYYY' per GSTN filing-period convention."""
+    y, m = month_yyyy_mm.split("-")
+    return f"{m}{y}"
+
+
+def _gstr1_9b_offline_json_projection(payload: dict) -> dict:
+    """C3.4 · Pure adapter — LOCKED C3.1 payload → GSTN utility envelope.
+
+    Returns the outer QORVENA envelope:
+        {
+          "utility_json": {gstin, fp, gt, cur_gt, version, hash, cdnr, cdnur},
+          "advisories":  {...},
+          "meta":        {generated_at, source_period, version_string,
+                          canonical_reconciled, utility_json_bytes,
+                          utility_json_over_5mb, note_split_counts},
+        }
+    NO DB access. NO recompute. Fail-loud on structural gaps.
+    """
+    issuer_gstin = (payload.get("issuer_gstin") or "").strip().upper()
+    month = payload.get("month") or ""
+    period = payload.get("period") or {}
+
+    # ── CDNR projection (grouped by ctin) ─────────────────────────
+    cdnr_out: list = []
+    dup_pairs: list = []          # duplicate (ctin, nt_num)
+    long_num_rows: list = []      # nt_num > 16 chars
+    _seen_pairs: set = set()
+    for grp in payload.get("cdnr", []) or []:
+        ctin = (grp.get("ctin") or "").strip().upper()
+        if not ctin:
+            long_num_rows.append({"ctin": "", "reason": "empty_ctin"})
+            continue
+        nt_out: list = []
+        # Deterministic sort by (nt_dt, nt_num) for stable byte-output.
+        for nt in sorted(grp.get("nt", []) or [], key=lambda x: (x.get("nt_dt", ""), x.get("nt_num", ""))):
+            nt_num = (nt.get("nt_num") or "").strip()
+            if not nt_num:
+                long_num_rows.append({"ctin": ctin, "nt_num": nt_num, "reason": "empty_nt_num"})
+                continue
+            if len(nt_num) > 16:
+                long_num_rows.append({"ctin": ctin, "nt_num": nt_num, "reason": "nt_num_gt_16_chars"})
+                continue
+            key = (ctin, nt_num)
+            if key in _seen_pairs:
+                dup_pairs.append({"ctin": ctin, "nt_num": nt_num})
+                continue
+            _seen_pairs.add(key)
+            nt_out.append({
+                "ntty":    nt.get("ntty"),
+                "nt_num":  nt_num,
+                "nt_dt":   nt.get("nt_dt"),
+                "p_gst":   nt.get("p_gst", "N"),
+                "inum":    nt.get("inum") or "",
+                "idt":     nt.get("idt") or "",
+                "val":     round(float(nt.get("val", 0) or 0), 2),
+                "rchrg":   nt.get("rchrg", "N"),
+                "inv_typ": nt.get("inv_typ", "R"),
+                "itms":    nt.get("itms") or [],
+            })
+        if nt_out:
+            cdnr_out.append({"ctin": ctin, "nt": nt_out})
+    cdnr_out.sort(key=lambda g: g["ctin"])
+
+    # ── CDNUR projection (flat, sorted deterministically) ─────────
+    cdnur_out: list = []
+    _seen_nt_num: set = set()
+    cdnur_dups: list = []
+    for r in sorted(payload.get("cdnur", []) or [], key=lambda x: (x.get("nt_dt", ""), x.get("nt_num", ""))):
+        nt_num = (r.get("nt_num") or "").strip()
+        if not nt_num:
+            long_num_rows.append({"typ": r.get("typ"), "nt_num": nt_num, "reason": "empty_nt_num"})
+            continue
+        if len(nt_num) > 16:
+            long_num_rows.append({"typ": r.get("typ"), "nt_num": nt_num, "reason": "nt_num_gt_16_chars"})
+            continue
+        if nt_num in _seen_nt_num:
+            cdnur_dups.append({"nt_num": nt_num})
+            continue
+        _seen_nt_num.add(nt_num)
+        pos_2 = _gstn_pos_2char(r.get("pos", ""))
+        if len(pos_2) != 2 or not pos_2.isdigit():
+            long_num_rows.append({"typ": r.get("typ"), "nt_num": nt_num, "reason": "pos_not_2char_state_code", "pos": r.get("pos")})
+            continue
+        cdnur_out.append({
+            "typ":    r.get("typ", "B2CL"),
+            "ntty":   r.get("ntty"),
+            "nt_num": nt_num,
+            "nt_dt":  r.get("nt_dt"),
+            "p_gst":  r.get("p_gst", "N"),
+            "pos":    pos_2,
+            "val":    round(float(r.get("val", 0) or 0), 2),
+            "itms":   r.get("itms") or [],
+        })
+
+    # ── Envelope ─────────────────────────────────────────────────
+    utility_json = {
+        "gstin":   issuer_gstin,
+        "fp":      _gstn_fp(month) if month else "",
+        "gt":      0,
+        "cur_gt":  0,
+        "version": _gstn_utility_version(),
+        "hash":    "hash",
+        "cdnr":    cdnr_out,
+        "cdnur":   cdnur_out,
+    }
+
+    # ── Advisories (surface non-emitted buckets + defaults) ──────
+    totals = payload.get("totals") or {}
+    advisories: dict = {
+        "gt_cur_gt_defaulted_to_zero":                   True,
+        "commercial_notes_excluded_from_offline_json":   (totals.get("commercial_notes") or {}).get("note_count", 0),
+        "b2cs_report_net_of_in_table_7":                 (totals.get("b2cs_adjustments") or {}).get("note_count", 0),
+        "cancelled_after_export_requires_9c_amendment":  (totals.get("cancelled_after_export") or {}).get("note_count", 0),
+        "rsn_field_omitted_portal_optional_in_v3_2":     True,
+    }
+    if dup_pairs:
+        advisories["duplicate_cdnr_pairs"] = dup_pairs
+    if cdnur_dups:
+        advisories["duplicate_cdnur_nt_num"] = cdnur_dups
+    if long_num_rows:
+        advisories["structural_gaps"] = long_num_rows
+
+    # ── Byte-size measurement (V3.2 5 MB portal ceiling) ─────────
+    serialized = json.dumps(utility_json, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    utility_bytes = len(serialized)
+
+    recon = payload.get("reconciliation") or {}
+    meta = {
+        "generated_at":            datetime.now(timezone.utc).isoformat(),
+        "source_period":           period,
+        "source_month":            month,
+        "version_string":          utility_json["version"],
+        "version_default":         _GSTN_UTILITY_VERSION_DEFAULT,
+        "version_override_env":    "GSTN_UTILITY_VERSION_STRING",
+        "canonical_reconciled":    bool(recon.get("reconciled", False)),
+        "utility_json_bytes":      utility_bytes,
+        "utility_json_size_limit": _GSTN_MAX_UPLOAD_BYTES,
+        "utility_json_over_5mb":   utility_bytes > _GSTN_MAX_UPLOAD_BYTES,
+        "note_split_counts": {
+            "cdnr_ctin_groups":  len(cdnr_out),
+            "cdnr_total_notes":  sum(len(g["nt"]) for g in cdnr_out),
+            "cdnur_notes":       len(cdnur_out),
+            "excluded_commercial":       advisories["commercial_notes_excluded_from_offline_json"],
+            "excluded_b2cs":             advisories["b2cs_report_net_of_in_table_7"],
+            "excluded_cancelled_9c":     advisories["cancelled_after_export_requires_9c_amendment"],
+        },
+        "compliance_claim": "GSTN Offline Utility JSON - schema/shape validated (portal round-trip not performed)",
+    }
+
+    return {"utility_json": utility_json, "advisories": advisories, "meta": meta}
+
+
+def _validate_gstn_utility_envelope(envelope: dict) -> None:
+    """Fail-loud pre-serve validation of the projected envelope.
+
+    Never returns; raises HTTPException with a detailed diagnostic on any
+    structural violation. Runs AFTER the adapter — enforces the invariants
+    that make an offline-utility upload byte-safe. Not a portal round-trip."""
+    u = envelope.get("utility_json") or {}
+    meta = envelope.get("meta") or {}
+    problems: list = []
+
+    # Envelope keys — exact set only
+    keys = set(u.keys())
+    expected = set(_GSTN_UTILITY_ENVELOPE_KEYS)
+    if keys != expected:
+        problems.append({"error": "envelope_keys_mismatch",
+                         "expected": sorted(expected), "got": sorted(keys)})
+
+    if not (u.get("gstin") and _GSTIN_RE.match(u["gstin"] or "")):
+        raise HTTPException(status_code=422, detail={
+            "error": "issuer_gstin_missing_or_invalid",
+            "hint":  "Configure the company's GSTIN in Settings before generating an offline utility upload.",
+        })
+
+    fp = u.get("fp") or ""
+    if not (len(fp) == 6 and fp.isdigit()):
+        problems.append({"error": "fp_not_mmyyyy", "got": fp})
+
+    # CDNR structure
+    seen_ctin_num: set = set()
+    for i, grp in enumerate(u.get("cdnr", []) or []):
+        ctin = (grp.get("ctin") or "").strip().upper()
+        if not _GSTIN_RE.match(ctin or ""):
+            problems.append({"error": "cdnr_ctin_invalid", "idx": i, "ctin": ctin})
+        for j, nt in enumerate(grp.get("nt", []) or []):
+            nt_num = (nt.get("nt_num") or "").strip()
+            if not nt_num or len(nt_num) > 16:
+                problems.append({"error": "cdnr_nt_num_invalid", "ctin": ctin, "idx": j, "nt_num": nt_num})
+            key = (ctin, nt_num)
+            if key in seen_ctin_num:
+                problems.append({"error": "cdnr_duplicate", "ctin": ctin, "nt_num": nt_num})
+            seen_ctin_num.add(key)
+
+    # CDNUR structure
+    seen_cdnur_num: set = set()
+    for i, r in enumerate(u.get("cdnur", []) or []):
+        nt_num = (r.get("nt_num") or "").strip()
+        if not nt_num or len(nt_num) > 16:
+            problems.append({"error": "cdnur_nt_num_invalid", "idx": i, "nt_num": nt_num})
+        if nt_num in seen_cdnur_num:
+            problems.append({"error": "cdnur_duplicate", "nt_num": nt_num})
+        seen_cdnur_num.add(nt_num)
+        pos = r.get("pos") or ""
+        if not (len(pos) == 2 and pos.isdigit()):
+            problems.append({"error": "cdnur_pos_not_2char_state_code", "idx": i, "pos": pos})
+        if r.get("typ") not in {"B2CL", "EXPWP", "EXPWOP"}:
+            problems.append({"error": "cdnur_typ_unsupported", "idx": i, "typ": r.get("typ")})
+
+    if meta.get("utility_json_over_5mb"):
+        problems.append({
+            "error": "utility_json_exceeds_5mb_portal_ceiling",
+            "utility_json_bytes":      meta.get("utility_json_bytes"),
+            "utility_json_size_limit": meta.get("utility_json_size_limit"),
+            "hint": "GSTN offline-utility guidance: split into multiple files. Automated chunk generation is not implemented in this slice.",
+        })
+
+    if problems:
+        raise HTTPException(status_code=422, detail={
+            "error": "gstr1_9b_offline_json_validation_failed",
+            "problems": problems,
+        })
+
+
+@router.get("/reports/gstr1-9b-offline.json")
+async def report_gstr1_9b_offline_json(
+    month: str,
+    request: Request,
+    raw: int = 0,
+    user=Depends(get_current_user),
+):
+    """C3.4 · GSTN GSTR-1 Offline Utility JSON for Table 9B (CDNR + CDNUR).
+
+    * Reads the LOCKED C3.1 canonical `_gstr1_9b_payload()` result.
+    * Applies the C3.4 pure adapter (no DB access, no recompute).
+    * Fail-loud validation — 422 on any structural problem or >5MB body.
+    * Default response: {utility_json, advisories, meta} — for UI consumption.
+    * `?raw=1` returns ONLY the utility_json body as a downloadable file
+      suitable for direct import into the GSTN Offline Tool (subject to
+      operator-side utility round-trip verification).
+
+    STATUTORY CLAIM SCOPE: "schema/shape validated". No claim of
+    'portal upload-ready' until a real portal round-trip has been
+    performed on the operator side."""
+    payload = await _gstr1_9b_payload(month, request, user)
+    envelope = _gstr1_9b_offline_json_projection(payload)
+    _validate_gstn_utility_envelope(envelope)
+
+    fname = f"GSTR1_9B_Offline_{envelope['utility_json']['gstin']}_{envelope['utility_json']['fp']}.json"
+    try:
+        await _log_audit(
+            user, "gstr_export", "download",
+            entity_id="", entity_ref=fname,
+            changes={
+                "format": "gstn_offline_json",
+                "period": payload.get("period"),
+                "row_count": payload.get("note_count", 0),
+                "utility_json_bytes": envelope["meta"]["utility_json_bytes"],
+                "over_5mb":           envelope["meta"]["utility_json_over_5mb"],
+                "cdnr_ctin_groups":   envelope["meta"]["note_split_counts"]["cdnr_ctin_groups"],
+                "cdnr_notes":         envelope["meta"]["note_split_counts"]["cdnr_total_notes"],
+                "cdnur_notes":        envelope["meta"]["note_split_counts"]["cdnur_notes"],
+                "raw":                bool(int(raw or 0)),
+            },
+        )
+    except Exception:
+        pass
+
+    if int(raw or 0) == 1:
+        body = json.dumps(envelope["utility_json"], separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+        return StreamingResponse(
+            io.BytesIO(body),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+        )
+    return envelope

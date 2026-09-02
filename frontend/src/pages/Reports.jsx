@@ -1432,6 +1432,37 @@ function GSTR19BReport() {
     }
   };
 
+  const doOfflineJsonDownload = async () => {
+    // C3.4 · GSTN §9B Offline Utility JSON (raw=1 = importable utility_json only).
+    const t = toast.loading("Preparing §9B Offline JSON…");
+    try {
+      const resp = await api.get("/reports/gstr1-9b-offline.json", {
+        params: { month, raw: 1 }, responseType: "blob",
+      });
+      const cd = resp.headers?.["content-disposition"] || "";
+      const m = cd.match(/filename="?([^"]+)"?/);
+      const fname = m ? m[1] : `GSTR1_9B_Offline_${month}.json`;
+      const url = URL.createObjectURL(resp.data);
+      const a = document.createElement("a");
+      a.href = url; a.download = fname; a.click();
+      URL.revokeObjectURL(url);
+      toast.success("§9B Offline JSON downloaded", { id: t });
+    } catch (e) {
+      const detail = e?.response?.data?.detail || e?.response?.data;
+      let msg = "§9B Offline JSON failed";
+      if (detail?.error === "issuer_gstin_missing_or_invalid") {
+        msg = "Company GSTIN missing/invalid. Configure it in Settings.";
+      } else if (detail?.error === "gstr1_9b_offline_json_validation_failed") {
+        msg = "Utility JSON validation failed — see console.";
+        // eslint-disable-next-line no-console
+        console.error("§9B offline JSON validation problems", detail.problems);
+      } else if (detail?.problems?.some?.((p) => p.error === "utility_json_exceeds_5mb_portal_ceiling")) {
+        msg = "Utility JSON > 5 MB — split file (chunking not implemented).";
+      }
+      toast.error(msg, { id: t });
+    }
+  };
+
   const doJsonDownload = () => {
     if (!data) return;
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -1467,6 +1498,11 @@ function GSTR19BReport() {
           </button>
         </div>
         <div className="flex items-end gap-2 md:col-span-2 justify-end">
+          <button data-testid="g9b-download-offline-json-btn" onClick={doOfflineJsonDownload} disabled={downloadsDisabled}
+            title="GSTN GSTR-1 Offline Utility JSON (schema/shape validated) — §9B (CDNR + CDNUR)"
+            className="px-3 py-2 text-xs uppercase tracking-wider bg-indigo-700 text-white rounded-sm hover:bg-indigo-800 disabled:opacity-40 inline-flex items-center gap-2">
+            <Download size={14} /> §9B Offline JSON
+          </button>
           <button data-testid="g9b-download-pdf-btn" onClick={() => doDownload("pdf")} disabled={downloadsDisabled}
             title="Download human-readable statutory PDF"
             className="px-3 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 disabled:opacity-40 inline-flex items-center gap-2">
