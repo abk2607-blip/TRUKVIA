@@ -3,6 +3,71 @@
 ## Product summary
 QORVENA is a Bitumen transport ERP tracking LRs, Trips, Freight, Shortage, Invoices, Payments, Suppliers, Customers, Vehicles, Drivers, Products, Fuel, and Reports. FastAPI + React + MongoDB. Auth via Emergent-managed Google, with a dev-only demo token.
 
+## Iter133 · Expense / Vehicle Cost Management — Turn 2C COMPLETE — NOT READY FOR UAT (2026-09-02)
+
+**Status:** Vendor Ledger + Mechanic Ledger read-only + Vendor/Mechanic Payment Correction (attribute + amount-reversal) shipped with immutable audit trail. Turn 2D (cost-date vs payment-date parametrised reporting + final integration) awaits explicit GO.
+
+### Documentation correction from prior turn
+§3.1 of the Turn-2C design addendum listed **four** new fields on VendorPayment/MechanicPayment (`corrected_at, corrected_by, correction_count, latest_correction_id`) but the section header said "three new fields" — corrected to **four new fields** as approved. No functional change.
+
+### FROZEN design implemented
+- Admin/Owner only for corrections (`_ensure_admin` gate → 403 otherwise).
+- Mandatory `correction_reason ≥ 10 chars` (400 otherwise).
+- Immutable append-only `payment_corrections` collection (no update / no delete endpoint).
+- **Attribute correction** → same payment row updated in place + one PaymentCorrection row (`kind=attribute`).
+- **Amount correction** → original marked `is_reversed=true` + fresh row inserted + one linking PaymentCorrection row (`kind=amount_reversal_new`). Preserves real cashbook history.
+- Idempotency mandatory: `Idempotency-Key` on both `/correct` and `/correct-amount`; replay returns cached response with `x-idempotent-replay=1`.
+- Tenant isolation via `user_id + company_id` scope.
+- Optimistic concurrency via `expected_correction_count` → 409 on mismatch.
+- Reconciled-payment guard: if `reconciled_at != ""` and no `force_reconciled_override=true` → 409.
+- Ledger auto-reflects: `GET /vendors/{id}/ledger` reads current-state payment `vendor_id` — corrected payments move ledgers automatically. Same for Mechanic.
+
+### Files added (5)
+- `backend/services_payment_corrections.py` — shared correction logic (attribute + amount-reversal) for both party types.
+- `backend/routers/vendor_ledger.py` — `GET /vendors/{vid}/ledger` + `POST /vendor-payments/{pid}/correct` + `POST /vendor-payments/{pid}/correct-amount` + `GET /vendor-payments/{pid}/corrections`.
+- `backend/routers/mechanic_ledger.py` — mirror for mechanic.
+- `backend/tests/test_iter133_expense_turn2c.py` — 15 tests (PC-2 through PC-13 + ledger derivation + reversed-original guard).
+- `frontend/src/pages/PartyLedger.jsx` — combined Vendor/Mechanic ledger UI with admin-only correction modal.
+
+### Files edited (additive only, 3)
+- `backend/models.py` — added **four** new fields on `VendorPayment` + `MechanicPayment` (`corrected_at, corrected_by, correction_count, latest_correction_id`) plus reversal/reconciliation fields (`is_reversed, reversed_by, reversed_at, reversal_reason, reversal_of, reconciled_at, reconciled_ref`); added `PaymentCorrection` model.
+- `backend/server.py` — wired `vendor_ledger_r` + `mechanic_ledger_r`; added `payment_corrections` compound index + `is_reversed/reversal_of` indexes.
+- `backend/idempotency.py` — whitelisted 4 new POST paths (`/vendor-payments/*/correct`, `/vendor-payments/*/correct-amount`, `/mechanic-payments/*/correct`, `/mechanic-payments/*/correct-amount`).
+- `frontend/src/App.js` — added `/vendor-ledger/:id` and `/mechanic-ledger/:id` routes.
+
+### Test evidence
+- `test_iter133_expense_turn2c.py`: **15 / 15 PASS** in 1.05 s.
+- Combined Iter133 (Turn 1 + 2A + 2B): **62 / 62 PASS** (7.27 s) — no regression.
+- Trip / Supplier / Idempotency (`iter49, iter91, iter45, iter111, iter126b`): all green.
+
+### Live end-to-end proof
+Created Vendor A + Bill 5000 + Payment 2000 posted to A.
+`V1 ledger BEFORE correction → total_debit=5000, total_credit=2000, outstanding=3000`.
+Applied `/correct` reassigning payment to Vendor B (with new Bill B on B). Response: `payment.vendor_id=V2, correction_count=1, correction.kind=attribute`.
+`V1 ledger AFTER correction → total_debit=5000, total_credit=0, outstanding=5000` ✓ (payment removed).
+`V2 ledger AFTER correction → total_debit=2000, total_credit=2000, outstanding=0` ✓ (payment moved).
+`/corrections history → 1 row, kind=attribute, reason preserved`.
+**ZERO duplicated rows. ZERO manual reconciliation.**
+
+### Locked-area untouched
+✅ C3.1 / C3.2 / C3.4 / C3.5 / C4 untouched.
+✅ C5 (deferred) untouched.
+✅ DG-STABILITY-1 · `pytest.ini` · `scripts/run_regression.sh` untouched.
+✅ Supplier Ledger (`_build_ledger`), `services._compute_trip`, driver-recovery sync, invoice recompute — all UNCHANGED.
+✅ Fuel collection standalone (as approved).
+
+### Known limitations
+- No bank-reconciliation UI — reconciled marker is currently written directly by seeding tests; future Reconciliation module can populate it.
+- No maker-checker on corrections — admin authority is sufficient per approved design.
+- No corrections export (Tally / GSTR) — corrections feed forward only.
+- Correction UI is minimal (attribute: ref/remarks only in the modal; amount: single field). More attribute fields (date, mode, bill reassignment via dropdown) can be surfaced in a later polish turn.
+
+### Next sub-turn (awaiting GO)
+**Turn 2D — Cost-date vs Payment-date parametrised reporting + final integration/regression + UAT artefacts.**
+
+### Final status
+**EXPENSE TURN 2C COMPLETE — NOT READY FOR UAT — NOT READY FOR LOCK.**
+
 ## Iter133 · Expense / Vehicle Cost Management — Turn 2B COMPLETE — NOT READY FOR UAT (2026-09-02)
 
 **Status:** Vehicle Cost + Vehicle Repair History reports are live (backend read-only + minimal UI). No stored totals. Turn 2C (Vendor + Mechanic Ledger UI) awaiting explicit GO.

@@ -53,6 +53,9 @@ from routers import (
     expenses as expenses_r,
     # Iter133 · Turn 2B — Vehicle Cost + Repair History read-only reports
     vehicle_reports as vehicle_reports_r,
+    # Iter133 · Turn 2C — Vendor + Mechanic Ledgers + Payment Corrections
+    vendor_ledger as vendor_ledger_r,
+    mechanic_ledger as mechanic_ledger_r,
 )
 
 ROOT_DIR = Path(__file__).parent
@@ -119,10 +122,11 @@ for r in (
     templates_r, ai_r, expenditure_types_r, suppliers_r,
     saved_filters_r, driver_shortage_policies_r,
     driver_ledger_r, policy_changes_r,
-    # Iter133 · Expense / Vehicle Cost — Turn 1 + Turn 2B
+    # Iter133 · Expense / Vehicle Cost — Turn 1 + Turn 2B + Turn 2C
     vendors_r, mechanics_r, repair_events_r,
     vendor_bills_r, mechanic_work_orders_r, expenses_r,
     vehicle_reports_r,
+    vendor_ledger_r, mechanic_ledger_r,
 ):
     app.include_router(r.router)
 
@@ -1276,6 +1280,16 @@ async def startup_event():
                                                 name="mechanic_payments_scope_date")
         await db.mechanic_payments.create_index([("mechanic_id", 1)], name="mechanic_payments_mechanic")
         await db.mechanic_payments.create_index([("mechanic_work_order_id", 1)], name="mechanic_payments_mwo")
+        # Iter133 · Turn 2C — payment corrections + reversal support
+        await db.payment_corrections.create_index(
+            [("user_id", 1), ("company_id", 1), ("payment_type", 1),
+             ("payment_id", 1), ("correction_index", 1)],
+            name="pcr_scope_payment_index",
+        )
+        await db.vendor_payments.create_index([("is_reversed", 1)], name="vp_reversed")
+        await db.vendor_payments.create_index([("reversal_of", 1)], name="vp_reversal_of")
+        await db.mechanic_payments.create_index([("is_reversed", 1)], name="mp_reversed")
+        await db.mechanic_payments.create_index([("reversal_of", 1)], name="mp_reversal_of")
         logger.info("Iter133 · Expense/Vehicle-Cost indexes ensured")
     except Exception as e:
         logger.warning(f"Iter133 index setup failed: {e}")
