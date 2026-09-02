@@ -50,6 +50,35 @@ User communicates in English. Respond in English. (Prior bilingual reference ret
   - **Backlog frozen**: C3 GSTR-1 §9B · C4 CN/DN Register · Statement Email Delivery · Iter132c-agg-fix · Phase 2 Security · `AKB/26-27//26-27/0004` hygiene · Preview Uptime Chip · LR Digest · Trip Templates · Trip Sheet redesign · Tyre · Driver Salary · Expense/Vehicle Cost ERP · Maintenance.
 
 
+## Iter132c · C5 · GSTR-1 §9C CDNRA / CDNURA Amendments — 🟡 DEFERRED (2026-09-02)
+
+**Status**: Phase 1 discovery complete. **Implementation intentionally postponed** in favour of higher-priority operational ERP modules.
+
+**Architectural prerequisite identified (Phase 1 finding)**: a genuine data-model gap exists — QORVENA today has no persistent prior-filing manifest and no CN/DN amendment lifecycle. Emitting CDNRA/CDNURA without those two foundations would either fabricate statutory claims from a heuristic (`cancelled_after_export[]`) or create a second CN/DN source of truth. Both violate the master principle.
+
+**Prerequisite (approved but on-hold) — required before any C5 code is written**:
+1. New persistent collection `gstr1_filings` — one immutable manifest per `(company_id, period_yyyy_mm, section)` recording the exact frozen note set + canonical SHA256 hash + operator-confirmed `Mark as Filed` action. This is the authoritative prior-filing evidence — NOT `audit_logs`, NOT `cancelled_after_export[]`, NOT `approved_at`.
+2. Scoped unlock of `backend/models.py` + `backend/routers/notes.py` to add three fields on `CreditDebitNote` (`amends_note_id`, `amendment_seq`, `amendment_reason_text`) plus two new endpoints `POST /credit-notes/{nid}/amend`, `POST /debit-notes/{nid}/amend`. Chain semantics: original `seq=0, amends_note_id=None`; amendments are NEW documents pointing to the LAST-IN-CHAIN note; monotonic seq; no forks; no cycles; original never overwritten.
+3. Amendment gate: an amendment (or cancellation-as-amendment) requires the target note to be present in a filed manifest for its `note_date`'s period+section — else HTTP 422 `prior_filing_evidence_missing`.
+
+**Planned phased implementation (when un-deferred)**:
+- Turn A.1 · Filing manifest persistence + `POST /reports/gstr1-filings/mark-filed` + T1-T6
+- Turn A.2 · Amendment lifecycle + `POST /{cn,dn}/{nid}/amend` + T7-T14
+- Turn B · `_gstr1_9c_payload()` canonical builder + `GET /reports/gstr1-9c` + T15-T25
+- Turn C · High-volume + UI (Mark-as-Filed, Amend, chain view, §9C review tab) + T26-T31
+- Turn D (optional) · §9C Offline Utility JSON adapter (mirror of C3.4)
+
+**Preserved discovery evidence**:
+- Statutory schema (CDNRA/CDNURA fields `ont_num`, `ont_dt`, `nt_num`, `nt_dt`, `ntty`, `pos`, `typ`, `itms.itm_det`) confirmed against `tutorial.gst.gov.in/contextualhelp/Einv/CDNRA.htm`, `tutorial.gst.gov.in/contextualhelp/Einv/CDNURA.htm`, offline-utility PDF, sandbox developer references.
+- Full field-by-field mapping, edge-case matrix, routing rules (CDNR → CDNRA, CDNUR B2CL → CDNURA), and RBAC/audit design captured in the Phase 1 discovery report (this session's conversation history).
+- 5 MB portal ceiling applies to §9C output (same as C3.4).
+- IFF quarterly M1/M2 restriction (only B2B, CDNR, B2BA, CDNRA allowed) noted.
+
+**Zero code touched during Phase 1 discovery**. No new collection, no schema change, no endpoint, no test, no UI. Discovery was strictly read-only.
+
+**Blockers to un-defer**: business-side prioritisation only. No technical blocker.
+
+
 ## Iter132c · C3.4 · GSTR-1 §9B Offline Utility JSON — ✅ READY FOR UAT (2026-09-02 · not yet locked)
 
 ### Scope shipped
