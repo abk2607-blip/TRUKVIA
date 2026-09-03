@@ -3,6 +3,32 @@
 ## Product summary
 QORVENA is a Bitumen transport ERP tracking LRs, Trips, Freight, Shortage, Invoices, Payments, Suppliers, Customers, Vehicles, Drivers, Products, Fuel, and Reports. FastAPI + React + MongoDB. Auth via Emergent-managed Google, with a dev-only demo token.
 
+## Iter134 · Invoice Number Reason — LIVE UAT verification (2026-09-03)
+
+Deployed bundle grep confirms the reason-binding fix ships in
+`/static/js/bundle.js` (`trimmedReason` x4, `reasonInvalid` x6,
+`invoice-number-reason-hint` x3, `localOverrideActive` x2).  End-to-end
+Playwright runs against the live preview URL:
+
+- **A** override + 24-char reason → payload `{invoice_number, invoice_number_reason:"Manual serial correction"}` → **200**, invoice PDF renders override.
+- **B** same override number again → **409** `Invoice number ... already exists` (reaches uniqueness, not reason validation).
+- **C/D** 5- and 9-char reasons → red hint, Create button **disabled**.
+- **E** exactly 10 chars → button enabled.
+- **F** padded whitespace reason → trimmed → button enabled.
+
+Backend regression `test_iter134_invoice_number_reason_binding.py`
+**14 / 14 PASS** (24-char accept, 10-char boundary, 9-char reject,
+whitespace-only reject, padded-trimmed accept, no-override no-reason,
+matching-suggested no-reason, duplicate → 409, audit trail captures
+`override_number_on_create` + reason + original + final).
+
+If UAT still shows the old error, the browser is serving a stale bundle
+— hard refresh (Ctrl+Shift+R / clear site data) fetches the current
+bundle that contains the fix.
+
+**ITER134 INVOICE NUMBER REASON — LIVE UAT VERIFIED · READY FOR FINAL UAT · ITER133 UNTOUCHED.**
+
+
 ## Iter134 · Invoice Number Reason Validation — UAT-blocker FIX (2026-09-03)
 
 **Bug.**  Owner overrode invoice number on `/invoices/new`, the Reason field

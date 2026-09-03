@@ -1,0 +1,101 @@
+{
+  "iteration": "Iter134",
+  "task": "Invoice Number Override Reason validation — LIVE UAT verification",
+  "verdict": "FIX PRESENT IN DEPLOYED BUNDLE · LIVE UAT PASSES",
+  "root_cause_of_original_bug": "React mutation body gated the outgoing payload on `invoiceNumber !== suggestedNumber` where `suggestedNumber` is React state cached from `/invoices/next-preview` (staleTime 5000ms). Under a live-preview race with the backend's atomic $inc counter the two could disagree in flight, so the payload sometimes shipped without the reason (or shipped an empty reason) even though the DOM showed a valid reason. Backend `strip()` then made the trimmed reason < 10 chars and returned the 400.",
+  "fix_summary": {
+    "frontend_only": [
+      "Owner + edited + non-empty trimmed number → ALWAYS send trimmed invoice_number + trimmed invoice_number_reason (backend re-verifies against LIVE preview, remains source of truth for override vs no-override)",
+      "Trim reason on the wire — whitespace-only reasons collapse to '' and are rejected consistently with backend strip()",
+      "reasonInvalid = localOverrideActive && trimmedReason.length < 10 → disables Create button + red inline hint (data-testid='invoice-number-reason-hint') with live length feedback"
+    ],
+    "backend": "UNCHANGED — routers/invoices.py numbering/override/audit intact; /auth/me now surfaces role/effective_role/is_staff (unrelated to this bug but required for canonical AuthContext consumers)"
+  },
+  "deployed_bundle_verification": {
+    "url": "REACT_APP_BACKEND_URL/static/js/bundle.js",
+    "size_bytes": 9515735,
+    "tokens_present_in_deployed_bundle": {
+      "trimmedReason": 4,
+      "trimmedNum": 5,
+      "reasonInvalid": 6,
+      "invoice-number-reason-hint": 3,
+      "localOverrideActive": 2
+    },
+    "old_gating_expression_remaining": "1 (only in the reason-input render gate at line 284 — NOT the mutation body; the mutation body now uses `isOwner && invoiceNumberEdited && trimmedNum`)"
+  },
+  "live_uat_playwright_runs": {
+    "A_valid_override_happy_path": {
+      "override_num": "AKB/25-26/DUP432197",
+      "reason": "Manual serial correction",
+      "outgoing_payload": "{\"customer_id\":\"cust_e819b37db4c147b0\",\"trip_ids\":[\"trip_8bfce16ae2c44cb9\"],\"invoice_date\":\"2026-09-03\",\"hsn_sac\":\"996791\",\"gst_type\":\"cgst_sgst\",\"rcm\":true,\"notes\":\"\",\"invoice_number\":\"AKB/25-26/DUP432197\",\"invoice_number_reason\":\"Manual serial correction\"}",
+      "response_status": 200,
+      "response_invoice_number": "AKB/25-26/DUP432197",
+      "verdict": "PASS"
+    },
+    "B_duplicate_number_reaches_uniqueness_not_reason": {
+      "override_num": "AKB/25-26/DUP432197",
+      "reason": "Manual serial correction",
+      "outgoing_payload": "{\"customer_id\":\"cust_dbb770bb5aa340fb\",\"trip_ids\":[\"trip_3cc4abc7a1294f68\"],\"invoice_date\":\"2026-09-03\",\"hsn_sac\":\"996791\",\"gst_type\":\"cgst_sgst\",\"rcm\":true,\"notes\":\"\",\"invoice_number\":\"AKB/25-26/DUP432197\",\"invoice_number_reason\":\"Manual serial correction\"}",
+      "response_status": 409,
+      "response_body": "{\"detail\":\"Invoice number AKB/25-26/DUP432197 already exists\"}",
+      "verdict": "PASS — request reaches uniqueness enforcement (not reason validation)"
+    },
+    "C_short_5char_reason_blocked_locally": {
+      "reason": "short",
+      "hint": "Reason must be at least 10 characters (currently 5).",
+      "create_button_disabled": true,
+      "verdict": "PASS"
+    },
+    "D_9char_reason_blocked_locally": {
+      "reason": "123456789",
+      "hint": "Reason must be at least 10 characters (currently 9).",
+      "create_button_disabled": true,
+      "verdict": "PASS"
+    },
+    "E_exactly_10char_reason_accepted_locally": {
+      "reason": "1234567890",
+      "hint": "Reason is required when overriding the invoice number.",
+      "create_button_disabled": false,
+      "verdict": "PASS"
+    },
+    "F_padded_reason_trimmed_and_accepted_locally": {
+      "reason": "   Manual serial correction   ",
+      "hint": "Reason is required when overriding the invoice number.",
+      "create_button_disabled": false,
+      "verdict": "PASS — trim renders 24 valid chars"
+    }
+  },
+  "backend_regression": {
+    "test_iter134_invoice_number_reason_binding.py": "14 / 14 PASS",
+    "specifics": [
+      "test_valid_24char_reason_accepted",
+      "test_exactly_10char_reason_accepted",
+      "test_9char_reason_rejected",
+      "test_whitespace_only_reason_rejected",
+      "test_padded_reason_trimmed_and_accepted",
+      "test_no_override_no_reason_required",
+      "test_matching_suggested_number_no_reason_required",
+      "test_duplicate_override_number_returns_409",
+      "test_override_audit_captures_reason_original_and_final",
+      "test_reason_is_trimmed_on_wire (source-shape)",
+      "test_invoice_number_is_trimmed_on_wire (source-shape)",
+      "test_payload_gate_is_owner_edited_notgated_by_local_suggested (source-shape)",
+      "test_create_button_blocks_short_reason (source-shape)",
+      "test_inline_reason_hint_present (source-shape)"
+    ],
+    "full_iter134_suite": "49 / 49 PASS (numbering + editable + field + reason-binding + role-ux + signature-upload + signature-size)"
+  },
+  "audit_verification": {
+    "test": "test_override_audit_captures_reason_original_and_final",
+    "captured_fields": ["action=override_number_on_create", "entity_ref=<final_invoice_number>", "reason=<user_reason>", "changes.suggested_number=<server_original>", "changes.new_number=<final>", "user_id", "timestamp"],
+    "verdict": "PASS"
+  },
+  "possible_reason_users_uat_still_failed": [
+    "Stale browser bundle — the user's UAT session was likely served a cached bundle predating the reason-binding fix. Deployed bundle now contains all new tokens (trimmedReason, reasonInvalid, invoice-number-reason-hint). Hard-refresh recommended (Ctrl+Shift+R / clear site data) so the browser fetches the current /static/js/bundle.js.",
+    "Different environment — if the user's UAT was on a Vercel/Railway/production deploy, that deploy must be re-published to pick up this commit."
+  ],
+  "screenshots": [
+    "/app/artifacts/iter134_reason_live_repro.png",
+    "/app/artifacts/iter134_live_verify.png"
+  ]
+}
