@@ -1,5 +1,78 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
+## 🔒 Iter134 · Invoice Enhancement — LOCKED — 2026-09-03
+
+**Status: LOCKED / FROZEN.** No further changes to the Iter134 surface
+without an explicit unlock instruction from the operator.
+
+### Locked scope
+1. Invoice-date-driven FY numbering
+2. FY-scoped atomic sequence (`companies.next_invoice_number_by_fy`, MongoDB `$inc`)
+3. Unique invoice number protection (`(user_id, invoice_number)` unique index)
+4. FY snapshot persisted on each invoice (`fy_string`)
+5. Next Invoice Number preview (`GET /api/invoices/next-preview`)
+6. Separate Invoice Number UI field on `/invoices/new`
+7. Owner-only create-time override (`POST /api/invoices`)
+8. Owner-only post-issue override (`PATCH /api/invoices/{iid}/override-number`)
+9. Override reason validation — trimmed, min 10 chars
+10. Override audit — `override_number_on_create` / override on PATCH — captures suggested + final + reason + user + timestamp
+11. Signature Upload UI (`SignatureUpload.jsx` + Settings)
+12. Signature Image rendering (Preview + Download PDF parity)
+13. Signature size polish — 50 × 20 mm proportional
+14. Authorised Signatory Name (Settings + PDF)
+15. Authorised Signatory Designation (Settings + PDF)
+16. Jurisdiction (Settings + PDF)
+17. System-generated Invoice Note (Settings + PDF)
+18. Contradiction guard (system-note vs override reason vs jurisdiction)
+19. Preview = Download PDF parity (single builder, two-pass canvas)
+20. Multi-page / Page X of Y preservation
+21. Fail-closed auth role gating on Invoice Number field
+    (`isOwner = !authLoading && _rawRole === "owner"`)
+
+### Final regression status
+- Iter134 pytest suite · **55 / 55 PASS** in default mode; **63 / 63 PASS** in serial (`-n 0`).
+  - `test_iter134_invoice_numbering.py` (12) · FY / atomic $inc / uniqueness / preview
+  - `test_iter134_invoice_number_field.py` (6) · UI-side field contract
+  - `test_iter134_invoice_number_editable.py` (3) · Owner create-time override happy path
+  - `test_iter134_invoice_number_role_ux.py` (5) · canonical role source + disabled/readOnly + reason gating
+  - `test_iter134_invoice_number_reason_binding.py` (14) · trim, 10-char boundary, whitespace-only, padded, no-override, matching-suggested, duplicate → 409, audit trail
+  - `test_iter134_owner_editable_live_uat.py` (6) · fail-closed authLoading gate
+  - `test_iter134_signature_upload.py` (5) · upload / replace / contradiction guard
+  - `test_iter134_signature_size.py` (4) · PDF box size + parity
+
+### Final UAT status
+- Owner login → Invoice Number editable · valid override + reason "Manual serial correction" → HTTP 200 · PDF renders override number.
+- Duplicate override number → HTTP 409 `Invoice number ... already exists`.
+- Short / 9-char / whitespace-only reasons → blocked locally (Create button disabled with red hint) and rejected server-side.
+- Non-owner / accountant / viewer / role-loading → field disabled with "Owner-only override" hint.
+- Backend independently rejects anonymous PATCH/POST override attempts (HTTP 401/403).
+
+### Deferred (backlog — do NOT implement)
+- Reason Presets
+- Override History Panel
+- Payment Cashbook UI
+- Auth-loading skeleton
+- Number-jump audit banner
+- Bulk Renumber
+- Signature alignment controls
+- Signature size presets
+- Signature previous-file manager
+- PDF Settings mini-preview
+- DSC
+- e-Invoice
+- IRN / QR
+- Any unrelated Invoice feature
+
+### Protection (untouched, still LOCKED)
+- Iter133 Expense / Vehicle Cost
+- C3.1 / C3.2 / C3.4 / C3.5
+- C4 CN/DN Register
+- C5 §9C CDNRA/CDNURA
+- DG-STABILITY-1
+
+**ITER134 INVOICE ENHANCEMENT — LOCKED — HARD STOP.**
+
+
 ## Product summary
 QORVENA is a Bitumen transport ERP tracking LRs, Trips, Freight, Shortage, Invoices, Payments, Suppliers, Customers, Vehicles, Drivers, Products, Fuel, and Reports. FastAPI + React + MongoDB. Auth via Emergent-managed Google, with a dev-only demo token.
 
