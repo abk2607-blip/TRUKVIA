@@ -3,6 +3,54 @@
 ## Product summary
 QORVENA is a Bitumen transport ERP tracking LRs, Trips, Freight, Shortage, Invoices, Payments, Suppliers, Customers, Vehicles, Drivers, Products, Fuel, and Reports. FastAPI + React + MongoDB. Auth via Emergent-managed Google, with a dev-only demo token.
 
+## Iter134 · Owner Role Gating — FAIL-CLOSED correction (2026-09-03)
+
+**Concern.** The previous permissive-default (`unknown role → Owner`)
+was wrong at the UI layer: a non-owner could see the field
+momentarily editable while `/auth/me` was in flight. Backend still
+rejected forged overrides with 403, but the UI must also fail-closed.
+
+**Fix (frontend only).**  Consume the `loading` flag from the canonical
+`AuthContext` and gate `isOwner` behind both flags:
+
+```js
+const { user, loading: authLoading } = useAuth();
+const _rawRole = (user?.effective_role ?? user?.role ?? "").toString().trim().toLowerCase();
+const isOwner = !authLoading && _rawRole === "owner";
+```
+
+| authLoading | _rawRole | isOwner | Field |
+| --- | --- | --- | --- |
+| true | any | **false** | disabled / read-only |
+| false | "" | **false** | disabled / read-only |
+| false | "owner" | **true** | editable |
+| false | "accountant" \| "viewer" \| … | **false** | disabled / read-only |
+
+### Live DOM evidence (Playwright, deployed preview)
+| Scenario | `disabled` | `readonly` | Typing | Hint |
+| --- | --- | --- | --- | --- |
+| S1 · role-less cache + /auth/me delayed 6s | `""` | `""` | ❌ | Owner-only override |
+| S2 · explicit owner after /auth/me | `null` | `null` | ✅ | Owner can override |
+| S3 · explicit accountant | `""` | `""` | ❌ | Owner-only override |
+| S4 · explicit viewer | `""` | `""` | ❌ | Owner-only override |
+| S5 · owner override valid reason | — | — | POST 200, PDF shows override |
+| S6 · anonymous PATCH/POST override | — | — | HTTP 401 (backend independent) |
+
+### Backend authorization (UNCHANGED)
+- `POST /api/invoices` override branch — 403 `Only owner can override the invoice number`
+- `PATCH /api/invoices/{iid}/override-number` — 403 `Only owner can override invoice number`
+
+### Tests · Iter134 suite → 63 / 63 PASS
+`test_iter134_owner_editable_live_uat.py` rewritten (6 tests) to lock
+the fail-closed shape.  `test_iter134_invoice_number_role_ux.py`
+assertion updated to `!authLoading && _rawRole === "owner"`.
+Reason-binding (14), editable (3), field (6), numbering (12),
+signature-size (4), signature-upload (5), role-ux (5), and the new
+owner-editable-live-uat (6) all green in serial mode.
+
+**ITER134 OWNER ROLE GATING — FAIL-CLOSED FIX COMPLETE — READY FOR FINAL UAT — ITER133 UNTOUCHED.**
+
+
 ## Iter134 · Owner Invoice-Number Editability — LIVE UAT HARDENING (2026-09-03)
 
 **Bug (as reported).** Owner logged into the live UI, opened

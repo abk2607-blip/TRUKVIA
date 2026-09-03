@@ -23,11 +23,10 @@ def test_uses_canonical_role_source():
     """isOwner must be derived from user.effective_role || user.role — the
     same canonical pattern used by Notes / PartyLedger / Vendors / Mechanics.
 
-    Iter134 LIVE UAT hardening: unknown / missing role is treated as OWNER
-    (permissive default) because /auth/session doesn't include a role field
-    and a real Owner would otherwise be locked out of their own field
-    during the split-second before /auth/me resolves. Backend remains the
-    final authorization gate.
+    Iter134 FAIL-CLOSED: auth-loading and unknown/empty role both resolve
+    to isOwner=false so the Invoice Number field can never be even
+    momentarily editable for a non-owner while /auth/me is in flight.
+    Backend remains the final authorization gate.
     """
     src = _src()
     assert 'const isOwner' in src
@@ -35,10 +34,10 @@ def test_uses_canonical_role_source():
         r'user\?\.effective_role\s*\?\?\s*user\?\.role',
         src,
     ), "canonical (effective_role ?? role) source missing"
-    # Permissive default — unknown role → true
-    assert '_rawRole === "" ? true' in src
-    # Explicit non-owner → false
-    assert '_rawRole === "owner"' in src
+    # Fail-closed — auth-loading gates the whole thing to false
+    assert '!authLoading && _rawRole === "owner"' in src
+    # The old permissive branch is retired
+    assert '_rawRole === "" ? true' not in src
 
 
 def test_invoice_number_input_gated_by_isowner():

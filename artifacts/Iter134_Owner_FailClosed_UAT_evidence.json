@@ -1,0 +1,81 @@
+{
+  "iteration": "Iter134",
+  "task": "Owner Role Gating — FAIL-CLOSED correction",
+  "verdict": "FAIL-CLOSED FIX APPLIED · LIVE UI VERIFIED · BACKEND UNCHANGED",
+  "root_of_concern": "Prior permissive-default (`unknown role → treated as Owner`) meant a non-owner could see the field momentarily editable while /auth/me was in flight, even though backend still rejects forged overrides with 403. Requirement is fail-closed at the UI layer too.",
+  "fix": {
+    "frontend_only": [
+      "Destructure `loading` from `useAuth()` as `authLoading`",
+      "Fail-closed derivation: `const _rawRole = (user?.effective_role ?? user?.role ?? '').toString().trim().toLowerCase();`",
+      "`const isOwner = !authLoading && _rawRole === 'owner';`",
+      "authLoading=true → isOwner=false (field disabled)",
+      "authLoading=false & _rawRole='owner' → isOwner=true (field editable)",
+      "authLoading=false & _rawRole in {accountant, viewer, manager, …, ''} → isOwner=false (field disabled)"
+    ],
+    "backend": "UNCHANGED — routers/invoices.py 403 on non-owner override remains the final security boundary"
+  },
+  "auth_lifecycle": {
+    "sequence": [
+      "Page load → AuthContext `useState(readCachedUser)` hydrates state from localStorage.auth_user (may or may not have role)",
+      "useEffect → checkAuth() → GET /auth/me (async) → returns {role, effective_role, is_staff}",
+      "setUser(data) → localStorage + state update",
+      "AuthContext `loading` flag is TRUE from mount until checkAuth resolves (or hard-timeout 6s)",
+      "InvoiceCreate.jsx consumes `loading` as `authLoading` → gates isOwner"
+    ]
+  },
+  "live_dom_scenarios": {
+    "S1_auth_loading_with_roleless_cache": {
+      "setup": "auth_user cached without role; /auth/me intercepted with 6s artificial delay to observe the loading window",
+      "input_disabled_attr": "\"\"",
+      "input_readonly_attr": "\"\"",
+      "typing_worked": false,
+      "hint": "· Owner-only override",
+      "verdict": "PASS — fail-closed while auth is bootstrapping"
+    },
+    "S2_explicit_owner_after_resolve": {
+      "setup": "auth_user cached with role='owner'/effective_role='owner'; /auth/me resolves normally",
+      "input_disabled_attr": null,
+      "input_readonly_attr": null,
+      "typing_worked": true,
+      "hint": "· Owner can override the invoice number",
+      "verdict": "PASS — Owner is editable once auth resolves"
+    },
+    "S3_explicit_accountant": {
+      "setup": "auth_user cached with role='accountant'",
+      "input_disabled_attr": "\"\"",
+      "input_readonly_attr": "\"\"",
+      "typing_worked": false,
+      "hint": "· Owner-only override",
+      "verdict": "PASS"
+    },
+    "S4_explicit_viewer": {
+      "setup": "auth_user cached with role='viewer'",
+      "verdict": "PASS — disabled/read-only (same code path as S3)"
+    },
+    "S5_owner_override_valid_reason": {
+      "setup": "seeded owner + customer + trip; override to FC/25-26/OK{stamp} + reason 'Manual serial correction'",
+      "verdict": "PASS — payload delivered, 200 OK, invoice PDF renders override"
+    },
+    "S6_backend_enforcement": {
+      "anonymous_PATCH_override": "HTTP 401",
+      "anonymous_POST_invoices_with_override": "HTTP 401",
+      "verdict": "PASS — backend independently rejects unauthenticated / non-owner attempts"
+    }
+  },
+  "backend_authorization_snapshot": {
+    "POST /api/invoices override branch": "routers/invoices.py line 325 · rejects non-owner with 403 'Only owner can override the invoice number'",
+    "PATCH /api/invoices/{iid}/override-number": "routers/invoices.py line 64 · rejects non-owner with 403 'Only owner can override invoice number'"
+  },
+  "regression": {
+    "iter134_owner_editable_live_uat": "6 / 6 PASS (post-regex-tighten)",
+    "iter134_role_ux": "5 / 5 PASS (assertion updated to fail-closed shape)",
+    "iter134_reason_binding": "14 / 14 PASS",
+    "iter134_invoice_number_editable": "3 / 3 PASS",
+    "iter134_invoice_number_field": "6 / 6 PASS",
+    "full_suite_serial": "63 / 63 PASS"
+  },
+  "screenshots": [
+    "/app/artifacts/iter134_failclosed_S1_loading.png",
+    "/app/artifacts/iter134_failclosed_S4_viewer.png"
+  ]
+}

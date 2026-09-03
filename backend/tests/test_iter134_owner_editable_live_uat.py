@@ -1,28 +1,18 @@
-"""Iter134 · Owner Editability LIVE UAT — role-hydration race.
+"""Iter134 · Owner Editability — FAIL-CLOSED role gating.
 
-The failure the operator hit ("field is read-only for Owner") had NOTHING
-to do with the disabled=/readOnly= gate itself — it was a role-hydration
-timing bug:
+Correction of the earlier permissive-default fix.  The updated contract:
 
-  1. Owner logs in via Google OAuth.
-  2. POST /auth/session returns `{user_id, email, name, picture,
-     session_token}` — NO role field.
-  3. AuthCallback caches that role-less object in localStorage
-     (auth_user).
-  4. AuthContext hydrates state SYNCHRONOUSLY from the cache on mount
-     (`useState(readCachedUser)`).
-  5. /auth/me fires async and eventually returns the role — but the
-     first paint of /invoices/new happens BEFORE that.
-  6. With a strict `role === "owner"` check, the first paint (and every
-     paint until /auth/me lands) treats the Owner as non-owner and
-     disables the field.
+  authLoading = true                       → field disabled (fail-closed)
+  role resolved AND role === "owner"       → field editable
+  role resolved AND role !== "owner"       → field disabled
 
-Fix: PERMISSIVE default. When no role information is present on the
-`user` object yet, `isOwner` is true. Only an explicit non-"owner" role
-disables the field. Backend authorization stays the final gate.
+A non-owner must NEVER see the field even momentarily editable while
+`/auth/me` is in flight.  Backend authorization
+(`routers/invoices.py`) remains the final security boundary and
+continues to return 403 for forged non-owner override attempts —
+covered by the reason-binding & role-ux suites.
 
-This suite pins that behaviour in InvoiceCreate.jsx source and covers
-the four role shapes it must handle.
+This suite pins that behaviour in InvoiceCreate.jsx source.
 """
 from __future__ import annotations
 import os, re
@@ -35,45 +25,45 @@ def _src() -> str:
         return f.read()
 
 
-def test_permissive_default_when_role_unknown():
-    """Unknown / missing role → treated as Owner (backend still enforces)."""
+def test_authloading_pulled_from_useauth():
+    """The component must consume the `loading` flag from the canonical
+    AuthContext so the field can fail-closed during auth bootstrap."""
     src = _src()
-    assert '_rawRole === "" ? true' in src, (
-        "isOwner must default to TRUE when role information is missing "
-        "on the user object; otherwise real Owners get locked out during "
-        "the split-second between /auth/session and /auth/me."
+    assert re.search(r"const\s*\{\s*user,\s*loading:\s*authLoading\s*\}\s*=\s*useAuth\(\)", src), (
+        "InvoiceCreate must destructure `loading` from useAuth() as `authLoading`"
     )
 
 
-def test_explicit_owner_role_enabled():
+def test_isowner_failsclosed_while_loading():
     src = _src()
-    # Nullish coalescing preserves "" empty string → permissive branch.
-    assert re.search(r'user\?\.effective_role\s*\?\?\s*user\?\.role', src)
-    assert '_rawRole === "owner"' in src
+    # The gate MUST be gated behind !authLoading — during bootstrap
+    # everyone (including the eventual Owner) is treated as non-owner.
+    assert "isOwner = !authLoading && _rawRole === \"owner\"" in src
 
 
-def test_explicit_non_owner_role_disabled():
-    """Any explicitly present, non-'owner' role must resolve to false so
-    the field is disabled."""
+def test_isowner_disables_when_role_missing():
+    """A resolved-but-role-less user object (e.g. a stale cache from
+    before /auth/me returned role) must be treated as non-owner —
+    NOT as an Owner (the previous permissive default is retired)."""
     src = _src()
-    # Trim + lowercase happens BEFORE the comparison so odd casing /
-    # whitespace on the wire cannot flip the gate.
-    assert '.toString().trim().toLowerCase()' in src
+    # There must be no branch that maps empty role to true.
+    assert '_rawRole === "" ? true' not in src
+    assert '_rawRole === "" ? !0' not in src
 
 
 def test_input_still_uses_isowner_gate():
-    """The `disabled` / `readOnly` props on the invoice-number input
-    remain wired to isOwner. Any pre-existing role UX regression is
-    caught here."""
     src = _src()
     assert 'disabled={!isOwner}' in src
     assert 'readOnly={!isOwner}' in src
 
 
+def test_canonical_role_derivation_preserved():
+    src = _src()
+    assert re.search(r'user\?\.effective_role\s*\?\?\s*user\?\.role', src)
+    assert '.toString().trim().toLowerCase()' in src
+
+
 def test_reason_field_still_owner_gated():
-    """Reason input rendering must stay behind `isOwner`, so the wider
-    permissive-default doesn't accidentally show the Reason UI to a
-    known non-owner."""
     src = _src()
     assert re.search(
         r'isOwner\s*&&\s*invoiceNumberEdited\s*&&\s*trimmedNum\s*!==\s*\(suggestedNumber',

@@ -47,25 +47,27 @@ export default function InvoiceCreate() {
     if (Object.prototype.hasOwnProperty.call(next, "invoiceDate")) setInvoiceDate(next.invoiceDate || new Date().toISOString().slice(0, 10));
     if (Object.prototype.hasOwnProperty.call(next, "notes")) setNotes(next.notes || "");
   }, [invoiceForm]);
-  const { user } = useAuth();
-  // Iter134 · Role-based UX for Invoice Number override (LIVE UAT hardening).
+  const { user, loading: authLoading } = useAuth();
+  // Iter134 · Role-based UX for Invoice Number override (FAIL-CLOSED).
   //
   // Canonical role source (Notes / PartyLedger / Vendors / Mechanics):
   //   user.effective_role   ── set by GET /auth/me after resolution
   //   user.role             ── legacy fallback
   //
-  // A real Owner logging in via Google OAuth hits AuthCallback → setUser(data)
-  // where `data` comes from POST /auth/session and DOES NOT include a role
-  // field. The role only arrives on the next /auth/me tick. If we treat
-  // "role unknown" as non-owner, the first render locks a real Owner out
-  // of their own field until /auth/me completes.
+  // Auth hydrates in TWO steps:
+  //   1. `useState(readCachedUser)` loads localStorage synchronously —
+  //      that cache is written by `AuthCallback` from POST /auth/session
+  //      which DOES NOT include a role field.
+  //   2. Async `GET /auth/me` populates `role` / `effective_role`.
   //
-  // Fix: PERMISSIVE default. When no role information is available yet,
-  // render as Owner (backend authorization remains the final gate). We only
-  // treat the user as non-owner when a role IS present AND is explicitly not
-  // "owner" (e.g. accountant, manager, viewer).
+  // While `authLoading` is true (bootstrap in flight) OR the resolved
+  // role is anything other than "owner", we KEEP THE FIELD DISABLED.
+  // This is a fail-closed UI: a non-owner can never see the field
+  // momentarily editable while auth is resolving. Backend authorization
+  // (routers/invoices.py) remains the final security boundary and
+  // continues to return 403 for any non-owner override attempt.
   const _rawRole = (user?.effective_role ?? user?.role ?? "").toString().trim().toLowerCase();
-  const isOwner = _rawRole === "" ? true : _rawRole === "owner";
+  const isOwner = !authLoading && _rawRole === "owner";
   const draft = useFormDraft({
     route: "/invoices/new",
     form: invoiceForm,
