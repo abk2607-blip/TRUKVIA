@@ -199,7 +199,46 @@ export default function Settings() {
         <div className="px-5 py-3 border-b border-zinc-200 text-sm font-bold uppercase tracking-wider">Invoice Numbering</div>
         <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
           <F label="Invoice Prefix"><input data-testid="setting-prefix" value={form.invoice_prefix} onChange={set("invoice_prefix")} className={inputCls} /></F>
-          <F label="Next Invoice Number"><input data-testid="setting-next-num" type="number" min="1" value={form.next_invoice_number} onChange={set("next_invoice_number")} className={inputCls} /></F>
+          <F label="Next Invoice Number (legacy fallback)"><input data-testid="setting-next-num" type="number" min="1" value={form.next_invoice_number} onChange={set("next_invoice_number")} className={inputCls} /></F>
+          <div className="md:col-span-2 text-[11px] text-zinc-500">
+            From Iter134 the running sequence is FY-scoped. `Next Invoice Number` is retained as a one-time seed for the current FY only.
+          </div>
+        </div>
+      </section>
+
+      <section className="border border-zinc-200 bg-white rounded-sm">
+        <div className="px-5 py-3 border-b border-zinc-200 text-sm font-bold uppercase tracking-wider">Invoice Presentation (Iter134)</div>
+        <div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <F label="Authorised Signatory Name">
+            <input data-testid="setting-signatory-name" value={form.authorised_signatory_name || ""}
+              onChange={set("authorised_signatory_name")} className={inputCls} placeholder="e.g. Rajesh Kumar" />
+          </F>
+          <F label="Authorised Signatory Designation">
+            <input data-testid="setting-signatory-designation" value={form.authorised_signatory_designation || ""}
+              onChange={set("authorised_signatory_designation")} className={inputCls} placeholder="e.g. Partner" />
+          </F>
+          <F label="Jurisdiction (empty = clause hidden)">
+            <input data-testid="setting-jurisdiction" value={form.jurisdiction || ""}
+              onChange={set("jurisdiction")} className={inputCls} placeholder="e.g. Vijayawada" />
+          </F>
+          <F label="System-generated Note (max 200 chars)">
+            <input data-testid="setting-system-note" maxLength={200} value={form.system_generated_note || ""}
+              onChange={set("system_generated_note")} className={inputCls}
+              placeholder="e.g. This is a computer-generated tax invoice." />
+          </F>
+          <F label="Signature Image File ID">
+            <input data-testid="setting-signature-file-id" value={form.signature_file_id || ""}
+              onChange={set("signature_file_id")} className={inputCls}
+              placeholder="Upload via Files page and paste file_id here" />
+          </F>
+          <F label="Signature Mode">
+            <select data-testid="setting-signature-mode" value={form.signature_mode || "image"}
+              onChange={set("signature_mode")} className={inputCls}>
+              <option value="none">None (text-only signature block)</option>
+              <option value="image">Signature Image</option>
+              <option value="dsc" disabled>Digital Signature / DSC (future — not active)</option>
+            </select>
+          </F>
         </div>
       </section>
     </div>

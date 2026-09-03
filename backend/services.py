@@ -410,43 +410,123 @@ def _compose_invoice_number(prefix: str, fy_str: str, seq: int) -> str:
     return f"{p}/{fy_str}/{seq:04d}"
 
 
-async def _next_invoice_number(user_id: str) -> str:
-    company = await db.companies.find_one({"user_id": user_id}, {"_id": 0})
-    prefix = "INV"
-    seq = 1
-    if company:
-        prefix = company.get("invoice_prefix") or "INV"
-        seq = int(company.get("next_invoice_number") or 1)
-    fy = now_utc()
-    yr = fy.year % 100
-    yr_next = (fy.year + 1) % 100
-    fy_str = f"{yr:02d}-{yr_next:02d}" if fy.month >= 4 else f"{yr-1:02d}-{yr:02d}"
-    num = _compose_invoice_number(prefix, fy_str, seq)
-    await db.companies.update_one(
-        {"user_id": user_id},
-        {"$set": {"next_invoice_number": seq + 1}},
-        upsert=True,
-    )
-    return num
+def _fy_from_iso(iso_date: str) -> str:
+    """Iter134 · FY string derived from an ISO date string. Same shape as
+    `_derive_fy_from_iso` used by CN/DN, hoisted so invoice numbering can
+    reuse it without introducing a circular import order."""
+    from datetime import date as _date
+    d = _date.fromisoformat(iso_date)
+    yr = d.year % 100
+    yr_next = (d.year + 1) % 100
+    return f"{yr:02d}-{yr_next:02d}" if d.month >= 4 else f"{yr-1:02d}-{yr:02d}"
 
-async def _next_invoice_number_for_company(company_id: str, user_id: str) -> str:
-    """Generate next invoice number scoped to a specific company (multi-company)."""
-    company = await db.companies.find_one({"id": company_id, "user_id": user_id}, {"_id": 0})
-    prefix = "INV"
-    seq = 1
+
+async def _next_invoice_number(user_id: str, invoice_date_iso: str | None = None) -> str:
+    """Iter134 · Kept for backward compat. Delegates to the company-scoped
+    helper using the tenant's single default company. Uses invoice_date to
+    determine FY (falls back to today only if the caller didn't provide one)."""
+    company = await db.companies.find_one({"user_id": user_id}, {"_id": 0})
     if company:
-        prefix = company.get("invoice_prefix") or "INV"
-        seq = int(company.get("next_invoice_number") or 1)
-    fy = now_utc()
-    yr = fy.year % 100
-    yr_next = (fy.year + 1) % 100
-    fy_str = f"{yr:02d}-{yr_next:02d}" if fy.month >= 4 else f"{yr-1:02d}-{yr:02d}"
-    num = _compose_invoice_number(prefix, fy_str, seq)
-    await db.companies.update_one(
+        return await _next_invoice_number_for_company(
+            company["id"], user_id, invoice_date_iso=invoice_date_iso
+        )
+    # No company yet — degenerate path used by very old code.
+    iso = invoice_date_iso or now_utc().date().isoformat()
+    fy_str = _fy_from_iso(iso)
+    return _compose_invoice_number("INV", fy_str, 1)
+
+
+async def _next_invoice_number_for_company(
+    company_id: str, user_id: str, invoice_date_iso: str | None = None
+) -> str:
+    """Iter134 · Atomically consume the next invoice sequence, FY-scoped
+    by the invoice's own date (not server clock).
+
+    Rules (mandatory):
+      1. FY is derived from `invoice_date_iso` — never `now_utc()`.
+      2. Sequence is atomic via `$inc` on
+         `next_invoice_number_by_fy["<fy>"]` — no read-then-set race.
+      3. Legacy `next_invoice_number` is a one-time seed if the FY key is
+         absent AND the current FY matches the legacy server-clock FY.
+      4. Uniqueness is enforced by a unique index on
+         `(user_id, invoice_number)` — see server.py startup.
+    """
+    iso = invoice_date_iso or now_utc().date().isoformat()
+    fy_str = _fy_from_iso(iso)
+    fy_key = f"next_invoice_number_by_fy.{fy_str}"
+
+    # Legacy self-heal: if the FY bucket is missing AND the invoice's FY
+    # matches today's server-clock FY, seed from the legacy scalar so old
+    # tenants keep their historical sequence continuity in that FY.
+    company = await db.companies.find_one(
         {"id": company_id, "user_id": user_id},
-        {"$set": {"next_invoice_number": seq + 1}},
+        {"_id": 0, "invoice_prefix": 1, "next_invoice_number": 1,
+         "next_invoice_number_by_fy": 1},
+    ) or {}
+    prefix = company.get("invoice_prefix") or "INV"
+    fy_map = company.get("next_invoice_number_by_fy") or {}
+    if fy_str not in fy_map:
+        server_fy = _fy_from_iso(now_utc().date().isoformat())
+        if fy_str == server_fy and int(company.get("next_invoice_number") or 1) > 1:
+            seed = int(company.get("next_invoice_number") or 1)
+        else:
+            seed = 1
+        # $setOnInsert-style safe seed — only writes if the key is still absent
+        await db.companies.update_one(
+            {"id": company_id, "user_id": user_id, fy_key: {"$exists": False}},
+            {"$set": {fy_key: seed}},
+        )
+
+    # Atomic increment; the returned document reflects the state BEFORE
+    # increment (`return_document=False`), so we grab our reserved sequence
+    # directly.
+    doc = await db.companies.find_one_and_update(
+        {"id": company_id, "user_id": user_id},
+        {"$inc": {fy_key: 1}},
+        projection={"_id": 0, "invoice_prefix": 1, "next_invoice_number_by_fy": 1},
+        return_document=False,
     )
-    return num
+    prefix = ((doc or {}).get("invoice_prefix")) or prefix
+    reserved = int(((doc or {}).get("next_invoice_number_by_fy") or {}).get(fy_str, 1))
+    # Also keep the legacy scalar in sync ONLY when we're numbering the
+    # current server-clock FY, so pre-Iter134 code paths keep working.
+    server_fy_today = _fy_from_iso(now_utc().date().isoformat())
+    if fy_str == server_fy_today:
+        await db.companies.update_one(
+            {"id": company_id, "user_id": user_id},
+            {"$set": {"next_invoice_number": reserved + 1}},
+        )
+    return _compose_invoice_number(prefix, fy_str, reserved)
+
+
+async def _preview_next_invoice_number(
+    company_id: str, user_id: str, invoice_date_iso: str
+) -> dict:
+    """Iter134 · Read-only preview — DOES NOT reserve the sequence.
+    Returns what the next invoice number WOULD be if issued right now with
+    this invoice_date. Callers must accept that the actual reservation is
+    atomic at POST time and the preview can be off by one under concurrency."""
+    fy_str = _fy_from_iso(invoice_date_iso)
+    company = await db.companies.find_one(
+        {"id": company_id, "user_id": user_id},
+        {"_id": 0, "invoice_prefix": 1, "next_invoice_number": 1,
+         "next_invoice_number_by_fy": 1},
+    ) or {}
+    prefix = company.get("invoice_prefix") or "INV"
+    fy_map = company.get("next_invoice_number_by_fy") or {}
+    if fy_str in fy_map:
+        seq = int(fy_map[fy_str])
+    else:
+        server_fy = _fy_from_iso(now_utc().date().isoformat())
+        if fy_str == server_fy and int(company.get("next_invoice_number") or 1) > 1:
+            seq = int(company.get("next_invoice_number") or 1)
+        else:
+            seq = 1
+    return {
+        "suggested_number": _compose_invoice_number(prefix, fy_str, seq),
+        "fy": fy_str,
+        "editable": False,
+    }
 
 
 # ── Iter132a · Credit Note numbering ──────────────────────────────────────

@@ -10,7 +10,8 @@ logger = logging.getLogger(__name__)
 from models import (
     Company, Customer, Expenses, Driver, Trip, Product, Party, Vehicle,
     MaintenanceLog, Fuel, Payment, Invoice, TeamMember, ROLE_PERMISSIONS,
-    InvoiceCreateRequest, InvoiceUpdateRequest, PaymentAdd, FileRef, AuditLog,
+    InvoiceCreateRequest, InvoiceUpdateRequest, InvoiceNumberOverrideRequest,
+    PaymentAdd, FileRef, AuditLog,
     now_utc, new_id,
 )
 from auth import get_current_user, _has_perm, require_perm
@@ -22,6 +23,7 @@ from audit import _log_audit, _diff_dict
 from services import (
     _compute_trip, _trip_billable, _recompute_invoice,
     _next_invoice_number, _next_invoice_number_for_company,
+    _preview_next_invoice_number,
     _next_lr_number, _in_range, _vehicle_expiry_stats,
     _state_code, _gstin_checksum,
 )
@@ -30,6 +32,103 @@ router = APIRouter(prefix="/api")
 
 from pdf import build_invoice_pdf
 from storage_client import put_object, APP_NAME
+@router.get("/invoices/next-preview")
+async def next_invoice_number_preview(
+    request: Request,
+    invoice_date: str,
+    user=Depends(get_current_user),
+):
+    """Iter134 · Read-only preview of the invoice number that WOULD be
+    assigned to a new invoice with the given invoice_date. Does NOT reserve
+    the sequence. Refreshed on every date change in the Create UI."""
+    from datetime import date as _date
+    try:
+        _iso = _date.fromisoformat(invoice_date)
+    except Exception:
+        raise HTTPException(status_code=400, detail="invoice_date must be ISO YYYY-MM-DD")
+    if _iso > now_utc().date():
+        raise HTTPException(status_code=400, detail="invoice_date cannot be in the future")
+    cid = await _active_company_id(request, user)
+    return await _preview_next_invoice_number(cid, user["user_id"], invoice_date)
+
+
+@router.patch("/invoices/{iid}/override-number")
+async def override_invoice_number(
+    iid: str,
+    payload: InvoiceNumberOverrideRequest,
+    user=Depends(get_current_user),
+):
+    """Iter134 · Owner-only controlled invoice number override.
+    Uniqueness enforced by the (user_id, invoice_number) unique index.
+    Reason ≥ 10 chars. Old/new/reason captured in the audit trail."""
+    if (user.get("effective_role") or user.get("role") or "").lower() != "owner":
+        raise HTTPException(status_code=403, detail="Only owner can override invoice number")
+    new_num = (payload.new_number or "").strip()
+    if not new_num:
+        raise HTTPException(status_code=400, detail="new_number is required")
+    if len(new_num) > 32:
+        raise HTTPException(status_code=400, detail="new_number too long (max 32 chars)")
+    if not re.match(r"^[A-Za-z0-9/_\-]+$", new_num):
+        raise HTTPException(status_code=400, detail="new_number contains invalid characters")
+    if len((payload.reason or "").strip()) < 10:
+        raise HTTPException(status_code=400, detail="Reason must be at least 10 characters")
+    existing = await db.invoices.find_one({"id": iid, "user_id": user["user_id"]}, {"_id": 0})
+    if not existing:
+        raise HTTPException(status_code=404, detail="Not found")
+    if existing.get("invoice_number") == new_num:
+        raise HTTPException(status_code=400, detail="New number is identical to current")
+    dup = await db.invoices.find_one(
+        {"user_id": user["user_id"], "invoice_number": new_num, "id": {"$ne": iid}},
+        {"_id": 0, "id": 1},
+    )
+    if dup:
+        raise HTTPException(status_code=409, detail=f"Invoice number {new_num} already exists")
+    old_num = existing.get("invoice_number", "")
+    try:
+        await db.invoices.update_one(
+            {"id": iid, "user_id": user["user_id"]},
+            {"$set": {"invoice_number": new_num}},
+        )
+    except Exception as e:
+        if "duplicate key" in str(e).lower():
+            raise HTTPException(status_code=409, detail=f"Invoice number {new_num} already exists")
+        raise
+    await _log_audit(
+        user, "invoice", "override_number",
+        entity_id=iid, entity_ref=new_num,
+        reason=payload.reason.strip(),
+        changes={"old_number": old_num, "new_number": new_num},
+    )
+    return await db.invoices.find_one({"id": iid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
+
+
+async def _attach_signature_path(company: dict, user_id: str) -> None:
+    """Iter134 · Resolve `signature_file_id` → a local tempfile path on the
+    company dict as `_signature_image_path`, consumed by pdf/invoice.py. No-op
+    if disabled, missing, or the file cannot be fetched. Zero impact on legacy
+    invoices/companies that never uploaded a signature."""
+    if company.get("signature_mode", "image") == "dsc":
+        return
+    fid = (company.get("signature_file_id") or "").strip()
+    if not fid:
+        return
+    ref = await db.files.find_one(
+        {"id": fid, "user_id": user_id, "is_deleted": False}, {"_id": 0},
+    )
+    if not ref:
+        return
+    try:
+        from storage_client import get_object
+        data, _ctype = get_object(ref["storage_path"])
+        import tempfile
+        suffix = ".png" if (ref.get("content_type") or "").endswith("png") else ".jpg"
+        tf = tempfile.NamedTemporaryFile(delete=False, suffix=suffix)
+        tf.write(data); tf.flush(); tf.close()
+        company["_signature_image_path"] = tf.name
+    except Exception as e:
+        logger.warning(f"signature fetch failed: {e}")
+
+
 
 @router.get("/invoices")
 async def list_invoices(request: Request, user=Depends(get_current_user)):
@@ -202,12 +301,26 @@ async def create_invoice(payload: InvoiceCreateRequest, request: Request, user=D
     round_off = round(final_amount - gross_total, 2)
     total_amount = final_amount
 
-    invoice_number = await _next_invoice_number_for_company(cid, user["user_id"])
+    # Iter134 · Invoice-date-driven FY. Reject future-dated invoices.
+    from datetime import date as _date
+    inv_date_iso = payload.invoice_date or now_utc().date().isoformat()
+    try:
+        _iso_d = _date.fromisoformat(inv_date_iso)
+    except Exception:
+        raise HTTPException(status_code=400, detail="invoice_date must be ISO YYYY-MM-DD")
+    if _iso_d > now_utc().date():
+        raise HTTPException(status_code=400, detail="invoice_date cannot be in the future")
+    from services import _fy_from_iso as _fy
+    invoice_number = await _next_invoice_number_for_company(
+        cid, user["user_id"], invoice_date_iso=inv_date_iso,
+    )
+    fy_snapshot = _fy(inv_date_iso)
     inv = Invoice(
         company_id=cid,
         invoice_number=invoice_number,
+        fy_string=fy_snapshot,
         customer_id=payload.customer_id,
-        invoice_date=payload.invoice_date or now_utc().date().isoformat(),
+        invoice_date=inv_date_iso,
         trip_ids=payload.trip_ids,
         subtotal=subtotal,
         hsn_sac=payload.hsn_sac or (company_doc.get("hsn_sac") or "996791"),
@@ -257,6 +370,25 @@ async def update_invoice(iid: str, payload: InvoiceUpdateRequest, user=Depends(g
         v = getattr(payload, k)
         if v is not None and v != existing.get(k):
             updates[k] = v
+    # Iter134 · Block cross-FY invoice_date edits on issued invoices.
+    if "invoice_date" in updates:
+        from datetime import date as _date
+        from services import _fy_from_iso as _fy
+        try:
+            _new_d = _date.fromisoformat(updates["invoice_date"])
+        except Exception:
+            raise HTTPException(status_code=400, detail="invoice_date must be ISO YYYY-MM-DD")
+        if _new_d > now_utc().date():
+            raise HTTPException(status_code=400, detail="invoice_date cannot be in the future")
+        old_fy = (existing.get("fy_string") or "").strip() or _fy(existing["invoice_date"])
+        new_fy = _fy(updates["invoice_date"])
+        if new_fy != old_fy:
+            raise HTTPException(
+                status_code=400,
+                detail=(f"Cannot change invoice_date across financial years "
+                        f"(current FY {old_fy}, requested FY {new_fy}). "
+                        f"Cancel this invoice and issue a fresh one in the new FY."),
+            )
     if updates:
         await db.invoices.update_one({"id": iid, "user_id": user["user_id"]}, {"$set": updates})
     # If gst_type/rcm changed, recompute totals
@@ -271,6 +403,7 @@ async def update_invoice(iid: str, payload: InvoiceUpdateRequest, user=Depends(g
         inv_company_id = updated.get("company_id", "")
         company = await db.companies.find_one({"id": inv_company_id, "user_id": user["user_id"]}, {"_id": 0}) if inv_company_id else None
         company = company or await db.companies.find_one({"user_id": user["user_id"], "is_default": True}, {"_id": 0}) or {}
+        await _attach_signature_path(company, user["user_id"])
         trip_docs = await db.trips.find({"user_id": user["user_id"], "id": {"$in": updated["trip_ids"]}}, {"_id": 0}).to_list(500)
         trip_docs.sort(key=lambda t: t.get("date", ""))
         pdf_bytes = build_invoice_pdf(company, customer, updated, trip_docs)
@@ -287,6 +420,7 @@ async def update_invoice(iid: str, payload: InvoiceUpdateRequest, user=Depends(g
     except Exception as e:
         logger.warning(f"invoice snapshot failed: {e}")
     return updated
+
 
 @router.delete("/invoices/{iid}")
 async def delete_invoice(iid: str, reason: str = "", user=Depends(get_current_user)):
@@ -355,6 +489,7 @@ async def invoice_pdf(iid: str, user=Depends(get_current_user)):
     inv_company_id = inv.get("company_id", "")
     company = await db.companies.find_one({"id": inv_company_id, "user_id": user["user_id"]}, {"_id": 0}) if inv_company_id else None
     company = company or await db.companies.find_one({"user_id": user["user_id"], "is_default": True}, {"_id": 0}) or {}
+    await _attach_signature_path(company, user["user_id"])
     trips = await db.trips.find(
         {"user_id": user["user_id"], "id": {"$in": inv["trip_ids"]}},
         {"_id": 0},

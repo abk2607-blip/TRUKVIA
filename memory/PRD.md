@@ -3,6 +3,65 @@
 ## Product summary
 QORVENA is a Bitumen transport ERP tracking LRs, Trips, Freight, Shortage, Invoices, Payments, Suppliers, Customers, Vehicles, Drivers, Products, Fuel, and Reports. FastAPI + React + MongoDB. Auth via Emergent-managed Google, with a dev-only demo token.
 
+## Iter134 · Invoice Enhancement — READY FOR UAT — NOT LOCKED (2026-09-03)
+
+**Delivered:** consolidated Invoice Enhancement turn covering P0 numbering + P1 presentation, per approved Phase-1 discovery. Iter133 untouched (0 files under lock scope modified).
+
+### Locked business rule (implemented + tested)
+> **Invoice numbering is determined by Invoice Date → Financial Year → Invoice Series → Sequence — not by PDF generation date or server date.**
+> An invoice generated in April but dated in March belongs to the previous financial year's numbering series.
+
+### What shipped
+- **P0** — Invoice-date-driven FY (`services._next_invoice_number_for_company` now takes `invoice_date_iso`), FY-scoped counter (`Company.next_invoice_number_by_fy: dict`), atomic `$inc`, unique index `(user_id, invoice_number)`, `Invoice.fy_string` snapshot, legacy `next_invoice_number` self-heal read-through, `GET /api/invoices/next-preview`, future-date reject at create + preview, `InvoiceCreate.jsx` `NextNumberChip` (FY badge + suggested # + backdate warning + future-date block via `max=today`).
+- **P1** — Company settings: `signature_file_id`, `authorised_signatory_name`, `authorised_signatory_designation`, `signature_mode ∈ {none|image|dsc}` (DSC disabled — future-only), `jurisdiction`, `system_generated_note`. `PATCH /api/invoices/{iid}/override-number` (owner-only, reason ≥ 10, 409 on duplicate, audit trail with old/new). Cross-FY invoice_date change on issued invoice blocked. Contradictory-note guard on `PUT /api/company`. PDF additions (all conditional / additive): signature image in existing right-side sig cell, signatory name + designation, `Subject to <city> jurisdiction only.` T&C clause, `<i>System-generated note</i>` beneath sig block. Settings page section "Invoice Presentation (Iter134)".
+- **Not implemented (intentional):** Digital Signature / DSC certificate handling / signing service / cryptographic PDF signing / e-Invoice — future-only.
+
+### Live scoreboard (24 scenarios)
+| Group | Result |
+|---|---|
+| Numbering / FY (A–F, N–P) | ✅ 9/9 |
+| Date validation (E, G, H) | ✅ 3/3 |
+| Owner override + audit (I, J, K) | ✅ 3/3 |
+| Settings + contradictions (L, M) | ✅ 2/2 |
+| Frontend chip + future-date block (Q, R) | ✅ 2/2 |
+| PDF additions + parity (S, T, U, V, W) | ✅ 5/5 |
+| CN / DN untouched (X) | ✅ 1/1 |
+| **Overall** | ✅ **PASS** |
+
+### Regression
+- Iter134 focused: **12 / 12 PASS**
+- Iter127b Page-of-Pages: **12 / 12 PASS** (unchanged)
+- Iter133 Turn 1 · 2A · 2B · 2C · 2D combined: **85 / 85 PASS** (serial, `pytest -o addopts=""`)
+- **Aggregate:** 109 / 109 PASS (24.8 s)
+
+### Files changed (all additive)
+- Backend: `models.py`, `services.py`, `routers/invoices.py`, `routers/companies.py`, `server.py` (index only), `pdf/invoice.py`
+- Frontend: `pages/InvoiceCreate.jsx`, `pages/InvoiceView.jsx`, `pages/Settings.jsx`
+- Tests: `backend/tests/test_iter134_invoice_numbering.py`
+
+### Untouched confirmations
+✅ `pdf/credit_note.py`, `pdf/debit_note.py`, `pdf/ledger.py`, `pdf/_base.py` — zero change.
+✅ CN/DN numbering helpers (`_next_credit_note_number_for_company`, `_next_debit_note_number_for_company`) — zero change.
+✅ All Iter133 code and tests — zero change; 85/85 still green.
+✅ `pytest.ini`, `scripts/run_regression.sh`, DG-STABILITY-1 — zero change.
+✅ `services._compute_trip`, `services_expense_bridge`, supplier `_build_ledger`, driver recovery, invoice recompute, Fuel — zero change.
+
+### Deferred / future
+- File-picker polish for Signature Image (currently a File-ID text input on Settings) — P2
+- DSC signing service integration — future
+- E-Invoice / IRN / QR payload — future
+- Bulk regenerate PDFs after signature settings change — P2
+
+### Compliance note
+Signature Image is decorative and not a Digital Signature. Legal weight of a scanned signature under IT Act / GST rules must be confirmed with the customer's tax counsel before rollout.
+
+### Artefact
+`/app/artifacts/Invoice_Enhancement_UAT_evidence.json` — 24 scenarios PASS, file list, compliance notes, known limitations.
+
+### Final status
+**INVOICE ENHANCEMENT COMPLETE — READY FOR UAT — ITER134 NOT LOCKED — AWAITING USER LOCK APPROVAL.**
+
+
 ## ITER133 EXPENSE / VEHICLE COST — LOCKED (2026-09-03)
 
 **Lock decision:** APPROVED BY USER. Iter133 slab is frozen. No automatic scope expansion. No further edits, refactors, or "improvements" permitted under this lock.

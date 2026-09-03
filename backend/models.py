@@ -1,7 +1,7 @@
 """All Pydantic domain models."""
 import uuid
 from datetime import datetime, timezone
-from typing import List, Optional, Literal, Any
+from typing import List, Optional, Literal, Any, Dict
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 
 
@@ -81,10 +81,22 @@ class Company(BaseModel):
     hsn_sac: str = "996791"
     invoice_prefix: str = "INV"
     next_invoice_number: int = 1
+    # Iter134 · FY-scoped invoice sequence.  Keys are FY strings like "26-27".
+    # Legacy `next_invoice_number` is preserved for backward compatibility and
+    # self-heals into this map on first use for a given FY.  Numbering is
+    # driven by invoice_date, not server clock — see services._next_invoice_number_for_company.
+    next_invoice_number_by_fy: Dict[str, int] = Field(default_factory=dict)
     lr_prefix: str = "LR"
     next_lr_number: int = 1
     logo: str = ""  # data URL (base64)
     udyam_registration: str = ""  # MSME / Udyam Registration No. — appears in Invoice T&C
+    # Iter134 · Invoice presentation settings (all optional; safe defaults).
+    signature_file_id: str = ""              # linked FileRef.id — decorative signature image
+    authorised_signatory_name: str = ""      # printed above "Authorised Signatory" label
+    authorised_signatory_designation: str = ""
+    signature_mode: Literal["none", "image", "dsc"] = "none"  # future-ready; only "image" active
+    jurisdiction: str = ""                   # empty → clause hidden on PDF
+    system_generated_note: str = ""          # empty → note hidden on PDF; max 200 chars
     is_default: bool = False
     # Iter132a · Credit Note / Debit Note numbering + configuration
     credit_note_prefix: str = "CN"
@@ -534,6 +546,7 @@ class Invoice(BaseModel):
     id: str = Field(default_factory=lambda: new_id("inv_"))
     company_id: str = ""
     invoice_number: str
+    fy_string: str = ""                      # Iter134 · FY snapshot ("26-27") — immutable once issued
     customer_id: str
     invoice_date: str
     trip_ids: List[str]
@@ -709,6 +722,15 @@ class InvoiceUpdateRequest(BaseModel):
     rcm: Optional[bool] = None
     notes: Optional[str] = None
     reason: str = ""
+
+
+class InvoiceNumberOverrideRequest(BaseModel):
+    """Iter134 · Owner-only controlled override of an issued invoice number.
+    Uniqueness is enforced server-side via the (user_id, invoice_number)
+    unique index. Reason is mandatory (≥ 10 chars) and audit-logged.
+    Does NOT touch fy_string — that remains the immutable numbering FY."""
+    new_number: str
+    reason: str
 
 
 class PaymentAdd(BaseModel):

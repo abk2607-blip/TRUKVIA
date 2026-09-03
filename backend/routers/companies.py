@@ -90,6 +90,19 @@ async def save_company(payload: Company, request: Request, user=Depends(get_curr
     """Save changes to the ACTIVE company (backward-compatible with single-company clients)."""
     cid = await _active_company_id(request, user)
     doc = payload.model_dump()
+    # Iter134 · Guard: system-generated note cannot contradict a configured signature image.
+    sig_id = (doc.get("signature_file_id") or "").strip()
+    note = (doc.get("system_generated_note") or "").strip().lower()
+    if sig_id and note and ("not required" in note or "does not require" in note or "no signature" in note):
+        raise HTTPException(
+            status_code=400,
+            detail=("System-generated note cannot claim 'signature not required' "
+                    "while a signature image is configured. Remove the signature image "
+                    "or update the note."),
+        )
+    # Iter134 · Enforce max length on system_generated_note (defence in depth vs UI).
+    if len(doc.get("system_generated_note") or "") > 200:
+        raise HTTPException(status_code=400, detail="system_generated_note exceeds 200 chars")
     doc["id"] = cid
     doc["user_id"] = user["user_id"]
     await db.companies.update_one(

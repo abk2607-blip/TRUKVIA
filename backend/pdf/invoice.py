@@ -693,6 +693,11 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
         if udyam:
             from xml.sax.saxutils import escape as _xml_escape
             terms.append(f"MSME / Udyam Registration No: {_xml_escape(udyam)}")
+        _jur = (company.get("jurisdiction") or "").strip()
+        if _jur:
+            from xml.sax.saxutils import escape as _xml_escape
+            # Iter134 · Configurable jurisdiction clause; hidden when empty.
+            terms.append(f"Subject to {_xml_escape(_jur)} jurisdiction only.")
         if invoice.get("notes"):
             from xml.sax.saxutils import escape as _xml_escape
             terms.append(f"Notes: {_xml_escape(invoice.get('notes'))}")
@@ -759,20 +764,63 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
         story.append(Spacer(1, 5))
 
         # ================== 6. SIGNATURE ==================
+        # Iter134 · Additive: signature image + authorised signatory name/designation
+        # inside the EXISTING right-side signature cell. Left-side "Received in
+        # good condition / Customer Signature & Stamp" is untouched.
+        _sig_img_flow = None
+        _sig_file_id = (company.get("signature_file_id") or "").strip()
+        if _sig_file_id and company.get("signature_mode", "image") in ("image", ""):
+            try:
+                from db import db as _db
+                _file = None
+                # We may be inside sync context; guard for both.
+                try:
+                    import asyncio as _asyncio
+                    if _asyncio.get_event_loop().is_running():
+                        # Called from async request handler — fetch via a
+                        # blocking-safe helper is not available; skip if we
+                        # can't resolve synchronously.
+                        pass
+                except Exception:
+                    pass
+            except Exception:
+                _file = None
+        _sig_img_path = (company.get("_signature_image_path") or "").strip()
+        _sig_name = (company.get("authorised_signatory_name") or "").strip()
+        _sig_desig = (company.get("authorised_signatory_designation") or "").strip()
+        right_cell = [Paragraph(f"<b>For {company_name}</b>", styles["SmallB"])]
+        if _sig_img_path:
+            try:
+                from reportlab.platypus import Image as _RLImage
+                _img = _RLImage(_sig_img_path, width=32 * mm, height=14 * mm, kind="proportional")
+                right_cell.append(Spacer(1, 2))
+                right_cell.append(_img)
+            except Exception:
+                pass
+        if _sig_name:
+            right_cell.append(Paragraph(f"<b>{_sig_name}</b>", styles["SmallB"]))
+        if _sig_desig:
+            right_cell.append(Paragraph(_sig_desig, styles["Tiny"]))
+        right_cell.append(Paragraph("Authorised Signatory", styles["Tiny"]))
         sig_tbl = Table(
             [[Paragraph("<font color='#94A3B8'>Received in good condition</font>", styles["Small"]),
-              Paragraph(f"<b>For {company_name}</b>", styles["SmallB"])],
+              right_cell],
              [Paragraph("<font color='#94A3B8'>Customer Signature &amp; Stamp</font>", styles["Tiny"]),
-              Paragraph("Authorised Signatory", styles["Tiny"])]],
-            colWidths=[161 * mm, 109 * mm],   # Iter133 L2d v2 · 273mm → 270mm safe budget
+              Paragraph("", styles["Tiny"])]],
+            colWidths=[161 * mm, 109 * mm],
         )
         sig_tbl.setStyle(TableStyle([
             ("ALIGN", (1, 0), (1, -1), "RIGHT"),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
             ("TOPPADDING", (0, 0), (-1, -1), 2),
             ("LINEABOVE", (0, 1), (0, 1), 0.4, C_LINE_D),
-            ("LINEABOVE", (1, 1), (1, 1), 0.4, C_LINE_D),
         ]))
-        story.append(KeepTogether([Spacer(1, 6), sig_tbl]))
+        _syst_note = (company.get("system_generated_note") or "").strip()[:200]
+        sig_block = [Spacer(1, 6), sig_tbl]
+        if _syst_note:
+            sig_block.append(Spacer(1, 3))
+            sig_block.append(Paragraph(f"<i>{_syst_note}</i>", styles["Tiny"]))
+        story.append(KeepTogether(sig_block))
         return story
 
     # Iter127b · Two-pass render so "Page X of Y" footer has a correct Y.

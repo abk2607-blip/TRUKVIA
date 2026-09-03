@@ -1224,6 +1224,16 @@ async def startup_event():
             [("user_id", 1), ("company_id", 1), ("kind", 1), ("note_number", 1)],
             partialFilterExpression={"note_number": {"$type": "string", "$gt": ""}},
         )
+        # Iter134 · Unique invoice number per tenant (defends against manual
+        # override collisions and any theoretical FY-scoped counter race).
+        try:
+            await db.invoices.create_index(
+                [("user_id", 1), ("invoice_number", 1)],
+                unique=True, name="uniq_user_invoice_number",
+                partialFilterExpression={"invoice_number": {"$type": "string", "$gt": ""}},
+            )
+        except Exception as _e_idx:
+            logger.warning(f"Iter134 invoice unique index skipped: {_e_idx}")
     except Exception as e:
         logger.warning(f"Iter132a startup backfill failed: {e}")
 

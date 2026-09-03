@@ -40,6 +40,18 @@ export default function InvoiceView() {
 
   const [showPay, setShowPay] = useState(false);
   const [pay, setPay] = useState({ amount: "", date: new Date().toISOString().slice(0, 10), mode: "Cash", note: "" });
+  // Iter134 · Owner-only Invoice Number override
+  const [showOverride, setShowOverride] = useState(false);
+  const [override, setOverride] = useState({ new_number: "", reason: "" });
+  const overrideMut = useMutation({
+    mutationFn: async () => (await api.patch(`/invoices/${id}/override-number`, override)).data,
+    onSuccess: () => {
+      toast.success("Invoice number overridden");
+      qc.invalidateQueries({ queryKey: ["invoice", id] });
+      setShowOverride(false); setOverride({ new_number: "", reason: "" });
+    },
+    onError: (e) => toast.error(e?.response?.data?.detail || "Override failed"),
+  });
 
   const addPay = useMutation({
     mutationFn: async () => (await api.post(`/invoices/${id}/payments`, { ...pay, amount: Number(pay.amount) })).data,

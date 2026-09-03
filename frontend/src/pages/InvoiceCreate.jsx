@@ -186,7 +186,10 @@ export default function InvoiceCreate() {
           </div>
           <div>
             <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">Invoice Date · తేదీ</label>
-            <input data-testid="invoice-date" type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} className={inputCls} />
+            <input data-testid="invoice-date" type="date" value={invoiceDate}
+              max={new Date().toISOString().slice(0,10)}
+              onChange={(e) => setInvoiceDate(e.target.value)} className={inputCls} />
+            <NextNumberChip invoiceDate={invoiceDate} />
           </div>
           <div>
             <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">GST Type <span className="text-emerald-700">(Auto)</span></label>
@@ -326,6 +329,46 @@ export default function InvoiceCreate() {
     </div>
   );
 }
+
+function NextNumberChip({ invoiceDate }) {
+  const { data } = useQuery({
+    queryKey: ["invoice-next-preview", invoiceDate],
+    queryFn: async () => (await api.get("/invoices/next-preview", { params: { invoice_date: invoiceDate } })).data,
+    enabled: !!invoiceDate,
+    staleTime: 5000,
+  });
+  const today = new Date().toISOString().slice(0, 10);
+  const isFuture = invoiceDate > today;
+  const daysOld = invoiceDate && !isFuture
+    ? Math.floor((new Date(today) - new Date(invoiceDate)) / 86400000)
+    : 0;
+  return (
+    <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px]" data-testid="invoice-next-chip">
+      {isFuture ? (
+        <span className="px-2 py-0.5 rounded-sm bg-rose-100 text-rose-800 border border-rose-300 font-semibold" data-testid="invoice-future-warning">
+          Future date not allowed
+        </span>
+      ) : data ? (
+        <>
+          <span className="px-2 py-0.5 rounded-sm bg-emerald-50 text-emerald-900 border border-emerald-300 font-semibold" data-testid="invoice-next-fy">
+            FY 20{data.fy?.split("-")[0]}-{data.fy?.split("-")[1]}
+          </span>
+          <span className="px-2 py-0.5 rounded-sm bg-zinc-100 text-zinc-800 border border-zinc-300 font-mono font-semibold" data-testid="invoice-next-number">
+            Next # {data.suggested_number}
+          </span>
+          {daysOld > 90 && (
+            <span className="px-2 py-0.5 rounded-sm bg-amber-100 text-amber-900 border border-amber-300" data-testid="invoice-backdated-warning">
+              Backdated {daysOld} days
+            </span>
+          )}
+        </>
+      ) : (
+        <span className="text-zinc-500">Fetching next number…</span>
+      )}
+    </div>
+  );
+}
+
 
 const inputCls = "w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none bg-white";
 

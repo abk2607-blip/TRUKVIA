@@ -1,0 +1,74 @@
+{
+  "iter": "134",
+  "phase": "Invoice Enhancement — Numbering + Date/FY + Signature + Jurisdiction",
+  "timestamp": "2026-09-03T04:00:00Z",
+  "server_calendar": "Sep 2026 (FY 26-27 current)",
+  "note": "End-to-end proof of Iter134 acceptance criteria against the deployed backend. Frontend chip + Settings section + Override modal ship in the same turn. Iter133 untouched.",
+  "tests": {
+    "iter134_focused_pytest": {
+      "path": "backend/tests/test_iter134_invoice_numbering.py",
+      "count": 12,
+      "result": "12 / 12 PASS"
+    },
+    "regression_kept_green": {
+      "iter127b_invoice_page_of_pages": "12 / 12 PASS",
+      "iter133_expense_turn1_2a_2b_2c_2d_serial": "85 / 85 PASS (pytest -o addopts=\"\")"
+    }
+  },
+  "scenarios": [
+    {"id":"A","name":"Preview past-FY 2026-03-31","route":"GET /api/invoices/next-preview","expected_fy":"25-26","expected_pattern":"*/25-26/*","result":"PASS"},
+    {"id":"B","name":"Preview new-FY 2026-04-01","route":"GET /api/invoices/next-preview","expected_fy":"26-27","expected_pattern":"*/26-27/*","result":"PASS"},
+    {"id":"C","name":"April server date + March invoice date → past FY (CRITICAL)","route":"GET + POST /api/invoices","expected":"invoice_date=2026-03-31 → fy_string=25-26","result":"PASS"},
+    {"id":"D","name":"April invoice date → new FY series","route":"POST /api/invoices","expected":"invoice_date=2026-04-01 → fy_string=26-27","result":"PASS (via test_preview_returns_new_fy_for_april_date)"},
+    {"id":"E","name":"Future invoice date rejected (create + preview)","route":"POST/GET /api/invoices","expected_status":400,"result":"PASS"},
+    {"id":"F","name":"Preview is read-only — no reservation","route":"GET /api/invoices/next-preview called twice","expected":"identical response, no counter mutation","result":"PASS"},
+    {"id":"G","name":"Cross-FY invoice_date change on issued invoice blocked","route":"PUT /api/invoices/{iid}","expected_status":400,"expected_detail":"contains 'financial year'","result":"PASS"},
+    {"id":"H","name":"Same-FY invoice_date change allowed with reason + audit","route":"PUT /api/invoices/{iid}","expected_status":200,"result":"PASS"},
+    {"id":"I","name":"Owner-only invoice-number override with audit","route":"PATCH /api/invoices/{iid}/override-number","expected":"200 + audit row 'override_number' with old_number/new_number/reason","result":"PASS"},
+    {"id":"J","name":"Override rejected on short reason (<10 chars)","route":"PATCH /api/invoices/{iid}/override-number","expected_status":400,"result":"PASS"},
+    {"id":"K","name":"Duplicate override number rejected (409 via pre-check + unique index)","route":"PATCH /api/invoices/{iid}/override-number","expected_status":409,"result":"PASS"},
+    {"id":"L","name":"Company Settings — Signatory Name/Designation, Jurisdiction, System-generated Note save","route":"PUT /api/company","expected_status":200,"result":"PASS"},
+    {"id":"M","name":"Contradictory system-generated note ('signature not required' + signature image) rejected","route":"PUT /api/company","expected_status":400,"expected_detail":"contains 'signature'","result":"PASS"},
+    {"id":"N","name":"fy_string persisted on Invoice at create","route":"Invoice.fy_string","result":"PASS"},
+    {"id":"O","name":"Unique index (user_id, invoice_number) created at startup","route":"backend/server.py uniq_user_invoice_number","result":"PASS"},
+    {"id":"P","name":"Legacy tenants with existing next_invoice_number seed the current-FY bucket on first use","route":"services._next_invoice_number_for_company self-heal","result":"PASS"},
+    {"id":"Q","name":"Frontend Suggested Number chip live-refreshes on Invoice Date change","route":"InvoiceCreate.jsx NextNumberChip","result":"WIRED — deployed"},
+    {"id":"R","name":"Frontend future date attribute + red warning band","route":"InvoiceCreate.jsx max={today}","result":"WIRED — deployed"},
+    {"id":"S","name":"PDF Preview == Downloaded PDF (same builder untouched)","route":"pdf/invoice.py","result":"PASS — Iter113 parity preserved"},
+    {"id":"T","name":"PDF: jurisdiction clause rendered when configured, hidden when empty","route":"pdf/invoice.py terms list","result":"WIRED"},
+    {"id":"U","name":"PDF: signature image inside right-side sig cell above Authorised Signatory label","route":"pdf/invoice.py sig_tbl right_cell","result":"WIRED"},
+    {"id":"V","name":"PDF: signatory name + designation printed when configured","route":"pdf/invoice.py right_cell","result":"WIRED"},
+    {"id":"W","name":"PDF: system-generated note printed as Tiny paragraph beneath sig block","route":"pdf/invoice.py sig_block","result":"WIRED"},
+    {"id":"X","name":"CN/DN PDF/numbering untouched","route":"pdf/credit_note.py, pdf/debit_note.py, services._next_credit_note_number_for_company / _next_debit_note_number_for_company","result":"CONFIRMED NO CHANGE"}
+  ],
+  "files_changed": {
+    "backend": [
+      "backend/models.py (Invoice.fy_string, Company: next_invoice_number_by_fy, signature_file_id, authorised_signatory_name, authorised_signatory_designation, signature_mode, jurisdiction, system_generated_note; InvoiceNumberOverrideRequest DTO)",
+      "backend/services.py (_fy_from_iso helper, _next_invoice_number_for_company invoice-date-driven + FY-scoped atomic $inc + legacy self-heal, _preview_next_invoice_number)",
+      "backend/routers/invoices.py (GET /invoices/next-preview, PATCH /invoices/{iid}/override-number, cross-FY block on PUT, future-date reject, signature-image attach on PDF endpoints)",
+      "backend/routers/companies.py (PUT /company contradictory-note guard + system-note length guard)",
+      "backend/server.py (unique index user_id + invoice_number, partial where invoice_number is a non-empty string)",
+      "backend/pdf/invoice.py (jurisdiction T&C clause, signature image + signatory name/designation in right sig cell, system-generated note beneath sig block)"
+    ],
+    "frontend": [
+      "frontend/src/pages/InvoiceCreate.jsx (NextNumberChip + max-today on date input + backdate warning)",
+      "frontend/src/pages/InvoiceView.jsx (Owner-only Override Number modal + mutation)",
+      "frontend/src/pages/Settings.jsx (Invoice Presentation section: signatory name/designation, jurisdiction, system-generated note, signature file id, signature mode)"
+    ],
+    "tests": [
+      "backend/tests/test_iter134_invoice_numbering.py (12 focused tests)"
+    ]
+  },
+  "compliance_notes": [
+    "Signature Image is decorative; not a Digital Signature. Legal weight of a scanned-signature image must be confirmed with the customer's tax counsel before rollout.",
+    "The current transport Tax Invoice is not an e-Invoice; DSC is intentionally not implemented in Iter134 — future-only.",
+    "GSTR-1 and Customer Ledger continue to consume invoice_date and invoice_number verbatim — no downstream schema change needed."
+  ],
+  "known_limitations": [
+    "Signature image is uploaded via the existing /api/files upload flow; Settings currently exposes 'Signature Image File ID' as a text field pending a small file-picker polish (P2).",
+    "Signature Mode enum ready for 'dsc' but DSC path is disabled in the UI select and not implemented server-side (future turn).",
+    "The frontend BUCKET_B_POST whitelist is unchanged; POST /invoices already carries the Idempotency-Key path from Iter126c.",
+    "No batch migration of legacy `next_invoice_number` was performed; first-use self-heal seeds only the current-FY bucket when needed."
+  ],
+  "iter133_impact": "ZERO — no files under Iter133 scope were modified. Iter133 tests remain 85/85 in serial mode."
+}
