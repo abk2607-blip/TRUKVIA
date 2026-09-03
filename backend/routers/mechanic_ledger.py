@@ -1,17 +1,24 @@
-"""Iter133 · Turn 2C · Mechanic Ledger + Correction endpoints (mirror pattern)."""
+"""Iter133 · Turn 2C · Mechanic Ledger + Correction endpoints (mirror pattern).
+Iter135 · JSON + PDF delegate to the authoritative party-ledger builder.
+
+Source-of-truth: `services_party_ledger.build_party_ledger` — one dataset
+serves both consumers, guaranteeing UI totals ≡ PDF totals.
+"""
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Request, Depends, Query, Body
+from fastapi.responses import Response
 
 from db import db
-from models import now_utc
 from auth import get_current_user
 from company import _active_company_id
+from services_party_ledger import build_party_ledger, guard_pdf_size
 from services_payment_corrections import (
     _ensure_admin,
     apply_attribute_correction,
     apply_amount_reversal_new,
     list_corrections,
 )
+from pdf.party_ledger import build_party_ledger_pdf
 
 router = APIRouter(prefix="/api")
 
@@ -31,97 +38,46 @@ async def mechanic_ledger(
     date_from: Optional[str] = Query(None, alias="from"),
     date_to: Optional[str] = Query(None, alias="to"),
     include_reversed: bool = False,
+    vehicle_id: Optional[str] = None,
     user=Depends(get_current_user),
 ):
     uid = user["user_id"]
     cid = await _active_company_id(request, user)
-    m = await _ensure_mechanic(uid, cid, mid)
+    await _ensure_mechanic(uid, cid, mid)
+    return await build_party_ledger(
+        party_type="mechanic", uid=uid, cid=cid, pid=mid,
+        date_from=date_from, date_to=date_to,
+        include_reversed=include_reversed, vehicle_id=vehicle_id,
+    )
 
-    q_wo: dict = {"user_id": uid, "company_id": cid, "mechanic_id": mid,
-                  "is_deleted": {"$ne": True}}
-    q_pay: dict = {"user_id": uid, "company_id": cid, "mechanic_id": mid,
-                   "is_deleted": {"$ne": True}}
-    if not include_reversed:
-        q_pay["is_reversed"] = {"$ne": True}
-    if date_from or date_to:
-        d: dict = {}
-        if date_from: d["$gte"] = date_from
-        if date_to: d["$lte"] = date_to
-        q_wo["work_date"] = d
-        q_pay["date"] = d
 
-    entries: list = []
-
-    opening_type = (m.get("opening_balance_type") or "payable").lower()
-    opening = float(m.get("opening_balance") or 0)
-    if opening > 0:
-        if opening_type == "payable":
-            entries.append({"date": m.get("created_at", "")[:10] or "",
-                            "kind": "opening", "ref": "Opening Balance",
-                            "debit": round(opening, 2), "credit": 0.0,
-                            "narration": "opening payable"})
-        else:
-            entries.append({"date": m.get("created_at", "")[:10] or "",
-                            "kind": "opening", "ref": "Opening Advance",
-                            "debit": 0.0, "credit": round(opening, 2),
-                            "narration": "opening advance"})
-
-    async for w in db.mechanic_work_orders.find(q_wo, {"_id": 0, "user_id": 0}):
-        entries.append({
-            "date": w.get("work_date", ""),
-            "kind": "work_order",
-            "ref": w.get("id"),
-            "id": w.get("id"),
-            "debit": round(float(w.get("amount") or 0), 2),
-            "credit": 0.0,
-            "narration": w.get("narration", ""),
-            "vehicle_number": w.get("vehicle_number", ""),
-            "repair_event_id": w.get("repair_event_id", ""),
-        })
-
-    async for p in db.mechanic_payments.find(q_pay, {"_id": 0, "user_id": 0}):
-        direction = 1 if p.get("type") == "payment_out" else -1
-        amt = float(p.get("amount") or 0) * direction
-        entries.append({
-            "date": p.get("date", ""),
-            "kind": "payment",
-            "ref": p.get("ref_no") or p.get("id"),
-            "id": p.get("id"),
-            "debit": 0.0,
-            "credit": round(amt, 2),
-            "narration": p.get("remarks", ""),
-            "against": p.get("against", ""),
-            "mechanic_work_order_id": p.get("mechanic_work_order_id", ""),
-            "mode": p.get("mode", ""),
-            "is_reversed": bool(p.get("is_reversed", False)),
-            "correction_count": int(p.get("correction_count") or 0),
-        })
-
-    entries.sort(key=lambda x: (x.get("date") or "", 0 if x["kind"] == "opening" else 1
-                                if x["kind"] == "work_order" else 2))
-    running = 0.0
-    for e in entries:
-        running += float(e.get("debit") or 0) - float(e.get("credit") or 0)
-        e["balance"] = round(running, 2)
-
-    total_debit = round(sum(float(e.get("debit") or 0) for e in entries), 2)
-    total_credit = round(sum(float(e.get("credit") or 0) for e in entries), 2)
-
-    return {
-        "mechanic_id": mid,
-        "mechanic_name": m.get("name", ""),
-        "from": date_from or "",
-        "to": date_to or "",
-        "opening_balance": round(opening, 2),
-        "opening_balance_type": opening_type,
-        "total_debit": total_debit,
-        "total_credit": total_credit,
-        "closing_balance": round(total_debit - total_credit, 2),
-        "outstanding": max(round(total_debit - total_credit, 2), 0),
-        "advance": max(round(total_credit - total_debit, 2), 0),
-        "entries": entries,
-        "generated_at": now_utc().isoformat(),
-    }
+@router.get("/mechanics/{mid}/ledger.pdf")
+async def mechanic_ledger_pdf(
+    mid: str,
+    request: Request,
+    date_from: Optional[str] = Query(None, alias="from"),
+    date_to: Optional[str] = Query(None, alias="to"),
+    include_reversed: bool = False,
+    vehicle_id: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    uid = user["user_id"]
+    cid = await _active_company_id(request, user)
+    await _ensure_mechanic(uid, cid, mid)
+    dataset = await build_party_ledger(
+        party_type="mechanic", uid=uid, cid=cid, pid=mid,
+        date_from=date_from, date_to=date_to,
+        include_reversed=include_reversed, vehicle_id=vehicle_id,
+    )
+    guard_pdf_size(dataset)
+    pdf_bytes = build_party_ledger_pdf(dataset)
+    slug = (dataset.get("party_name") or "mechanic").replace("/", "_").replace(" ", "_")
+    fname = f"Mechanic-Ledger_{slug}_{date_from or 'all'}_{date_to or 'today'}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{fname}"'},
+    )
 
 
 @router.post("/mechanic-payments/{pid}/correct")

@@ -1,5 +1,95 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
+## Iter135 · Vendor / Mechanic Ledger — Vehicle Context + Unified Accounting Presentation + Printable PDF · READY FOR UAT (2026-09-03)
+
+**One authoritative dataset drives both screen and PDF.**
+Source: `backend/services_party_ledger.py :: build_party_ledger()`.
+Neither the React screen nor the ReportLab renderer performs any
+balance math — both consume the identical LedgerDataset object, so
+`UI totals ≡ PDF totals` for every parameter combination.
+
+### Accounting semantics
+- **Opening** = `party.opening_balance ± sum(debit − credit)` of every
+  bill/WO/payment strictly BEFORE `from`  (`include_reversed=false`
+  excludes reversed payments in both opening and entries).
+- **Entries** in `[from, to]` sorted `date → kind priority (opening=0,
+  bill/WO=1, payment=2) → created_at → id`.
+- **Closing** = `Opening + Σ(debit) − Σ(credit)`.
+- Bill uses `bill_date`, Work Order uses `work_date`, Payment uses
+  `payment date` — the existing per-record date semantics are
+  preserved.
+
+### Vehicle derivation (zero-schema)
+- Bill / WO rows carry the `vehicle_id` + `vehicle_number` snapshot
+  denormalised at write-time.
+- Payment rows resolve via a **single batched** `find({id:{$in:[…]}})`
+  keyed on `vendor_bill_id` / `mechanic_work_order_id`.  No N+1, no new
+  `vehicle_id` field on `VendorPayment` / `MechanicPayment`.
+- Unallocated (or empty-linked) payments → UI renders `— Unallocated`.
+
+### Endpoints (additive; existing callers unaffected)
+```
+GET /api/vendors/{vid}/ledger              → LedgerDataset (JSON)
+GET /api/vendors/{vid}/ledger.pdf          → application/pdf
+GET /api/mechanics/{mid}/ledger            → LedgerDataset (JSON)
+GET /api/mechanics/{mid}/ledger.pdf        → application/pdf
+
+Query params (both): from, to, include_reversed, vehicle_id
+```
+
+### PDF (A4 portrait · ReportLab · two-pass canvas)
+`Date | Type | Ref | Vehicle | Description | Debit | Credit | Balance`
+- Table header repeats on every page (`repeatRows=1`).
+- Footer stamp `Computer-generated statement · Page X of Y · Printed YYYY-MM-DD`.
+- Reversed rows retain the muted / strike-through styling of the screen.
+- Hard guardrail `MAX_PDF_ENTRIES = 5000` — refuses to render with
+  HTTP 413 `"Narrow the date range"` rather than silently truncate a
+  mathematically inconsistent statement.
+
+### Frontend (`frontend/src/pages/PartyLedger.jsx`)
+Vendor and Mechanic Ledgers share a single component.
+- KPI strip: Opening · Total Debit · Total Credit · Closing · Outstanding/Advance.
+- Table columns: Date | Type | Ref | **Vehicle** | Description | Debit | Credit | Balance | Action.
+- **Vehicle cell** is a link to `/vehicles/:vehicle_id/repair-history`
+  when known, else grey `— Unallocated`.
+- **Download PDF** button uses the same query params, downloads via
+  the shared `api` client with `responseType='blob'`.
+- New client-side **Type filter** dropdown (Bills / WOs / Payments /
+  Opening) — presentation only.
+- Correction modal + reversal semantics unchanged.
+
+### Tests · Iter135 suite → 16 / 16 PASS
+`test_iter135_party_ledger.py` covers:
+- Vendor + Mechanic mirror happy paths (vehicle in bill/WO rows + derived on payments)
+- Unallocated payment has empty vehicle context
+- Opening folds pre-window bills + payments
+- Vehicle filter reconciles
+- Vendor + Mechanic PDF totals match JSON (pdfplumber text-extract)
+- Empty ledger renders PDF
+- Multi-page PDF (60 rows) with repeated headers + `Page X of Y`
+- Source-of-truth guards (services + routers) — never touch `db.expenses`
+- Correction (reversal + fresh) — both rows carry identical vehicle context
+- PDF guardrail raises HTTP 413 for >5,000 rows (no silent truncation)
+- Batched vehicle lookup code-shape guard
+
+### Live UAT
+- Vendor `VIJAYA KRISHNA AGENCIES UI …` + vehicle `AP31TF……` — Bill
+  ₹13,080 + Payment ₹10,000 → Closing ₹3,080. Screen and PDF match.
+  Vehicle chip clickable on both rows.
+- Mechanic `VENKATESWARA RAO …` + vehicle `AP31MC……` — WO ₹3,500 +
+  Payment ₹3,500 → Closing ₹0. Both rows carry the vehicle.
+- Vehicle Cost for the same vehicle remains ₹13,080 (Iter133 invariant
+  intact).
+
+### Invariants preserved
+- Iter133 Expense / Vehicle Cost — untouched.
+- Iter134 Invoice Enhancement — untouched.
+- Ledger reads Bills/WOs + Payments only (guard tests confirm).
+- No Bill + twin-Expense summation anywhere in ledger.
+
+**ITER135 VENDOR / MECHANIC LEDGER — COMPLETE — READY FOR UAT — ITER133/ITER134 UNTOUCHED.**
+
+
 ## 🔒 Iter134 · Invoice Enhancement — LOCKED — 2026-09-03
 
 **Status: LOCKED / FROZEN.** No further changes to the Iter134 surface

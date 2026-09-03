@@ -1,17 +1,20 @@
 import React, { useState, useMemo } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
 import PaymentDrawer from "@/components/PaymentDrawer";
-import { Plus } from "lucide-react";
+import { Plus, FileDown } from "lucide-react";
 
 /**
  * Iter133 · Turn 2C — Party Ledger (Vendor OR Mechanic) + Admin correction.
+ * Iter135 · Vehicle context column + unified accounting presentation + PDF download.
  * Route: /vendor-ledger/:id  or  /mechanic-ledger/:id
- * Reads DERIVED ledger from Bills/WOs + Payments (never Expense).
- * Admin/Owner sees "Correct" button on each payment row.
+ *
+ * The screen consumes the SAME dataset the PDF endpoint consumes (see
+ * backend/services_party_ledger.py) — running balance / opening / closing
+ * are NEVER recomputed here.
  */
 export default function PartyLedger({ partyType }) {
   const { id } = useParams();
@@ -24,10 +27,11 @@ export default function PartyLedger({ partyType }) {
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
   const [showReversed, setShowReversed] = useState(false);
-  const [correcting, setCorrecting] = useState(null); // payment row or null
-  const [mode, setMode] = useState("attribute"); // "attribute" | "amount"
+  const [typeFilter, setTypeFilter] = useState(""); // "" | "bill" | "work_order" | "payment"
+  const [correcting, setCorrecting] = useState(null);
+  const [mode, setMode] = useState("attribute");
   const [form, setForm] = useState({});
-  const [payOpen, setPayOpen] = useState(false); // Iter133 Turn 3 — Payment quick-entry drawer
+  const [payOpen, setPayOpen] = useState(false);
 
   const params = useMemo(() => {
     const p = {};
@@ -67,27 +71,65 @@ export default function PartyLedger({ partyType }) {
     onError: (e) => toast.error(e?.response?.data?.detail || "Correction failed"),
   });
 
-  const fmt = (n) => `₹${Number(n || 0).toLocaleString("en-IN")}`;
+  const fmt = (n) => {
+    const v = Number(n || 0);
+    if (v === 0) return "—";
+    const sign = v < 0 ? "-" : "";
+    return `${sign}₹${Math.abs(v).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
+
+  const filteredEntries = useMemo(() => {
+    const all = ledger.data?.entries || [];
+    if (!typeFilter) return all;
+    return all.filter((e) => e.kind === typeFilter);
+  }, [ledger.data, typeFilter]);
+
+  const downloadPdf = async () => {
+    try {
+      const url = new URL(`${api.defaults.baseURL || ""}/${base}/${id}/ledger.pdf`, window.location.origin);
+      Object.entries(params).forEach(([k, v]) => { if (v !== undefined && v !== null && v !== "") url.searchParams.set(k, v); });
+      const resp = await api.get(`/${base}/${id}/ledger.pdf`, { params, responseType: "blob" });
+      const blobUrl = window.URL.createObjectURL(new Blob([resp.data], { type: "application/pdf" }));
+      const a = document.createElement("a");
+      a.href = blobUrl;
+      const partyName = (ledger.data?.party_name || partyType).replace(/\//g, "_").replace(/\s+/g, "_");
+      a.download = `${partyType === "vendor" ? "Vendor" : "Mechanic"}-Ledger_${partyName}_${from || "all"}_${to || "today"}.pdf`;
+      document.body.appendChild(a); a.click();
+      setTimeout(() => { window.URL.revokeObjectURL(blobUrl); a.remove(); }, 100);
+    } catch (e) {
+      toast.error(e?.response?.data?.detail || "PDF download failed");
+    }
+  };
 
   return (
     <div className="p-6 space-y-4" data-testid="party-ledger">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <h1 className="text-2xl font-semibold">
-          {partyType === "vendor" ? "Vendor" : "Mechanic"} Ledger — {ledger.data?.[`${partyType}_name`] || id}
+          {partyType === "vendor" ? "Vendor" : "Mechanic"} Ledger — {ledger.data?.party_name || id}
         </h1>
-        <button
-          data-testid="open-payment-drawer-btn"
-          onClick={() => setPayOpen(true)}
-          className="ml-auto inline-flex items-center gap-1 text-xs px-3 py-2 bg-zinc-950 text-white rounded-sm hover:bg-zinc-800"
-        >
-          <Plus size={14} /> Payment
-        </button>
+        <div className="ml-auto flex items-center gap-2">
+          <button
+            data-testid="download-pdf-btn"
+            onClick={downloadPdf}
+            disabled={ledger.isLoading}
+            className="inline-flex items-center gap-1 text-xs px-3 py-2 border border-zinc-300 rounded-sm hover:bg-zinc-50 disabled:opacity-50"
+          >
+            <FileDown size={14} /> Download PDF
+          </button>
+          <button
+            data-testid="open-payment-drawer-btn"
+            onClick={() => setPayOpen(true)}
+            className="inline-flex items-center gap-1 text-xs px-3 py-2 bg-zinc-950 text-white rounded-sm hover:bg-zinc-800"
+          >
+            <Plus size={14} /> Payment
+          </button>
+        </div>
       </div>
       <PaymentDrawer
         open={payOpen}
         partyType={partyType}
         partyId={id}
-        partyName={ledger.data?.[`${partyType}_name`] || ""}
+        partyName={ledger.data?.party_name || ""}
         onClose={() => setPayOpen(false)}
         onSaved={() => qc.invalidateQueries({ queryKey: [`${partyType}-ledger`, id] })}
       />
@@ -106,25 +148,40 @@ export default function PartyLedger({ partyType }) {
             data-testid="show-reversed" />
           Show reversed payments
         </label>
+        <label className="text-sm">Type
+          <select value={typeFilter} onChange={(e) => setTypeFilter(e.target.value)}
+            className="ml-2 border rounded px-2 py-1" data-testid="filter-type">
+            <option value="">All</option>
+            <option value={partyType === "vendor" ? "bill" : "work_order"}>
+              {partyType === "vendor" ? "Bills" : "Work Orders"}
+            </option>
+            <option value="payment">Payments</option>
+            <option value="opening">Opening</option>
+          </select>
+        </label>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+        <Kpi label="Opening" value={fmt(ledger.data?.opening_balance)} testid="kpi-opening" />
         <Kpi label="Total Debit" value={fmt(ledger.data?.total_debit)} testid="kpi-debit" />
         <Kpi label="Total Credit" value={fmt(ledger.data?.total_credit)} testid="kpi-credit" />
-        <Kpi label="Outstanding" value={fmt(ledger.data?.outstanding)} testid="kpi-outstanding" />
-        <Kpi label="Advance" value={fmt(ledger.data?.advance)} testid="kpi-advance" />
+        <Kpi label="Closing" value={fmt(ledger.data?.closing_balance)} testid="kpi-closing" />
+        <Kpi label={(ledger.data?.closing_balance || 0) >= 0 ? "Outstanding" : "Advance"}
+             value={fmt(Math.max(ledger.data?.outstanding || 0, ledger.data?.advance || 0))}
+             testid="kpi-outstanding" />
       </div>
 
       <div className="bg-white border rounded-lg p-4 overflow-x-auto" data-testid="ledger-table">
         {ledger.isLoading ? <div>Loading…</div> :
-         (ledger.data?.entries || []).length === 0 ? <div className="text-zinc-400">No entries.</div> :
+         filteredEntries.length === 0 ? <div className="text-zinc-400">No entries.</div> :
          <table className="w-full text-sm">
            <thead className="bg-zinc-50">
              <tr className="text-left">
                <th className="py-2 px-2">Date</th>
-               <th className="py-2 px-2">Kind</th>
+               <th className="py-2 px-2">Type</th>
                <th className="py-2 px-2">Ref</th>
-               <th className="py-2 px-2">Narration</th>
+               <th className="py-2 px-2">Vehicle</th>
+               <th className="py-2 px-2">Description</th>
                <th className="py-2 px-2 text-right">Debit</th>
                <th className="py-2 px-2 text-right">Credit</th>
                <th className="py-2 px-2 text-right">Balance</th>
@@ -132,16 +189,28 @@ export default function PartyLedger({ partyType }) {
              </tr>
            </thead>
            <tbody>
-             {ledger.data.entries.map((e, i) => (
+             {filteredEntries.map((e, i) => (
                <tr key={i} className={"border-t " + (e.is_reversed ? "opacity-50 line-through" : "")}
                    data-testid={`ledger-row-${i}`}>
-                 <td className="py-2 px-2">{e.date}</td>
-                 <td className="py-2 px-2">{e.kind}</td>
+                 <td className="py-2 px-2 whitespace-nowrap">{e.date}</td>
+                 <td className="py-2 px-2">{e.type_label || e.kind}</td>
                  <td className="py-2 px-2 font-mono text-xs">{e.ref}</td>
+                 <td className="py-2 px-2 whitespace-nowrap" data-testid={`ledger-vehicle-${i}`}>
+                   {e.vehicle_id && e.vehicle_number ? (
+                     <Link to={`/vehicles/${e.vehicle_id}/repair-history`}
+                           className="text-indigo-700 hover:underline font-mono text-xs">
+                       {e.vehicle_number}
+                     </Link>
+                   ) : (
+                     <span className="text-zinc-400 text-xs">
+                       {e.kind === "payment" && !e.vehicle_number ? "— Unallocated" : (e.vehicle_number || "—")}
+                     </span>
+                   )}
+                 </td>
                  <td className="py-2 px-2">{e.narration}</td>
-                 <td className="py-2 px-2 text-right">{e.debit ? fmt(e.debit) : "—"}</td>
-                 <td className="py-2 px-2 text-right">{e.credit ? fmt(e.credit) : "—"}</td>
-                 <td className="py-2 px-2 text-right font-medium">{fmt(e.balance)}</td>
+                 <td className="py-2 px-2 text-right tabular-nums">{fmt(e.debit)}</td>
+                 <td className="py-2 px-2 text-right tabular-nums">{fmt(e.credit)}</td>
+                 <td className="py-2 px-2 text-right tabular-nums font-medium">{fmt(e.balance)}</td>
                  {isAdmin && (
                    <td className="py-2 px-2 text-right">
                      {e.kind === "payment" && !e.is_reversed && (
@@ -234,7 +303,7 @@ function Kpi({ label, value, testid }) {
   return (
     <div className="bg-white border rounded-lg p-4" data-testid={testid}>
       <div className="text-xs text-zinc-500 uppercase">{label}</div>
-      <div className="text-2xl font-semibold mt-1">{value}</div>
+      <div className="text-2xl font-semibold mt-1 tabular-nums">{value}</div>
     </div>
   );
 }
