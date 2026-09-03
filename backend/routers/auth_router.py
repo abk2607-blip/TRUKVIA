@@ -233,11 +233,18 @@ async def create_session(request: Request, response: Response):
 
 @router.get("/auth/me")
 async def me(user=Depends(get_current_user)):
+    # Iter134 · Return the resolved role so the frontend can gate owner-only
+    # UI (canonical source consumed by Notes / PartyLedger / Vendors /
+    # Mechanics / InvoiceCreate). Backend authorization on protected
+    # endpoints continues to be the final enforcement.
     return {
         "user_id": user["user_id"],
         "email": user["email"],
         "name": user.get("name", ""),
         "picture": user.get("picture", ""),
+        "role": user.get("effective_role") or user.get("role") or "owner",
+        "effective_role": user.get("effective_role") or user.get("role") or "owner",
+        "is_staff": bool(user.get("is_staff", False)),
     }
 
 @router.post("/auth/logout")

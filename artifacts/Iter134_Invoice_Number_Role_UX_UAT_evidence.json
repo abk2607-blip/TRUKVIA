@@ -1,0 +1,31 @@
+{
+  "iteration": "Iter134",
+  "task": "Invoice Number Role UX alignment",
+  "scope": "Frontend disabled/readOnly state on /invoices/new · Invoice Number field",
+  "canonical_role_source": "user?.effective_role || user?.role (matches Notes, PartyLedger, Vendors, Mechanics)",
+  "backend_touchpoints": {
+    "invoices.py": "UNCHANGED - owner-only override still enforced at POST /api/invoices and PATCH /api/invoices/{iid}/override-number",
+    "auth_router.py": "/auth/me now includes role / effective_role / is_staff so the frontend AuthContext exposes the canonical role to every consumer"
+  },
+  "frontend_touchpoints": {
+    "InvoiceCreate.jsx": [
+      "Added `const isOwner = ((user?.effective_role || user?.role || '').toLowerCase() === 'owner')` alongside existing useAuth() hook",
+      "Applied `disabled={!isOwner}` + `readOnly={!isOwner}` + `aria-disabled={!isOwner}` to `[data-testid=invoice-number-input]`",
+      "Muted the input (bg-zinc-50, cursor-not-allowed) when non-owner",
+      "Reason input, Suggested chip, and Reset button now render only when isOwner + edited + differs-from-suggested",
+      "Helper text: 'Owner can override the invoice number' for owner, 'Owner-only override' for non-owner"
+    ]
+  },
+  "regression": {
+    "backend_curl": {
+      "auth/me role echoed": "role=owner, effective_role=owner",
+      "anonymous PATCH override": "HTTP 401",
+      "owner PATCH override on missing invoice": "HTTP 404 (auth passed)"
+    },
+    "pytest_iter134_serial": "PASS"
+  },
+  "screenshots": [
+    "/app/artifacts/iter134_role_ux_owner.png",
+    "/app/artifacts/iter134_role_ux_nonowner.png"
+  ]
+}

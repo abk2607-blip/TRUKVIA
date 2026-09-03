@@ -3,6 +3,47 @@
 ## Product summary
 QORVENA is a Bitumen transport ERP tracking LRs, Trips, Freight, Shortage, Invoices, Payments, Suppliers, Customers, Vehicles, Drivers, Products, Fuel, and Reports. FastAPI + React + MongoDB. Auth via Emergent-managed Google, with a dev-only demo token.
 
+## Iter134 · Invoice Number Role UX Alignment — READY FOR UAT (2026-09-03)
+
+**Final UX polish** for the Invoice Number field on `/invoices/new`.  Prior fix
+removed the `disabled=` gate entirely so non-owners could type but were only
+rejected at save time.  This iteration re-instates a **canonical, role-based**
+disabled state on the frontend while leaving the backend authorization
+untouched.
+
+### Behaviour
+- **Owner** (`effective_role === "owner"`) → input editable, Reset/Suggested
+  chip and Reason field surface when the number is actually changed.
+- **Non-owner** (any other role) → input `disabled` + `readOnly`,
+  muted styling, helper text reads *"Owner-only override"*, Reason field
+  never rendered.
+- Backend keeps rejecting non-owner overrides at both
+  `POST /api/invoices` and `PATCH /api/invoices/{iid}/override-number` (403).
+
+### Delta
+- `frontend/src/pages/InvoiceCreate.jsx` — added `isOwner` derived from the
+  canonical `user.effective_role || user.role`, gated `disabled` / `readOnly`,
+  Reset chip, Reason input, and helper hint accordingly.
+- `backend/routers/auth_router.py` — `/auth/me` now returns
+  `role`, `effective_role`, `is_staff` so the frontend AuthContext exposes
+  the same canonical role consumed by Notes, PartyLedger, Vendors, Mechanics.
+  **No change to override / numbering logic.**
+- `backend/tests/test_iter134_invoice_number_role_ux.py` — NEW, 5 tests
+  locking the canonical source, gated `disabled`/`readOnly`, owner-only
+  reason field, hint copy, and dead-code guard.
+- `artifacts/Iter134_Invoice_Number_Role_UX_UAT_evidence.json` +
+  `iter134_role_ux_owner.png` / `iter134_role_ux_nonowner.png`.
+
+### Regression
+- Backend curl: `/auth/me` returns `role=owner effective_role=owner`;
+  anonymous PATCH override → **401**; owner PATCH override on missing
+  invoice → **404** (auth passed).
+- Pytest iter134 serial suite (33 passed, 2 signature-upload xdist
+  false-positives — `DG-STABILITY-1`, pass in isolation).
+
+**ITER134 INVOICE NUMBER ROLE UX — COMPLETE — READY FOR UAT — ITER133 UNTOUCHED.**
+
+
 ## Iter134 · Invoice Number Owner Editability — READY FOR UAT (2026-09-03)
 
 **UAT-blocker fix.** In `InvoiceCreate.jsx`, the Invoice Number input had `disabled={... role !== 'owner'}` which in the deployed demo session evaluated to permanently disabled, blocking Owner override at create-time. Removed the `disabled=` prop; helper text now reads *"Non-owner overrides will be rejected on save"* so non-owners are still warned. **Server-side guards are unchanged and remain the source of truth** (role check, reason ≥ 10, format, max length, unique index, audit).

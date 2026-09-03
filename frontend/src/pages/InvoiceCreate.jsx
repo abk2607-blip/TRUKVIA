@@ -48,6 +48,11 @@ export default function InvoiceCreate() {
     if (Object.prototype.hasOwnProperty.call(next, "notes")) setNotes(next.notes || "");
   }, [invoiceForm]);
   const { user } = useAuth();
+  // Iter134 · Role-based UX for Invoice Number override.
+  // Canonical role source matches other pages (Notes, PartyLedger, Vendors,
+  // Mechanics): user.effective_role falls back to user.role. Only Owner may
+  // edit the auto-suggested Invoice Number; backend still enforces this.
+  const isOwner = ((user?.effective_role || user?.role || "").toLowerCase() === "owner");
   const draft = useFormDraft({
     route: "/invoices/new",
     form: invoiceForm,
@@ -221,14 +226,18 @@ export default function InvoiceCreate() {
               data-testid="invoice-number-input"
               value={invoiceNumber}
               onChange={(e) => { setInvoiceNumber(e.target.value); setInvoiceNumberEdited(true); }}
-              className={inputCls + " font-mono"}
+              disabled={!isOwner}
+              readOnly={!isOwner}
+              aria-disabled={!isOwner}
+              className={inputCls + " font-mono" + (!isOwner ? " bg-zinc-50 text-zinc-600 cursor-not-allowed" : "")}
               placeholder="Auto-generated from Invoice Date"
+              title={isOwner ? "Owner can override the invoice number" : "Owner-only override"}
             />
             <div className="mt-1 text-[10px] text-zinc-500 flex items-center gap-2">
               <span data-testid="invoice-fy-label">
                 {suggestedFy ? `FY 20${suggestedFy.split("-")[0]}-${suggestedFy.split("-")[1]}` : "—"}
               </span>
-              {invoiceNumberEdited && suggestedNumber && invoiceNumber !== suggestedNumber && (
+              {isOwner && invoiceNumberEdited && suggestedNumber && invoiceNumber !== suggestedNumber && (
                 <>
                   <span>·</span>
                   <span>Suggested: <span className="font-mono">{suggestedNumber}</span></span>
@@ -242,11 +251,11 @@ export default function InvoiceCreate() {
                   </button>
                 </>
               )}
-              {((user?.effective_role || user?.role || "").toLowerCase() !== "owner") && (
-                <span className="text-zinc-400">· Non-owner overrides will be rejected on save</span>
-              )}
+              <span data-testid="invoice-number-role-hint" className="text-zinc-400">
+                · {isOwner ? "Owner can override the invoice number" : "Owner-only override"}
+              </span>
             </div>
-            {invoiceNumberEdited && invoiceNumber !== suggestedNumber && (
+            {isOwner && invoiceNumberEdited && invoiceNumber !== suggestedNumber && (
               <input
                 data-testid="invoice-number-reason"
                 value={overrideReason}
