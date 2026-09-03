@@ -184,12 +184,20 @@ def test_pdf_totals_reconcile_with_json_post_polish():
 def test_frontend_vehicle_link_uses_canonical_route():
     with open("/app/frontend/src/pages/PartyLedger.jsx", "r", encoding="utf-8") as f:
         src = f.read()
-    # Canonical route already used by RepairWorkspace + VehicleCostReport.
-    assert "/vehicles/${e.vehicle_id}/repair-history" in src
+    # Canonical FRONTEND PAGE route registered in App.js — renders
+    # VehicleCostReport, which consumes /api/vehicles/{vid}/repair-history.
+    assert "/vehicles/${e.vehicle_id}/cost" in src
     # data-testid for the link exists so screen tests can target it.
     assert 'data-testid={`vehicle-link-${e.vehicle_id}`}' in src
     # Unallocated payments render as plain text and are NOT linked.
     assert "— Unallocated" in src
+
+
+def test_frontend_vehicle_cost_route_registered_in_app():
+    with open("/app/frontend/src/App.js", "r", encoding="utf-8") as f:
+        src = f.read()
+    assert '"/vehicles/:vid/cost"' in src
+    assert "VehicleCostReport" in src
 
 
 # ── 5. Unallocated payments are not linked and remain unallocated ────
@@ -260,6 +268,8 @@ def test_pdf_renderer_has_no_ledger_math():
 # ── 8. Canonical vehicle-repair-history route lives at /vehicles/{vid}/repair-history ──
 
 def test_canonical_repair_history_route_exists():
+    """Backend endpoint for repair history data (the frontend page
+    /vehicles/:vid/cost consumes this API)."""
     with open("/app/backend/routers/vehicle_reports.py", "r", encoding="utf-8") as f:
         assert '/vehicles/{vid}/repair-history' in f.read(), \
             "Canonical repair-history endpoint changed unexpectedly"

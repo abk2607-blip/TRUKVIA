@@ -236,7 +236,10 @@ def _vehicle_hyperlink(entry: dict, base_url: str) -> str | None:
     vid = entry.get("vehicle_id") or ""
     if not vid or not entry.get("vehicle_number"):
         return None
-    return f"{base_url.rstrip('/')}/vehicles/{vid}/repair-history"
+    # Canonical frontend PAGE route registered in App.js — renders
+    # VehicleCostReport, which internally consumes the
+    # /api/vehicles/{vid}/repair-history backend endpoint.
+    return f"{base_url.rstrip('/')}/vehicles/{vid}/cost"
 
 
 def _entries_table(dataset: dict, base_url: str) -> Table:
