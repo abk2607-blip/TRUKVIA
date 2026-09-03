@@ -1,0 +1,35 @@
+{
+  "iteration": "Iter134",
+  "task": "Invoice Number Override Reason binding — UAT-blocker fix",
+  "root_cause": "Frontend mutation gated payload on invoiceNumber !== suggestedNumber (local, staleTime-cached state) which could disagree with backend's live preview — producing payloads that either dropped the reason or triggered false rejections despite a valid reason in the DOM.",
+  "fix": {
+    "frontend": [
+      "Always send `invoice_number` and trimmed `invoice_number_reason` when Owner has edited the field (backend re-verifies against LIVE preview)",
+      "Trim reason on the wire so whitespace-only reasons collapse to empty and are rejected consistently",
+      "Compute reasonInvalid = localOverrideActive && trimmedReason.length < 10 and wire it into canSubmit so the Create button disables until reason is valid",
+      "Add inline hint `[data-testid=invoice-number-reason-hint]` with live length feedback"
+    ],
+    "backend": "UNCHANGED — routers/invoices.py numbering/override/audit intact"
+  },
+  "live_uat": {
+    "short_reason_5_chars": {
+      "hint": "Reason must be at least 10 characters (currently 5).",
+      "create_button_disabled": true
+    },
+    "valid_reason_manual_serial_correction": {
+      "hint": "Reason is required when overriding the invoice number.",
+      "create_button_disabled": false,
+      "post_body": "{\"customer_id\":\"cust_dceb67c5f3404dbe\",\"trip_ids\":[\"trip_3acf85c6512e44d8\"],\"invoice_date\":\"2026-09-03\",\"hsn_sac\":\"996791\",\"gst_type\":\"cgst_sgst\",\"rcm\":true,\"notes\":\"\",\"invoice_number\":\"REBIND/25-26/UAT431494\",\"invoice_number_reason\":\"Manual serial correction\"}",
+      "response_status": 200,
+      "invoice_number_on_pdf": "REBIND/25-26/UAT431494",
+      "toast": "Invoice created"
+    }
+  },
+  "regression": {
+    "iter134_suite": "49 / 49 PASS (invoice-number-reason-binding · role-ux · editable · field · numbering · signature-upload · signature-size)",
+    "page_of_pages": "ran alongside · green"
+  },
+  "screenshots": [
+    "/app/artifacts/iter134_reason_binding_ok.png"
+  ]
+}

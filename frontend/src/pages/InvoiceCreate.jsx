@@ -128,6 +128,30 @@ export default function InvoiceCreate() {
   const finalTotal = Math.round(grossTotal);
   const roundOff = Number((finalTotal - grossTotal).toFixed(2));
 
+  // Iter134 · Reason-binding fix.
+  // The backend is the source of truth for whether an override is happening
+  // (it re-computes preview atomically against the same $inc counter it
+  // will consume). We therefore:
+  //   1. Always send `invoice_number` + trimmed `invoice_number_reason`
+  //      when the Owner has visibly touched the field. If the number the
+  //      user typed happens to equal the backend's LIVE preview, the
+  //      backend safely treats it as non-override and ignores the reason
+  //      (per routers/invoices.py line 324).
+  //   2. Trim the reason before sending — a whitespace-only reason
+  //      collapses to "" and is rejected, which mirrors backend behaviour.
+  //   3. Locally block the Create button when an override is happening
+  //      but the trimmed reason is < 10 chars, with an inline hint —
+  //      users can never hit the 400 for an already-typed valid reason.
+  const trimmedNum = (invoiceNumber || "").trim();
+  const trimmedReason = (overrideReason || "").trim();
+  // Local heuristic — matches backend's `override_num != preview` gate.
+  // Backend re-verifies against LIVE preview so we err on the safe side by
+  // sending the fields whenever the user has actually edited.
+  const localOverrideActive = Boolean(
+    isOwner && invoiceNumberEdited && trimmedNum && trimmedNum !== (suggestedNumber || "")
+  );
+  const reasonInvalid = localOverrideActive && trimmedReason.length < 10;
+
   const create = useMutation({
     mutationFn: async () => (await api.post("/invoices", {
       customer_id: customerId,
@@ -137,9 +161,11 @@ export default function InvoiceCreate() {
       gst_type: gstType,
       rcm,
       notes,
-      // Iter134 correction · only send override fields when user actually edited
-      ...(invoiceNumberEdited && invoiceNumber && invoiceNumber !== suggestedNumber
-        ? { invoice_number: invoiceNumber, invoice_number_reason: overrideReason }
+      // Owner + touched → send override fields (trimmed). Backend accepts,
+      // rejects with a specific error, or silently treats as non-override
+      // when the typed value equals the LIVE preview.
+      ...(isOwner && invoiceNumberEdited && trimmedNum
+        ? { invoice_number: trimmedNum, invoice_number_reason: trimmedReason }
         : {}),
     }, { headers: idemKeyRef.current ? { "Idempotency-Key": idemKeyRef.current } : {} })).data,
     onSuccess: (data) => {
@@ -160,7 +186,7 @@ export default function InvoiceCreate() {
     }
   };
 
-  const canSubmit = customerId && selectedTrips.length > 0;
+  const canSubmit = customerId && selectedTrips.length > 0 && !reasonInvalid;
 
   return (
     <div className="space-y-6" data-testid="invoice-create-page">
@@ -255,14 +281,27 @@ export default function InvoiceCreate() {
                 · {isOwner ? "Owner can override the invoice number" : "Owner-only override"}
               </span>
             </div>
-            {isOwner && invoiceNumberEdited && invoiceNumber !== suggestedNumber && (
-              <input
-                data-testid="invoice-number-reason"
-                value={overrideReason}
-                onChange={(e) => setOverrideReason(e.target.value)}
-                className={inputCls + " mt-2"}
-                placeholder="Reason for overriding the invoice number (min 10 chars)"
-              />
+            {isOwner && invoiceNumberEdited && trimmedNum !== (suggestedNumber || "") && (
+              <>
+                <input
+                  data-testid="invoice-number-reason"
+                  value={overrideReason}
+                  onChange={(e) => setOverrideReason(e.target.value)}
+                  className={inputCls + " mt-2" + (reasonInvalid ? " border-rose-400 focus:border-rose-500 focus:ring-rose-500" : "")}
+                  placeholder="Reason for overriding the invoice number (min 10 chars)"
+                  aria-invalid={reasonInvalid || undefined}
+                  aria-describedby="invoice-number-reason-hint"
+                />
+                <div
+                  id="invoice-number-reason-hint"
+                  data-testid="invoice-number-reason-hint"
+                  className={"mt-1 text-[10px] " + (reasonInvalid ? "text-rose-700 font-semibold" : "text-zinc-500")}
+                >
+                  {reasonInvalid
+                    ? `Reason must be at least 10 characters (currently ${trimmedReason.length}).`
+                    : "Reason is required when overriding the invoice number."}
+                </div>
+              </>
             )}
           </div>
           <div>

@@ -3,6 +3,57 @@
 ## Product summary
 QORVENA is a Bitumen transport ERP tracking LRs, Trips, Freight, Shortage, Invoices, Payments, Suppliers, Customers, Vehicles, Drivers, Products, Fuel, and Reports. FastAPI + React + MongoDB. Auth via Emergent-managed Google, with a dev-only demo token.
 
+## Iter134 · Invoice Number Reason Validation — UAT-blocker FIX (2026-09-03)
+
+**Bug.**  Owner overrode invoice number on `/invoices/new`, the Reason field
+visibly contained *"Manual serial correction"* (24 chars, valid), but the
+server still rejected with *"invoice_number_reason must be at least 10
+characters when overriding"*.
+
+**Root cause.**  The React mutation body gated the outgoing payload on
+`invoiceNumber !== suggestedNumber` — a comparison against **local**
+state.  Because `suggestedNumber` is populated by the (staleTime-cached)
+`/invoices/next-preview` query and the backend re-computes preview
+atomically against the same `$inc` counter it will consume, the two can
+disagree in flight and produce edge-case payloads (or drop the reason
+entirely) even when the DOM showed a valid reason.
+
+**Fix (frontend only, race-safe).**
+- Always send `invoice_number` and **trimmed** `invoice_number_reason`
+  when the Owner has touched the field.  Backend remains the source of
+  truth for override vs no-override (its live-preview comparison decides
+  whether to require the reason).
+- Trim the reason on the wire so whitespace-only strings collapse to
+  empty and are rejected — consistent with the backend `strip()`.
+- Compute `reasonInvalid = localOverrideActive && trimmedReason.length < 10`,
+  wire it into the Create button (`canSubmit`), and show a live inline hint
+  (`data-testid="invoice-number-reason-hint"`) so users can never submit a
+  reason that will fail the 10-char rule.
+- Backend `routers/invoices.py` (numbering / override / audit) UNCHANGED.
+
+### Live UAT · verified
+1. Login as Owner, `/invoices/new`, pick customer + trip.
+2. Suggested number pre-populates; type override `REBIND/25-26/UAT431494`.
+3. Enter short reason `short` → red hint *"Reason must be at least 10
+   characters (currently 5)."*, **Create Invoice** button disabled.
+4. Enter `Manual serial correction` → hint returns to neutral, button
+   enabled, POST payload contains the exact trimmed reason.
+5. Server → **200**, invoice created, PDF renders with the override
+   number, "Invoice created" toast.
+
+### Tests · Iter134 suite → 49 / 49 PASS
+- `test_iter134_invoice_number_reason_binding.py` NEW · 14 tests
+  (frontend source shape guards + backend contract: 24-char happy path,
+  10-char boundary, 9-char reject, whitespace-only reject, padded
+  reason trimmed & accepted, no-override no-reason, matching-suggested
+  no-reason, duplicate → 409 not 400, audit trail captures
+  `override_number_on_create` + reason + original + final).
+- All prior Iter134 tests (numbering, editable, field, signature upload,
+  signature size, role UX) still green.
+
+**ITER134 INVOICE NUMBER REASON VALIDATION — FIX COMPLETE — READY FOR UAT — ITER133 UNTOUCHED.**
+
+
 ## Iter134 · Invoice Number Role UX Alignment — READY FOR UAT (2026-09-03)
 
 **Final UX polish** for the Invoice Number field on `/invoices/new`.  Prior fix

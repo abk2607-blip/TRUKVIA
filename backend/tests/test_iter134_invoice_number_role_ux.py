@@ -47,7 +47,7 @@ def test_reason_field_owner_only():
     the suggested number. Non-owners can never see it."""
     src = _src()
     assert re.search(
-        r"isOwner\s*&&\s*invoiceNumberEdited\s*&&\s*invoiceNumber\s*!==\s*suggestedNumber",
+        r"isOwner\s*&&\s*invoiceNumberEdited\s*&&\s*trimmedNum\s*!==\s*\(suggestedNumber",
         src,
     ), "reason field must be gated behind isOwner + edited + differs-from-suggested"
 
