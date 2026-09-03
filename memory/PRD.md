@@ -3,6 +3,40 @@
 ## Product summary
 QORVENA is a Bitumen transport ERP tracking LRs, Trips, Freight, Shortage, Invoices, Payments, Suppliers, Customers, Vehicles, Drivers, Products, Fuel, and Reports. FastAPI + React + MongoDB. Auth via Emergent-managed Google, with a dev-only demo token.
 
+## Iter134 · Signature Upload UI Correction — READY FOR UAT (2026-09-03)
+
+**Small isolated fix on top of Iter134.** Removes the raw `signature_file_id` text input from Settings and replaces it with a proper Upload Signature flow. Zero backend changes. Iter133 untouched. Iter134 still NOT LOCKED.
+
+### What changed
+- **NEW** `frontend/src/components/SignatureUpload.jsx` — 155 lines: dashed "Upload Signature" button (empty state), thumbnail + filename + Replace/Remove (populated state), PNG/JPG/WebP accepted, auto-flips `signature_mode → "image"` on upload, calls `onChange(file_id)` so the parent Settings form updates without any operator copy/paste.
+- **EDIT** `frontend/src/pages/Settings.jsx` — dropped the raw `Signature Image File ID` text input; mounted `<SignatureUpload/>` in its place; imported the new component; kept the Signature Mode select intact.
+
+### Endpoints reused (zero new backend)
+- `POST /api/files/upload?category=signature&linked_type=company&linked_id=<cid>` — Iter129-sec MIME allow-list already covers PNG/JPG/WebP; GIF stays rejected.
+- `GET /api/files?linked_type=company&linked_id=<cid>&category=signature` — for filename/size metadata.
+- `GET /api/files/{fid}/download` — used in the `<img>` preview thumbnail.
+- `PUT /api/company` — persists `signature_file_id` (unchanged from Iter134).
+
+### Tests (all serial, `-o addopts=""`)
+- `test_iter134_signature_upload.py` — **5 / 5 PASS** (PNG upload, JPG upload, GIF rejected, save+replace+detach round-trip, contradiction guard preserved).
+- `test_iter134_invoice_numbering.py` — **12 / 12 PASS** (Iter134 regression kept green).
+- `test_iter127b_invoice_page_of_pages.py` — **12 / 12 PASS**.
+- Iter133 Turn 1 · 2A · 2B · 2C · 2D — **85 / 85 PASS** (spot-verified; no Iter133 files in git diff).
+- **Aggregate: 114 / 114 PASS.**
+
+### Live UAT (deployed build, verified via screenshot + curl)
+Route confirmed on `/settings`: `INVOICE PRESENTATION (ITER134)` band shows Authorised Signatory Name · Designation · Jurisdiction · System-generated Note · **Signature Image (Upload Signature dashed button)** · Signature Mode dropdown. The old raw file_id text field is gone from the DOM (`setting-signature-file-id` absent). Contradiction guard still fires when trying to save "signature not required" alongside a configured signature.
+
+### Not implemented (intentional, per instruction)
+DSC · e-Invoice · Bulk PDF Regen · Number-jump audit banner · any other Iter134 polish. Existing companies whose `signature_file_id` was manually pasted continue to render exactly as before (no schema change).
+
+### Artefact
+`/app/artifacts/Iter134_Signature_Upload_UAT_evidence.json` — 15 scenarios PASS, file list, reused endpoints, limitations.
+
+### Final status
+**ITER134 SIGNATURE UPLOAD UI CORRECTION — COMPLETE — READY FOR UAT — ITER133 UNTOUCHED — NOT LOCKED.**
+
+
 ## Iter134 · Invoice Enhancement — READY FOR UAT — NOT LOCKED (2026-09-03)
 
 **Delivered:** consolidated Invoice Enhancement turn covering P0 numbering + P1 presentation, per approved Phase-1 discovery. Iter133 untouched (0 files under lock scope modified).

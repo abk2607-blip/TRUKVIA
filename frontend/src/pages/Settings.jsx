@@ -4,6 +4,7 @@ import { api } from "@/api";
 import { toast } from "sonner";
 import { Save, Upload, Trash2 } from "lucide-react";
 import { StateSelect } from "@/lib/states";
+import SignatureUpload from "@/components/SignatureUpload";
 
 const EMPTY = {
   name: "", address: "", phone: "", email: "",
@@ -226,11 +227,19 @@ export default function Settings() {
               onChange={set("system_generated_note")} className={inputCls}
               placeholder="e.g. This is a computer-generated tax invoice." />
           </F>
-          <F label="Signature Image File ID">
-            <input data-testid="setting-signature-file-id" value={form.signature_file_id || ""}
-              onChange={set("signature_file_id")} className={inputCls}
-              placeholder="Upload via Files page and paste file_id here" />
-          </F>
+          <div className="md:col-span-2">
+            <SignatureUpload
+              companyId={form.id || ""}
+              fileId={form.signature_file_id || ""}
+              onChange={(fid) => setForm((f) => ({
+                ...f,
+                signature_file_id: fid,
+                // Keep signature_mode consistent with presence of an image
+                signature_mode: fid ? "image" : (f.signature_mode === "image" ? "none" : f.signature_mode),
+              }))}
+              onModeAuto={(mode) => setForm((f) => ({ ...f, signature_mode: mode }))}
+            />
+          </div>
           <F label="Signature Mode">
             <select data-testid="setting-signature-mode" value={form.signature_mode || "image"}
               onChange={set("signature_mode")} className={inputCls}>

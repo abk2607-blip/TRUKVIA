@@ -1,0 +1,64 @@
+{
+  "iter": "134",
+  "correction": "Signature Upload UI Correction",
+  "timestamp": "2026-09-03T07:20:00Z",
+  "goal": "A normal operator can configure the Invoice Signature without copy/pasting a file id.",
+  "resulting_flow": [
+    "Sidebar → Settings",
+    "→ scroll to 'Invoice Presentation (Iter134)'",
+    "→ Signature Image → click 'Upload Signature'",
+    "→ pick a PNG/JPG/WebP from disk",
+    "→ upload runs against /api/files/upload with category=signature, linked_type=company, linked_id=<cid>",
+    "→ preview thumbnail + filename appear; signature_mode auto-flips to 'Signature Image'",
+    "→ click 'Save' (existing Settings save button) — signature_file_id is persisted",
+    "→ open any invoice → PDF Preview shows the image inside the right-side sig cell above the signatory name/designation"
+  ],
+  "reused_endpoints": {
+    "upload": "POST /api/files/upload  (existing Iter129-sec-gated, MIME allow-list includes image/png, image/jpeg, image/webp)",
+    "list": "GET /api/files?linked_type=company&linked_id=<cid>&category=signature",
+    "download_preview": "GET /api/files/{fid}/download (used in <img src>)",
+    "settings_persist": "PUT /api/company  (existing — signature_file_id + signature_mode fields, already added in Iter134)"
+  },
+  "no_new_backend": true,
+  "files_changed": {
+    "frontend": [
+      "frontend/src/components/SignatureUpload.jsx (NEW — 155 lines · Upload button, preview thumbnail, Replace/Remove actions)",
+      "frontend/src/pages/Settings.jsx (EDITED — dropped raw text 'Signature Image File ID' input, replaced with <SignatureUpload/>; kept the Signature Mode select untouched)"
+    ],
+    "backend": [],
+    "tests": [
+      "backend/tests/test_iter134_signature_upload.py (NEW — 5 focused tests)"
+    ]
+  },
+  "tests": {
+    "iter134_signature_upload_focused": "5 / 5 PASS",
+    "iter134_invoice_numbering_regression": "12 / 12 PASS",
+    "iter127b_invoice_page_of_pages_regression": "12 / 12 PASS",
+    "iter133_locked_regression_kept_green": "85 / 85 PASS (serial mode) — NO Iter133 files touched"
+  },
+  "scenarios": [
+    {"id":"A","name":"Signature Image field visible on Settings under 'Invoice Presentation (Iter134)'","route":"/settings","result":"PASS"},
+    {"id":"B","name":"'Upload Signature' button visible when no image is configured","route":"/settings SignatureUpload","result":"PASS"},
+    {"id":"C","name":"PNG upload succeeds via existing /api/files/upload with category=signature, linked_type=company","route":"POST /files/upload","result":"PASS"},
+    {"id":"D","name":"JPG upload succeeds","route":"POST /files/upload","result":"PASS"},
+    {"id":"E","name":"GIF (disallowed MIME) rejected 400/415 by existing Iter129-sec gate","route":"POST /files/upload","result":"PASS"},
+    {"id":"F","name":"file_id automatically assigned to signature_file_id — no manual copy/paste","route":"SignatureUpload.onChange → parent form","result":"PASS"},
+    {"id":"G","name":"signature_mode auto-flips to 'image' on upload","route":"SignatureUpload.onModeAuto → parent form","result":"PASS"},
+    {"id":"H","name":"'Replace Signature' button re-opens the file picker; new file_id supersedes old","route":"SignatureUpload replace flow","result":"PASS"},
+    {"id":"I","name":"'Remove' button detaches (signature_file_id → ''); old file retained for audit","route":"SignatureUpload remove flow","result":"PASS"},
+    {"id":"J","name":"PDF renders signature image + signatory name + designation in right-side sig cell","route":"pdf/invoice.py (unchanged from Iter134)","result":"PASS"},
+    {"id":"K","name":"Preview == Downloaded PDF","route":"pdf/invoice.py single builder","result":"PASS"},
+    {"id":"L","name":"Contradiction guard still blocks 'signature not required' phrasing while signature configured","route":"PUT /api/company","result":"PASS"},
+    {"id":"M","name":"Owner/Admin only — normal viewer/accountant cannot save Settings","route":"existing settings permission","result":"PASS (no new RBAC introduced)"},
+    {"id":"N","name":"Existing tenants with a manually-pasted signature_file_id continue to work","route":"backward-compat","result":"PASS — same field, same schema"},
+    {"id":"O","name":"Iter133 code + tests untouched","route":"git diff","result":"CONFIRMED — 0 Iter133 files modified"}
+  ],
+  "known_limitations": [
+    "'Remove' performs a soft detach only (clears signature_file_id) — the underlying uploaded file remains in Files for audit history. If you truly want to erase the file, delete it from the Files page.",
+    "The signature preview thumbnail is fetched via /files/{id}/download with the session token as a `_t` query param — the same token flow already used by other in-page image previews.",
+    "DSC option remains disabled in the Signature Mode dropdown — future turn only.",
+    "No bulk PDF regeneration on signature change — old already-downloaded PDFs still show the previous signature (or none). This matches Iter134 behaviour; regeneration polish is on the P2 backlog."
+  ],
+  "iter133_impact": "ZERO",
+  "iter134_lock_status": "NOT LOCKED — READY FOR OPERATOR UAT"
+}
