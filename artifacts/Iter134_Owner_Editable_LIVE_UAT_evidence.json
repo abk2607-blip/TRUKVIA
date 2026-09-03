@@ -1,0 +1,79 @@
+{
+  "iteration": "Iter134",
+  "task": "Owner Invoice Number field READ-ONLY in live UAT — role hydration race",
+  "verdict": "ROOT CAUSE IDENTIFIED · FIX APPLIED · LIVE UI VERIFIED",
+  "root_cause": "AuthContext.readCachedUser() hydrates the user state SYNCHRONOUSLY from localStorage on mount. AuthCallback caches the /auth/session response, which returns {user_id, email, name, picture, session_token} — with NO role field. GET /auth/me (which now returns role/effective_role/is_staff) fires asynchronously and eventually overwrites the cache. The FIRST render of /invoices/new therefore had `user.effective_role === undefined` and the previous strict `... === 'owner'` check flipped isOwner to FALSE, disabling the field until /auth/me landed. Users saw a disabled field with the 'Owner-only override' hint even though they were the Owner.",
+  "fix": {
+    "frontend_only": [
+      "Replaced `isOwner = ((user?.effective_role || user?.role || '').toLowerCase() === 'owner')` with a PERMISSIVE-default derivation:",
+      "  const _rawRole = (user?.effective_role ?? user?.role ?? '').toString().trim().toLowerCase();",
+      "  const isOwner = _rawRole === '' ? true : _rawRole === 'owner';",
+      "Unknown / empty role now renders the field as Owner-editable (backend authorization remains the final gate). Only an explicitly present, non-'owner' role disables the field. Trim + lowercase absorbs padding / casing weirdness on the wire."
+    ],
+    "backend": "UNCHANGED — routers/invoices.py numbering/override/audit intact; /auth/me continues to return role/effective_role/is_staff"
+  },
+  "auth_me_live_evidence": {
+    "endpoint": "GET /api/auth/me",
+    "response_for_demo_owner": {
+      "user_id": "user_demo_men_2026",
+      "email": "demo@bitumen-transport.local",
+      "name": "Demo User",
+      "picture": "",
+      "role": "owner",
+      "effective_role": "owner",
+      "is_staff": false
+    }
+  },
+  "deployed_bundle_verification": {
+    "url": "REACT_APP_BACKEND_URL/static/js/bundle.js",
+    "new_tokens_present": ["_rawRole", "'_rawRole === \"owner\"'", "toString().trim().toLowerCase()"],
+    "isOwner_occurrences": 11
+  },
+  "live_dom_scenarios": {
+    "S1_rolelesscache_first_paint": {
+      "cached_user": "no role/effective_role — simulates real OAuth right after /auth/session",
+      "input_disabled_attr": null,
+      "input_readonly_attr": null,
+      "typing_worked": true,
+      "hint": "· Owner can override the invoice number",
+      "verdict": "PASS — real Owner is editable on first paint"
+    },
+    "S2_explicit_owner": {
+      "cached_user": "role='owner' effective_role='owner'",
+      "input_disabled_attr": null,
+      "input_readonly_attr": null,
+      "typing_worked": true,
+      "hint": "· Owner can override the invoice number",
+      "verdict": "PASS"
+    },
+    "S3_explicit_accountant": {
+      "cached_user": "role='accountant' effective_role='accountant'",
+      "input_disabled_attr": "",
+      "input_readonly_attr": "",
+      "typing_worked": false,
+      "hint": "· Owner-only override",
+      "verdict": "PASS — non-owner is disabled/read-only"
+    },
+    "S4_padded_UPPER_owner": {
+      "cached_user": "role='  OWNER  ' effective_role='  OWNER  '",
+      "input_disabled_attr": null,
+      "input_readonly_attr": null,
+      "typing_worked": true,
+      "verdict": "PASS — casing/whitespace tolerant"
+    }
+  },
+  "reason_binding_and_duplicate_still_green": {
+    "valid_override_reason": "Manual serial correction → HTTP 200",
+    "short_reason_5_chars": "hint 'Reason must be at least 10 characters (currently 5).' + Create button disabled",
+    "duplicate_number": "HTTP 409 · Invoice number ... already exists (reaches uniqueness, not reason validation)",
+    "audit": "action=override_number_on_create · reason='Manual serial correction' · suggested_number + new_number captured"
+  },
+  "regression": {
+    "iter134_full_suite": "63 / 63 PASS (owner_editable_live_uat + role_ux + reason_binding + editable + field + numbering + signature-upload + signature-size)"
+  },
+  "backend_security": "UNCHANGED — routers/invoices.py POST /api/invoices and PATCH /api/invoices/{iid}/override-number still return 403 for non-owner overrides (verified earlier: anonymous PATCH → 401, owner PATCH on missing invoice → 404)",
+  "screenshots": [
+    "/app/artifacts/iter134_owner_firstpaint.png",
+    "/app/artifacts/iter134_owner_nonowner.png"
+  ]
+}

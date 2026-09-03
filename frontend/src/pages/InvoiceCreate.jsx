@@ -48,11 +48,24 @@ export default function InvoiceCreate() {
     if (Object.prototype.hasOwnProperty.call(next, "notes")) setNotes(next.notes || "");
   }, [invoiceForm]);
   const { user } = useAuth();
-  // Iter134 · Role-based UX for Invoice Number override.
-  // Canonical role source matches other pages (Notes, PartyLedger, Vendors,
-  // Mechanics): user.effective_role falls back to user.role. Only Owner may
-  // edit the auto-suggested Invoice Number; backend still enforces this.
-  const isOwner = ((user?.effective_role || user?.role || "").toLowerCase() === "owner");
+  // Iter134 · Role-based UX for Invoice Number override (LIVE UAT hardening).
+  //
+  // Canonical role source (Notes / PartyLedger / Vendors / Mechanics):
+  //   user.effective_role   ── set by GET /auth/me after resolution
+  //   user.role             ── legacy fallback
+  //
+  // A real Owner logging in via Google OAuth hits AuthCallback → setUser(data)
+  // where `data` comes from POST /auth/session and DOES NOT include a role
+  // field. The role only arrives on the next /auth/me tick. If we treat
+  // "role unknown" as non-owner, the first render locks a real Owner out
+  // of their own field until /auth/me completes.
+  //
+  // Fix: PERMISSIVE default. When no role information is available yet,
+  // render as Owner (backend authorization remains the final gate). We only
+  // treat the user as non-owner when a role IS present AND is explicitly not
+  // "owner" (e.g. accountant, manager, viewer).
+  const _rawRole = (user?.effective_role ?? user?.role ?? "").toString().trim().toLowerCase();
+  const isOwner = _rawRole === "" ? true : _rawRole === "owner";
   const draft = useFormDraft({
     route: "/invoices/new",
     form: invoiceForm,

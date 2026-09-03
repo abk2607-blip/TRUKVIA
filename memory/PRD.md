@@ -3,6 +3,58 @@
 ## Product summary
 QORVENA is a Bitumen transport ERP tracking LRs, Trips, Freight, Shortage, Invoices, Payments, Suppliers, Customers, Vehicles, Drivers, Products, Fuel, and Reports. FastAPI + React + MongoDB. Auth via Emergent-managed Google, with a dev-only demo token.
 
+## Iter134 · Owner Invoice-Number Editability — LIVE UAT HARDENING (2026-09-03)
+
+**Bug (as reported).** Owner logged into the live UI, opened
+`/invoices/new`, saw the Invoice Number field prefilled with
+`AKB/26-27/0029`, helper text *"Owner-only override"*, and could not
+click / type into the field.
+
+**Root cause — role-hydration race.** `AuthContext.readCachedUser()`
+hydrates React state synchronously from `localStorage.auth_user` on
+mount.  That cached blob is written by `AuthCallback` right after
+Google OAuth using the `/auth/session` response, which returns
+`{user_id, email, name, picture, session_token}` — **no role field**.
+`GET /auth/me` (which does include `role` / `effective_role`) only lands
+asynchronously.  The previous strict `... === "owner"` gate therefore
+resolved to `false` on the very first render, disabling the field for
+the entire window between paint and `/auth/me` completion.
+
+**Fix (frontend only).** Permissive default in `InvoiceCreate.jsx`:
+
+```js
+const _rawRole = (user?.effective_role ?? user?.role ?? "").toString().trim().toLowerCase();
+const isOwner = _rawRole === "" ? true : _rawRole === "owner";
+```
+
+- Unknown / empty role → treated as Owner (backend authorization stays
+  the final gate; `routers/invoices.py` still returns 403 for non-owner
+  overrides).
+- Explicitly non-`"owner"` role → disabled / read-only.
+- Trim + lowercase absorbs padding / casing quirks.
+
+### Live DOM evidence (Playwright against the deployed preview)
+| Scenario | `disabled` | `readonly` | Typing works | Hint |
+| --- | --- | --- | --- | --- |
+| Role-less cache (real OAuth first paint) | `null` | `null` | ✅ | `Owner can override the invoice number` |
+| Explicit `owner` | `null` | `null` | ✅ | `Owner can override the invoice number` |
+| Explicit `accountant` | `""` | `""` | ❌ (element not enabled) | `Owner-only override` |
+| Padded `"  OWNER  "` | `null` | `null` | ✅ | `Owner can override the invoice number` |
+
+### Deployed bundle proof
+`/static/js/bundle.js` grep — `_rawRole` present, `_rawRole === "owner"`
+present, `toString().trim().toLowerCase()` present, `isOwner`
+occurrences: 11.
+
+### Tests · Iter134 suite → 63 / 63 PASS
+`test_iter134_owner_editable_live_uat.py` NEW · 5 tests locking the
+permissive-default derivation and role casing behaviour.  Existing
+reason-binding (14), role-ux (5), editable (3), field (6), numbering
+(12), signature-size (4), signature-upload (5) still green.
+
+**ITER134 OWNER INVOICE NUMBER — LIVE ROLE GATING VERIFIED — READY FOR FINAL UAT — ITER133 UNTOUCHED.**
+
+
 ## Iter134 · Invoice Number Reason — LIVE UAT verification (2026-09-03)
 
 Deployed bundle grep confirms the reason-binding fix ships in
