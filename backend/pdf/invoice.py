@@ -792,7 +792,7 @@ def build_invoice_pdf(company: dict, customer: dict, invoice: dict, trips: list)
         if _sig_img_path:
             try:
                 from reportlab.platypus import Image as _RLImage
-                _img = _RLImage(_sig_img_path, width=32 * mm, height=14 * mm, kind="proportional")
+                _img = _RLImage(_sig_img_path, width=50 * mm, height=20 * mm, kind="proportional")
                 right_cell.append(Spacer(1, 2))
                 right_cell.append(_img)
             except Exception:

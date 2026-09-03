@@ -1,0 +1,41 @@
+{
+  "iter": "134",
+  "correction": "Signature Image Size Polish",
+  "timestamp": "2026-09-03T10:00:00Z",
+  "change": "pdf/invoice.py — signature Image() width/height bumped from 32×14 mm to 50×20 mm; kind='proportional' preserved so the uploaded source image never distorts.",
+  "why": "Operator UAT feedback: on real invoices the signature was clearly visible but occupied too little of the 109 mm right signature cell, leaving excess whitespace next to the company name / signatory name / Authorised Signatory label.",
+  "safety": {
+    "aspect_ratio_preserved": true,
+    "right_cell_budget_mm": 109,
+    "new_image_box_mm": [50, 20],
+    "fits_horizontally": true,
+    "fits_vertically_in_sig_band": true,
+    "source_file_untouched": true
+  },
+  "tests": {
+    "signature_size_focused": "4 / 4 PASS (renders, page-count sanity, preview==download page-count, size constants guard)",
+    "signature_upload_regression": "5 / 5 PASS",
+    "invoice_number_field_regression": "6 / 6 PASS",
+    "invoice_numbering_regression": "12 / 12 PASS",
+    "iter127b_page_of_pages_regression": "12 / 12 PASS",
+    "iter133_regression_kept_green_serial": "85 / 85 PASS",
+    "aggregate": "124 / 124 PASS"
+  },
+  "scenarios": [
+    {"id":"A","name":"Signature image renders in enlarged 50×20 mm box","result":"PASS"},
+    {"id":"B","name":"Aspect ratio preserved via kind='proportional'","result":"PASS"},
+    {"id":"C","name":"Right sig cell (109 mm) still fits image + name + designation + label","result":"PASS"},
+    {"id":"D","name":"No extra page introduced by enlarged image (page-count sanity across recent invoices)","result":"PASS"},
+    {"id":"E","name":"Old constant 32×14 mm removed from source","result":"PASS"},
+    {"id":"F","name":"Preview == Download (same page count both renders)","result":"PASS"},
+    {"id":"G","name":"Totals / Bank / T&C / Amount in Words / Round Off / Page X of Y untouched","result":"PASS — no code changes to those blocks"},
+    {"id":"H","name":"CN/DN unchanged","result":"CONFIRMED"},
+    {"id":"I","name":"Iter133 files untouched","result":"CONFIRMED via git diff"}
+  ],
+  "known_limitations": [
+    "If the uploaded PNG itself contains large transparent margins around the actual strokes, the signature will still look small inside the 50×20 mm box. The renderer intentionally does NOT crop the source file — this preserves the user's uploaded original. Fix by uploading a tightly-cropped PNG.",
+    "The size constants (50 mm × 20 mm) are inline in pdf/invoice.py. If future tuning is needed, adjust in one place and re-run the guard test."
+  ],
+  "iter133_impact": "ZERO",
+  "iter134_lock_status": "NOT LOCKED — READY FOR OPERATOR UAT"
+}

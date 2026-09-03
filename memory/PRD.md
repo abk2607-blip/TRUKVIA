@@ -3,6 +3,23 @@
 ## Product summary
 QORVENA is a Bitumen transport ERP tracking LRs, Trips, Freight, Shortage, Invoices, Payments, Suppliers, Customers, Vehicles, Drivers, Products, Fuel, and Reports. FastAPI + React + MongoDB. Auth via Emergent-managed Google, with a dev-only demo token.
 
+## Iter134 · Signature Image Size Polish — READY FOR UAT (2026-09-03)
+
+Bumped the invoice PDF signature image box from **32 × 14 mm** to **50 × 20 mm** (`pdf/invoice.py` — single-line change on the `_RLImage(..., width=…, height=…, kind='proportional')` call). Right signature cell is 109 mm wide — plenty of headroom. Aspect ratio preserved via ReportLab `kind="proportional"`; source file is never touched or cropped.
+
+### Files changed
+- `backend/pdf/invoice.py` — one constant swap.
+- `backend/tests/test_iter134_signature_size.py` — NEW, 4 focused tests.
+
+### Tests · 124 / 124 PASS
+Iter134 signature-size (4) + Iter134 signature-upload (5) + Iter134 invoice-number-field (6) + Iter134 invoice-numbering (12) + Iter127b Page-of-Pages (12) + Iter133 Turn 1–2D combined (85, serial).
+
+### Known limitation
+If the operator's uploaded PNG contains large transparent margins, the visible signature will still look small inside the enlarged box. The renderer intentionally does not auto-crop — upload a tightly-cropped PNG to fully use the 50×20 mm area.
+
+**ITER134 SIGNATURE IMAGE SIZE POLISH — COMPLETE — READY FOR UAT — ITER133 UNTOUCHED.**
+
+
 ## Iter134 · Invoice Number UI Correction — READY FOR UAT (2026-09-03)
 
 Operator now sees the **Invoice Number** as a separate labelled input field on the Create screen — no longer buried inside a "Next #" chip. Suggested number auto-populates from `/api/invoices/next-preview`; Owner may edit with a mandatory reason (≥10 chars, format + duplicate guards). Non-owner sees the input disabled.
