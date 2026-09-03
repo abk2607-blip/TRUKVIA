@@ -1,0 +1,170 @@
+{
+  "timestamp": "2026-09-03T03:27:42.329207Z",
+  "iter": "133",
+  "phase": "Turn 3 / Slice A",
+  "tenant_marker": "SLICEA-1788406057",
+  "note": "End-to-end invariant proof of the twin-write UI flow via the same backend endpoints and the same Idempotency-Key semantics that the UI uses.",
+  "created": {
+    "vendor_id": "ven_0eb2a0ace6564f95",
+    "mechanic_id": "mec_63f4648b6247474e",
+    "vehicle_id": "veh_0c59f3a72edb4b1e",
+    "vehicle_number": "UAT-SLICEA-1788406057",
+    "repair_id": "rev_39cd34e45d5b4ab0",
+    "bill_id": "vbl_4adf25db8c714d40",
+    "bill_amount": 18000,
+    "wo_id": "mwo_2ea7f6e0564a4ff7",
+    "wo_amount": 7000,
+    "twin_expense_ids": [
+      "exp_17d37291c8ab4027",
+      "exp_b05057daae35433a"
+    ],
+    "payment_id": "vpay_a3ef063e614040f9",
+    "payment_amount": 10000
+  },
+  "expected": {
+    "after_twin_writes": {
+      "vehicle_total_cost": 25000,
+      "parts_cost": 18000,
+      "labour_cost": 7000,
+      "vendor_payable": 18000,
+      "mechanic_payable": 7000
+    },
+    "after_payment_10k": {
+      "vehicle_total_cost": 25000,
+      "vendor_paid": 10000,
+      "vendor_outstanding": 8000,
+      "mechanic_outstanding": 7000
+    },
+    "idempotent_replay_returns_same_id": true,
+    "expense_rows_on_repair": 2,
+    "expense_sum_on_repair": 25000
+  },
+  "actual": {
+    "after_twin_writes": {
+      "vehicle_total_cost": 25000.0,
+      "parts_cost": 18000.0,
+      "labour_cost": 7000.0,
+      "vendor_payable": 18000.0,
+      "mechanic_payable": 7000.0
+    },
+    "after_payment_10k": {
+      "vehicle_total_cost": 25000.0,
+      "vendor_paid": 10000.0,
+      "vendor_outstanding": 8000.0,
+      "mechanic_outstanding": 7000.0
+    },
+    "idempotent_replay_returns_same_id": true,
+    "expense_rows_on_repair": 2,
+    "expense_sum_on_repair": 25000.0
+  },
+  "scenarios": [
+    {
+      "id": "A",
+      "name": "Create UAT Vendor",
+      "route": "/vendors",
+      "status": "PASS"
+    },
+    {
+      "id": "B",
+      "name": "Create UAT Mechanic",
+      "route": "/mechanics",
+      "status": "PASS"
+    },
+    {
+      "id": "C",
+      "name": "Create Repair",
+      "route": "/vehicles/:vid/repairs/new \u2192 /repairs/:rid",
+      "status": "PASS"
+    },
+    {
+      "id": "D",
+      "name": "Twin write VendorBill+Expense 18000",
+      "route": "/repairs/:rid Parts",
+      "status": "PASS"
+    },
+    {
+      "id": "E",
+      "name": "Twin write MechanicWO+Expense 7000",
+      "route": "/repairs/:rid Labour",
+      "status": "PASS"
+    },
+    {
+      "id": "F",
+      "name": "Repair Cost = 25000 (no double-count)",
+      "route": "/repairs/:rid totals",
+      "status": "PASS"
+    },
+    {
+      "id": "G",
+      "name": "Parts = 18000",
+      "route": "/repairs/:rid totals",
+      "status": "PASS"
+    },
+    {
+      "id": "H",
+      "name": "Labour = 7000",
+      "route": "/repairs/:rid totals",
+      "status": "PASS"
+    },
+    {
+      "id": "I",
+      "name": "Vendor Payable = 18000",
+      "route": "/repairs/:rid totals",
+      "status": "PASS"
+    },
+    {
+      "id": "J",
+      "name": "Mechanic Payable = 7000",
+      "route": "/repairs/:rid totals",
+      "status": "PASS"
+    },
+    {
+      "id": "K",
+      "name": "Vendor Payment 10000",
+      "route": "/vendor-ledger/:id + drawer",
+      "status": "PASS"
+    },
+    {
+      "id": "L",
+      "name": "Vendor outstanding = 8000",
+      "route": "/vendor-ledger/:id",
+      "status": "PASS"
+    },
+    {
+      "id": "M",
+      "name": "Vehicle Cost UNCHANGED at 25000",
+      "route": "/vehicles/:vid/cost",
+      "status": "PASS"
+    },
+    {
+      "id": "N",
+      "name": "No duplicate Expense (idempotent replay)",
+      "route": "/repairs/:rid retry",
+      "status": "PASS"
+    },
+    {
+      "id": "O",
+      "name": "Vendor Ledger reachable via /vendors row",
+      "route": "/vendors \u2192 /vendor-ledger/:id",
+      "status": "PASS"
+    },
+    {
+      "id": "P",
+      "name": "Mechanic Ledger reachable via /mechanics row",
+      "route": "/mechanics \u2192 /mechanic-ledger/:id",
+      "status": "PASS"
+    },
+    {
+      "id": "Q",
+      "name": "Trip Toll canonical/XOR regression",
+      "route": "legacy TripForm",
+      "status": "COVERED_BY_test_iter133_expense_turn2a.py (84/84 green baseline)"
+    }
+  ],
+  "known_limitations": [
+    "Non-trip Expense modal, Supplier Settlement Recoveries panel, Outstanding-as-of widget, Payment Cashbook page \u2014 DEFERRED to Slice B (P1).",
+    "Multi-vehicle VendorBill split, GST ITC, Tally export \u2014 DEFERRED per PRD.",
+    "Attachments on new Repair Workspace forms deferred to Slice B polish.",
+    "Frontend BUCKET_B_POST whitelist not extended for /vendors, /mechanics, /vendor-bills, /mechanic-work-orders, /expenses, /repair-events \u2014 Repair Workspace sends explicit Idempotency-Key headers for the twin-write; master creates + Payment go through unkeyed (backend passes through, per /app/backend/idempotency.py). This is sufficient for Slice A retry safety on the ONE flow that could otherwise leak duplicates (twin-write)."
+  ]
+}

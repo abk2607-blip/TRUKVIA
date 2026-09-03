@@ -4,6 +4,8 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api";
 import { toast } from "sonner";
 import { useAuth } from "@/context/AuthContext";
+import PaymentDrawer from "@/components/PaymentDrawer";
+import { Plus } from "lucide-react";
 
 /**
  * Iter133 · Turn 2C — Party Ledger (Vendor OR Mechanic) + Admin correction.
@@ -25,6 +27,7 @@ export default function PartyLedger({ partyType }) {
   const [correcting, setCorrecting] = useState(null); // payment row or null
   const [mode, setMode] = useState("attribute"); // "attribute" | "amount"
   const [form, setForm] = useState({});
+  const [payOpen, setPayOpen] = useState(false); // Iter133 Turn 3 — Payment quick-entry drawer
 
   const params = useMemo(() => {
     const p = {};
@@ -68,9 +71,26 @@ export default function PartyLedger({ partyType }) {
 
   return (
     <div className="p-6 space-y-4" data-testid="party-ledger">
-      <h1 className="text-2xl font-semibold">
-        {partyType === "vendor" ? "Vendor" : "Mechanic"} Ledger — {ledger.data?.[`${partyType}_name`] || id}
-      </h1>
+      <div className="flex items-center gap-3">
+        <h1 className="text-2xl font-semibold">
+          {partyType === "vendor" ? "Vendor" : "Mechanic"} Ledger — {ledger.data?.[`${partyType}_name`] || id}
+        </h1>
+        <button
+          data-testid="open-payment-drawer-btn"
+          onClick={() => setPayOpen(true)}
+          className="ml-auto inline-flex items-center gap-1 text-xs px-3 py-2 bg-zinc-950 text-white rounded-sm hover:bg-zinc-800"
+        >
+          <Plus size={14} /> Payment
+        </button>
+      </div>
+      <PaymentDrawer
+        open={payOpen}
+        partyType={partyType}
+        partyId={id}
+        partyName={ledger.data?.[`${partyType}_name`] || ""}
+        onClose={() => setPayOpen(false)}
+        onSaved={() => qc.invalidateQueries({ queryKey: [`${partyType}-ledger`, id] })}
+      />
       <div className="bg-white border rounded-lg p-4 flex flex-wrap gap-3 items-end">
         <label className="text-sm">From
           <input type="date" value={from} onChange={(e) => setFrom(e.target.value)}

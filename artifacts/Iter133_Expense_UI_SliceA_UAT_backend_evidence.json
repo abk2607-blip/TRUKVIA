@@ -1,0 +1,20 @@
+{
+  "tag": "SLICEA-E390E2",
+  "scenarios": {
+    "twin_write_25k": "PASS",
+    "payment_no_cost_change": "PASS",
+    "supplier_settlement": "PASS"
+  },
+  "vendor_id": "ven_b4452cdb48f54c17",
+  "mechanic_id": "mec_b78de62097f049c9",
+  "vehicle_id": "veh_37dd7ecc5bd9474e",
+  "baseline_total_cost": 0,
+  "repair_id": "rev_2ea37733a3984db8",
+  "bill_id": "vbl_c73d389a39b14f0d",
+  "wo_id": "mwo_44153b21c2d64457",
+  "twin_expense_ids": [
+    "exp_a6ff09d93eb94027",
+    "exp_f4790a79a653408a"
+  ],
+  "payment_id": "vpay_18371f77f89a4e6e"
+}

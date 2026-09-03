@@ -233,6 +233,14 @@ export default function Vehicles() {
                   >
                     Cost
                   </a>
+                  <a
+                    data-testid={`vehicle-new-repair-${v.id}`}
+                    href={`/vehicles/${v.id}/repairs/new`}
+                    className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-zinc-200 rounded-sm mr-2 hover:bg-zinc-950 hover:text-white"
+                    title="Start a new repair for this vehicle"
+                  >
+                    + Repair
+                  </a>
                   <button data-testid={`edit-vehicle-${v.id}`} onClick={() => openEdit(v)} className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-zinc-200 rounded-sm mr-2 hover:bg-zinc-950 hover:text-white">
                     <Pencil size={12} /> Edit
                   </button>

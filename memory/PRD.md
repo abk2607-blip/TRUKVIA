@@ -3,6 +3,71 @@
 ## Product summary
 QORVENA is a Bitumen transport ERP tracking LRs, Trips, Freight, Shortage, Invoices, Payments, Suppliers, Customers, Vehicles, Drivers, Products, Fuel, and Reports. FastAPI + React + MongoDB. Auth via Emergent-managed Google, with a dev-only demo token.
 
+## Iter133 · Turn 3 · Operator UI · Slice A — UAT COMPLETE — ITER133 STILL NOT LOCKED (2026-09-03)
+
+**Status:** Frontend-only Slice A implemented. All backend endpoints untouched. UI UAT and source-of-truth invariants verified end-to-end. **NOT LOCKED.**
+
+### What shipped in Slice A (frontend only)
+- **`/vendors`** — Vendors master (create/edit/deactivate/reactivate + Ledger deep-link) — `frontend/src/pages/Vendors.jsx`
+- **`/mechanics`** — Mechanics master (same pattern) — `frontend/src/pages/Mechanics.jsx`
+- **`/vehicles/:vid/repairs/new`** + **`/repairs/:rid`** — Repair Workspace with Parts + Labour twin-write rows — `frontend/src/pages/RepairWorkspace.jsx`
+  - **Save Parts** → POST `/vendor-bills` (Idempotency-Key A) THEN POST `/expenses` (Idempotency-Key B). Retry-Cost re-fires only the Expense POST with the same key → replays cleanly on backend.
+  - **Save Labour** → mirror for `/mechanic-work-orders`.
+  - Supplier-owned vehicles get a mandatory settlement-mode band (`supplier_settlement_adjustment` vs `company_borne`).
+- **`+ Payment` drawer** on `/vendor-ledger/:id` and `/mechanic-ledger/:id`, plus **Pay** buttons on Repair Workspace bill/WO rows (pre-filled but partial amount allowed) — `frontend/src/components/PaymentDrawer.jsx`
+- **Nav** — added `nav-vendors` + `nav-mechanics` sidebar entries; `+ Repair` link on Vehicles row and `+ New Repair` button on Vehicle Cost Report; `Open` link on each repair-history event.
+
+### Live UAT scoreboard (17 scenarios)
+| # | Scenario | Route | Result |
+|---|---|---|---|
+| A | Vendor create/edit/deactivate | `/vendors` | ✅ |
+| B | Mechanic create/edit/deactivate | `/mechanics` | ✅ |
+| C | RepairEvent create + redirect to `/repairs/:rid` | `/vehicles/:vid/repairs/new` | ✅ |
+| D | Twin write Parts: VendorBill ₹18,000 + Expense ₹18,000 | `/repairs/:rid` | ✅ |
+| E | Twin write Labour: MechanicWO ₹7,000 + Expense ₹7,000 | `/repairs/:rid` | ✅ |
+| F | **Repair Cost = ₹25,000** (NOT ₹36k / ₹43k / ₹50k) | derived, `/repair-history` | ✅ |
+| G | Parts Cost = ₹18,000 | derived | ✅ |
+| H | Labour Cost = ₹7,000 | derived | ✅ |
+| I | Vendor Payable = ₹18,000 | derived | ✅ |
+| J | Mechanic Payable = ₹7,000 | derived | ✅ |
+| K | Vendor Payment ₹10,000 (payment_out, against bill) | drawer on `/vendor-ledger/:id` | ✅ |
+| L | Vendor Outstanding drops to ₹8,000 | ledger | ✅ |
+| M | **Vehicle Cost UNCHANGED at ₹25,000** after payment | `/cost-summary` | ✅ |
+| N | Idempotent replay of Expense POST returns SAME id | key-B replay | ✅ |
+| O | Vendor Ledger reachable via `/vendors` row → `/vendor-ledger/:id` | nav | ✅ |
+| P | Mechanic Ledger reachable via `/mechanics` row → `/mechanic-ledger/:id` | nav | ✅ |
+| Q | Trip Toll canonical/XOR regression (unchanged) | legacy `TripForm` | ✅ (Turn 2A 85/85 green, serial) |
+| **Overall** | | | ✅ **PASS** |
+
+### Regression scoreboard (2026-09-03)
+- Iter133 combined Turn 1 + 2A + 2B + 2C + 2D **85 / 85 PASS** in serial mode (`-o addopts=""` to bypass the pre-existing xdist wrapper). The 1-failure seen under default xdist-parallel is the documented `DG-STABILITY-1` flake — **not** introduced by Slice A (zero backend files touched).
+- Slice A itself: zero new backend tests (UI-only turn); source-of-truth invariants proven end-to-end by `/tmp/slice_a_uat.py` against the deployed API.
+
+### Files changed (all frontend)
+- NEW: `frontend/src/pages/Vendors.jsx`, `frontend/src/pages/Mechanics.jsx`, `frontend/src/pages/RepairWorkspace.jsx`, `frontend/src/components/PaymentDrawer.jsx`
+- EDIT: `frontend/src/App.js` (+4 routes), `frontend/src/components/Layout.jsx` (+2 nav entries), `frontend/src/pages/PartyLedger.jsx` (+ Payment button + drawer mount), `frontend/src/pages/Vehicles.jsx` (+ Repair link), `frontend/src/pages/VehicleCostReport.jsx` (+ New Repair button + Open-repair link)
+
+### Untouched confirmations (Slice A)
+✅ Backend routers, models, services — untouched (git status shows zero backend edits).
+✅ C3.1 / C3.2 / C3.4 / C3.5 / C4 / C5 / DG-STABILITY-1 / `pytest.ini` / `scripts/run_regression.sh` — untouched.
+✅ Legacy TripForm expense entry, `services_expense_bridge`, `services._compute_trip`, supplier `_build_ledger`, driver recovery, invoice recompute, Fuel — untouched.
+✅ Schema/model: no migration, no new collections, no new endpoints.
+
+### Deferred (Slice B / P1 backlog)
+- Non-trip Expense modal on Vehicle Cost page
+- Supplier Settlement Recoveries panel on Supplier detail
+- Outstanding-as-of widget on ledgers
+- Payment Cashbook report page
+- Attachments UI on new Repair Workspace forms
+- Bulk import for Vendors / Mechanics
+
+### Final artefact
+`/app/artifacts/Iter133_Expense_UI_SliceA_UAT_evidence.json` — full scenario payload, expected vs actual, ids created, PASS per scenario, known limitations.
+
+### Final status
+**TURN 3 SLICE A — UI UAT COMPLETE — ITER133 STILL NOT LOCKED — AWAITING USER REVIEW.**
+
+
 ## Iter133 · Expense / Vehicle Cost Management — OPERATOR UAT PASSED — AWAITING EXPLICIT LOCK APPROVAL (2026-09-03)
 
 **Status:** Live operator UAT executed against the deployed app; every scenario passed. Module is NOT auto-locked per the freeze; awaits explicit user LOCK instruction.

@@ -19,6 +19,9 @@ import Products from "@/pages/Products";
 import Vehicles from "@/pages/Vehicles";
 import VehicleCostReport from "@/pages/VehicleCostReport";
 import PartyLedger from "@/pages/PartyLedger";
+import Vendors from "@/pages/Vendors";
+import Mechanics from "@/pages/Mechanics";
+import RepairWorkspace from "@/pages/RepairWorkspace";
 import Fuel from "@/pages/Fuel";
 import Files from "@/pages/Files";
 import AuditLog from "@/pages/AuditLog";
@@ -79,6 +82,10 @@ function AppRouter() {
       <Route path="/reports/halting-verify" element={<Protected><HaltingVerify /></Protected>} />
       <Route path="/vehicles" element={<Protected><Vehicles /></Protected>} />
       <Route path="/vehicles/:vid/cost" element={<Protected><VehicleCostReport /></Protected>} />
+      <Route path="/vehicles/:vid/repairs/new" element={<Protected><RepairWorkspace /></Protected>} />
+      <Route path="/repairs/:rid" element={<Protected><RepairWorkspace /></Protected>} />
+      <Route path="/vendors" element={<Protected><Vendors /></Protected>} />
+      <Route path="/mechanics" element={<Protected><Mechanics /></Protected>} />
       <Route path="/vendor-ledger/:id" element={<Protected><PartyLedger partyType="vendor" /></Protected>} />
       <Route path="/mechanic-ledger/:id" element={<Protected><PartyLedger partyType="mechanic" /></Protected>} />
       <Route path="/products" element={<Protected><Products /></Protected>} />

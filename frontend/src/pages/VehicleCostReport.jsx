@@ -1,8 +1,8 @@
 import React, { useState, useMemo } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, Link } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "@/api";
-import { ArrowLeft, Truck, FileText, Wrench, Calendar } from "lucide-react";
+import { ArrowLeft, Truck, FileText, Wrench, Calendar, Plus } from "lucide-react";
 
 /**
  * Iter133 · Turn 2B — Vehicle Cost + Repair History (read-only).
@@ -60,6 +60,13 @@ export default function VehicleCostReport() {
         <h1 className="text-2xl font-semibold flex items-center gap-2">
           <Truck size={22} /> {vehicle?.vehicle_number || vid}
         </h1>
+        <Link
+          data-testid="new-repair-btn"
+          to={`/vehicles/${vid}/repairs/new`}
+          className="ml-auto inline-flex items-center gap-1 text-xs px-3 py-2 bg-zinc-950 text-white rounded-sm hover:bg-zinc-800"
+        >
+          <Plus size={14} /> New Repair
+        </Link>
       </div>
 
       {/* Filters */}
@@ -148,13 +155,18 @@ export default function VehicleCostReport() {
          <div className="space-y-3">
            {history.data.events.map((ev) => (
              <details key={ev.id} className="border rounded" data-testid={`repair-event-${ev.id}`}>
-               <summary className="cursor-pointer px-3 py-2 flex flex-wrap gap-x-6 gap-y-1 text-sm">
+               <summary className="cursor-pointer px-3 py-2 flex flex-wrap gap-x-6 gap-y-1 text-sm items-center">
                  <span className="font-medium">{ev.event_date}</span>
                  <span>{ev.workshop_name || <em className="text-zinc-400">no workshop</em>}</span>
                  <span>Total: <span className="font-semibold">{fmt(ev.total_repair_cost)}</span></span>
                  <span className="text-zinc-500">Parts: {fmt(ev.parts_cost)} · Labour: {fmt(ev.labour_cost)}</span>
                  <span className="text-zinc-500">Vendor payable: {fmt(ev.vendor_outstanding)}/{fmt(ev.vendor_payable)}</span>
                  <span className="text-zinc-500">Mechanic payable: {fmt(ev.mechanic_outstanding)}/{fmt(ev.mechanic_payable)}</span>
+                 <Link to={`/repairs/${ev.id}`} data-testid={`open-repair-${ev.id}`}
+                   onClick={(e) => e.stopPropagation()}
+                   className="ml-auto text-xs px-2 py-1 border rounded-sm hover:bg-zinc-950 hover:text-white">
+                   Open
+                 </Link>
                </summary>
                <div className="px-3 py-2 border-t bg-zinc-50 text-sm space-y-2">
                  {ev.description && <div><strong>Description:</strong> {ev.description}</div>}

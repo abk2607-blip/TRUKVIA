@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/context/AuthContext";
 import { api, getActiveCompanyId, setActiveCompanyId } from "@/api";
 import {
-  LayoutDashboard, Truck, Users, FileText, Settings as SettingsIcon, LogOut, UserCog, Package, BarChart3, Car, Fuel as FuelIcon, FolderArchive, History, ShieldCheck, MapPin, AlertCircle, Building2, LayoutTemplate, Handshake, Menu, X, MoreHorizontal, FileMinus,
+  LayoutDashboard, Truck, Users, FileText, Settings as SettingsIcon, LogOut, UserCog, Package, BarChart3, Car, Fuel as FuelIcon, FolderArchive, History, ShieldCheck, MapPin, AlertCircle, Building2, LayoutTemplate, Handshake, Menu, X, MoreHorizontal, FileMinus, Wrench, HardHat,
 } from "lucide-react";
 import AIChatBubble from "@/components/AIChatBubble";
 import DeployReadinessBadge from "@/components/DeployReadinessBadge";
@@ -19,6 +19,8 @@ const nav = [
   { to: "/suppliers", te: "సప్లయర్లు", en: "Suppliers", icon: Handshake, testid: "nav-suppliers" },
   { to: "/parties", te: "కన్‌సైనర్/కన్‌సైనీ", en: "Consignor/Consignee", icon: MapPin, testid: "nav-parties" },
   { to: "/vehicles", te: "వాహనాలు", en: "Vehicles", icon: Car, testid: "nav-vehicles" },
+  { to: "/vendors", te: "వెండార్లు", en: "Vendors", icon: Wrench, testid: "nav-vendors" },
+  { to: "/mechanics", te: "మెకానిక్‌లు", en: "Mechanics", icon: HardHat, testid: "nav-mechanics" },
   { to: "/drivers", te: "డ్రైవర్లు", en: "Drivers", icon: UserCog, testid: "nav-drivers" },
   { to: "/drivers/shortage-policies", te: "షార్టేజ్ పాలసీ", en: "Shortage Policy", icon: UserCog, testid: "nav-shortage-policies" },
   { to: "/products", te: "ప్రొడక్ట్‌లు", en: "Products", icon: Package, testid: "nav-products" },
