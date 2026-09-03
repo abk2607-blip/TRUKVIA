@@ -3,6 +3,40 @@
 ## Product summary
 QORVENA is a Bitumen transport ERP tracking LRs, Trips, Freight, Shortage, Invoices, Payments, Suppliers, Customers, Vehicles, Drivers, Products, Fuel, and Reports. FastAPI + React + MongoDB. Auth via Emergent-managed Google, with a dev-only demo token.
 
+## Iter133 · Expense / Vehicle Cost Management — OPERATOR UAT PASSED — AWAITING EXPLICIT LOCK APPROVAL (2026-09-03)
+
+**Status:** Live operator UAT executed against the deployed app; every scenario passed. Module is NOT auto-locked per the freeze; awaits explicit user LOCK instruction.
+
+### Live UAT scoreboard
+| Scenario | Result |
+|---|---|
+| A · Trip Toll ₹1000 → exactly one canonical Expense, no dup on re-save, `has_canonical_expenses=true` | ✅ PASS |
+| B · Repair ₹18k + ₹7k → Vehicle Repair Cost 25000, Parts 18000, Labour 7000, Vendor Payable 18000, Mechanic Payable 7000, NOT 50000 | ✅ PASS |
+| C · Partial vendor payment ₹10k → outstanding 18000 → 8000, Vehicle Cost unchanged, Sep cashbook has payment | ✅ PASS |
+| D · Supplier settlement adjustment ₹3000 → Supplier CREDIT projection = 3000, no SupplierPayment duplicate | ✅ PASS |
+| E · Company-borne ₹3000 on supplier vehicle → Vehicle Cost 6000 (both modes), settlement projection stays at 3000 | ✅ PASS |
+| Date-basis · Aug cost + Sep payment → Aug outstanding = 18000, Sep outstanding = 8000, cashbook date_basis=payment_date | ✅ PASS |
+| Correction · attribute correction on VendorPayment → correction_count=1, 1 immutable history row, no duplicate row | ✅ PASS |
+| Legacy XOR · Trip toll → 0 → canonical rows soft-deleted → `has_canonical_expenses=false` | ✅ PASS |
+| **OVERALL** | ✅ **PASS** |
+
+### Regression scoreboard
+- Iter133 combined (Turn 1 + 2A + 2B + 2C + 2D excl. 1000-row heavy): **84 / 84 PASS** (9.48 s).
+- High-volume 1000-row aggregation: **PASS** (13.88 s).
+- Trip / Supplier / Idempotency (`iter49, iter91, iter45, iter111, iter126b`): **34 / 34 PASS** (10.46 s).
+- Pre-existing xdist-sys.path failures in `test_iter132a/b/c` remain unchanged (Infrastructure, not Iter133).
+
+### Final artefact
+`/app/artifacts/Iter133_Expense_UAT_final_evidence.json` — full scenario payload with expected/actual + endpoint used + PASS/FAIL flags.
+
+### Untouched confirmations
+✅ C3.1 / C3.2 / C3.4 / C3.5 / C4 · C5 · DG-STABILITY-1 · `pytest.ini` · `run_regression.sh` — all untouched.
+✅ Supplier `_build_ledger`, `services._compute_trip`, driver-recovery sync, invoice recompute, Fuel — unchanged.
+✅ No new module started. No unrelated polish shipped.
+
+### Final status
+**EXPENSE ITER133 — UAT PASSED — AWAITING EXPLICIT LOCK APPROVAL.**
+
 ## Iter133 · Expense / Vehicle Cost Management — Turn 2D COMPLETE — READY FOR UAT (2026-09-02)
 
 **Status:** Cost-date vs Payment-date reporting live · Supplier-settlement-adjustment projection live · Outstanding-as-of endpoints live · Cross-module parity proven on scenarios A–E · UAT artefact generated.

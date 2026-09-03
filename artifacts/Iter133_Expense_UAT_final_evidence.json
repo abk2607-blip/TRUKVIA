@@ -1,0 +1,93 @@
+{
+  "tag": "UATF-C95DA3",
+  "module": "Iter133 Expense/Vehicle Cost",
+  "turn": "UAT-final",
+  "scenarios": {
+    "A_trip_toll": {
+      "trip_id": "trip_90df346a22db4366",
+      "has_canonical_expenses": true,
+      "expected_amount": 1000,
+      "actual_amount": 1000.0,
+      "expected_row_count": 1,
+      "actual_row_count": 1,
+      "result": "PASS"
+    },
+    "B_repair_18k_7k": {
+      "vehicle_id": "veh_da2c73625fba4bab",
+      "repair_event_id": "rev_5e622b29be7e4b48",
+      "expected_total_repair": 25000,
+      "actual_total_repair": 25000.0,
+      "expected_parts": 18000,
+      "actual_parts": 18000.0,
+      "expected_labour": 7000,
+      "actual_labour": 7000.0,
+      "expected_vendor_payable": 18000,
+      "actual_vendor_payable": 18000.0,
+      "expected_mechanic_payable": 7000,
+      "actual_mechanic_payable": 7000.0,
+      "not_50000": true,
+      "result": "PASS"
+    },
+    "C_partial_payment": {
+      "expected_payable_before": 18000,
+      "actual_outstanding_aug": 18000.0,
+      "expected_payable_after_sep": 8000,
+      "actual_outstanding_sep": 8000.0,
+      "cost_unchanged": true,
+      "vendor_paid": 10000.0,
+      "vendor_outstanding": 8000.0,
+      "cashbook_aug_net_out": 0.0,
+      "cashbook_sep_net_out": 10000.0,
+      "result": "PASS"
+    },
+    "D_supplier_settlement_adjustment": {
+      "expected_credit": 3000,
+      "actual_credit": 3000.0,
+      "expected_row_count": 1,
+      "actual_row_count": 1,
+      "result": "PASS"
+    },
+    "E_supplier_company_borne": {
+      "expected_vehicle_cost_delta": 6000,
+      "actual_supp_vehicle_cost": 6000.0,
+      "settlement_adj_did_not_include_company_borne": true,
+      "result": "PASS"
+    }
+  },
+  "parity": {
+    "trip_toll": 1000.0,
+    "vehicle_cost_incl_repair": 26000.0,
+    "vehicle_repair_cost": 25000.0,
+    "vendor_payable_after_payment": 8000.0,
+    "mechanic_payable": 7000.0
+  },
+  "date_basis": {
+    "cost_date_source": "Expense.date",
+    "payment_date_source": "Payment.date",
+    "aug_outstanding": 18000.0,
+    "sep_outstanding": 8000.0,
+    "aug_cashbook_net_out": 0.0,
+    "sep_cashbook_net_out": 10000.0,
+    "result": "PASS"
+  },
+  "correction": {
+    "attribute_correction_count": 1,
+    "audit_history_rows": 1,
+    "result": "PASS"
+  },
+  "legacy_xor": {
+    "after_toll_zero_active_rows": 0,
+    "has_canonical_expenses_after_zero": false,
+    "result": "PASS"
+  },
+  "overall": {
+    "pass": true,
+    "scenarios": [
+      "PASS",
+      "PASS",
+      "PASS",
+      "PASS",
+      "PASS"
+    ]
+  }
+}
