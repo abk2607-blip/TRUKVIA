@@ -56,6 +56,8 @@ from routers import (
     # Iter133 · Turn 2C — Vendor + Mechanic Ledgers + Payment Corrections
     vendor_ledger as vendor_ledger_r,
     mechanic_ledger as mechanic_ledger_r,
+    # Iter133 · Turn 2D — Cost-date / Payment-date / Supplier projection
+    expense_date_reports as expense_date_reports_r,
 )
 
 ROOT_DIR = Path(__file__).parent
@@ -127,6 +129,7 @@ for r in (
     vendor_bills_r, mechanic_work_orders_r, expenses_r,
     vehicle_reports_r,
     vendor_ledger_r, mechanic_ledger_r,
+    expense_date_reports_r,
 ):
     app.include_router(r.router)
 

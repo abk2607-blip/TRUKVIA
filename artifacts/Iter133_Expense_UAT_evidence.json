@@ -1,0 +1,35 @@
+{
+  "meta": {
+    "tag": "UAT-00629",
+    "module": "Iter133 Expense/Vehicle Cost",
+    "turn": "2D-UAT"
+  },
+  "trip_id": "trip_4b05380844074779",
+  "vehicle_id": "veh_9602a5c60cbb406d",
+  "vendor_id": "ven_ac4be50a7ab74ad3",
+  "mechanic_id": "mec_3e4cfb4bc5094df5",
+  "trip_canonical_expenses": {
+    "error": "HTTP Error 403: Forbidden"
+  },
+  "vehicle_cost_summary": {
+    "error": "HTTP Error 403: Forbidden"
+  },
+  "vehicle_repair_history": {
+    "error": "HTTP Error 403: Forbidden"
+  },
+  "vendor_ledger": {
+    "error": "HTTP Error 403: Forbidden"
+  },
+  "mechanic_ledger": {
+    "error": "HTTP Error 403: Forbidden"
+  },
+  "vendor_outstanding_aug31": {
+    "error": "HTTP Error 403: Forbidden"
+  },
+  "vendor_outstanding_sep30": {
+    "error": "HTTP Error 403: Forbidden"
+  },
+  "payment_cashbook_sep": {
+    "error": "HTTP Error 403: Forbidden"
+  }
+}

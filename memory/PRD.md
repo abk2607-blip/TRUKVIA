@@ -3,6 +3,65 @@
 ## Product summary
 QORVENA is a Bitumen transport ERP tracking LRs, Trips, Freight, Shortage, Invoices, Payments, Suppliers, Customers, Vehicles, Drivers, Products, Fuel, and Reports. FastAPI + React + MongoDB. Auth via Emergent-managed Google, with a dev-only demo token.
 
+## Iter133 · Expense / Vehicle Cost Management — Turn 2D COMPLETE — READY FOR UAT (2026-09-02)
+
+**Status:** Cost-date vs Payment-date reporting live · Supplier-settlement-adjustment projection live · Outstanding-as-of endpoints live · Cross-module parity proven on scenarios A–E · UAT artefact generated.
+
+### Turn 2D scope shipped
+- `GET /api/payment-cashbook?party_type=vendor|mechanic&from=&to=` — **PAYMENT DATE** cashbook (`date_basis="payment_date"` in response).
+- `GET /api/vendors/{vid}/outstanding-as-of?as_of=YYYY-MM-DD` — bills ≤ cutoff MINUS payments ≤ cutoff.
+- `GET /api/mechanics/{mid}/outstanding-as-of?as_of=YYYY-MM-DD` — mirror.
+- `GET /api/suppliers/{sid}/settlement-adjustments?from=&to=` — supplier-settlement-adjustment CREDIT projection (never creates a SupplierPayment).
+- Cost-date semantics on Vehicle Cost + Repair History (from Turn 2B, already using `Expense.date`).
+- Legacy Trip XOR bridge (from Turn 2A) — verified end-to-end.
+
+### Files changed (Turn 2D, additive only)
+- **NEW** `backend/routers/expense_date_reports.py` — 4 endpoints above.
+- **NEW** `backend/tests/test_iter133_expense_turn2d.py` — 8 tests (scenarios A–E + date semantics + RBAC + cross-tenant + high-volume 1000-row aggregation).
+- **NEW** `/app/artifacts/Iter133_Expense_UAT_evidence.json` — end-to-end UAT payload.
+- **EDITED** `backend/server.py` — wired router into mount loop.
+
+### Cost-date / Payment-date behaviour
+`Expense.date` drives Vehicle Cost / Repair Cost / Expense Register. `Payment.date` drives payment cashbook. Outstanding-as-of composes both cutoffs correctly. Verified: Aug bill + Sep payment shows Aug outstanding = full amount, Sep outstanding = full − payment, Aug cashbook = 0, Sep cashbook ≥ payment.
+
+### Supplier settlement projection
+`supplier_settlement_mode='supplier_settlement_adjustment'` Expenses appear as CREDIT/recovery rows via `/api/suppliers/{id}/settlement-adjustments`. No SupplierPayment(payment_out) duplicated. `company_borne` expenses appear in Vehicle Cost but NOT in the projection. Existing `_build_ledger` in routers/suppliers.py untouched.
+
+### Cross-module parity (scenarios A–E all green)
+| Scenario | Result | Test |
+|---|---|---|
+| A · Trip Toll ₹1000 | Expense=1000, Vehicle Cost=1000, Expense Register=1000 | ✓ |
+| B · Repair ₹18k + ₹7k | Repair Cost=25k, Vendor Payable=18k, Mechanic Payable=7k | ✓ |
+| C · ₹10k partial payment | Payable→8k, Cost unchanged=25k | ✓ |
+| D · Supplier-adjustment ₹3k | Vehicle Cost +3k, Supplier CREDIT 3k, P&L 0, no dup payment | ✓ |
+| E · Company-borne ₹3k | Vehicle Cost +3k, P&L +3k, Supplier CREDIT unchanged | ✓ |
+
+### Test evidence
+- `test_iter133_expense_turn2d.py`: **8 / 8 PASS** (7 in 0.6s + 1000-row high-volume separately).
+- Combined Iter133 (Turn 1 + 2A + 2B + 2C): **77 / 77 PASS** (8.1 s).
+- Trip / Supplier / Idempotency regressions (`iter49, iter91, iter45, iter111, iter126b`): **34 / 34 PASS** (9.72 s).
+
+### High-volume result
+1000 Expense rows on one vehicle → `expense_count=1000`, `total_cost = expected exact sum`, category filter returns same total, no truncation, no N+1.
+
+### Live UAT artefact
+`/app/artifacts/Iter133_Expense_UAT_evidence.json` — one run captures: canonical Expense from Trip, Trip.has_canonical_expenses=true, Vehicle Cost, Repair History, Vendor Ledger, Mechanic Ledger, Vendor Outstanding-as-of Aug31 & Sep30, Vendor Payment Cashbook Sep, Supplier Settlement Adjustment projection.
+
+### Known limitations
+- No supplier-settlement UI (backend endpoint ready; UI hookup is polish scope).
+- No bank-reconciliation write endpoint (Turn 2C marker only).
+- No dedicated Vendor/Mechanic master list pages (out of scope per user directive).
+- Existing supplier `_build_ledger` unchanged — the settlement-adjustment CREDIT projection is a separate composable endpoint; a UI can render both side-by-side.
+
+### Locked-area untouched confirmations
+✅ C3.1 / C3.2 / C3.4 / C3.5 / C4 untouched.
+✅ C5 (deferred) untouched.
+✅ DG-STABILITY-1 · `pytest.ini` · `scripts/run_regression.sh` untouched.
+✅ `_build_ledger`, `services._compute_trip`, driver-recovery sync, Fuel — all UNCHANGED.
+
+### Final status
+**EXPENSE TURN 2D COMPLETE — READY FOR UAT — NOT LOCKED.**
+
 ## Iter133 · Expense / Vehicle Cost Management — Turn 2C COMPLETE — NOT READY FOR UAT (2026-09-02)
 
 **Status:** Vendor Ledger + Mechanic Ledger read-only + Vendor/Mechanic Payment Correction (attribute + amount-reversal) shipped with immutable audit trail. Turn 2D (cost-date vs payment-date parametrised reporting + final integration) awaits explicit GO.
