@@ -1,5 +1,57 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
+## Iter135A · Vendor / Mechanic Ledger — ERP Presentation Polish + Company Branding + Vehicle Repair Navigation · READY FOR UAT (2026-09-03)
+
+Presentation-only polish on top of the Iter135 accounting foundation.
+**One authoritative dataset still drives Screen + PDF; zero accounting
+math added anywhere.**
+
+### PDF (ReportLab · A4 portrait)
+- Branded two-column header — canonical company logo (`companies.logo`
+  base64 data URL) + name / address / GSTIN / phone / email; VENDOR
+  LEDGER or MECHANIC LEDGER title with Party card on the right.
+- Statement-info strip · STATEMENT PERIOD | ACCOUNT TYPE | OPENING
+  BALANCE | INCLUDE REVERSED | PRINTED.
+- Ledger table · dark header band, zebra body, tabular-nums, right-
+  aligned money, strike-through/muted grey on reversed rows.
+- Accounting summary · Opening + Total Debit + Total Credit card on the
+  left, large highlighted CLOSING BALANCE strip on the right with
+  payable/advance/Nil label.
+- Footer · `Computer-generated accounting statement · This is not a
+  demand notice. · Page X of Y · Printed YYYY-MM-DD`.
+- Vehicle number in every ledger row is a PDF hyperlink to
+  `<APP_URL>/vehicles/<vehicle_id>/repair-history` when the app-URL env
+  is present; text-only fallback otherwise — PDF generation never
+  fails on link/logo issues.
+- Guard-rails preserved · MAX_PDF_ENTRIES=5000 → HTTP 413 "Narrow the
+  date range" (no silent truncation).
+
+### Frontend polish (`PartyLedger.jsx`)
+- Vehicle chip is a `Link to="/vehicles/${vehicle_id}/repair-history"`
+  with `data-testid=vehicle-link-{vehicle_id}`, tooltip and
+  `text-indigo-700 hover:text-indigo-900 hover:underline cursor-pointer
+  font-mono` styling.
+- Unallocated payments render as grey `— Unallocated` text (not a
+  link).
+
+### Tests — 28 / 28 PASS  (Iter135 + Iter135A)
+`test_iter135a_ledger_polish.py` (12 new) covers PDF with logo,
+without logo, with a broken logo string, JSON↔PDF total reconciliation
+post-polish, canonical route usage in the frontend, unallocated
+payment behaviour, source-of-truth guards on service + routers +
+payment models, PDF-renderer has no accounting math, and the
+canonical `/api/vehicles/{vid}/repair-history` route still exists.
+
+### Invariants preserved
+- Iter133 Expense / Vehicle Cost — untouched.
+- Iter134 Invoice Enhancement — untouched.
+- Ledger truth = Bills/WOs + Payments only.
+- Screen and PDF consume the same `LedgerDataset`.
+- No `vehicle_id` field added to `VendorPayment` / `MechanicPayment`.
+
+**ITER135A VENDOR / MECHANIC LEDGER POLISH — COMPLETE — READY FOR UAT — ITER133/ITER134 UNTOUCHED.**
+
+
 ## Iter135 · Vendor / Mechanic Ledger — Vehicle Context + Unified Accounting Presentation + Printable PDF · READY FOR UAT (2026-09-03)
 
 **One authoritative dataset drives both screen and PDF.**

@@ -198,7 +198,9 @@ export default function PartyLedger({ partyType }) {
                  <td className="py-2 px-2 whitespace-nowrap" data-testid={`ledger-vehicle-${i}`}>
                    {e.vehicle_id && e.vehicle_number ? (
                      <Link to={`/vehicles/${e.vehicle_id}/repair-history`}
-                           className="text-indigo-700 hover:underline font-mono text-xs">
+                           title={`Open Repair History for ${e.vehicle_number}`}
+                           data-testid={`vehicle-link-${e.vehicle_id}`}
+                           className="inline-flex items-center gap-1 text-indigo-700 hover:text-indigo-900 hover:underline font-mono text-xs cursor-pointer">
                        {e.vehicle_number}
                      </Link>
                    ) : (

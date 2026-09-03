@@ -344,6 +344,10 @@ async def build_party_ledger(
             "name": company.get("name") or company.get("company_name") or "",
             "gstin": company.get("gstin") or company.get("gst_number") or "",
             "address": company.get("address") or "",
+            "state": company.get("state") or "",
+            "phone": company.get("phone") or "",
+            "email": company.get("email") or "",
+            "logo": company.get("logo") or "",   # base64 data URL (canonical source)
         },
         "from": date_from or "",
         "to": date_to or "",
