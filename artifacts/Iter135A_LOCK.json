@@ -1,0 +1,48 @@
+{
+  "iteration": "Iter135A",
+  "title": "Vendor / Mechanic Ledger — ERP Presentation Polish + Company Branding + Vehicle Repair Navigation",
+  "status": "LOCKED",
+  "lock_date": "2026-09-03",
+  "uat": "ACCEPTED",
+  "regression": {
+    "iter135a_focused": "13 / 13 PASS",
+    "combined_iter133_iter134_iter135_iter135a": "69 / 69 PASS"
+  },
+  "lock_criteria": {
+    "vendor_ledger_pdf": "PASS",
+    "mechanic_ledger_pdf": "PASS",
+    "company_branding_logo": "PASS",
+    "erp_style_presentation": "PASS",
+    "ledger_screen_presentation": "PASS",
+    "vehicle_clickable_navigation": "PASS",
+    "canonical_frontend_route_/vehicles/:vid/cost": "PASS",
+    "correct_vehicle_repair_history_context": "PASS",
+    "unallocated_payment_handling": "PASS",
+    "screen_pdf_parity": "PASS",
+    "accounting_source_of_truth": "PASS",
+    "no_db_expenses_ledger_reads": "PASS",
+    "no_payment_vehicle_duplication": "PASS",
+    "iter135a_focused_tests_13_of_13": "PASS",
+    "combined_regression_69_of_69": "PASS",
+    "iter133_untouched": "PASS",
+    "iter134_untouched": "PASS"
+  },
+  "canonical_routes": {
+    "frontend_page": "/vehicles/:vid/cost  (VehicleCostReport)",
+    "backend_data_endpoint": "/api/vehicles/{vid}/repair-history"
+  },
+  "invariants_locked": [
+    "Vendor Ledger truth = VendorBill + VendorPayment + Opening",
+    "Mechanic Ledger truth = MechanicWorkOrder + MechanicPayment + Opening",
+    "Vehicle Cost remains Expense-based",
+    "Payment models never gain vehicle_id / vehicle_number",
+    "Ledger never queries db.expenses",
+    "Screen and PDF consume the same LedgerDataset (no independent math)",
+    "MAX_PDF_ENTRIES = 5000 → HTTP 413, no silent truncation"
+  ],
+  "protection": {
+    "iter133_expense_vehicle_cost": "LOCKED, untouched",
+    "iter134_invoice_enhancement": "LOCKED, untouched",
+    "c3_1_c3_2_c3_4_c3_5_c4_c5_dg_stability_1": "LOCKED, untouched"
+  }
+}

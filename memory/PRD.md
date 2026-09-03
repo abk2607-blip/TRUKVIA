@@ -1,5 +1,79 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
+## 🔒 Iter135A · Vendor / Mechanic Ledger — ERP Presentation Polish — LOCKED — 2026-09-03
+
+**Status: LOCKED / FROZEN.**  UAT: ACCEPTED.  Regression: **69 / 69 PASS**.
+No further changes to the Iter135A surface without an explicit unlock
+instruction from the operator.
+
+### Locked scope
+- Vendor Ledger PDF — ERP presentation polish
+- Mechanic Ledger PDF — ERP presentation polish
+- Canonical company logo integration (`companies.logo` — base64 data
+  URL, single source, text-only fallback when missing/invalid)
+- Professional branded two-column header (logo + name + address +
+  GSTIN + phone + email · report title + party card)
+- Statement-info strip (Period · Account Type · Opening · Include
+  Reversed · Printed)
+- Ledger table columns · Date | Type | Ref | Vehicle | Description |
+  Debit | Credit | Balance — dark header band, zebra striping,
+  tabular-nums right-aligned money, muted strike-through on reversed
+  rows, repeating header, safe wrapping
+- Accounting summary — Opening / Total Debit / Total Credit card +
+  highlighted **CLOSING BALANCE** strip with payable / advance / Nil
+  label
+- Footer — `Computer-generated accounting statement · This is not a
+  demand notice.` + `Page X of Y · Printed YYYY-MM-DD` (two-pass
+  canvas)
+- Frontend `PartyLedger.jsx` vehicle chip is a `<Link>` with tooltip
+  and hover affordance
+- **Canonical frontend PAGE route: `/vehicles/:vid/cost`**
+  (`VehicleCostReport`) — used by the ledger vehicle link,
+  `RepairWorkspace`, and other flows.  DO NOT create a separate
+  `/vehicles/:vid/repair-history` frontend route.
+- Backend data endpoint: `/api/vehicles/{vid}/repair-history` — the
+  same API `VehicleCostReport` already consumes
+- Unallocated payments render as grey `— Unallocated` text and are
+  never linked
+- `MAX_PDF_ENTRIES = 5000` → HTTP 413 "Narrow the date range" (no
+  silent truncation)
+
+### Accounting invariants (LOCKED)
+- Vendor Ledger truth = `VendorBill` + `VendorPayment` + `Opening
+  Balance`
+- Mechanic Ledger truth = `MechanicWorkOrder` + `MechanicPayment` +
+  `Opening Balance`
+- `db.expenses` is NEVER queried by ledger service or ledger routers
+- Vehicle Cost remains Expense-based (Iter133)
+- No `vehicle_id` / `vehicle_number` on `VendorPayment` /
+  `MechanicPayment` — vehicle context is derived through the linked
+  Bill / Work Order in a single batched lookup
+- No duplicate accounting postings
+- PDF renderer performs NO independent accounting math
+- Screen and PDF consume the SAME `LedgerDataset` object
+
+### Manual UAT — ACCEPTED
+- Vendor Ledger `AP31TF…` → vehicle chip clicks navigate to
+  `/vehicles/{vehicle_id}/cost` (verified Playwright).
+- Mechanic Ledger `AP31TF…` → same canonical destination.
+- Unallocated payments remain non-clickable.
+- PDF ships with company logo, branded header, and reconciles to the
+  JSON dataset for opening / debit / credit / closing.
+
+### Regression counts (LOCKED)
+- Iter135A focused suite `test_iter135a_ledger_polish.py` — **13 / 13
+  PASS** (12 original + 1 added App.js route-registration guard)
+- Combined Iter133 + Iter134 + Iter135 + Iter135A run — **69 / 69
+  PASS**
+
+### Protection — untouched, still LOCKED
+- 🔒 Iter133 Expense / Vehicle Cost
+- 🔒 Iter134 Invoice Enhancement
+- C3.1 / C3.2 / C3.4 / C3.5 · C4 CN/DN · C5 §9C · DG-STABILITY-1
+
+**ITER135A — VENDOR / MECHANIC LEDGER ERP POLISH — LOCKED — HARD STOP.**
+
+
 ## Iter135A · Vendor / Mechanic Ledger — ERP Presentation Polish + Company Branding + Vehicle Repair Navigation · READY FOR UAT (2026-09-03)
 
 Presentation-only polish on top of the Iter135 accounting foundation.
