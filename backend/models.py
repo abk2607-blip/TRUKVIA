@@ -199,7 +199,11 @@ class ExpenditureType(BaseModel):
 DEFAULT_EXPENDITURE_TYPES = [
     "Driver Food", "Parking", "Toll", "Loading Charges",
     "Unloading Charges", "Weighment", "Labour", "Detention",
-    "Cleaning", "Others",
+    "Cleaning",
+    # Iter136 · Non-trip / operational categories (additive; string field).
+    "Insurance", "Road Tax", "Permit", "Fitness", "Tyres",
+    "Engine Oil", "AdBlue", "Repair", "Spare Parts", "Office / General",
+    "Others",
 ]
 
 class Driver(BaseModel):

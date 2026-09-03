@@ -4,7 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/context/AuthContext";
 import { api, getActiveCompanyId, setActiveCompanyId } from "@/api";
 import {
-  LayoutDashboard, Truck, Users, FileText, Settings as SettingsIcon, LogOut, UserCog, Package, BarChart3, Car, Fuel as FuelIcon, FolderArchive, History, ShieldCheck, MapPin, AlertCircle, Building2, LayoutTemplate, Handshake, Menu, X, MoreHorizontal, FileMinus, Wrench, HardHat,
+  LayoutDashboard, Truck, Users, FileText, Settings as SettingsIcon, LogOut, UserCog, Package, BarChart3, Car, Fuel as FuelIcon, FolderArchive, History, ShieldCheck, MapPin, AlertCircle, Building2, LayoutTemplate, Handshake, Menu, X, MoreHorizontal, FileMinus, Wrench, HardHat, Receipt,
 } from "lucide-react";
 import AIChatBubble from "@/components/AIChatBubble";
 import DeployReadinessBadge from "@/components/DeployReadinessBadge";
@@ -25,6 +25,7 @@ const nav = [
   { to: "/drivers/shortage-policies", te: "షార్టేజ్ పాలసీ", en: "Shortage Policy", icon: UserCog, testid: "nav-shortage-policies" },
   { to: "/products", te: "ప్రొడక్ట్‌లు", en: "Products", icon: Package, testid: "nav-products" },
   { to: "/fuel", te: "డీజిల్", en: "Fuel", icon: FuelIcon, testid: "nav-fuel" },
+  { to: "/expenses", te: "ఖర్చులు", en: "Expenses", icon: Receipt, testid: "nav-expenses" },
   { to: "/invoices", te: "ఇన్వాయిస్‌లు", en: "Invoices", icon: FileText, testid: "nav-invoices" },
   { to: "/invoices/overdue", te: "బకాయిలు", en: "Overdue", icon: AlertCircle, testid: "nav-overdue" },
   { to: "/notes", te: "క్రెడిట్ / డెబిట్ నోట్‌లు", en: "Credit / Debit Notes", icon: FileMinus, testid: "nav-notes", cdnOnly: true },

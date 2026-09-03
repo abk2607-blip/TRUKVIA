@@ -1,5 +1,83 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
+## Iter136 P0 · Expense Register + Non-Trip Expense Operator Workflow — IMPLEMENTATION COMPLETE (Awaiting UAT) — 2026-02-03
+
+**Status: P0 IMPLEMENTATION COMPLETE.  MANUAL UAT PENDING.  NOT LOCKED.**
+No lock until the operator accepts the workflow.  P1 / P2 items below
+remain deferred backlog.
+
+### Scope shipped (P0)
+- **Frontend** — new operator-facing pages, both purely a projection of
+  the canonical `Expense` collection.  Zero schema change.
+  - `/app/frontend/src/pages/ExpenseRegister.jsx` — filterable register
+    (Date / Category / Vehicle / Trip / Party / Ref / Amount / Status /
+    Actions), KPI strip (`kpi-count`, `kpi-total`, `kpi-reversed`),
+    include-reversed toggle, vehicle chip deep-linked to the canonical
+    Iter135A route `/vehicles/:vid/cost`.
+  - `/app/frontend/src/pages/ExpenseForm.jsx` — create / edit drawer.
+    Category dropdown seeded from the 20 non-trip + trip categories with
+    an "Other…" free-text escape.  Optional Vehicle picker, optional
+    Trip ID, Party Type + **Party Name** (Party Name field shown when
+    party type is Vendor / Mechanic / Supplier / Driver), Settlement
+    mode, file attachments.  **Twin-payable guard** — the payload
+    NEVER carries `vendor_bill_id` or `mechanic_work_order_id`, so
+    operators cannot create duplicate payables outside RepairWorkspace.
+  - Sidebar link `nav-expenses` — "ఖర్చులు (Expenses)" with Receipt
+    icon, wired to `/expenses` in `Layout.jsx`.
+  - App route added in `App.js`.
+- **Backend** — reused **as-is**.  Zero code change to
+  `/api/expenses` CRUD.
+  - `GET /api/expenses` with filters (`category`, `vehicle_id`,
+    `party_type`, `date_from`, `date_to`, `include_reversed`)
+  - `POST /api/expenses`, `PUT /api/expenses/{eid}`
+  - `DELETE /api/expenses/{eid}` — soft-cancel, Owner/Admin, requires
+    `reason` (≥ 3 chars, 422 otherwise).
+- **Seed data** — `DEFAULT_EXPENDITURE_TYPES` in
+  `/app/backend/models.py` extended with the non-trip operational
+  categories (Insurance, Road Tax, Permit, Fitness, Tyres, Engine Oil,
+  AdBlue, Repair, Spare Parts, Office / General, Others).
+
+### Accounting invariants preserved (still LOCKED)
+- Expense remains the sole source of truth for Vehicle Cost (Iter133).
+- Vendor / Mechanic Ledgers still read Bills + Payments only —
+  `db.expenses` is never touched by the ledger service (Iter135 /
+  Iter135A).
+- No `vendor_bill_id` / `mechanic_work_order_id` writes originate from
+  the register UI.
+- Vehicle chip target is the canonical Iter135A page route
+  `/vehicles/:vid/cost` — `/repair-history` is explicitly not linked.
+
+### Regression counts
+- New focused suite `test_iter136_expense_register.py` — **14 / 14 PASS**
+- Combined Iter133 + Iter134 + Iter135 + Iter135A + Iter136 — **140 / 140 PASS**
+
+### Testing agent (frontend flow) — iteration_83
+Flows executed: sidebar → register render → create standalone Insurance
+₹18,000 → edit to ₹18,500 → reason-validation on cancel → soft-cancel
+(row disappears) → `Show reversed` does not resurrect soft-deleted row
+→ twin-payable guard → vehicle-linked Tyres ₹22,000 → vehicle chip
+navigates to canonical `/vehicles/{vid}/cost` → category filter.  Result:
+**10 / 11 flows PASS** on first pass.  One HIGH finding (missing
+`party_name` input in the drawer) and one LOW (raw `party_type` token in
+Party column) — **both fixed in this iteration**.  Cosmetic cleanups
+(unused imports, dead `useEffect`) also removed.
+
+### Deferred to P1 backlog (NOT part of this delivery)
+- Cursor / server-side pagination on `GET /api/expenses` and moving KPI
+  aggregates server-side (register currently loads the full filtered
+  set client-side; acceptable at seed volume, needs paging at scale)
+- POST idempotency enforcement
+- CSV / PDF export
+- Bulk soft-cancel
+
+### Deferred to P2 backlog (NOT part of this delivery)
+- Split-by-vehicle helper
+- Recurring expense templates
+
+**Iter136 P0 is READY FOR MANUAL UAT.  Do not lock until operator accepts.**
+
+
+
 ## 🔒 Iter135A · Vendor / Mechanic Ledger — ERP Presentation Polish — LOCKED — 2026-09-03
 
 **Status: LOCKED / FROZEN.**  UAT: ACCEPTED.  Regression: **69 / 69 PASS**.

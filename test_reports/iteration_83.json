@@ -1,0 +1,38 @@
+{
+  "summary": "ITER136 P0 frontend-only testing of Expense Register + non-trip expense operator workflow via preview URL with demo login. All 11 requested flows executed with Playwright: sidebar nav-expenses (Telugu label 'ఖర్చులు (Expenses)'), /expenses register render (expense-register, kpi-count/kpi-total/kpi-reversed, filter row, 10-column table), New Expense drawer, standalone Insurance ₹18,000 create (no vehicle chip, vehicle cell '—'), edit to ₹18,500, short-reason (2 chars) cancel rejection, valid-reason soft-cancel removal, 'Show reversed' does not resurrect soft-deleted row, twin-payable guard (no vendor_bill_id / mechanic_work_order_id inputs), vehicle-linked Tyres ₹22,000 create with vehicle chip navigating to /vehicles/veh_c501e8a429754fbf/cost (Iter135A page loaded and reflected the ₹22,000 Tyres cost), and category filter (Insurance / Tyres). Zero console errors throughout. All core acceptance criteria PASS. One functional gap found: ExpenseForm has no party_name / party_id input, so the requested party_name='Local Tyre Co' could not be entered and the Party column shows the raw 'vendor' string.",
+  "backend_issues": {
+    "critical": [],
+    "minor": []
+  },
+  "frontend_issues": {
+    "ui_bugs": [
+      {"component": "ExpenseForm", "issue": "No input for party_name (or party_id) even though both are kept in form state and sent in the POST/PUT payload (lines 43-44, 68-69). Operator selecting party_type=vendor/mechanic/supplier/driver cannot record WHO was paid; requested test case party_name='Local Tyre Co' was impossible via UI. Register Party column then displays the raw party_type token.", "selector": "[data-testid=\"expense-drawer\"]", "priority": "HIGH"},
+      {"component": "ExpenseRegister table", "issue": "Party column renders unformatted lowercase party_type ('vendor') when party_name is empty; other tokens ('mechanic','supplier','driver') would render the same way. Should be title-cased/labelled like the drawer's PARTY_TYPES labels.", "selector": "[data-testid=\"expense-table\"]", "priority": "LOW"},
+      {"component": "ExpenseRegister", "issue": "No pagination / page-size limit: default unfiltered load rendered 7881 rows in a single DOM table (KPI 'Rows 7881', total ₹21,35,004.00). Heavy DOM + full dataset transfer on every filter change; will degrade badly as data grows.", "selector": "[data-testid=\"expense-table\"]", "priority": "MEDIUM"}
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {"screen": "/expenses register", "issues": ["Filter row uses raw browser date inputs (mm/dd/yyyy) instead of the shadcn calendar component used elsewhere", "'Category' filter is a free-text box with placeholder 'Any' rather than a select of the 20 known ExpenseForm categories — operators must type the exact string (works, but discoverability/typo-prone)", "Actions column buttons (Edit/Cancel) wrap to two lines at 1920px in the wide unfiltered table"]}
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iter136_expense_register.py"],
+  "action_items": [
+    "Add a party_name text input (and optional party picker for party_id) to ExpenseForm, shown when party_type is not none/cash — currently the payload field is dead UI-wise.",
+    "Add pagination or a server-side limit/offset to GET /api/expenses consumption in ExpenseRegister (7881 rows rendered at once).",
+    "Format the Party column via the PARTY_TYPES label map instead of printing the raw enum token.",
+    "Optional: convert the Category filter free-text into a select seeded from the CATEGORIES list; remove unused imports (FileText, X) in ExpenseRegister.jsx and the no-op useEffect in ExpenseForm.jsx."
+  ],
+  "critical_code_review_comments": [
+    "ExpenseForm.jsx keeps party_name/party_id in state and sends them, but renders no control for either — silent data loss for vendor/mechanic expenses.",
+    "ExpenseRegister.jsx fetches the entire expense collection unbounded; KPIs (total/reversed) are computed client-side over that full array, so they will silently break/slow once paginated — move aggregates server-side.",
+    "ExpenseRegister.jsx imports FileText and X without using them; ExpenseForm.jsx has an empty useEffect on form.vehicle_id (dead code)."
+  ],
+  "updated_files": [],
+  "success_rate": {"backend": "not tested (per request)", "frontend": "91% (10/11 flows fully pass; party_name sub-step of the Tyres case blocked by missing input)"},
+  "seed_data_creation": "Created and then hard-deleted two test expenses (Insurance 'Annual comprehensive insurance' and Tyres 'TEST Tyres set replacement'). IMPORTANT: during the first pass an existing seeded Insurance expense exp_3e96b9a440744b6b (veh_559d72e14b0a44ae / AP99IT2B6641) was edited to 18500 and soft-cancelled by the test; it has been fully restored in MongoDB (amount=12000.0, is_deleted=false, deletion_* fields unset) and verified. No other pre-existing data touched.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "Demo login via [data-testid=\"demo-login-button\"] on /login (works, lands on /dashboard as user_demo_men_2026, effective_role admin/owner so Cancel buttons render).",
+  "context_for_next_testing_agent": "Expense register default list is unsorted-by-recency-only and contains ~7.9k seeded rows with far-future dates (2029, 2077-2079). To find a newly created row, always set filter-from AND filter-to to today plus the category filter — otherwise tbody row 0 is a seeded row and edit/cancel will mutate seed data. Row action testids are edit-btn-<expense_id> / cancel-btn-<expense_id>; vehicle chip is row-vehicle-link-<vehicle_id>; the cancel flow uses window.prompt (handle with page.once('dialog', ...)).",
+  "rca_of_the_issue": "Missing party_name input: ExpenseForm was built with the payload contract complete but the corresponding UI Field block was never added, so party attribution silently defaults to empty. Pagination gap: the register calls GET /api/expenses with only filter params and no limit, and derives KPIs from the returned array client-side."
+}
