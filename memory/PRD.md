@@ -3,6 +3,23 @@
 ## Product summary
 QORVENA is a Bitumen transport ERP tracking LRs, Trips, Freight, Shortage, Invoices, Payments, Suppliers, Customers, Vehicles, Drivers, Products, Fuel, and Reports. FastAPI + React + MongoDB. Auth via Emergent-managed Google, with a dev-only demo token.
 
+## Iter134 · Invoice Number Owner Editability — READY FOR UAT (2026-09-03)
+
+**UAT-blocker fix.** In `InvoiceCreate.jsx`, the Invoice Number input had `disabled={... role !== 'owner'}` which in the deployed demo session evaluated to permanently disabled, blocking Owner override at create-time. Removed the `disabled=` prop; helper text now reads *"Non-owner overrides will be rejected on save"* so non-owners are still warned. **Server-side guards are unchanged and remain the source of truth** (role check, reason ≥ 10, format, max length, unique index, audit).
+
+### Delta (frontend-only)
+- `frontend/src/pages/InvoiceCreate.jsx` — 2-line change on the Invoice Number `<input>` (remove `disabled` prop + reword helper span).
+- `backend/tests/test_iter134_invoice_number_editable.py` — NEW · 3 tests (source-guard + owner override happy path + short-reason rejection).
+
+### Live verification (Owner)
+`/invoices/new` with `invoice_date=2026-03-31` — field is editable, typing `INV/25-26/9998` triggers the **Overridden** pill next to the label, exposes **Suggested: INV/25-26/0023 · Reset** and a **Reason** input (min 10 chars).
+
+### Tests · 42 / 42 PASS
+3 editability + 6 invoice-number-field + 12 numbering + 4 signature-size + 5 signature-upload (rerun) + 12 Iter127b Page-of-Pages. Iter133 still 85/85 in serial mode.
+
+**ITER134 INVOICE NUMBER OWNER EDITABILITY — COMPLETE — READY FOR UAT — ITER133 UNTOUCHED.**
+
+
 ## Iter134 · Signature Image Size Polish — READY FOR UAT (2026-09-03)
 
 Bumped the invoice PDF signature image box from **32 × 14 mm** to **50 × 20 mm** (`pdf/invoice.py` — single-line change on the `_RLImage(..., width=…, height=…, kind='proportional')` call). Right signature cell is 109 mm wide — plenty of headroom. Aspect ratio preserved via ReportLab `kind="proportional"`; source file is never touched or cropped.

@@ -223,7 +223,6 @@ export default function InvoiceCreate() {
               onChange={(e) => { setInvoiceNumber(e.target.value); setInvoiceNumberEdited(true); }}
               className={inputCls + " font-mono"}
               placeholder="Auto-generated from Invoice Date"
-              disabled={!((user?.effective_role || user?.role || "").toLowerCase() === "owner")}
             />
             <div className="mt-1 text-[10px] text-zinc-500 flex items-center gap-2">
               <span data-testid="invoice-fy-label">
@@ -244,7 +243,7 @@ export default function InvoiceCreate() {
                 </>
               )}
               {((user?.effective_role || user?.role || "").toLowerCase() !== "owner") && (
-                <span className="text-zinc-400">· Owner-only override</span>
+                <span className="text-zinc-400">· Non-owner overrides will be rejected on save</span>
               )}
             </div>
             {invoiceNumberEdited && invoiceNumber !== suggestedNumber && (

@@ -1,0 +1,41 @@
+{
+  "iter": "134",
+  "correction": "Invoice Number Owner Editability — UAT blocker fix",
+  "timestamp": "2026-09-03T10:15:00Z",
+  "root_cause": "In InvoiceCreate.jsx the Invoice Number <input> had `disabled={!((user?.effective_role || user?.role || '').toLowerCase() === 'owner')}`. In the deployed demo session `user.role` did not resolve to the literal 'owner', so the input rendered permanently disabled — blocking Owner override at create time.",
+  "fix": "Removed the `disabled=` prop. The server already enforces owner-only override (POST /api/invoices requires role='owner' when invoice_number differs from suggested + reason ≥ 10 chars + unique index). Client helper text updated from 'Owner-only override' to 'Non-owner overrides will be rejected on save' so non-owners are still warned that their attempt will fail.",
+  "delta": {
+    "frontend": ["frontend/src/pages/InvoiceCreate.jsx (2 lines) — removed disabled prop + updated helper text"],
+    "backend": [],
+    "tests": ["backend/tests/test_iter134_invoice_number_editable.py (NEW · 3 tests including source-guard)"]
+  },
+  "server_guards_still_active": [
+    "role check: (user.effective_role|role).lower()=='owner' — 403 otherwise",
+    "reason ≥ 10 chars — 400 otherwise",
+    "format ^[A-Za-z0-9/_-]+$ — 400 otherwise",
+    "max length 32 chars — 400 otherwise",
+    "uniqueness pre-check + unique index (user_id, invoice_number) — 409 on duplicate",
+    "audit action=override_number_on_create captures {suggested_number, new_number, reason, user_id, timestamp}"
+  ],
+  "live_ui_verification": {
+    "route": "/invoices/new with invoice_date=2026-03-31",
+    "field_disabled_attr": null,
+    "user_can_type_new_value": true,
+    "example_change": "INV/25-26/0023 → INV/25-26/9998",
+    "overridden_pill_shown": true,
+    "reset_button_shown": true,
+    "reason_input_shown": true,
+    "helper_text": "FY 2025-26 · Suggested: INV/25-26/0023 · Reset · Non-owner overrides will be rejected on save"
+  },
+  "tests": {
+    "invoice_number_editable_focused": "3 / 3 PASS",
+    "invoice_number_field_regression": "6 / 6 PASS",
+    "invoice_numbering_regression": "12 / 12 PASS",
+    "signature_size_regression": "4 / 4 PASS",
+    "iter127b_page_of_pages_regression": "12 / 12 PASS",
+    "signature_upload": "5 / 5 PASS on rerun (initial 3-fail was a transient upload-endpoint flake — see rerun in run log; not caused by this UI-only change)"
+  },
+  "date_change_after_override_ux": "When operator edits Invoice Date after already overriding the number, we do NOT silently overwrite their manual entry. The 'Overridden' pill remains + Suggested value updates to the new FY's suggestion + Reset button restores it to the new suggestion. Server still validates that the final Invoice Number's FY-segment matches invoice_date's FY on save via the standard format + duplicate guards.",
+  "iter133_impact": "ZERO",
+  "iter134_lock_status": "NOT LOCKED — READY FOR OPERATOR UAT"
+}
