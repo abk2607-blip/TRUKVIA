@@ -311,10 +311,41 @@ async def create_invoice(payload: InvoiceCreateRequest, request: Request, user=D
     if _iso_d > now_utc().date():
         raise HTTPException(status_code=400, detail="invoice_date cannot be in the future")
     from services import _fy_from_iso as _fy
-    invoice_number = await _next_invoice_number_for_company(
-        cid, user["user_id"], invoice_date_iso=inv_date_iso,
-    )
     fy_snapshot = _fy(inv_date_iso)
+    # Iter134 · Invoice Number override at create-time (Owner only).
+    # Rules mirror PATCH /invoices/{iid}/override-number: format, length,
+    # duplicate + reason ≥ 10.  When the operator did NOT override, we use
+    # the atomic server-suggested number and skip the audit override log.
+    override_num = (payload.invoice_number or "").strip()
+    override_used = False
+    if override_num:
+        # Compute what the auto-suggested number would be for a fair compare.
+        preview = await _preview_next_invoice_number(cid, user["user_id"], inv_date_iso)
+        if override_num != preview["suggested_number"]:
+            if (user.get("effective_role") or user.get("role") or "").lower() != "owner":
+                raise HTTPException(status_code=403, detail="Only owner can override the invoice number")
+            if len(override_num) > 32:
+                raise HTTPException(status_code=400, detail="invoice_number too long (max 32 chars)")
+            if not re.match(r"^[A-Za-z0-9/_\-]+$", override_num):
+                raise HTTPException(status_code=400, detail="invoice_number contains invalid characters")
+            if len((payload.invoice_number_reason or "").strip()) < 10:
+                raise HTTPException(
+                    status_code=400,
+                    detail="invoice_number_reason must be at least 10 characters when overriding",
+                )
+            dup = await db.invoices.find_one(
+                {"user_id": user["user_id"], "invoice_number": override_num},
+                {"_id": 0, "id": 1},
+            )
+            if dup:
+                raise HTTPException(status_code=409, detail=f"Invoice number {override_num} already exists")
+            override_used = True
+    if override_used:
+        invoice_number = override_num
+    else:
+        invoice_number = await _next_invoice_number_for_company(
+            cid, user["user_id"], invoice_date_iso=inv_date_iso,
+        )
     inv = Invoice(
         company_id=cid,
         invoice_number=invoice_number,
@@ -355,6 +386,13 @@ async def create_invoice(payload: InvoiceCreateRequest, request: Request, user=D
     doc.pop("user_id", None)
     doc.pop("_id", None)
     await _log_audit(user, "invoice", "create", entity_id=inv.id, entity_ref=invoice_number)
+    if override_used:
+        await _log_audit(
+            user, "invoice", "override_number_on_create",
+            entity_id=inv.id, entity_ref=invoice_number,
+            reason=(payload.invoice_number_reason or "").strip(),
+            changes={"suggested_number": preview["suggested_number"], "new_number": invoice_number},
+        )
     return doc
 
 

@@ -3,6 +3,23 @@
 ## Product summary
 QORVENA is a Bitumen transport ERP tracking LRs, Trips, Freight, Shortage, Invoices, Payments, Suppliers, Customers, Vehicles, Drivers, Products, Fuel, and Reports. FastAPI + React + MongoDB. Auth via Emergent-managed Google, with a dev-only demo token.
 
+## Iter134 · Invoice Number UI Correction — READY FOR UAT (2026-09-03)
+
+Operator now sees the **Invoice Number** as a separate labelled input field on the Create screen — no longer buried inside a "Next #" chip. Suggested number auto-populates from `/api/invoices/next-preview`; Owner may edit with a mandatory reason (≥10 chars, format + duplicate guards). Non-owner sees the input disabled.
+
+### Delta
+- Backend: `InvoiceCreateRequest` + `create_invoice` accept optional `invoice_number` + `invoice_number_reason`; owner-only + unique + format guards; extra audit row `action='override_number_on_create'`.
+- Frontend: `InvoiceCreate.jsx` — new labelled Invoice Number input; FY label below; Overridden pill + Reset button; reason field on override; disabled for non-owner. `NextNumberChip` reduced to Future/Backdated badges only and forwards preview via `onPreview`.
+
+### Tests · 35 / 35 PASS
+`test_iter134_invoice_number_field` (6) + `test_iter134_invoice_numbering` (12) + `test_iter134_signature_upload` (5) + `test_iter127b_invoice_page_of_pages` (12).
+
+### Live UAT
+Deployed build: `/invoices/new` with `invoice_date=2026-03-31` shows Invoice Number field pre-populated `INV/25-26/0011`, sub-label `FY 2025-26 · Owner-only override`. Screenshot captured. No Iter133 files touched.
+
+**ITER134 INVOICE NUMBER UI CORRECTION — COMPLETE — READY FOR UAT — ITER133 UNTOUCHED.**
+
+
 ## Iter134 · Signature Upload UI Correction — READY FOR UAT (2026-09-03)
 
 **Small isolated fix on top of Iter134.** Removes the raw `signature_file_id` text input from Settings and replaces it with a proper Upload Signature flow. Zero backend changes. Iter133 untouched. Iter134 still NOT LOCKED.

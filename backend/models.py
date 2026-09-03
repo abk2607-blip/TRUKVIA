@@ -714,6 +714,12 @@ class InvoiceCreateRequest(BaseModel):
     gst_type: Literal["cgst_sgst", "igst"] = "cgst_sgst"
     rcm: bool = True
     notes: str = ""
+    # Iter134 · Invoice Number UI correction — optional Owner-only override at
+    # create time.  If set, must match ^[A-Za-z0-9/_\-]+$ and be unique per
+    # tenant. Reason is required (≥ 10 chars) when this differs from the
+    # server-suggested number.
+    invoice_number: Optional[str] = None
+    invoice_number_reason: str = ""
 
 
 class InvoiceUpdateRequest(BaseModel):

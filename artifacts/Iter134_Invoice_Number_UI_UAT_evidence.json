@@ -1,0 +1,50 @@
+{
+  "iter": "134",
+  "correction": "Invoice Number UI Correction — separate visible field on Create",
+  "timestamp": "2026-09-03T09:20:00Z",
+  "goal": "Operator sees Invoice Number as a distinct labelled field on the Create screen (not only a Next # chip); Owner can override at create-time with reason + audit.",
+  "resulting_flow": [
+    "Sidebar → Invoices → + New Invoice",
+    "Invoice Date field visible + backdated/future badges under it",
+    "Invoice Number field visible top-right with the server-suggested value pre-populated",
+    "Below Invoice Number: 'FY 20YY-YY' label + 'Owner-only override' hint (or Overridden pill + Reset when changed)",
+    "Owner may edit the number → 'Overridden' pill appears → a reason input appears (min 10 chars) → server enforces uniqueness + format",
+    "Non-owner sees the input DISABLED",
+    "Save Invoice → POST /invoices sends invoice_number + invoice_number_reason ONLY when actually overridden — otherwise server assigns the next atomic FY sequence"
+  ],
+  "backend_delta": {
+    "models.py": "InvoiceCreateRequest: optional invoice_number + invoice_number_reason",
+    "routers/invoices.py": "create_invoice: if invoice_number != auto-suggested → require owner + reason≥10 + format check + duplicate check → use it directly; else use atomic $inc; extra audit row action='override_number_on_create'",
+    "no schema migration, no CN/DN change, no PDF change"
+  },
+  "frontend_delta": {
+    "InvoiceCreate.jsx": "Added separate Invoice Number labelled input, FY label below it, Overridden pill + Reset button, reason field on override, disabled for non-owner; NextNumberChip now only shows badges (Future/Backdated) and forwards preview via onPreview callback"
+  },
+  "tests": {
+    "iter134_invoice_number_field": "6 / 6 PASS",
+    "iter134_invoice_numbering_regression": "12 / 12 PASS",
+    "iter134_signature_upload_regression": "5 / 5 PASS",
+    "iter127b_page_of_pages_regression": "12 / 12 PASS",
+    "aggregate": "35 / 35 PASS"
+  },
+  "live_ui_verification": {
+    "route": "/invoices/new with invoice_date=2026-03-31",
+    "invoice_number_input_visible": true,
+    "auto_populated_value": "INV/25-26/0011",
+    "fy_label_visible": "FY 2025-26",
+    "owner_only_override_hint_visible": true,
+    "old_next_chip_text_removed": true
+  },
+  "invariants_preserved": [
+    "Invoice-date-driven FY (server date irrelevant): 31-Mar-2026 → FY 2025-26",
+    "Preview never reserves a sequence — atomic $inc still happens only at POST time",
+    "Cross-FY invoice_date change on issued invoice still blocked (Iter134 P0.7)",
+    "Contradiction guard on system-generated note vs signature image still active (Iter134 P1.8)",
+    "Iter133 files untouched — LOCKED status intact"
+  ],
+  "known_limitations": [
+    "Owner permission is inferred from user.effective_role|role === 'owner'; if RBAC changes surface a different role name it may need a small check widening (out of scope for this correction).",
+    "The old 'Next # chip' text is removed; users habituated to it are guided by the new labelled Invoice Number field itself.",
+    "No client-side length cap; server rejects >32 chars — matches PATCH override behaviour."
+  ]
+}

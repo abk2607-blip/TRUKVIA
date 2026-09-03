@@ -20,6 +20,12 @@ export default function InvoiceCreate() {
   const [hsnSac, setHsnSac] = useState("996791");
   const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().slice(0, 10));
   const [notes, setNotes] = useState("");
+  // Iter134 · Invoice Number correction — separate visible field.
+  const [invoiceNumber, setInvoiceNumber] = useState("");
+  const [invoiceNumberEdited, setInvoiceNumberEdited] = useState(false);
+  const [overrideReason, setOverrideReason] = useState("");
+  const [suggestedFy, setSuggestedFy] = useState("");
+  const [suggestedNumber, setSuggestedNumber] = useState("");
 
   // Iter126c — Draft preservation. InvoiceCreate is Phase 1 scope. The
   // sanitised buffer that is written includes ONLY the six controlled
@@ -126,6 +132,10 @@ export default function InvoiceCreate() {
       gst_type: gstType,
       rcm,
       notes,
+      // Iter134 correction · only send override fields when user actually edited
+      ...(invoiceNumberEdited && invoiceNumber && invoiceNumber !== suggestedNumber
+        ? { invoice_number: invoiceNumber, invoice_number_reason: overrideReason }
+        : {}),
     }, { headers: idemKeyRef.current ? { "Idempotency-Key": idemKeyRef.current } : {} })).data,
     onSuccess: (data) => {
       toast.success("Invoice created");
@@ -189,7 +199,63 @@ export default function InvoiceCreate() {
             <input data-testid="invoice-date" type="date" value={invoiceDate}
               max={new Date().toISOString().slice(0,10)}
               onChange={(e) => setInvoiceDate(e.target.value)} className={inputCls} />
-            <NextNumberChip invoiceDate={invoiceDate} />
+            <NextNumberChip
+              invoiceDate={invoiceDate}
+              onPreview={(p) => {
+                setSuggestedFy(p.fy || "");
+                setSuggestedNumber(p.suggested_number || "");
+                if (!invoiceNumberEdited) setInvoiceNumber(p.suggested_number || "");
+              }}
+            />
+          </div>
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">
+              Invoice Number
+              {invoiceNumberEdited && (
+                <span className="ml-2 px-1.5 py-0.5 text-[9px] rounded-sm bg-amber-100 text-amber-900 border border-amber-300" data-testid="invoice-number-overridden">
+                  Overridden
+                </span>
+              )}
+            </label>
+            <input
+              data-testid="invoice-number-input"
+              value={invoiceNumber}
+              onChange={(e) => { setInvoiceNumber(e.target.value); setInvoiceNumberEdited(true); }}
+              className={inputCls + " font-mono"}
+              placeholder="Auto-generated from Invoice Date"
+              disabled={!((user?.effective_role || user?.role || "").toLowerCase() === "owner")}
+            />
+            <div className="mt-1 text-[10px] text-zinc-500 flex items-center gap-2">
+              <span data-testid="invoice-fy-label">
+                {suggestedFy ? `FY 20${suggestedFy.split("-")[0]}-${suggestedFy.split("-")[1]}` : "—"}
+              </span>
+              {invoiceNumberEdited && suggestedNumber && invoiceNumber !== suggestedNumber && (
+                <>
+                  <span>·</span>
+                  <span>Suggested: <span className="font-mono">{suggestedNumber}</span></span>
+                  <button
+                    type="button"
+                    data-testid="invoice-number-reset"
+                    onClick={() => { setInvoiceNumber(suggestedNumber); setInvoiceNumberEdited(false); setOverrideReason(""); }}
+                    className="text-indigo-700 hover:underline"
+                  >
+                    Reset
+                  </button>
+                </>
+              )}
+              {((user?.effective_role || user?.role || "").toLowerCase() !== "owner") && (
+                <span className="text-zinc-400">· Owner-only override</span>
+              )}
+            </div>
+            {invoiceNumberEdited && invoiceNumber !== suggestedNumber && (
+              <input
+                data-testid="invoice-number-reason"
+                value={overrideReason}
+                onChange={(e) => setOverrideReason(e.target.value)}
+                className={inputCls + " mt-2"}
+                placeholder="Reason for overriding the invoice number (min 10 chars)"
+              />
+            )}
           </div>
           <div>
             <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">GST Type <span className="text-emerald-700">(Auto)</span></label>
@@ -330,13 +396,14 @@ export default function InvoiceCreate() {
   );
 }
 
-function NextNumberChip({ invoiceDate }) {
+function NextNumberChip({ invoiceDate, onPreview }) {
   const { data } = useQuery({
     queryKey: ["invoice-next-preview", invoiceDate],
     queryFn: async () => (await api.get("/invoices/next-preview", { params: { invoice_date: invoiceDate } })).data,
     enabled: !!invoiceDate,
     staleTime: 5000,
   });
+  React.useEffect(() => { if (data && onPreview) onPreview(data); }, [data, onPreview]);
   const today = new Date().toISOString().slice(0, 10);
   const isFuture = invoiceDate > today;
   const daysOld = invoiceDate && !isFuture
@@ -350,12 +417,6 @@ function NextNumberChip({ invoiceDate }) {
         </span>
       ) : data ? (
         <>
-          <span className="px-2 py-0.5 rounded-sm bg-emerald-50 text-emerald-900 border border-emerald-300 font-semibold" data-testid="invoice-next-fy">
-            FY 20{data.fy?.split("-")[0]}-{data.fy?.split("-")[1]}
-          </span>
-          <span className="px-2 py-0.5 rounded-sm bg-zinc-100 text-zinc-800 border border-zinc-300 font-mono font-semibold" data-testid="invoice-next-number">
-            Next # {data.suggested_number}
-          </span>
           {daysOld > 90 && (
             <span className="px-2 py-0.5 rounded-sm bg-amber-100 text-amber-900 border border-amber-300" data-testid="invoice-backdated-warning">
               Backdated {daysOld} days
