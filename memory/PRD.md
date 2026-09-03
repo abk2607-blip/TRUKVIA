@@ -3,6 +3,52 @@
 ## Product summary
 QORVENA is a Bitumen transport ERP tracking LRs, Trips, Freight, Shortage, Invoices, Payments, Suppliers, Customers, Vehicles, Drivers, Products, Fuel, and Reports. FastAPI + React + MongoDB. Auth via Emergent-managed Google, with a dev-only demo token.
 
+## ITER133 EXPENSE / VEHICLE COST — LOCKED (2026-09-03)
+
+**Lock decision:** APPROVED BY USER. Iter133 slab is frozen. No automatic scope expansion. No further edits, refactors, or "improvements" permitted under this lock.
+
+### Locked scope (frozen — do not modify)
+**Backend (Turns 1 · 2A · 2B · 2C · 2D):**
+- Canonical `Expense` model + services (source-of-truth for cost)
+- Trip → canonical Expense bridge + `Trip.has_canonical_expenses` legacy XOR (`services_expense_bridge`)
+- `RepairEvent` (operational envelope, no monetary total, `extra='forbid'`)
+- `VendorBill` (payable-side; duplicate `(vendor_id, bill_number)` 409 guard)
+- `MechanicWorkOrder` (payable-side)
+- `VendorPayment`, `MechanicPayment` (cash movement only — never touch Expense)
+- `PaymentCorrection` immutable audit trail (attribute + amount-reversal)
+- Vendor Ledger + Mechanic Ledger endpoints (derive from Bills/WOs + Payments only)
+- Vehicle Cost Summary (`/vehicles/{id}/cost-summary`)
+- Vehicle Repair History (`/vehicles/{id}/repair-history`)
+- Cost-date vs Payment-date reporting (Outstanding-as-of, Payment Cashbook)
+- Supplier `supplier_settlement_adjustment` projection (`/suppliers/{sid}/settlement-adjustments`)
+- Supplier `company_borne` mode
+- All associated routers: `expenses.py`, `repair_events.py`, `vendor_bills.py`, `mechanic_work_orders.py`, `vendors.py`, `mechanics.py`, `vendor_ledger.py`, `mechanic_ledger.py`, `vehicle_reports.py`, `expense_date_reports.py`
+
+**Frontend Turn 3 Slice A:**
+- Vendors master — `frontend/src/pages/Vendors.jsx` · route `/vendors`
+- Mechanics master — `frontend/src/pages/Mechanics.jsx` · route `/mechanics`
+- Repair Workspace — `frontend/src/pages/RepairWorkspace.jsx` · routes `/vehicles/:vid/repairs/new` and `/repairs/:rid` (Parts + Labour twin-write with stable client-side Idempotency-Keys)
+- Payment quick-entry drawer — `frontend/src/components/PaymentDrawer.jsx` (reused from `/vendor-ledger/:id`, `/mechanic-ledger/:id`, and Repair Workspace Pay buttons)
+- Sidebar nav entries `nav-vendors` + `nav-mechanics` — `frontend/src/components/Layout.jsx`
+- Vehicles list `+ Repair` link — `frontend/src/pages/Vehicles.jsx`
+- Vehicle Cost Report `+ New Repair` button + per-event `Open` link — `frontend/src/pages/VehicleCostReport.jsx`
+- Party Ledger `+ Payment` header button + drawer mount — `frontend/src/pages/PartyLedger.jsx`
+- Routing wiring — `frontend/src/App.js`
+
+### Lock evidence
+- **Live operator UAT:** `/app/artifacts/Iter133_Expense_UAT_final_evidence.json` (backend UAT · 8/8) and `/app/artifacts/Iter133_Expense_UI_SliceA_UAT_evidence.json` (UI Slice-A UAT · 17/17). Historical content preserved as-is; not rewritten to look newer.
+- **Source-of-truth invariants accepted:** Bill ₹18k + WO ₹7k = Vehicle Cost ₹25,000 (never ₹36k / ₹43k / ₹50k); Payment ₹10k → Outstanding ₹8k with Vehicle Cost unchanged; idempotent Expense POST replay returns same id; ledger derived from Bills/WOs + Payments only, never from Expense.
+- **Regression:** Iter133 Turn 1 + 2A + 2B + 2C + 2D — **85 / 85 PASS** in serial mode (`pytest -o addopts=""`). Any failure under default xdist-parallel is the pre-existing `DG-STABILITY-1` flake, out of Iter133 scope.
+
+### Explicitly deferred (remain deferred under this lock)
+Non-trip Expense modal · Supplier Settlement Recoveries UI panel · Outstanding-as-of dedicated widget · Payment Cashbook UI · Attachment wiring/polish · Twin-write health widget · Split-bill-across-vehicles helper · richer correction fields · bank reconciliation · multi-vehicle VendorBill split · Batta → Driver Ledger · Fuel → Expense merge · GST ITC · Tally export · C5 §9C · Driver Salary · Tyre · Inventory · Maintenance · DG-STABILITY-1 · B2C statutory correction.
+
+### No new module started
+No files created or modified during the lock. No new tests. No refactors. Backend and frontend Slice A remain byte-identical to the reviewed-and-approved state.
+
+**ITER133 EXPENSE / VEHICLE COST — LOCKED — HARD STOP.**
+
+
 ## Iter133 · Turn 3 · Operator UI · Slice A — UAT COMPLETE — ITER133 STILL NOT LOCKED (2026-09-03)
 
 **Status:** Frontend-only Slice A implemented. All backend endpoints untouched. UI UAT and source-of-truth invariants verified end-to-end. **NOT LOCKED.**
