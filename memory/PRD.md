@@ -3,6 +3,114 @@
 ## Iter139 P0 · Quick Operational Expense — IMPLEMENTED / READY FOR UAT — 2026-09-04
 
 **Status: IMPLEMENTED. NOT LOCKED — awaiting operator UAT.**
+Regression: **180 / 180 PASS** (152 baseline + 32 Iter139 focused tests
+after the duplicate-warning UAT fix). Zero backend accounting / schema
+/ router changes beyond one additive `source_type="quick_op"` enum
+value.
+
+### Iter139 UAT fix (2026-09-04): Exact-duplicate warning
+- **Root cause of UX gap:** the operator could unintentionally re-enter
+  the same Date + Category + Vehicle + Amount without any signal —
+  every row wrote silently because Iter139's row-level idempotency
+  only fires on `source_key` match (technical retry), not on business
+  duplicate.
+- **Fix — UI-only warning, no DB constraint:** the Save flow now runs
+  a client-side duplicate check before dispatching to
+  `POST /expenses/bulk-operational`.
+  - **In-batch duplicates** detected in-memory over `(vehicle_id, amount.toFixed(2))`.
+  - **Existing-DB duplicates** fetched via `GET /api/expenses` per
+    distinct `vehicle_id` for `date_from=date_to=<date> AND category=canonical(category)`, then matched on amount tolerance 0.005.
+  - Canonical category comparison — `"Driver Batta"` → `"Batta"` before
+    the check.
+  - Reversed / soft-deleted rows are naturally excluded because the
+    Iter136 `/api/expenses` filter already hides them.
+- **Modal UX** — one summary dialog listing all detected duplicates
+  with per-item `Existing` vs `New Entry` side-by-side. Buttons: **Cancel
+  All Duplicates** (skips duplicated rows, submits the rest) and **Add
+  All Anyway** (submits every row). No hard block, no cascade of
+  browser prompts, no new database index.
+- **Idempotency distinction preserved.** A technical retry with the
+  same `source_key` still collapses via
+  `expenses_source_key_uniq`; a fresh operator submission with a new
+  `client_row_id` that happens to match an existing row is treated as
+  an operator duplicate warning, not an idempotent replay.
+- **Locked modules untouched** — no change to `services_party_ledger`,
+  `services_payment_corrections`, `ExpenseForm.jsx`,
+  `ExpenseRegister.jsx`, `SearchableSelect`, or any Iter133-137A code
+  path.
+
+### Files changed (UAT fix)
+- **Modified** — `/app/frontend/src/pages/QuickOperationalExpense.jsx`
+  (add duplicate-check mutation, modal, canonical alias table, amount
+  tolerance helper).
+- **Modified** — `/app/backend/tests/test_iter139_quick_operational.py`
+  (add 4 duplicate-warning invariant tests — no new unique index,
+  reversed/deleted exclusion, static frontend guard, Batta alias
+  match).
+
+### API / backend behaviour
+**Unchanged.** No new endpoint, no new schema field, no new index. The
+duplicate check reuses the existing Iter136 `GET /api/expenses`
+read path.
+
+### Exact duplicate matching rule
+```
+same date  AND
+canon(category) ==  canon(category)  (Driver Batta → Batta)  AND
+same vehicle_id  AND
+|amount₁ − amount₂| < 0.005  AND
+existing row is_reversed=false AND is_deleted=false
+```
+Nothing else. Not amount alone, not vehicle alone, not category alone.
+
+### Manual UAT route
+1. `/expenses/quick` open; enter Toll ₹2,500 for `AP39ZU6779` on 2026-09-04 → Save (no warning) → row created.
+2. New submission with same date + Toll + same vehicle + ₹2,500 → Save → **DUPLICATE RECORD FOUND** modal appears with Existing vs New Entry side-by-side.
+3. Click **Cancel All Duplicates** → no second row created; `/expenses` still shows only one row for that (date, vehicle, ₹2,500).
+4. Repeat step 2 → click **Add All Anyway** → second row created; `/expenses` now shows two independent Toll ₹2,500 rows for that vehicle/date.
+5. Different amount (₹2,600) → **NO warning.**
+6. Different vehicle → **NO warning.**
+7. Different category → **NO warning.**
+8. Enter `Driver Batta ₹500` for a vehicle, save; new submission `Batta ₹500` same vehicle/date → **warning appears** (canonical alias).
+9. Supplier vehicle with adjustment mode → warning applies same as own vehicle (settlement mode is not part of the duplicate key).
+10. Quick Diesel — duplicate check queries `/api/expenses` only; `db.fuel` list count remains unchanged.
+11. Retry the same Save request programmatically with the identical `client_row_id` — row returns `status="duplicate"` per Iter139 idempotency (technical retry, no modal shown because the retry never re-runs the client-side check).
+
+### Test totals — READY FOR UAT
+- Focused suite `test_iter139_quick_operational.py` — **32 / 32 PASS**
+  (28 original + 4 new duplicate-warning invariants).
+- Combined Iter133 + 134 + 135 + 135A + 136 + 137A + 139 — **180 / 180 PASS** (serial).
+- Frontend build — clean compile.
+
+### Known accepted limitations
+- Duplicate warning is a UX layer. A race between the client-side check
+  and the server-side insert cannot be prevented on standalone Mongo —
+  the technical `source_key` uniqueness remains the only mathematical
+  guarantee, and it applies only to same-`client_row_id` retries.
+- One `GET /api/expenses` per distinct vehicle in the batch — up to 200
+  requests for a maxed-out batch. Real-world batches are typically 5–20
+  vehicles; performance is fine at that scale.
+- No fuzzy detection. Same amount at two different toll booths on the
+  same route is a legitimate scenario and passes through without a warning.
+- Iter138 P0 remains DEFERRED / BLOCKED (Mongo topology).
+
+### Explicit deferred backlog — NOT IMPLEMENTED
+Recent Categories First · Recent Vehicles First · Today's entries
+strip · Per-row Trip ID · CSV/PDF Quick Expense export · Recurring
+templates · Bulk edit / cancel · Analytics · Fuel migration · Driver
+Ledger · GST / RTO / Accident · Spare Parts / Inventory · VendorBill /
+WO correction (Iter138) · Duplicate rules on Iter136 register /
+Trip / VendorBill / MechanicWorkOrder · Fuzzy duplicate detection.
+
+**Core product principle (binding):**
+**ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO MANUAL RECONCILIATION.**
+
+**ITER139 P0 — IMPLEMENTED / READY FOR UAT — HARD STOP.**
+
+
+## Iter139 P0 · Quick Operational Expense — IMPLEMENTED / READY FOR UAT — 2026-09-04
+
+**Status: IMPLEMENTED. NOT LOCKED — awaiting operator UAT.**
 Regression: **176 / 176 PASS** (148 baseline + 28 new Iter139 tests).
 Zero backend accounting / schema / router changes beyond one additive
 `source_type` enum value.

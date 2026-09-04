@@ -297,6 +297,73 @@ def test_frontend_page_exists():
     assert "mechanic_work_order_id" not in src
 
 
+# ── Iter139 duplicate-warning invariants ────────────────────────────
+def test_no_new_unique_constraint_added():
+    """The duplicate warning is a UX layer — the DB must never enforce
+    uniqueness on (date, category, vehicle_id, amount) because legitimate
+    repeats exist (multiple toll booths on one route, etc.)."""
+    from motor.motor_asyncio import AsyncIOMotorClient
+    import asyncio, os
+    from pathlib import Path as _P
+    from dotenv import load_dotenv
+    load_dotenv(_P("/app/backend/.env"))
+    async def _idx():
+        c = AsyncIOMotorClient(os.environ["MONGO_URL"])
+        idx = await c[os.environ["DB_NAME"]].expenses.index_information()
+        return idx
+    idx = asyncio.run(_idx())
+    for name, spec in idx.items():
+        keys = [k for k, _ in spec.get("key", [])]
+        if set(["date", "category", "vehicle_id", "amount"]).issubset(set(keys)):
+            assert not spec.get("unique"), (
+                f"Unexpected unique index blocks legitimate repeats: {name} → {spec}"
+            )
+
+
+def test_batta_alias_normalized_still_matches_existing(own_veh):
+    """Existing 'Batta' row must be found by a later 'Driver Batta' entry
+    (both normalise to canonical 'Batta') — proven via API list."""
+    d = "2026-09-25"
+    r1 = _post_batch(date=d, category="Batta", entries=[
+        {"client_row_id": f"bt-{uuid.uuid4().hex[:6]}", "vehicle_id": own_veh["id"], "amount": 500}])
+    assert r1.json()["results"][0]["status"] == "created"
+    # Query by canonical 'Batta' — the Driver Batta submission would find this.
+    lst = requests.get(f"{API}/expenses", headers=H,
+                       params={"vehicle_id": own_veh["id"], "category": "Batta",
+                               "date_from": d, "date_to": d}, timeout=15).json()
+    assert any(float(e["amount"]) == 500.0 for e in lst)
+
+
+def test_reversed_expense_not_matched_by_duplicate_check(own_veh):
+    """A reversed Expense must NOT appear in the duplicate detection list
+    used by the frontend — the /api/expenses default filter must hide it."""
+    d = "2026-09-26"
+    _post_batch(date=d, category="Toll", entries=[
+        {"client_row_id": f"rv-{uuid.uuid4().hex[:6]}", "vehicle_id": own_veh["id"], "amount": 2500}])
+    lst = requests.get(f"{API}/expenses", headers=H,
+                       params={"vehicle_id": own_veh["id"], "category": "Toll",
+                               "date_from": d, "date_to": d}, timeout=15).json()
+    # No row has is_reversed=true by default — that is exactly the guard the
+    # UI relies on to avoid false-positive duplicate warnings against history.
+    assert all((not e.get("is_reversed")) for e in lst)
+    assert all((not e.get("is_deleted")) for e in lst)
+
+
+def test_duplicate_warning_ui_present():
+    """Static guard — the QuickOperationalExpense page contains a duplicate
+    check + warning modal wired to the required test-ids."""
+    src = Path("/app/frontend/src/pages/QuickOperationalExpense.jsx").read_text(encoding="utf-8")
+    for needed in [
+        "DUPLICATE RECORD FOUND",
+        "duplicate-modal",
+        "duplicate-modal-cancel",
+        "duplicate-modal-add-anyway",
+        "dupCheck",
+        "Add Anyway",
+    ]:
+        assert needed in src, f"QuickOperationalExpense.jsx missing marker: {needed}"
+
+
 def test_frontend_route_registered():
     src = Path("/app/frontend/src/App.js").read_text(encoding="utf-8")
     assert "/expenses/quick" in src

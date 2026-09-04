@@ -3,7 +3,7 @@ import { useMutation, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/api";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { Plus, Trash2, Save } from "lucide-react";
+import { Plus, Trash2, Save, AlertTriangle } from "lucide-react";
 
 /** Iter139 P0 · Quick Operational Expense — single-point daily entry.
  *  One Date + One Category + N (vehicle, amount) rows → N canonical Expense rows
@@ -14,11 +14,16 @@ const CATEGORIES = [
   "Loading Charges", "Unloading Charges", "Weighment",
   "Detention", "Cleaning", "Driver Food", "AdBlue",
 ];
+// Same alias table as services_quick_expense.py — must stay in sync.
+const CATEGORY_ALIAS = { "Driver Batta": "Batta" };
+const canon = (c) => CATEGORY_ALIAS[c] || c;
 const SUPPLIER_MODES = [
   { value: "supplier_settlement_adjustment", label: "Supplier Adjustment (recovery)" },
   { value: "company_borne", label: "Company Borne (P&L)" },
 ];
 const rid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+const eqAmount = (a, b) => Math.abs((parseFloat(a) || 0) - (parseFloat(b) || 0)) < 0.005;
+const fmt = (n) => `₹${(parseFloat(n) || 0).toFixed(2)}`;
 
 export default function QuickOperationalExpense() {
   const today = new Date().toISOString().slice(0, 10);
@@ -49,8 +54,8 @@ export default function QuickOperationalExpense() {
   const patchRow = (id, patch) => setRows((r) => r.map((x) => (x.id === id ? { ...x, ...patch } : x)));
 
   const save = useMutation({
-    mutationFn: async () => {
-      const entries = rows.map((r) => ({
+    mutationFn: async (rowsToSubmit) => {
+      const entries = rowsToSubmit.map((r) => ({
         client_row_id: r.id, vehicle_id: r.vehicle_id,
         amount: parseFloat(r.amount) || 0, remarks: r.remarks || "",
         supplier_settlement_mode: r.supplier_settlement_mode || "",
@@ -81,6 +86,70 @@ export default function QuickOperationalExpense() {
 
   const totalRows = rows.length;
   const totalAmount = rows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
+
+  // Iter139 P0 · Exact-duplicate warning (UX only — no unique constraint).
+  // Match keys: date + canonical(category) + vehicle_id + amount, active rows only.
+  const [dupModal, setDupModal] = useState(null); // { rowsToSubmit, duplicates: [{row, existing?, inBatch?}] }
+  const dupCheck = useMutation({
+    mutationFn: async () => {
+      const canonCat = canon(category);
+      const readyRows = rows.filter(
+        (r) => r.vehicle_id && (parseFloat(r.amount) || 0) > 0,
+      );
+      if (readyRows.length === 0) return { readyRows, duplicates: [] };
+      // ── In-batch duplicates ────────────────────────────────────
+      const seen = new Map();
+      const inBatch = [];
+      for (const r of readyRows) {
+        const k = `${r.vehicle_id}|${parseFloat(r.amount).toFixed(2)}`;
+        if (seen.has(k)) inBatch.push({ row: r, firstRow: seen.get(k), source: "batch" });
+        else seen.set(k, r);
+      }
+      // ── Existing-DB duplicates ─────────────────────────────────
+      // One request per distinct vehicle_id for this date+canonical category
+      // — batch-size ≤ 200, so ≤ 200 lightweight queries and typically far fewer.
+      const distinctVids = [...new Set(readyRows.map((r) => r.vehicle_id))];
+      const existingByVid = {};
+      await Promise.all(distinctVids.map(async (vid) => {
+        const { data } = await api.get("/expenses", { params: {
+          vehicle_id: vid, category: canonCat, date_from: date, date_to: date,
+        }});
+        existingByVid[vid] = Array.isArray(data) ? data : [];
+      }));
+      const dupExisting = [];
+      for (const r of readyRows) {
+        const amt = parseFloat(r.amount) || 0;
+        const match = (existingByVid[r.vehicle_id] || []).find(
+          (e) => eqAmount(e.amount, amt) && !e.is_reversed && !e.is_deleted,
+        );
+        if (match) dupExisting.push({ row: r, existing: match, source: "existing" });
+      }
+      return { readyRows, duplicates: [...dupExisting, ...inBatch] };
+    },
+    onSuccess: ({ readyRows, duplicates }) => {
+      if (duplicates.length === 0) {
+        save.mutate(readyRows);
+        return;
+      }
+      setDupModal({ readyRows, duplicates });
+    },
+    onError: (err) => toast.error(err?.response?.data?.detail || "Duplicate check failed"),
+  });
+
+  const resolveDupModal = (choice) => {
+    if (!dupModal) return;
+    const { readyRows, duplicates } = dupModal;
+    setDupModal(null);
+    if (choice === "cancel_all") {
+      // Skip every duplicated row; submit non-dup rows only.
+      const dupIds = new Set(duplicates.map((d) => d.row.id));
+      const keep = readyRows.filter((r) => !dupIds.has(r.id));
+      if (keep.length === 0) { toast.info("All duplicate rows cancelled — nothing to save."); return; }
+      save.mutate(keep);
+    } else if (choice === "add_all") {
+      save.mutate(readyRows);
+    }
+  };
 
   return (
     <div className="p-6 max-w-5xl" data-testid="quick-expense-page">
@@ -178,12 +247,81 @@ export default function QuickOperationalExpense() {
       </div>
 
       <div className="flex justify-end gap-2">
-        <button onClick={() => save.mutate()} disabled={save.isPending}
+        <button onClick={() => dupCheck.mutate()} disabled={save.isPending || dupCheck.isPending}
                 className="inline-flex items-center gap-1 bg-zinc-900 text-white px-4 py-2 rounded disabled:opacity-40"
                 data-testid="quick-expense-save">
-          <Save size={14}/> {save.isPending ? "Saving…" : `Save ${totalRows} ${totalRows === 1 ? "Entry" : "Entries"}`}
+          <Save size={14}/> {save.isPending || dupCheck.isPending ? "Saving…" : `Save ${totalRows} ${totalRows === 1 ? "Entry" : "Entries"}`}
         </button>
       </div>
+
+      {dupModal && (
+        <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center pt-24" data-testid="duplicate-modal">
+          <div className="bg-white rounded-lg shadow-xl w-[min(640px,92vw)] max-h-[80vh] overflow-auto">
+            <div className="flex items-start gap-3 px-5 py-4 border-b bg-amber-50">
+              <AlertTriangle className="text-amber-600 mt-0.5" size={20}/>
+              <div>
+                <div className="font-semibold text-amber-900">
+                  {dupModal.duplicates.length === 1 ? "DUPLICATE RECORD FOUND"
+                    : `${dupModal.duplicates.length} DUPLICATE RECORDS FOUND`}
+                </div>
+                <div className="text-xs text-amber-800 mt-1">
+                  Same date, category, vehicle, and amount. You can cancel these rows or add them anyway.
+                </div>
+              </div>
+            </div>
+            <div className="px-5 py-3 space-y-3 text-sm">
+              {dupModal.duplicates.map((d, i) => {
+                const veh = vehById[d.row.vehicle_id];
+                const vnum = veh?.vehicle_number || d.row.vehicle_id;
+                const existing = d.existing;
+                return (
+                  <div key={i} className="border rounded p-3" data-testid={`duplicate-item-${i}`}>
+                    <div className="text-xs uppercase tracking-wide text-zinc-500 mb-1">
+                      {d.source === "batch" ? "Duplicate within this batch" : "Matches an existing record"}
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <div className="text-[11px] text-zinc-500 mb-0.5">Existing</div>
+                        {existing ? (
+                          <div>
+                            <div className="font-medium">{fmt(existing.amount)}</div>
+                            <div className="text-xs text-zinc-600">
+                              {existing.date} · {existing.category} · {existing.vehicle_number}
+                            </div>
+                            {existing.narration && <div className="text-xs text-zinc-500 mt-0.5">{existing.narration}</div>}
+                          </div>
+                        ) : (
+                          <div className="text-xs text-zinc-500">Another row above with same vehicle + amount.</div>
+                        )}
+                      </div>
+                      <div>
+                        <div className="text-[11px] text-zinc-500 mb-0.5">New Entry</div>
+                        <div className="font-medium">{fmt(d.row.amount)}</div>
+                        <div className="text-xs text-zinc-600">
+                          {date} · {canon(category)} · {vnum}
+                        </div>
+                        {d.row.remarks && <div className="text-xs text-zinc-500 mt-0.5">{d.row.remarks}</div>}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex justify-end gap-2 px-5 py-3 border-t bg-zinc-50">
+              <button onClick={() => resolveDupModal("cancel_all")}
+                      className="px-3 py-1.5 border rounded text-sm"
+                      data-testid="duplicate-modal-cancel">
+                {dupModal.duplicates.length === 1 ? "Cancel" : "Cancel All Duplicates"}
+              </button>
+              <button onClick={() => resolveDupModal("add_all")}
+                      className="px-3 py-1.5 bg-amber-600 text-white rounded text-sm"
+                      data-testid="duplicate-modal-add-anyway">
+                {dupModal.duplicates.length === 1 ? "Add Anyway" : "Add All Anyway"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
