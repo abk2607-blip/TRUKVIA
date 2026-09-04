@@ -89,6 +89,15 @@ export function SearchableSelect({
               tabIndex={-1}
               onPointerDown={clear}
               onClick={clear}
+              data-testid={testId ? `${testId}-clear` : undefined}
+              className="text-zinc-400 hover:text-zinc-900 cursor-pointer"
+              title="Clear"
+            >
+              <XIcon size={14} />
+            </span>
+          ) : (
+            <ChevronsUpDown size={14} className="text-zinc-400 shrink-0" />
+          )}
         </button>
       </PopoverTrigger>
       <PopoverContent
