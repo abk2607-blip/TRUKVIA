@@ -18,7 +18,7 @@ Turn-1 non-goals: no Trip Cost report, no Vehicle Cost report, no ledger
 projection to Supplier Statement. Those land in the reporting turn.
 """
 from typing import Optional
-from fastapi import APIRouter, HTTPException, Request, Depends, Query
+from fastapi import APIRouter, HTTPException, Request, Depends, Query, Body
 
 from db import db
 from models import Expense, now_utc
@@ -241,6 +241,19 @@ async def update_expense(eid: str, payload: Expense, request: Request, user=Depe
         pass
     after.pop("_id", None); after.pop("user_id", None)
     return after
+
+
+# Iter139 P0 · Quick Operational Expense — bulk canonical writer.
+@router.post("/expenses/bulk-operational")
+async def bulk_operational_expenses(request: Request, body: dict = Body(...),
+                                    user=Depends(get_current_user)):
+    from services_quick_expense import bulk_create_operational_expenses
+    role = (user.get("effective_role") or "").lower()
+    if role not in ("owner", "admin", "ops"):
+        raise HTTPException(status_code=403, detail="Owner, Admin, or Ops role required.")
+    uid = user["user_id"]
+    cid = await _active_company_id(request, user)
+    return await bulk_create_operational_expenses(uid, cid, user, body)
 
 
 @router.delete("/expenses/{eid}")

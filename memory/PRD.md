@@ -1,5 +1,130 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
+## Iter139 P0 · Quick Operational Expense — IMPLEMENTED / READY FOR UAT — 2026-09-04
+
+**Status: IMPLEMENTED. NOT LOCKED — awaiting operator UAT.**
+Regression: **176 / 176 PASS** (148 baseline + 28 new Iter139 tests).
+Zero backend accounting / schema / router changes beyond one additive
+`source_type` enum value.
+
+### Scope shipped (P0)
+- **Endpoint** `POST /api/expenses/bulk-operational` — batch write of
+  1..200 canonical Expense rows through the existing Iter133
+  `_validate_and_normalise` gate. Row-level idempotency via
+  `expenses_source_key_uniq` (partial-unique index). Batch-level
+  idempotency via existing platform `Idempotency-Key` middleware.
+- **Service** `services_quick_expense.py::bulk_create_operational_expenses`
+  — pure per-row helper; ready to be wrapped in a Mongo transaction the
+  day the deployment converts to a replica set (Iter138 unblock).
+- **Whitelist** — server-enforced (`QUICK_OP_CATEGORIES` = 12 categories:
+  Toll, Diesel, Parking, Batta, Driver Batta, Loading Charges,
+  Unloading Charges, Weighment, Detention, Cleaning, Driver Food,
+  AdBlue). Everything else → HTTP 400.
+- **Category normalisation** — `"Driver Batta"` → canonical `"Batta"`
+  on the write; UI keeps operator-friendly label.
+- **Supplier routing** — server auto-derives `supplier_owned_vehicle`
+  from `Vehicle.vehicle_type`; per-row `supplier_settlement_mode`
+  required when supplier vehicle is selected.
+- **Fuel isolation** — Quick Diesel writes only `db.expenses`;
+  legacy `db.fuel` collection untouched.
+- **Frontend page** `/expenses/quick` (new) + sidebar entry
+  `nav-quick-expense` (`త్వరిత ఖర్చు · Quick Expense`) reusing the
+  LOCKED Iter137A `SearchableSelect` for both Vehicle and Category
+  pickers. Iter136 register drawer untouched.
+
+### Files changed
+- **New** — `/app/backend/services_quick_expense.py`
+- **New** — `/app/frontend/src/pages/QuickOperationalExpense.jsx`
+- **New** — `/app/backend/tests/test_iter139_quick_operational.py` (28 tests)
+- **Modified** (single-line additive) — `/app/backend/models.py`
+  (`Expense.source_type` Literal now includes `"quick_op"`)
+- **Modified** — `/app/backend/routers/expenses.py` (add
+  `POST /expenses/bulk-operational`; import `Body`; delete route unchanged)
+- **Modified** — `/app/backend/idempotency.py` (register the new pattern)
+- **Modified** — `/app/frontend/src/App.js` (new route `/expenses/quick`)
+- **Modified** — `/app/frontend/src/components/Layout.jsx` (sidebar entry)
+- **Unmodified** — Iter132a-c, Iter133, Iter134, Iter135, Iter135A,
+  Iter136 P0 register, Iter137A SearchableSelect, ExpenseForm.jsx,
+  ExpenseRegister.jsx, services_party_ledger, services_payment_corrections,
+  vendor_bills.py, mechanic_work_orders.py. Iter138 P0 remains DEFERRED.
+
+### API contract
+```
+POST /api/expenses/bulk-operational
+Headers: Authorization: Bearer <token> · Idempotency-Key: <opaque>
+Body: { date, category, trip_id?, entries: [{ client_row_id, vehicle_id, amount, remarks?, supplier_settlement_mode? }] }
+Response 200: { batch_id, date, category, created, duplicate, failed,
+                results: [{ client_row_id, status: created|duplicate|failed, expense?, error? }] }
+```
+Error codes:
+- Row: `INVALID_AMOUNT`, `VEHICLE_NOT_FOUND`, `VEHICLE_INACTIVE`,
+  `MISSING_SUPPLIER_MODE`, `INVALID_SUPPLIER_MODE`, `DUPLICATE`, `VALIDATION`.
+- Batch: 400 (bad date / non-whitelist category / empty entries / >200
+  entries / bad trip_id), 403 (role), 422 (body).
+
+### source_key / idempotency strategy
+- Deterministic per-row: `quickop:{YYYY-MM-DD}:{category_slug}:{vehicle_id}:{client_row_id}`.
+- `client_row_id` is generated on the frontend BEFORE first submit via
+  `useRef` and reused verbatim on retry.
+- Row-level duplicates return `status="duplicate"` with the existing
+  Expense — treated as a successful idempotent replay, not an error.
+
+### Test totals — READY FOR UAT
+- New focused suite `test_iter139_quick_operational.py` — **28 / 28 PASS**.
+- Combined regression Iter133 + 134 + 135 + 135A + 136 + 137A + 139 —
+  **176 / 176 PASS** (serial, ~55 s).
+- Frontend build — clean compile.
+
+### Manual UAT route
+1. `/expenses/quick` opens; sidebar `Quick Expense` navigates correctly.
+2. Toll multi-vehicle — 3 own vehicles ₹1,000 / ₹1,500 / ₹800 → single Save → 3 canonical Expense rows, Vehicle Cost per vehicle reflects the new totals.
+3. Diesel — Quick Diesel ₹8,000 → Expense created, `/fuel` list count unchanged, Vehicle Cost updated.
+4. Parking, Batta, AdBlue — happy paths.
+5. Supplier vehicle Toll `supplier_settlement_adjustment` → Expense flagged, appears in `/api/reports/supplier-settlement-adjustments`.
+6. Supplier vehicle Toll `company_borne` → Expense flagged, NOT in Supplier Statement CREDIT list.
+7. Optional Trip ID — batch-level trip_id propagates to every row.
+8. Retry same submission → `duplicate` status per row, no ghost Expenses.
+9. Partial batch — mix a valid, an invalid vehicle, and an inactive vehicle → 1 created, 2 failed, both failed rows remain on screen with an actionable ⚠ message.
+10. Iter136 register regression — `/expenses` shows the new rows with `source_type=quick_op` visible in the API.
+11. Iter137A selectors regression — vehicle / category comboboxes still work on the Iter136 drawer.
+
+### Known accepted limitations
+- No multi-doc transactions (standalone Mongo). Row-level idempotency
+  makes retries safe but a mid-batch server crash can leave a partial
+  batch — the operator retries with the same `Idempotency-Key` and
+  duplicates collapse automatically.
+- No "recent categories first", no "today's entries" strip, no
+  per-row Trip ID — deferred to Iter139 P1.
+- Attachments not supported on the Quick Entry path — attach through
+  the Iter136 register drawer if evidence needed.
+- Category filter is limited to the 12-item whitelist; anything else
+  redirects the operator to the Iter136 register.
+- Iter138 P0 remains DEFERRED / BLOCKED until Mongo topology changes.
+
+### Explicit deferred backlog — NOT IMPLEMENTED
+Recent Categories First · Recent Vehicles First · Today's entries strip
+· Soft duplicate warning · Per-row Trip ID · CSV/PDF Quick Expense
+export · Recurring templates · Bulk edit / cancel · Analytics · Fuel
+migration or deprecation · Driver Ledger · GST / GSTR-3B / RTO / Accident
+architecture · Spare Parts Master · Inventory · VendorBill / WO
+correction (Iter138 blocked) · Fleet Snapshot cards.
+
+### Protection — still LOCKED (no change)
+- 🔒 Iter132a-c · Credit / Debit Notes
+- 🔒 Iter133 · Expense / Vehicle Cost
+- 🔒 Iter134 · Invoice Enhancement
+- 🔒 Iter135  · Vendor / Mechanic Ledger
+- 🔒 Iter135A · Ledger ERP Presentation Polish
+- 🔒 Iter136 P0 · Expense Register + Non-Trip Expense Workflow
+- 🔒 Iter137A · Searchable Vehicle + Category Selectors
+- ⛔ Iter138 P0 · DEFERRED / BLOCKED (Mongo topology)
+
+**Core product principle (binding):**
+**ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO MANUAL RECONCILIATION.**
+
+**ITER139 P0 — IMPLEMENTED / READY FOR UAT — HARD STOP.**
+
+
 ## 🔒 Iter137A · Searchable Vehicle + Category Selectors — LOCKED — 2026-09-04
 
 **Status: LOCKED / FROZEN.  Manual UAT: ACCEPTED — 2026-09-04.

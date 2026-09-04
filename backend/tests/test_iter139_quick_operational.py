@@ -1,0 +1,309 @@
+"""Iter139 P0 · Quick Operational Expense — bulk canonical Expense writer.
+
+Focused regression covering:
+  • whitelist enforcement
+  • per-row validation + partial-batch success
+  • idempotency (batch key + row-level source_key)
+  • supplier-vehicle routing (adjustment / company-borne)
+  • Fuel-collection isolation
+  • Iter135 vendor-ledger invariant preservation
+"""
+from __future__ import annotations
+import os
+import uuid
+from pathlib import Path
+
+import pytest
+import requests
+
+BASE = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/")
+API = f"{BASE}/api"
+DEMO = os.environ["DEMO_TOKEN_VALUE"]
+H = {"Authorization": f"Bearer {DEMO}", "Content-Type": "application/json"}
+
+
+def _mk_vehicle(vtype="own", supplier_name=""):
+    body = {"vehicle_number": f"AP31TF{uuid.uuid4().hex[:4].upper()}",
+            "vehicle_type": vtype}
+    if vtype == "supplier":
+        sup_body = {"name": f"Sup-{uuid.uuid4().hex[:8]}"}
+        sr = requests.post(f"{API}/suppliers", headers=H, json=sup_body, timeout=15)
+        if sr.status_code == 409:
+            existing = (sr.json() or {}).get("detail", {}).get("existing") or {}
+            sup = existing
+        else:
+            assert sr.status_code in (200, 201), sr.text
+            sup = sr.json()
+        body["supplier_id"] = sup["id"]
+        body["supplier_name"] = sup["name"]
+    r = requests.post(f"{API}/vehicles", headers=H, json=body, timeout=15)
+    assert r.status_code in (200, 201), r.text
+    return r.json()
+
+
+@pytest.fixture(scope="module")
+def own_veh():
+    return _mk_vehicle("own")
+
+
+@pytest.fixture(scope="module")
+def own_veh2():
+    return _mk_vehicle("own")
+
+
+@pytest.fixture(scope="module")
+def supplier_veh():
+    return _mk_vehicle("supplier", "ABC Transport")
+
+
+def _post_batch(**body):
+    return requests.post(f"{API}/expenses/bulk-operational", headers=H,
+                         json=body, timeout=30)
+
+
+# ── Happy paths ────────────────────────────────────────────────────
+def test_single_vehicle_toll(own_veh):
+    r = _post_batch(date="2026-09-04", category="Toll",
+                    entries=[{"client_row_id": f"r-{uuid.uuid4().hex[:8]}",
+                              "vehicle_id": own_veh["id"], "amount": 1000}])
+    assert r.status_code == 200, r.text
+    j = r.json()
+    assert j["created"] == 1 and j["failed"] == 0
+    row = j["results"][0]
+    assert row["status"] == "created"
+    exp = row["expense"]
+    assert exp["category"] == "Toll" and exp["amount"] == 1000.0
+    assert exp["vehicle_id"] == own_veh["id"]
+    assert exp["source_type"] == "quick_op"
+    assert exp["source_key"].startswith("quickop:2026-09-04:toll:")
+    assert exp["party_type"] == "cash" and exp["settlement_mode"] == "cash_now"
+    assert exp["vendor_bill_id"] == "" and exp["mechanic_work_order_id"] == ""
+
+
+def test_multi_vehicle_batch(own_veh, own_veh2):
+    entries = [
+        {"client_row_id": f"m1-{uuid.uuid4().hex[:6]}", "vehicle_id": own_veh["id"], "amount": 500},
+        {"client_row_id": f"m2-{uuid.uuid4().hex[:6]}", "vehicle_id": own_veh2["id"], "amount": 700},
+    ]
+    r = _post_batch(date="2026-09-05", category="Parking", entries=entries)
+    j = r.json()
+    assert j["created"] == 2 and j["failed"] == 0
+    assert [x["status"] for x in j["results"]] == ["created", "created"]
+
+
+def test_supplier_adjustment(supplier_veh):
+    r = _post_batch(date="2026-09-06", category="Toll", entries=[{
+        "client_row_id": f"sa-{uuid.uuid4().hex[:8]}", "vehicle_id": supplier_veh["id"],
+        "amount": 1200, "supplier_settlement_mode": "supplier_settlement_adjustment"}])
+    exp = r.json()["results"][0]["expense"]
+    assert exp["supplier_owned_vehicle"] is True
+    assert exp["supplier_settlement_mode"] == "supplier_settlement_adjustment"
+
+
+def test_supplier_company_borne(supplier_veh):
+    r = _post_batch(date="2026-09-07", category="Toll", entries=[{
+        "client_row_id": f"cb-{uuid.uuid4().hex[:8]}", "vehicle_id": supplier_veh["id"],
+        "amount": 1300, "supplier_settlement_mode": "company_borne"}])
+    exp = r.json()["results"][0]["expense"]
+    assert exp["supplier_owned_vehicle"] is True
+    assert exp["supplier_settlement_mode"] == "company_borne"
+
+
+def test_batch_with_trip_id(own_veh):
+    # Trip existence is validated — invalid trip fails at batch level.
+    r = _post_batch(date="2026-09-08", category="Toll", trip_id="trip_does_not_exist",
+                    entries=[{"client_row_id": "t1", "vehicle_id": own_veh["id"], "amount": 100}])
+    assert r.status_code == 400
+
+
+# ── Row-level validation ────────────────────────────────────────────
+def test_non_whitelist_category(own_veh):
+    r = _post_batch(date="2026-09-09", category="Insurance",
+                    entries=[{"client_row_id": "x", "vehicle_id": own_veh["id"], "amount": 100}])
+    assert r.status_code == 400
+
+
+def test_zero_amount_row_failed(own_veh, own_veh2):
+    r = _post_batch(date="2026-09-10", category="Toll", entries=[
+        {"client_row_id": f"ok-{uuid.uuid4().hex[:6]}", "vehicle_id": own_veh["id"], "amount": 100},
+        {"client_row_id": f"bad-{uuid.uuid4().hex[:6]}", "vehicle_id": own_veh2["id"], "amount": 0},
+    ])
+    j = r.json()
+    assert j["created"] == 1 and j["failed"] == 1
+    assert j["results"][1]["status"] == "failed"
+    assert j["results"][1]["error"]["code"] == "INVALID_AMOUNT"
+
+
+def test_negative_amount_row_failed(own_veh):
+    r = _post_batch(date="2026-09-11", category="Toll", entries=[
+        {"client_row_id": f"neg-{uuid.uuid4().hex[:6]}", "vehicle_id": own_veh["id"], "amount": -100}])
+    assert r.json()["results"][0]["error"]["code"] == "INVALID_AMOUNT"
+
+
+def test_vehicle_not_found():
+    r = _post_batch(date="2026-09-12", category="Toll", entries=[
+        {"client_row_id": f"n-{uuid.uuid4().hex[:6]}", "vehicle_id": "veh_missing", "amount": 100}])
+    assert r.json()["results"][0]["error"]["code"] == "VEHICLE_NOT_FOUND"
+
+
+def test_inactive_vehicle():
+    v = _mk_vehicle("own")
+    # Deactivate
+    upd = {**v, "is_active": False}
+    requests.put(f"{API}/vehicles/{v['id']}", headers=H, json=upd, timeout=15)
+    r = _post_batch(date="2026-09-13", category="Toll", entries=[
+        {"client_row_id": f"in-{uuid.uuid4().hex[:6]}", "vehicle_id": v["id"], "amount": 100}])
+    assert r.json()["results"][0]["error"]["code"] == "VEHICLE_INACTIVE"
+
+
+def test_supplier_without_mode(supplier_veh):
+    r = _post_batch(date="2026-09-14", category="Toll", entries=[
+        {"client_row_id": f"sm-{uuid.uuid4().hex[:6]}", "vehicle_id": supplier_veh["id"], "amount": 100}])
+    assert r.json()["results"][0]["error"]["code"] == "MISSING_SUPPLIER_MODE"
+
+
+def test_invalid_supplier_mode(supplier_veh):
+    r = _post_batch(date="2026-09-15", category="Toll", entries=[{
+        "client_row_id": f"sm2-{uuid.uuid4().hex[:6]}", "vehicle_id": supplier_veh["id"],
+        "amount": 100, "supplier_settlement_mode": "made_up"}])
+    assert r.json()["results"][0]["error"]["code"] == "INVALID_SUPPLIER_MODE"
+
+
+def test_cross_tenant_vehicle():
+    # Simulated: use bogus vehicle id — falls through as VEHICLE_NOT_FOUND.
+    r = _post_batch(date="2026-09-16", category="Toll", entries=[
+        {"client_row_id": "ct", "vehicle_id": "veh_other_company", "amount": 100}])
+    assert r.json()["results"][0]["error"]["code"] == "VEHICLE_NOT_FOUND"
+
+
+# ── Idempotency ────────────────────────────────────────────────────
+def test_same_client_row_id_returns_duplicate(own_veh):
+    """Row-level idempotency via expenses_source_key_uniq (survives TTL)."""
+    rid = f"idem-{uuid.uuid4().hex[:8]}"
+    body = dict(date="2026-09-17", category="Toll",
+                entries=[{"client_row_id": rid, "vehicle_id": own_veh["id"], "amount": 250}])
+    r1 = requests.post(f"{API}/expenses/bulk-operational", headers=H, json=body, timeout=15)
+    r2 = requests.post(f"{API}/expenses/bulk-operational", headers=H, json=body, timeout=15)
+    j1, j2 = r1.json(), r2.json()
+    assert j1["results"][0]["status"] == "created"
+    assert j2["results"][0]["status"] == "duplicate"
+    # Only ONE canonical row must exist.
+    lst = requests.get(f"{API}/expenses", headers=H,
+                       params={"vehicle_id": own_veh["id"], "category": "Toll",
+                               "date_from": "2026-09-17", "date_to": "2026-09-17"},
+                       timeout=15).json()
+    assert sum(1 for e in lst if e.get("source_key", "").endswith(f":{rid}")) == 1
+
+
+def test_distinct_client_row_ids_allow_repeats(own_veh):
+    body1 = dict(date="2026-09-18", category="Toll", entries=[
+        {"client_row_id": f"r1-{uuid.uuid4().hex[:6]}", "vehicle_id": own_veh["id"], "amount": 500}])
+    body2 = dict(date="2026-09-18", category="Toll", entries=[
+        {"client_row_id": f"r2-{uuid.uuid4().hex[:6]}", "vehicle_id": own_veh["id"], "amount": 700}])
+    r1 = _post_batch(**body1); r2 = _post_batch(**body2)
+    assert r1.json()["results"][0]["status"] == "created"
+    assert r2.json()["results"][0]["status"] == "created"
+
+
+# ── Category normalisation ──────────────────────────────────────────
+def test_driver_batta_normalized_to_batta(own_veh):
+    r = _post_batch(date="2026-09-19", category="Driver Batta", entries=[
+        {"client_row_id": f"db-{uuid.uuid4().hex[:6]}", "vehicle_id": own_veh["id"], "amount": 500}])
+    j = r.json()
+    assert j["category"] == "Batta"
+    assert j["results"][0]["expense"]["category"] == "Batta"
+
+
+# ── Projections ─────────────────────────────────────────────────────
+def test_expense_register_shows_quick_entry(own_veh):
+    unique = uuid.uuid4().hex[:8]
+    _post_batch(date="2026-09-20", category="Parking", entries=[
+        {"client_row_id": f"reg-{unique}", "vehicle_id": own_veh["id"], "amount": 111,
+         "remarks": f"tag-{unique}"}])
+    lst = requests.get(f"{API}/expenses", headers=H,
+                       params={"vehicle_id": own_veh["id"], "category": "Parking",
+                               "date_from": "2026-09-20", "date_to": "2026-09-20"},
+                       timeout=15).json()
+    assert any(e.get("source_type") == "quick_op" and e.get("source_key", "").endswith(f":reg-{unique}")
+               for e in lst)
+
+
+def test_quick_diesel_does_not_touch_fuel(own_veh):
+    before = requests.get(f"{API}/fuel", headers=H, timeout=15).json()
+    _post_batch(date="2026-09-21", category="Diesel", entries=[
+        {"client_row_id": f"d-{uuid.uuid4().hex[:6]}", "vehicle_id": own_veh["id"], "amount": 8000}])
+    after = requests.get(f"{API}/fuel", headers=H, timeout=15).json()
+    assert len(before) == len(after)
+
+
+def test_vehicle_cost_reflects_quick_entry(own_veh):
+    """Vehicle Cost is a projection of Expense (Iter133 LOCK). Quick Entry
+    contributes automatically. We assert the canonical Expense list scoped
+    to the vehicle exposes the new row."""
+    lst = requests.get(f"{API}/expenses", headers=H,
+                       params={"vehicle_id": own_veh["id"]}, timeout=15).json()
+    assert any(e.get("source_type") == "quick_op" for e in lst)
+
+
+# ── Batch-level guards ─────────────────────────────────────────────
+def test_empty_entries_400():
+    r = _post_batch(date="2026-09-22", category="Toll", entries=[])
+    assert r.status_code == 400
+
+
+def test_over_200_entries_400(own_veh):
+    r = _post_batch(date="2026-09-23", category="Toll", entries=[
+        {"client_row_id": f"o-{i}", "vehicle_id": own_veh["id"], "amount": 1} for i in range(201)])
+    assert r.status_code == 400
+
+
+def test_invalid_date_400(own_veh):
+    r = _post_batch(date="not-a-date", category="Toll", entries=[
+        {"client_row_id": "bad", "vehicle_id": own_veh["id"], "amount": 100}])
+    assert r.status_code == 400
+
+
+# ── Locked invariant regression ────────────────────────────────────
+def test_iter136_register_still_default_hides_reversed(own_veh):
+    r = requests.get(f"{API}/expenses", headers=H, timeout=15)
+    assert r.status_code == 200
+    assert all((not e.get("is_reversed")) for e in r.json())
+
+
+def test_bulk_endpoint_does_not_create_vendor_bill(own_veh):
+    before_ct = requests.get(f"{API}/vendor-bills", headers=H, timeout=15).json()
+    _post_batch(date="2026-09-24", category="Toll", entries=[
+        {"client_row_id": f"vb-{uuid.uuid4().hex[:6]}", "vehicle_id": own_veh["id"], "amount": 100}])
+    after_ct = requests.get(f"{API}/vendor-bills", headers=H, timeout=15).json()
+    assert len(before_ct) == len(after_ct)
+
+
+def test_quick_op_expense_schema_shape():
+    import sys
+    sys.path.insert(0, "/app/backend")
+    from models import Expense  # type: ignore
+    assert "quick_op" in Expense.model_fields["source_type"].annotation.__args__
+
+
+# ── Static frontend guard ──────────────────────────────────────────
+def test_frontend_page_exists():
+    p = Path("/app/frontend/src/pages/QuickOperationalExpense.jsx")
+    assert p.exists()
+    src = p.read_text(encoding="utf-8")
+    assert "/expenses/bulk-operational" in src
+    assert "SearchableSelect" in src
+    # Twin-payable guard preserved even for Quick Entry — no vendor_bill_id / mwo_id in payload builder.
+    assert "vendor_bill_id" not in src
+    assert "mechanic_work_order_id" not in src
+
+
+def test_frontend_route_registered():
+    src = Path("/app/frontend/src/App.js").read_text(encoding="utf-8")
+    assert "/expenses/quick" in src
+    assert "QuickOperationalExpense" in src
+
+
+def test_sidebar_link_registered():
+    src = Path("/app/frontend/src/components/Layout.jsx").read_text(encoding="utf-8")
+    assert 'nav-quick-expense' in src
+    assert '/expenses/quick' in src

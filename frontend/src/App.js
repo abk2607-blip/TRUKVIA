@@ -19,6 +19,7 @@ import Products from "@/pages/Products";
 import Vehicles from "@/pages/Vehicles";
 import VehicleCostReport from "@/pages/VehicleCostReport";
 import ExpenseRegister from "@/pages/ExpenseRegister";
+import QuickOperationalExpense from "@/pages/QuickOperationalExpense";
 import PartyLedger from "@/pages/PartyLedger";
 import Vendors from "@/pages/Vendors";
 import Mechanics from "@/pages/Mechanics";
@@ -83,6 +84,7 @@ function AppRouter() {
       <Route path="/reports/halting-verify" element={<Protected><HaltingVerify /></Protected>} />
       <Route path="/vehicles" element={<Protected><Vehicles /></Protected>} />
       <Route path="/expenses" element={<Protected><ExpenseRegister /></Protected>} />
+      <Route path="/expenses/quick" element={<Protected><QuickOperationalExpense /></Protected>} />
       <Route path="/vehicles/:vid/cost" element={<Protected><VehicleCostReport /></Protected>} />
       <Route path="/vehicles/:vid/repairs/new" element={<Protected><RepairWorkspace /></Protected>} />
       <Route path="/repairs/:rid" element={<Protected><RepairWorkspace /></Protected>} />

@@ -73,6 +73,7 @@ BUCKET_B_PATTERNS: list[re.Pattern] = [re.compile(p) for p in (
     r"^/api/team$",
     r"^/api/templates$",
     r"^/api/fuel$",
+    r"^/api/expenses/bulk-operational$",
     r"^/api/expenditure-types$",
     r"^/api/saved-trip-filters$",
     r"^/api/driver-shortage-policies$",

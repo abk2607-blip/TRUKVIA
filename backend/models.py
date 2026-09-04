@@ -1118,7 +1118,7 @@ class Expense(BaseModel):
     #   trip:{trip_id}:oe:{row_id}      for Trip.other_expenditures[]
     # Never uses amount/date/vendor heuristics. `source_type='manual'` means
     # user-typed via the Expense API (no auto-materialisation).
-    source_type: Literal["manual", "trip_legacy", "trip_other_expenditure"] = "manual"
+    source_type: Literal["manual", "trip_legacy", "trip_other_expenditure", "quick_op"] = "manual"
     source_key: str = ""
     source_trip_id: str = ""    # denormalised for fast cleanup queries
     file_ids: List[str] = Field(default_factory=list)

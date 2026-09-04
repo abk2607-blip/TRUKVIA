@@ -26,6 +26,7 @@ const nav = [
   { to: "/products", te: "ప్రొడక్ట్‌లు", en: "Products", icon: Package, testid: "nav-products" },
   { to: "/fuel", te: "డీజిల్", en: "Fuel", icon: FuelIcon, testid: "nav-fuel" },
   { to: "/expenses", te: "ఖర్చులు", en: "Expenses", icon: Receipt, testid: "nav-expenses" },
+  { to: "/expenses/quick", te: "త్వరిత ఖర్చు", en: "Quick Expense", icon: Receipt, testid: "nav-quick-expense" },
   { to: "/invoices", te: "ఇన్వాయిస్‌లు", en: "Invoices", icon: FileText, testid: "nav-invoices" },
   { to: "/invoices/overdue", te: "బకాయిలు", en: "Overdue", icon: AlertCircle, testid: "nav-overdue" },
   { to: "/notes", te: "క్రెడిట్ / డెబిట్ నోట్‌లు", en: "Credit / Debit Notes", icon: FileMinus, testid: "nav-notes", cdnOnly: true },
