@@ -609,6 +609,47 @@ async def _build_ledger(uid: str, cid: str, sid: str, start: Optional[str], end:
             "payment_id": p.get("id"),
         })
 
+    # 3.5) Iter139 UAT fix · Supplier-owned vehicle settlement-adjustment
+    # Expense rows post here as CREDIT (recovery) — canonical Expense is
+    # the sole source (Iter133 T2D). No SupplierPayment is created.  This
+    # closes the gap where /api/suppliers/{sid}/settlement-adjustments was
+    # a separate projection endpoint the Supplier Ledger UI never called.
+    supplier_veh_ids = []
+    async for v in db.vehicles.find(
+        {"user_id": uid, "company_id": cid, "supplier_id": sid,
+         "vehicle_type": "supplier"},
+        {"_id": 0, "id": 1, "vehicle_number": 1},
+    ):
+        supplier_veh_ids.append((v["id"], v.get("vehicle_number") or ""))
+    if supplier_veh_ids:
+        vid_map = {vid: vnum for vid, vnum in supplier_veh_ids}
+        eq = {
+            "user_id": uid, "company_id": cid,
+            "supplier_owned_vehicle": True,
+            "supplier_settlement_mode": "supplier_settlement_adjustment",
+            "is_deleted": {"$ne": True}, "is_reversed": {"$ne": True},
+            "vehicle_id": {"$in": list(vid_map.keys())},
+        }
+        async for e in db.expenses.find(eq, {"_id": 0, "user_id": 0}):
+            d = e.get("date", "")
+            if start and d < start: continue
+            if end and d > end: continue
+            amt = _num(e.get("amount"))
+            if amt <= 0:
+                continue
+            cat = e.get("category") or "Expense"
+            entries.append({
+                "date": d, "type": "supplier_settlement_expense",
+                "particulars": f"Supplier-borne {cat} (recovery)",
+                "lr_number": "",
+                "vehicle_number": e.get("vehicle_number") or vid_map.get(e.get("vehicle_id"), ""),
+                "trip_id": e.get("trip_id") or "",
+                "ref_no": "",
+                "remarks": e.get("narration") or e.get("remarks") or "",
+                "debit": 0.0, "credit": round(amt, 2),
+                "expense_id": e.get("id"),
+            })
+
     # 4) Chronological sort — opening always first
     entries.sort(key=lambda e: (e["date"], 0 if e["type"] == "opening" else 1))
 

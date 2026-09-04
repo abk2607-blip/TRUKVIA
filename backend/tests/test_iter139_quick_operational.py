@@ -364,6 +364,122 @@ def test_duplicate_warning_ui_present():
         assert needed in src, f"QuickOperationalExpense.jsx missing marker: {needed}"
 
 
+# ── Iter139 UAT bug fix · Supplier-owned vehicle CREDIT projection ───
+
+def _mk_supplier_vehicle():
+    """Create a supplier + supplier-owned vehicle and return both."""
+    sup_body = {"name": f"UATSup-{uuid.uuid4().hex[:8]}", "opening_balance": 0}
+    sr = requests.post(f"{API}/suppliers", headers=H, json=sup_body, timeout=15)
+    if sr.status_code == 409:
+        sup = (sr.json() or {}).get("detail", {}).get("existing") or {}
+    else:
+        assert sr.status_code in (200, 201), sr.text
+        sup = sr.json()
+    vbody = {"vehicle_number": f"AP39ZU{uuid.uuid4().hex[:4].upper()}",
+             "vehicle_type": "supplier",
+             "supplier_id": sup["id"], "supplier_name": sup["name"]}
+    vr = requests.post(f"{API}/vehicles", headers=H, json=vbody, timeout=15)
+    assert vr.status_code in (200, 201), vr.text
+    return sup, vr.json()
+
+
+def test_supplier_adjustment_appears_in_supplier_ledger():
+    """Iter139 UAT fix: Quick Entry with supplier_settlement_adjustment must
+    materialise as a CREDIT entry in the Supplier Ledger."""
+    sup, veh = _mk_supplier_vehicle()
+    d = "2026-10-01"
+    r = _post_batch(date=d, category="Toll", entries=[{
+        "client_row_id": f"sa1-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": veh["id"], "amount": 1000,
+        "supplier_settlement_mode": "supplier_settlement_adjustment"}])
+    assert r.json()["created"] == 1, r.text
+    lg = requests.get(f"{API}/suppliers/{sup['id']}/ledger", headers=H, timeout=15).json()
+    entries = lg.get("entries") or []
+    credit_rows = [e for e in entries if e.get("type") == "supplier_settlement_expense"]
+    assert len(credit_rows) == 1, f"expected 1 credit row, got {credit_rows}"
+    assert credit_rows[0]["credit"] == 1000.0
+    assert credit_rows[0]["debit"] == 0.0
+    assert lg["totals"]["credit"] >= 1000.0
+
+
+def test_supplier_company_borne_does_not_appear_in_supplier_ledger():
+    sup, veh = _mk_supplier_vehicle()
+    d = "2026-10-02"
+    r = _post_batch(date=d, category="Toll", entries=[{
+        "client_row_id": f"cb1-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": veh["id"], "amount": 1200,
+        "supplier_settlement_mode": "company_borne"}])
+    assert r.json()["created"] == 1
+    lg = requests.get(f"{API}/suppliers/{sup['id']}/ledger", headers=H, timeout=15).json()
+    for e in (lg.get("entries") or []):
+        assert e.get("type") != "supplier_settlement_expense", (
+            "company_borne Expense must NOT appear in Supplier Ledger"
+        )
+
+
+def test_own_vehicle_does_not_appear_in_supplier_ledger(own_veh):
+    # No supplier is associated; iterate all suppliers to be safe.
+    r = _post_batch(date="2026-10-03", category="Toll", entries=[{
+        "client_row_id": f"ov1-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "amount": 500}])
+    assert r.json()["created"] == 1
+    # No specific supplier to query — verify no other supplier ledger picks it up
+    # by checking a fresh supplier's ledger is empty of settlement rows.
+    sup, _ = _mk_supplier_vehicle()
+    lg = requests.get(f"{API}/suppliers/{sup['id']}/ledger", headers=H, timeout=15).json()
+    for e in (lg.get("entries") or []):
+        # Only supplier's own trips / payments allowed; no cross-supplier expense.
+        assert e.get("type") != "supplier_settlement_expense" or e.get("vehicle_number") == "".__class__(""), (
+            "Own-vehicle Expense leaked into a foreign Supplier Ledger"
+        )
+
+
+def test_multiple_supplier_vehicles_route_to_correct_suppliers():
+    supA, vehA = _mk_supplier_vehicle()
+    supB, vehB = _mk_supplier_vehicle()
+    d = "2026-10-04"
+    r = _post_batch(date=d, category="Toll", entries=[
+        {"client_row_id": f"a-{uuid.uuid4().hex[:6]}", "vehicle_id": vehA["id"], "amount": 1000,
+         "supplier_settlement_mode": "supplier_settlement_adjustment"},
+        {"client_row_id": f"b-{uuid.uuid4().hex[:6]}", "vehicle_id": vehB["id"], "amount": 1500,
+         "supplier_settlement_mode": "supplier_settlement_adjustment"},
+    ])
+    assert r.json()["created"] == 2
+    lgA = requests.get(f"{API}/suppliers/{supA['id']}/ledger", headers=H, timeout=15).json()
+    lgB = requests.get(f"{API}/suppliers/{supB['id']}/ledger", headers=H, timeout=15).json()
+    aRows = [e for e in lgA["entries"] if e.get("type") == "supplier_settlement_expense"]
+    bRows = [e for e in lgB["entries"] if e.get("type") == "supplier_settlement_expense"]
+    assert sum(e["credit"] for e in aRows) == 1000.0
+    assert sum(e["credit"] for e in bRows) == 1500.0
+
+
+def test_supplier_adjustment_does_not_create_supplier_payment():
+    sup, veh = _mk_supplier_vehicle()
+    before = requests.get(f"{API}/suppliers/{sup['id']}/payments", headers=H, timeout=15).json()
+    _post_batch(date="2026-10-05", category="Toll", entries=[{
+        "client_row_id": f"np-{uuid.uuid4().hex[:6]}", "vehicle_id": veh["id"], "amount": 600,
+        "supplier_settlement_mode": "supplier_settlement_adjustment"}])
+    after = requests.get(f"{API}/suppliers/{sup['id']}/payments", headers=H, timeout=15).json()
+    assert len(before) == len(after), "Quick Entry must NOT create a SupplierPayment"
+
+
+def test_reversed_or_deleted_expense_excluded_from_supplier_ledger():
+    """The settlement-adjustment CREDIT projection must respect the
+    is_reversed / is_deleted filters (Iter139 UAT invariant)."""
+    sup, veh = _mk_supplier_vehicle()
+    d = "2026-10-06"
+    r = _post_batch(date=d, category="Toll", entries=[{
+        "client_row_id": f"rv-{uuid.uuid4().hex[:6]}", "vehicle_id": veh["id"], "amount": 800,
+        "supplier_settlement_mode": "supplier_settlement_adjustment"}])
+    eid = r.json()["results"][0]["expense"]["id"]
+    # Soft-cancel via Iter136 API
+    requests.delete(f"{API}/expenses/{eid}", headers=H,
+                    params={"reason": "UAT reverse test"}, timeout=15)
+    lg = requests.get(f"{API}/suppliers/{sup['id']}/ledger", headers=H, timeout=15).json()
+    for e in lg["entries"]:
+        assert e.get("expense_id") != eid, "Deleted Expense must not appear in supplier ledger"
+
+
 def test_frontend_route_registered():
     src = Path("/app/frontend/src/App.js").read_text(encoding="utf-8")
     assert "/expenses/quick" in src

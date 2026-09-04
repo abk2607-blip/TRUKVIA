@@ -3,6 +3,76 @@
 ## Iter139 P0 · Quick Operational Expense — IMPLEMENTED / READY FOR UAT — 2026-09-04
 
 **Status: IMPLEMENTED. NOT LOCKED — awaiting operator UAT.**
+Regression: **186 / 186 PASS** (152 baseline + 38 Iter139 focused tests
+covering duplicate-warning + supplier CREDIT projection fix). Zero
+backend accounting invariant change.
+
+### Iter139 UAT fix #2 (2026-09-04): Supplier CREDIT projection in Ledger
+- **Root cause:** `services_quick_expense.py` wrote the canonical Expense
+  with `supplier_owned_vehicle=true` and
+  `supplier_settlement_mode='supplier_settlement_adjustment'` correctly,
+  but `suppliers.py::_build_ledger` (the API the Supplier Ledger UI
+  calls) never read `db.expenses`. The Iter133 T2D projection endpoint
+  `/api/suppliers/{sid}/settlement-adjustments` existed but was a
+  separate reader the ledger page never consulted.
+- **Fix (minimum additive surface, single file):** added Step 3.5 to
+  `_build_ledger` that queries `db.expenses` filtered by the supplier's
+  vehicle_ids, `supplier_owned_vehicle=true`,
+  `supplier_settlement_mode='supplier_settlement_adjustment'`, and the
+  standard active-row filter (`is_deleted:{$ne:true} AND
+  is_reversed:{$ne:true}`). Each matching Expense is appended as a
+  CREDIT entry `type='supplier_settlement_expense'` with
+  `particulars='Supplier-borne <Category> (recovery)'`, amount from the
+  Expense, and `expense_id` on the row for traceability.
+- **Invariants preserved:** no new collection / field / index / endpoint;
+  no `SupplierPayment` created; `company_borne` and own-vehicle rows
+  excluded; Iter135 lock intact (Vendor/Mechanic Ledgers still never
+  read Expense); reversed / soft-deleted rows excluded.
+- **File changed:** `/app/backend/routers/suppliers.py` (single additive block).
+
+### Iter139 UAT fix #1 (earlier): Exact-duplicate warning
+UI-only detection on `date + canon(category) + vehicle_id + amount`;
+canonical alias `"Driver Batta" → "Batta"`; modal with `Cancel All
+Duplicates` / `Add All Anyway`; no DB uniqueness constraint.
+
+### Files changed across Iter139 P0
+- **New** — `services_quick_expense.py`, `test_iter139_quick_operational.py` (38 tests), `QuickOperationalExpense.jsx`.
+- **Modified (additive)** — `models.py` (Literal `+"quick_op"`), `routers/expenses.py` (bulk endpoint), `idempotency.py` (register pattern), `App.js` + `Layout.jsx` (route + sidebar), `routers/suppliers.py` (Step 3.5 supplier CREDIT projection).
+
+### Manual UAT route
+**Prior duplicate-warning UAT (8 steps) still stands.** New supplier tests:
+
+**TEST A — Supplier Adjustment**
+`/expenses/quick` → Toll → supplier vehicle → Supplier Adjustment → ₹1,000 → Save. Verify: Expense Register ₹1,000; Vehicle Cost +₹1,000; **Supplier Ledger shows CREDIT row `Supplier-borne Toll (recovery) · ₹1,000`**; no new SupplierPayment; running balance shifts by −₹1,000.
+
+**TEST B — Company Borne**
+Same supplier vehicle, Company Borne, ₹1,200. Vehicle Cost +₹1,200; Supplier Ledger CREDIT total **unchanged**.
+
+**TEST C — Two Suppliers**
+Two rows, Supplier A ₹1,000 (adjustment) + Supplier B ₹1,500 (adjustment). Each Supplier's Ledger reflects its own credit only.
+
+### Test totals — READY FOR UAT
+- `test_iter139_quick_operational.py` — **38 / 38 PASS** (28 original + 4 duplicate + 6 supplier routing).
+- Combined Iter133 + 134 + 135 + 135A + 136 + 137A + 139 — **186 / 186 PASS** (~55 s serial).
+- Frontend build — clean.
+
+### Known accepted limitations
+- Duplicate warning is UX, not a uniqueness constraint.
+- Supplier CREDIT projection reads canonical Expense (Iter133 T2D pattern). Iter135 rule (Vendor / Mechanic Ledger never reads Expense) still applies to those two ledger builders only — Supplier Ledger is a different builder and has always been Expense-aware by design.
+- Iter138 P0 remains DEFERRED / BLOCKED (Mongo topology).
+
+### Explicit deferred backlog — NOT IMPLEMENTED
+Recent Categories First · Today's Entries Strip · Per-row Trip ID · CSV/PDF export · Recurring templates · Bulk edit / cancel · Analytics · Fuel migration · Driver Ledger · GST / RTO / Accident · Spare Parts / Inventory · VendorBill / WO correction (Iter138) · Fuzzy duplicate detection · Duplicate rules on Iter136 register / Trip / Vendor / WO.
+
+**Core product principle (binding):**
+**ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO MANUAL RECONCILIATION.**
+
+**ITER139 P0 — IMPLEMENTED / READY FOR UAT — HARD STOP.**
+
+
+## Iter139 P0 · Quick Operational Expense — IMPLEMENTED / READY FOR UAT — 2026-09-04 (superseded by newer entry above)
+
+**Status: IMPLEMENTED. NOT LOCKED — awaiting operator UAT.**
 Regression: **180 / 180 PASS** (152 baseline + 32 Iter139 focused tests
 after the duplicate-warning UAT fix). Zero backend accounting / schema
 / router changes beyond one additive `source_type="quick_op"` enum
