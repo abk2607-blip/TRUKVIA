@@ -1,0 +1,30 @@
+{
+  "summary": "ITER137A targeted frontend RETEST of the two MEDIUM bugs from iteration_84, plus full regression of the searchable Vehicle/Category comboboxes. BUGFIX #1 VERIFIED: clicking field-vehicle-clear no longer opens the Popover (aria-expanded stays 'false', no field-vehicle-input in DOM, trigger resets to placeholder and vehicle_id becomes empty); a single subsequent click on field-vehicle re-opens the list (aria-expanded=true). BUGFIX #2 VERIFIED: editing expenses whose category exists only in the server master pre-selects the category correctly — 'Detention Special' and 'PW Custom' both render as proper selections in the field-category trigger with field-category-other absent. Truncation hint verified: 'Showing first 200 of 20000. Refine your search…' (field-vehicle-truncated) shows on empty query and disappears when the query narrows the list ('B98D'). Regressions all green: category search tyr->Tyres, park->Parking, INSUR->Insurance (case-insensitive), empty-state 'No categories found', Other… sentinel reveals+keeps field-category-other and saves the typed custom category, re-edit of a custom category correctly falls back to Other… with the value pre-filled, vehicle partial numeric search 'B98D' -> AP39WCB98D, 'Supplier · <name>' secondary line present, vehicle-linked row renders chip deep-linking to /vehicles/veh_06fa6207cdf54fba/cost, soft-cancel via window.prompt removes the row, POST payload contains category/vehicle_id and NO vendor_bill_id / mechanic_work_order_id / repair_event_id keys, Iter136 register filters unchanged (filter-category=INPUT, filter-vehicle=SELECT). No console errors, no error nodes on page. Backend not tested (frontend-only request).",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Expense drawer · Category combobox",
+        "issues": ["Cosmetic (carried over from iteration_84, unfixed): the 'Other…' selection renders on the trigger as 'Other…· Enter a custom category' — the '·' separator hugs the label with no leading space. Low priority."]
+      }
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iter137a_searchable_selectors.py"],
+  "action_items": [
+    "Optional cosmetic: add a leading space/margin before the '·' secondary text on the SearchableSelect trigger (searchable-select.jsx line ~79) so 'Other…' does not read as 'Other…· Enter a custom category'."
+  ],
+  "critical_code_review_comments": [
+    "searchable-select.jsx: the clear control is still a role=\"button\" <span> nested inside the PopoverTrigger <button> (invalid HTML nesting). Behaviour is now correct thanks to onPointerDown+onClick preventDefault/stopPropagation, but rendering the clear affordance as a sibling outside the trigger would remove the fragility permanently.",
+    "ExpenseForm.jsx useEffect([categoryNames, form.category]) now re-classifies otherCat correctly, but it will also flip otherCat->false if a user types a custom value in field-category-other that exactly matches a master category (the free-text input would disappear mid-typing). Edge case only; verified typing 'ITER137B Custom Cat' keeps the field visible."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "not tested (frontend-only request)", "frontend": "17/17 scenarios PASS (100%)" },
+  "seed_data_creation": "Created via API 3 expenses dated 2026-09-04 ('Detention Special' 1234, 'PW Custom' 777) plus one UI-created 'ITER137B Custom Cat' 22000 vehicle-linked expense; all purged from Mongo (narration /^ITER137B/, deleted 4 docs, 0 remaining). No seeded data modified.",
+  "should_call_test_agent_after_fix": false,
+  "should_main_agent_self_test": true,
+  "test_credentials": "Demo login button on /login (REACT_APP_ENABLE_DEMO_LOGIN=1); backend DEMO_TOKEN_VALUE used for API seeding.",
+  "context_for_next_testing_agent": "Both iteration_84 bugs are fixed and verified. OTHER_SENTINEL value is the literal string '__other' (option testid field-category-option-__other), NOT '__other__'. App 'today' is 2026-09-04 — always set filter-from/filter-to to it (register has ~10.4k rows). Vehicle veh_06fa6207cdf54fba = AP39WCB98D, search 'B98D'. Vehicle master returns 20000 rows so the truncated hint always shows on empty query. Cancel is window.prompt-driven soft delete (row disappears). Save button testid is drawer-save.",
+  "rca_of_the_issue": "Bug1 fixed by adding onPointerDown (in addition to onClick) with preventDefault+stopPropagation on the clear span, which stops Radix's pointerdown-based toggle. Bug2 fixed by initializing otherCat=false and re-syncing it in a useEffect once the expenditure-types query resolves, so API-only categories are no longer misclassified as custom."
+}

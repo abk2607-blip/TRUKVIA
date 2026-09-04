@@ -1,0 +1,49 @@
+{
+  "summary": "Iter137A frontend-only UAT of the searchable Vehicle + Category comboboxes in the New/Edit Expense drawer (preview URL, demo login). Verified: category combobox opens with search input, case-insensitive filtering ('tyr'->Tyres, 'park'->Parking, 'AD'->AdBlue+Loading Charges/Road Tax/Unloading Charges), empty-state text, selection closes popover and shows label, keyboard type+Enter selection works, 'Other…' sentinel reveals field-category-other and saves the typed custom category. Vehicle combobox: 200-option list, partial numeric search ('B98D' -> 1 exact match), 'Supplier · <name>' secondary line present on 26 supplier vehicles, selection stores vehicle_id and shows vehicle_number, clear (×) resets to empty. Payload shape verified byte-for-byte on POST/PUT (category string, vehicle_id, no vendor_bill_id / mechanic_work_order_id / repair_event_id keys). Regressions verified: Tyres 22,000 vehicle-linked row renders chip deep-linking to /vehicles/veh_.../cost; Insurance 18,000 no-vehicle create -> edit to 18,500 -> soft-cancel with reason (is_deleted=true, deletion_reason persisted in Mongo); register filters remain filter-category=<input> and filter-vehicle=<select> (NOT upgraded). 2 real UX defects found (both in the new combobox code).",
+  "backend_issues": { "critical": [], "minor": [] },
+  "frontend_issues": {
+    "ui_bugs": [
+      {
+        "component": "SearchableSelect (searchable-select.jsx) / field-vehicle",
+        "issue": "Clicking the clear (×) button also opens the Popover. Measured aria-expanded=true immediately after clicking field-vehicle-clear, so the user's next click on the trigger CLOSES the dropdown instead of opening it (needs two clicks to re-open). e.stopPropagation() on the React onClick of the clear span does not prevent Radix PopoverTrigger from toggling.",
+        "selector": "[data-testid=\"field-vehicle-clear\"]",
+        "priority": "MEDIUM"
+      },
+      {
+        "component": "ExpenseForm.jsx category combobox",
+        "issue": "Editing an expense whose category exists only in the server master (GET /api/expenditure-types) and not in FALLBACK_CATEGORIES — e.g. 'PW Custom', 'Detention Special' — opens the drawer with the trigger showing 'Other…' and the free-text field-category-other pre-filled with 'PW Custom' instead of the category being pre-selected in the combobox. Acceptance criterion 'Editing an existing expense opens the drawer with both Vehicle and Category pre-populated correctly' fails for these categories. Data is not corrupted (payload still sends the same category string).",
+        "selector": "[data-testid=\"field-category\"] / [data-testid=\"field-category-other\"]",
+        "priority": "MEDIUM"
+      }
+    ],
+    "integration_issues": [],
+    "design_issues": [
+      {
+        "screen": "Expense drawer · Vehicle combobox",
+        "issues": [
+          "With an empty query the option list is silently truncated to the first 200 vehicles (slice(0,200)) with no 'refine your search' hint — users scrolling instead of typing may believe a vehicle does not exist.",
+          "Selected 'Other…' trigger renders as 'Other…· Enter a custom category' (secondary separator hugs the label; minor spacing nit)."
+        ]
+      }
+    ]
+  },
+  "test_report_links": ["/app/backend/tests/test_iter137a_searchable_selectors.py"],
+  "action_items": [
+    "Fix clear (×) opening the popover: add onPointerDown={(e)=>{e.preventDefault(); e.stopPropagation();}} (and keep onClick stopPropagation) on the clear span in searchable-select.jsx, or render the clear control as a sibling outside PopoverTrigger.",
+    "Fix category pre-population for API-only categories: otherCat is initialized via useState from categoryNames, which on first render contains only FALLBACK_CATEGORIES because the expenditure-types query has not resolved yet, and it is never re-synced. Derive otherCat after cats.data arrives (useEffect sync or compute from a loaded flag).",
+    "Optional: show a hint/counter when the vehicle option list is truncated at 200."
+  ],
+  "critical_code_review_comments": [
+    "searchable-select.jsx: clear button is nested inside PopoverTrigger's button — nesting an interactive role=\"button\" span inside a <button> is invalid HTML and is the root cause of the toggle side-effect.",
+    "ExpenseForm.jsx: `const [otherCat, setOtherCat] = useState(!!form.category && !categoryNames.includes(form.category))` reads an async-derived list during the first render — classic stale-initial-state bug.",
+    "ExpenseForm.jsx wraps the combobox trigger button inside <label> (Field component); works today but label/control nesting with a button is fragile — prefer a div + text."
+  ],
+  "updated_files": [],
+  "success_rate": { "backend": "not tested (frontend-only request)", "frontend": "11/13 scenarios PASS (85%)" },
+  "seed_data_creation": "Created and then removed 4 test expenses dated 2026-09-04 (Tyres 22,000 vehicle-linked; Insurance 18,000->18,500 soft-cancelled; PW Custom 777 via API; 'ITER137A Custom Cat' 101). All purged from Mongo (narration /^ITER137A/, deletedCount=4). No seeded data modified.",
+  "should_call_test_agent_after_fix": true,
+  "should_main_agent_self_test": false,
+  "test_credentials": "Demo login button on /login (REACT_APP_ENABLE_DEMO_LOGIN=1); backend DEMO_TOKEN_VALUE used for API verification.",
+  "context_for_next_testing_agent": "Use vehicle veh_06fa6207cdf54fba (AP39WCB98D) for vehicle-linked cases; search by last 4 chars 'B98D'. Register vehicles query takes a few seconds — wait_for_function on filter-vehicle option count > 1 before reading vehicle ids. Always set filter-from/filter-to to today (2026-09-04) — 10.4k seeded rows otherwise. Cancel is a SOFT DELETE (is_deleted=true + deletion_reason) and the row disappears even with include_reversed=true — this is Iter136 locked behaviour, verify in Mongo, not in the register. API-only categories to retest pre-population bug: 'PW Custom', 'Detention Special'.",
+  "rca_of_the_issue": "Bug 1: the clear span lives inside the PopoverTrigger <button>; Radix toggles open state before/independently of the React onClick stopPropagation, so clearing also opens the list. Bug 2: otherCat state is computed once during the first render from categoryNames, which is derived from the not-yet-resolved react-query expenditure-types response, so any category present only in the API master is misclassified as a custom 'Other…' value."
+}

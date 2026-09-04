@@ -1,23 +1,26 @@
-import React, { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
+import React, { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import { api } from "@/api";
 import { toast } from "sonner";
 import { X } from "lucide-react";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 
 /** Iter136 P0 · Standalone Expense form drawer.
+ *  Iter137A · Vehicle + Category selectors converted to searchable comboboxes.
  *
  * Reuses POST/PUT /api/expenses. Never sends vendor_bill_id or
  * mechanic_work_order_id — those payable-twin fields belong to
  * RepairWorkspace's chain and are intentionally hidden here to
  * prevent operators from creating duplicate payables.
  */
-const CATEGORIES = [
+const FALLBACK_CATEGORIES = [
   "Driver Food", "Parking", "Toll", "Loading Charges", "Unloading Charges",
   "Weighment", "Labour", "Detention", "Cleaning",
   "Insurance", "Road Tax", "Permit", "Fitness", "Tyres",
   "Engine Oil", "AdBlue", "Repair", "Spare Parts", "Office / General",
   "Others",
 ];
+const OTHER_SENTINEL = "__other";
 
 const PARTY_TYPES = [
   { value: "none", label: "None" },
@@ -46,7 +49,51 @@ export default function ExpenseForm({ mode = "create", row = null, vehicles = []
     file_ids: editing ? row.file_ids || [] : [],
   }));
   const [uploading, setUploading] = useState(false);
-  const [otherCat, setOtherCat] = useState(!CATEGORIES.includes(form.category));
+
+  // Iter137A · Category master (company-scoped, server-seeded).  Fall back
+  // to the hard-coded list if the API is unreachable so the drawer never
+  // becomes unusable.
+  const cats = useQuery({
+    queryKey: ["expenditure-types"],
+    queryFn: async () => (await api.get("/expenditure-types")).data,
+    staleTime: 60_000,
+  });
+  const categoryNames = useMemo(() => {
+    const fromApi = (cats.data || []).map((r) => (r.name || "").trim()).filter(Boolean);
+    const merged = Array.from(new Set([...FALLBACK_CATEGORIES, ...fromApi]));
+    merged.sort((a, b) => a.localeCompare(b));
+    return merged;
+  }, [cats.data]);
+  const categoryOptions = useMemo(() => {
+    const opts = categoryNames.map((n) => ({ value: n, label: n }));
+    opts.push({ value: OTHER_SENTINEL, label: "Other…", secondary: "Enter a custom category" });
+    return opts;
+  }, [categoryNames]);
+
+  const [otherCat, setOtherCat] = useState(false);
+
+  // Iter137A · Once the category master resolves, re-classify the currently
+  // selected value as either a known option or a custom "Other…" entry.
+  useEffect(() => {
+    if (!form.category) return;
+    setOtherCat(!categoryNames.includes(form.category));
+  }, [categoryNames, form.category]);
+
+  // Iter137A · Vehicle options with searchable label + supplier badge.
+  const vehicleOptions = useMemo(() => (
+    (vehicles || []).map((v) => {
+      const isSupplier = (v.vehicle_type || "").toLowerCase() === "supplier";
+      const supplierBits = [v.supplier_name, v.owner_name].filter(Boolean).join(" · ");
+      return {
+        value: v.id,
+        label: v.vehicle_number || v.id,
+        secondary: isSupplier
+          ? (supplierBits ? `Supplier · ${supplierBits}` : "Supplier")
+          : (v.owner_name || ""),
+        keywords: [v.vehicle_number, v.owner_name, v.supplier_name, v.make_model].filter(Boolean),
+      };
+    })
+  ), [vehicles]);
 
   const save = useMutation({
     mutationFn: async () => {
@@ -107,15 +154,23 @@ export default function ExpenseForm({ mode = "create", row = null, vehicles = []
                    className="w-full border rounded px-2 py-1" data-testid="field-date"/>
           </Field>
           <Field label="Category">
-            <select value={otherCat ? "__other" : form.category}
-                    onChange={(e) => {
-                      if (e.target.value === "__other") { setOtherCat(true); setForm((f) => ({ ...f, category: "" })); }
-                      else { setOtherCat(false); setForm((f) => ({ ...f, category: e.target.value })); }
-                    }}
-                    className="w-full border rounded px-2 py-1" data-testid="field-category">
-              {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-              <option value="__other">Other…</option>
-            </select>
+            <SearchableSelect
+              testId="field-category"
+              placeholder="Search category…"
+              emptyText="No categories found"
+              allowClear={false}
+              value={otherCat ? OTHER_SENTINEL : form.category}
+              onChange={(v) => {
+                if (v === OTHER_SENTINEL) {
+                  setOtherCat(true);
+                  setForm((f) => ({ ...f, category: "" }));
+                } else {
+                  setOtherCat(false);
+                  setForm((f) => ({ ...f, category: v }));
+                }
+              }}
+              options={categoryOptions}
+            />
             {otherCat && (
               <input value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
                      placeholder="Custom category" className="w-full border rounded px-2 py-1 mt-1" data-testid="field-category-other"/>
@@ -135,11 +190,15 @@ export default function ExpenseForm({ mode = "create", row = null, vehicles = []
                    className="w-full border rounded px-2 py-1" data-testid="field-remarks"/>
           </Field>
           <Field label="Vehicle (optional)">
-            <select value={form.vehicle_id} onChange={(e) => setForm((f) => ({ ...f, vehicle_id: e.target.value }))}
-                    className="w-full border rounded px-2 py-1" data-testid="field-vehicle">
-              <option value="">— None —</option>
-              {vehicles.map((v) => <option key={v.id} value={v.id}>{v.vehicle_number}</option>)}
-            </select>
+            <SearchableSelect
+              testId="field-vehicle"
+              placeholder="Search vehicle…"
+              emptyText="No vehicles found"
+              allowClear
+              value={form.vehicle_id}
+              onChange={(v) => setForm((f) => ({ ...f, vehicle_id: v }))}
+              options={vehicleOptions}
+            />
           </Field>
           <Field label="Trip ID (optional)">
             <input value={form.trip_id} onChange={(e) => setForm((f) => ({ ...f, trip_id: e.target.value }))}

@@ -1,5 +1,138 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
+## Iter137A · Searchable Vehicle + Category Selectors — DELIVERED — 2026-09-04
+
+**Status: DELIVERED.  Regression: 148 / 148 PASS.  Testing agent iteration_85: 17 / 17 scenarios PASS (100%).**
+Pure UX iteration on top of the locked Iter136 P0 Expense Register.
+**Zero** backend schema / accounting / route / model / router changes.
+
+### Scope (exactly two selectors)
+- **Searchable Vehicle Selector** — `field-vehicle` inside the New/Edit
+  Expense drawer.  Popover + shadcn `Command` combobox.  Partial
+  case-insensitive match on `vehicle_number`, `owner_name`,
+  `supplier_name`, `make_model`.  Shows a "Supplier · <name>" secondary
+  line for `vehicle_type='supplier'` vehicles.  Clear (×) affordance
+  resets `vehicle_id` to empty without opening the popover.  Truncation
+  hint "Showing first 200 of N. Refine your search…" surfaces when the
+  filtered list exceeds 200 (testid `field-vehicle-truncated`).
+- **Searchable Category Selector** — `field-category` inside the same
+  drawer.  Options merged from `GET /api/expenditure-types` +
+  hard-coded `FALLBACK_CATEGORIES` (Iter136 non-trip categories) so
+  historical companies whose expenditure-types collection was seeded
+  before Iter136 still see the full list.  Preserves the "Other…"
+  sentinel free-text escape hatch exactly as in Iter136 P0.  Editing an
+  expense whose category exists only in the API master (e.g.
+  `'Detention Special'`) now pre-selects it correctly instead of
+  silently falling back to "Other…" (bug fixed after iteration_84).
+
+### Files changed
+- **New** — `/app/frontend/src/components/ui/searchable-select.jsx`
+  · Reusable Popover + Command combobox.  Testids: `<id>` (trigger),
+  `<id>-input` (search), `<id>-option-<value>`, `<id>-clear`,
+  `<id>-truncated`.
+- **Modified** — `/app/frontend/src/pages/ExpenseForm.jsx`
+  · Category dropdown → `SearchableSelect` (options = API master ∪
+  fallback ∪ "Other…" sentinel).  Vehicle dropdown → `SearchableSelect`
+  with supplier badge.  `otherCat` state now synced via `useEffect`
+  against the async-loaded category master.  Imports `useQuery` and
+  `useEffect`.  Payload builder untouched — `POST/PUT /api/expenses`
+  receives the exact same body as Iter136 P0.
+- **New** — `/app/backend/tests/test_iter137a_searchable_selectors.py`
+  · 8 focused tests covering payload compatibility, custom-category
+  round-trip, static frontend guards, register-filter locked state, and
+  zero-schema-drift assertion on the Expense pydantic model.
+- **Unmodified** — `/app/frontend/src/pages/ExpenseRegister.jsx`
+  (Iter136 P0 locked — filter-category stays `<input>`, filter-vehicle
+  stays native `<select>` — verified by static tests).
+- **Unmodified** — `/app/backend/**` (zero backend change).
+
+### Backend changes
+**None.**  API contract, models, routers, and services are byte-identical.
+`Expense.model_fields` still contains the exact 20 required fields
+verified by `test_iter137a_expense_schema_unchanged`.
+
+### Payload compatibility
+- `POST /api/expenses` and `PUT /api/expenses/{eid}` accept and return
+  the same fields as Iter136 P0.
+- `vehicle_id` round-trips exactly (empty string when cleared, exact id
+  when selected).
+- Custom categories submitted via "Other…" round-trip verbatim (see
+  `test_iter137a_custom_category_round_trip`).
+- `vendor_bill_id`, `mechanic_work_order_id`, `repair_event_id` still
+  never appear in the drawer payload (twin-payable guard preserved).
+
+### Test totals — DELIVERED
+- New focused suite `test_iter137a_searchable_selectors.py` — **8 / 8 PASS**.
+- Combined regression across Iter133 + Iter134 + Iter135 + Iter135A +
+  Iter136 + Iter137A — **148 / 148 PASS** (serial run, ~44 s).
+- Testing agent iteration_85 (frontend Playwright) — **17 / 17
+  scenarios PASS** including both bug fixes from iteration_84 and full
+  Iter136 regression.
+
+### Manual UAT route map
+1. Sign in via **CONTINUE AS DEMO** → `/dashboard`.
+2. Sidebar → **ఖర్చులు (Expenses)** → `/expenses`.
+3. Click **+ New Expense** → drawer opens.
+4. **Category search** — click Category trigger → type `tyr` → pick
+   Tyres.  Try `park` → Parking, `ad` → AdBlue, `INSUR` → Insurance
+   (case-insensitive).  Try `Other…` → free-text field appears and the
+   drawer accepts a fully custom category on save.
+5. **Vehicle search** — click Vehicle trigger → type a partial
+   registration (e.g. `B98D`) → pick the match.  For a supplier
+   vehicle, verify the "Supplier · <name>" secondary line renders in
+   both the option list and the trigger.  Click × to clear — the
+   popover MUST NOT reopen; a subsequent single click on the trigger
+   opens the list normally.
+6. **Save** the standalone Insurance ₹18,000 (no vehicle) — appears in
+   the register with `—` in the Vehicle column.
+7. **Save** the vehicle-linked Tyres ₹22,000 — vehicle chip renders
+   and deep-links to `/vehicles/<vehicle_id>/cost`.
+8. **Edit** either row → drawer opens with Category and Vehicle
+   pre-selected in the combobox triggers (NOT falling back to
+   "Other…").  Change values, save, verify register updates.
+9. **Cancel** either row → reason prompt (≥ 3 chars) → row disappears
+   from the default list.  `Show reversed` does NOT resurrect it.
+10. **Register filter guard** — the Register's own Category filter is a
+    plain `<input>` (still requires exact match) and the Vehicle filter
+    is a native `<select>`.  Iter136 P0 lock verified.
+
+### Known accepted limitations
+- Register filters intentionally NOT upgraded (Iter136 P0 lock respected).
+- Vehicle option list truncates at 200 with a "refine your search"
+  hint — full list is available by narrowing the search, not by
+  scrolling.
+- Clear affordance is nested inside the PopoverTrigger button (invalid
+  HTML nesting).  Behaviour is correct (verified by iteration_85 after
+  the `onPointerDown` fix); future refactor could hoist the clear
+  control outside the trigger.
+- `otherCat` state may briefly flip if a user's typed "Other…" value
+  exactly matches a master category name — edge case only.
+
+### Explicit deferred items — NOT IMPLEMENTED, NOT STARTED
+- Quick Operational Expense / bulk multi-vehicle entry
+- Negotiated-rate / VendorBill or MechanicWorkOrder correction workflow
+- Supplier-owned vehicle settlement routing refinement
+- GST / GSTR-3B / RTO / Statutory modules
+- Accident expenditure architecture
+- Spare Parts Description convention or Part Master
+- Pagination · CSV/PDF export · Bulk cancel · Recurring templates
+- Any other backlog item from Iter137 discovery
+
+### Protection — still LOCKED (no change)
+- 🔒 Iter132a-c · Credit / Debit Notes
+- 🔒 Iter133 · Expense / Vehicle Cost
+- 🔒 Iter134 · Invoice Enhancement
+- 🔒 Iter135  · Vendor / Mechanic Ledger
+- 🔒 Iter135A · Ledger ERP Presentation Polish
+- 🔒 Iter136 P0 · Expense Register + Non-Trip Expense Workflow
+- 🔒 C3.1 / C3.2 / C3.4 / C3.5 · C4 CN/DN · C5 §9C · DG-STABILITY-1
+
+**Core product principle (binding):**
+**ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO MANUAL RECONCILIATION.**
+
+**ITER137A — SEARCHABLE VEHICLE + CATEGORY SELECTORS — DELIVERED — HARD STOP.**
+
+
 ## 🔒 Iter136 P0 · Expense Register + Non-Trip Expense Operator Workflow — LOCKED — 2026-09-04
 
 **Status: LOCKED / FROZEN.  UAT: ACCEPTED — 2026-09-04.  Regression: 140 / 140 PASS.**
