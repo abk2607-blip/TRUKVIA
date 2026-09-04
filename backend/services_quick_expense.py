@@ -145,7 +145,8 @@ async def bulk_create_operational_expenses(uid: str, cid: str, user: dict,
         try:
             payload = Expense(
                 date=date, category=category, amount=_q2(amt_raw),
-                narration="", remarks=str(remarks or ""),
+                narration=str((e or {}).get("narration") or "")[:400],
+                remarks=str(remarks or ""),
                 vehicle_id=vid, vehicle_number=veh.get("vehicle_number", ""),
                 trip_id=trip_id or "", repair_event_id="",
                 party_type="cash", party_id="", party_name="",

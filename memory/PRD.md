@@ -3,9 +3,82 @@
 ## Iter139 P0 · Quick Operational Expense — IMPLEMENTED / READY FOR UAT — 2026-09-04
 
 **Status: IMPLEMENTED. NOT LOCKED — awaiting operator UAT.**
-Regression: **186 / 186 PASS** (152 baseline + 38 Iter139 focused tests
-covering duplicate-warning + supplier CREDIT projection fix). Zero
-backend accounting invariant change.
+Regression: **192 / 192 PASS** (152 baseline + 44 Iter139 focused
+tests — duplicate warning + supplier CREDIT projection + Diesel-specific
+UX). Zero backend accounting invariant change; zero schema addition.
+
+### Iter139 UAT UX #3 (2026-09-04): Diesel-specific row layout
+- **Change:** when `Category = Diesel` in `/expenses/quick`, each row
+  swaps its generic Amount input for a **Qty × Rate → Amount** compact
+  grid (Amount is read-only and derived as `qty × rate`, quantized to
+  2 dp). Two optional free-text fields appear below the row remarks:
+  **Filled At** (station / location) and **Vendor** (free-text — no
+  Vendor Ledger side-effect).
+- **Persistence with zero schema change:** the derived amount is sent
+  as `amount`; Qty / Rate / Filled At / Vendor are folded into the
+  existing `Expense.narration` free-text field as
+  `"320L @ ₹92.50 · IOC Vijayawada Auto Nagar · Indian Oil Corporation"`.
+  The backend service was updated to pass client-supplied `narration`
+  through `_validate_and_normalise` (truncated to 400 chars for safety).
+  **No new Expense field, no new collection, no `db.fuel` write, no
+  VendorBill / VendorPayment created.**
+- **Non-Diesel rows unchanged.** Toll / Parking / Batta / AdBlue / etc.
+  keep the plain Amount input; the JSX branch is gated on
+  `category === "Diesel"`.
+- **Duplicate-warning still works:** uses `computedAmount(row, category)`
+  (i.e. `qty × rate` for Diesel, typed amount for the rest) as the
+  match key, so same-date / same-vehicle / same-calculated-amount fires
+  the modal.
+- **Supplier routing preserved:** supplier-owned-vehicle Diesel rows
+  still show the per-row Settlement Mode selector; server routes them
+  through the same `services_quick_expense.py` path and the Iter139
+  UAT #2 `_build_ledger` Step 3.5 posts a CREDIT entry to the Supplier
+  Ledger.
+
+### Files changed this UX pass
+- **Modified** — `/app/frontend/src/pages/QuickOperationalExpense.jsx`
+  (Diesel branch, `computedAmount`, `dieselNarration`, `q2`; total/
+  duplicate/save flows all consume the derived amount).
+- **Modified (single-line)** — `/app/backend/services_quick_expense.py`
+  (accept and pass client `narration`, capped at 400 chars).
+- **Modified** — `/app/backend/tests/test_iter139_quick_operational.py`
+  (+6 Diesel tests: derived amount, zero-amount fail, narration
+  preserves vendor/station, no vendor-payable, duplicate-detection
+  uses calculated amount, static frontend layout guard).
+
+### Manual UAT — Diesel additions
+A. `/expenses/quick` → Category = **Diesel** → row now shows Qty | Rate | Amount(read-only).
+B. Own vehicle, Qty 100, Rate 92.50 → Amount auto-fills ₹9,250.00.
+C. Filled At = `IOC - Vijayawada Auto Nagar`, Vendor = `Indian Oil Corporation` → Save → Expense created with `amount=9,250` and `narration="100L @ ₹92.50 · IOC - Vijayawada Auto Nagar · Indian Oil Corporation"`. Expense Register + Vehicle Cost updated; `/api/fuel` list count unchanged; no VendorBill / VendorPayment created.
+D. Supplier-owned vehicle Diesel + Supplier Adjustment → CREDIT row appears in Supplier Ledger (Iter139 UAT #2 path).
+E. Duplicate — same date + Diesel + same vehicle + same 320 × ₹92.50 = ₹29,600 → **DUPLICATE RECORD FOUND** modal.
+F. Different Qty or Rate producing a different amount → no warning.
+
+### Test totals — READY FOR UAT
+- Focused `test_iter139_quick_operational.py` — **44 / 44 PASS** (28 original + 4 duplicate + 6 supplier + 6 Diesel).
+- Combined Iter133 + 134 + 135 + 135A + 136 + 137A + 139 — **192 / 192 PASS** (~58 s serial).
+- Frontend build — clean.
+
+### Known accepted limitations
+- Qty / Rate / Filled At / Vendor persist inside `Expense.narration`
+  free-text — analytics on litres/vendor spend will require an
+  explicit schema step in a future iteration (deferred).
+- Duplicate warning is UX-only (no DB uniqueness).
+- Iter138 P0 remains DEFERRED / BLOCKED (Mongo topology).
+
+### Explicit deferred backlog — NOT IMPLEMENTED
+Fuel Station Master · Fuel inventory / mileage / efficiency analytics
+· Recent Categories · Today's Entries · Per-row Trip ID · CSV/PDF
+export · Recurring templates · Driver Ledger · Bill Correction
+(Iter138) · GST / RTO / Accident · Spare Parts.
+
+**Core product principle (binding):**
+**ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO MANUAL RECONCILIATION.**
+
+**ITER139 P0 — IMPLEMENTED / READY FOR UAT — HARD STOP.**
+
+
+## Iter139 P0 · Quick Operational Expense — IMPLEMENTED / READY FOR UAT — 2026-09-04 (superseded)
 
 ### Iter139 UAT fix #2 (2026-09-04): Supplier CREDIT projection in Ledger
 - **Root cause:** `services_quick_expense.py` wrote the canonical Expense

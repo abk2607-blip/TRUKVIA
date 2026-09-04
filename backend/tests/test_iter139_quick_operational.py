@@ -366,6 +366,85 @@ def test_duplicate_warning_ui_present():
 
 # ── Iter139 UAT bug fix · Supplier-owned vehicle CREDIT projection ───
 
+# ── Iter139 UAT UX · Diesel row (qty × rate = amount, Filled At, Vendor) ───
+
+def test_diesel_amount_calculated_from_qty_x_rate(own_veh):
+    """Backend accepts calculated amount from the client (320 × 92.50)."""
+    r = _post_batch(date="2026-11-01", category="Diesel", entries=[{
+        "client_row_id": f"d1-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"],
+        "amount": 320 * 92.50,
+        "narration": "320L @ ₹92.50 · IOC Vijayawada"}])
+    assert r.status_code == 200, r.text
+    doc = r.json()["results"][0]["expense"]
+    assert doc["category"] == "Diesel"
+    assert abs(doc["amount"] - 29600.0) < 0.005
+    assert "320L" in (doc.get("narration") or "")
+    assert "IOC Vijayawada" in (doc.get("narration") or "")
+
+
+def test_diesel_zero_amount_row_failed(own_veh):
+    """Amount 0 (missing qty or rate) fails at row level."""
+    r = _post_batch(date="2026-11-02", category="Diesel", entries=[{
+        "client_row_id": f"d0-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "amount": 0}])
+    assert r.json()["results"][0]["error"]["code"] == "INVALID_AMOUNT"
+
+
+def test_diesel_narration_preserves_vendor_and_station(own_veh):
+    """Narration is free-text and passes through unaltered — this is
+    how Filled At + Vendor are carried without schema change."""
+    r = _post_batch(date="2026-11-03", category="Diesel", entries=[{
+        "client_row_id": f"dv-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "amount": 9250,
+        "narration": "100L @ ₹92.50 · IOC Vijayawada Auto Nagar · Indian Oil Corporation"}])
+    doc = r.json()["results"][0]["expense"]
+    assert "Indian Oil Corporation" in doc["narration"]
+    assert "IOC Vijayawada" in doc["narration"]
+
+
+def test_diesel_does_not_create_vendor_payable(own_veh):
+    """Free-text vendor attribution in narration must never create a
+    VendorBill or VendorPayment (Iter135 invariant)."""
+    before_b = requests.get(f"{API}/vendor-bills", headers=H, timeout=15).json()
+    _post_batch(date="2026-11-04", category="Diesel", entries=[{
+        "client_row_id": f"dnp-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "amount": 5000,
+        "narration": "50L @ ₹100 · BPC · Bharat Petroleum"}])
+    after_b = requests.get(f"{API}/vendor-bills", headers=H, timeout=15).json()
+    assert len(before_b) == len(after_b)
+
+
+def test_diesel_duplicate_detection_uses_calculated_amount(own_veh):
+    """Same date + Diesel + same vehicle + same calculated amount is
+    detectable via the same /api/expenses filter the UI uses."""
+    d = "2026-11-05"
+    _post_batch(date=d, category="Diesel", entries=[{
+        "client_row_id": f"dup-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "amount": 320 * 92.50,
+        "narration": "320L @ ₹92.50"}])
+    lst = requests.get(f"{API}/expenses", headers=H, params={
+        "vehicle_id": own_veh["id"], "category": "Diesel",
+        "date_from": d, "date_to": d}, timeout=15).json()
+    assert any(abs(e["amount"] - 29600.0) < 0.005 for e in lst)
+
+
+def test_diesel_frontend_layout_present():
+    """Static guard — Diesel row exposes qty/rate/filled-at/vendor
+    testids and read-only amount."""
+    src = Path("/app/frontend/src/pages/QuickOperationalExpense.jsx").read_text(encoding="utf-8")
+    for needed in [
+        "quick-expense-row-${i}-qty",
+        "quick-expense-row-${i}-rate",
+        "quick-expense-row-${i}-filled-at",
+        "quick-expense-row-${i}-vendor",
+        "isDiesel",
+        "computedAmount",
+        "dieselNarration",
+        "readOnly value={fmt(computedAmount",
+    ]:
+        assert needed in src, f"QuickOperationalExpense.jsx missing marker: {needed}"
+
 def _mk_supplier_vehicle():
     """Create a supplier + supplier-owned vehicle and return both."""
     sup_body = {"name": f"UATSup-{uuid.uuid4().hex[:8]}", "opening_balance": 0}

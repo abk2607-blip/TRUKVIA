@@ -24,6 +24,19 @@ const SUPPLIER_MODES = [
 const rid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 const eqAmount = (a, b) => Math.abs((parseFloat(a) || 0) - (parseFloat(b) || 0)) < 0.005;
 const fmt = (n) => `₹${(parseFloat(n) || 0).toFixed(2)}`;
+const q2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
+// Iter139 UAT · Diesel rows derive amount from qty × rate; other categories keep typed amount.
+const computedAmount = (row, cat) => cat === "Diesel"
+  ? q2((parseFloat(row.qty) || 0) * (parseFloat(row.rate) || 0))
+  : (parseFloat(row.amount) || 0);
+const dieselNarration = (row, filled_at) => {
+  const qty = parseFloat(row.qty) || 0, rate = parseFloat(row.rate) || 0;
+  const parts = [];
+  if (qty > 0 && rate > 0) parts.push(`${qty}L @ ₹${rate.toFixed(2)}`);
+  if (filled_at) parts.push(filled_at);
+  if (row.vendor_name) parts.push(row.vendor_name);
+  return parts.join(" · ");
+};
 
 export default function QuickOperationalExpense() {
   const today = new Date().toISOString().slice(0, 10);
@@ -55,11 +68,17 @@ export default function QuickOperationalExpense() {
 
   const save = useMutation({
     mutationFn: async (rowsToSubmit) => {
-      const entries = rowsToSubmit.map((r) => ({
-        client_row_id: r.id, vehicle_id: r.vehicle_id,
-        amount: parseFloat(r.amount) || 0, remarks: r.remarks || "",
-        supplier_settlement_mode: r.supplier_settlement_mode || "",
-      }));
+      const isDiesel = category === "Diesel";
+      const entries = rowsToSubmit.map((r) => {
+        const amt = computedAmount(r, category);
+        const narration = isDiesel ? dieselNarration(r, r.filled_at) : "";
+        return {
+          client_row_id: r.id, vehicle_id: r.vehicle_id,
+          amount: amt, remarks: r.remarks || "",
+          narration,
+          supplier_settlement_mode: r.supplier_settlement_mode || "",
+        };
+      });
       const body = { date, category, trip_id: tripId || "", entries };
       const { data } = await api.post("/expenses/bulk-operational", body, {
         headers: { "Idempotency-Key": idemKey.current },
@@ -85,7 +104,8 @@ export default function QuickOperationalExpense() {
   });
 
   const totalRows = rows.length;
-  const totalAmount = rows.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
+  const totalAmount = rows.reduce((s, r) => s + computedAmount(r, category), 0);
+  const isDiesel = category === "Diesel";
 
   // Iter139 P0 · Exact-duplicate warning (UX only — no unique constraint).
   // Match keys: date + canonical(category) + vehicle_id + amount, active rows only.
@@ -94,14 +114,14 @@ export default function QuickOperationalExpense() {
     mutationFn: async () => {
       const canonCat = canon(category);
       const readyRows = rows.filter(
-        (r) => r.vehicle_id && (parseFloat(r.amount) || 0) > 0,
+        (r) => r.vehicle_id && computedAmount(r, category) > 0,
       );
       if (readyRows.length === 0) return { readyRows, duplicates: [] };
       // ── In-batch duplicates ────────────────────────────────────
       const seen = new Map();
       const inBatch = [];
       for (const r of readyRows) {
-        const k = `${r.vehicle_id}|${parseFloat(r.amount).toFixed(2)}`;
+        const k = `${r.vehicle_id}|${computedAmount(r, category).toFixed(2)}`;
         if (seen.has(k)) inBatch.push({ row: r, firstRow: seen.get(k), source: "batch" });
         else seen.set(k, r);
       }
@@ -118,7 +138,7 @@ export default function QuickOperationalExpense() {
       }));
       const dupExisting = [];
       for (const r of readyRows) {
-        const amt = parseFloat(r.amount) || 0;
+        const amt = computedAmount(r, category);
         const match = (existingByVid[r.vehicle_id] || []).find(
           (e) => eqAmount(e.amount, amt) && !e.is_reversed && !e.is_deleted,
         );
@@ -182,7 +202,7 @@ export default function QuickOperationalExpense() {
           <thead className="bg-zinc-50 text-zinc-600 text-xs uppercase">
             <tr>
               <th className="px-3 py-2 text-left w-[42%]">Vehicle</th>
-              <th className="px-3 py-2 text-right w-[15%]">Amount ₹</th>
+              <th className="px-3 py-2 text-right w-[22%]">{isDiesel ? "Qty × Rate → Amount ₹" : "Amount ₹"}</th>
               <th className="px-3 py-2 text-left">Remarks / Supplier Mode</th>
               <th className="px-3 py-2 w-[40px]"></th>
             </tr>
@@ -201,12 +221,45 @@ export default function QuickOperationalExpense() {
                     {r.__error && <div className="text-xs text-red-600 mt-1">⚠ {r.__error}</div>}
                   </td>
                   <td className="px-3 py-2">
-                    <input type="number" min="0" step="0.01" value={r.amount}
-                           onChange={(e) => patchRow(r.id, { amount: e.target.value })}
-                           className="w-full border rounded px-2 py-1 text-right tabular-nums"
-                           data-testid={`quick-expense-row-${i}-amount`}/>
+                    {isDiesel ? (
+                      <div className="grid grid-cols-3 gap-1">
+                        <input type="number" min="0" step="0.01" value={r.qty || ""}
+                               onChange={(e) => patchRow(r.id, { qty: e.target.value })}
+                               placeholder="Qty L"
+                               className="w-full border rounded px-2 py-1 text-right tabular-nums"
+                               data-testid={`quick-expense-row-${i}-qty`}/>
+                        <input type="number" min="0" step="0.01" value={r.rate || ""}
+                               onChange={(e) => patchRow(r.id, { rate: e.target.value })}
+                               placeholder="₹/L"
+                               className="w-full border rounded px-2 py-1 text-right tabular-nums"
+                               data-testid={`quick-expense-row-${i}-rate`}/>
+                        <input type="text" readOnly value={fmt(computedAmount(r, category))}
+                               tabIndex={-1}
+                               className="w-full border rounded px-2 py-1 text-right tabular-nums bg-zinc-50 text-zinc-700"
+                               data-testid={`quick-expense-row-${i}-amount`}/>
+                      </div>
+                    ) : (
+                      <input type="number" min="0" step="0.01" value={r.amount}
+                             onChange={(e) => patchRow(r.id, { amount: e.target.value })}
+                             className="w-full border rounded px-2 py-1 text-right tabular-nums"
+                             data-testid={`quick-expense-row-${i}-amount`}/>
+                    )}
                   </td>
                   <td className="px-3 py-2">
+                    {isDiesel && (
+                      <>
+                        <input value={r.filled_at || ""}
+                               onChange={(e) => patchRow(r.id, { filled_at: e.target.value })}
+                               placeholder="Filled at (station / location) — optional"
+                               className="w-full border rounded px-2 py-1 mb-1"
+                               data-testid={`quick-expense-row-${i}-filled-at`}/>
+                        <input value={r.vendor_name || ""}
+                               onChange={(e) => patchRow(r.id, { vendor_name: e.target.value })}
+                               placeholder="Vendor (optional, free text)"
+                               className="w-full border rounded px-2 py-1 mb-1 text-xs"
+                               data-testid={`quick-expense-row-${i}-vendor`}/>
+                      </>
+                    )}
                     <input value={r.remarks} onChange={(e) => patchRow(r.id, { remarks: e.target.value })}
                            placeholder="optional remarks"
                            className="w-full border rounded px-2 py-1 mb-1"
