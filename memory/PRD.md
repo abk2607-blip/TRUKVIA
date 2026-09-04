@@ -1,10 +1,43 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
-## Iter136 P0 · Expense Register + Non-Trip Expense Operator Workflow — IMPLEMENTATION COMPLETE (Awaiting UAT) — 2026-02-03
+## 🔒 Iter136 P0 · Expense Register + Non-Trip Expense Operator Workflow — LOCKED — 2026-09-04
 
-**Status: P0 IMPLEMENTATION COMPLETE.  MANUAL UAT PENDING.  NOT LOCKED.**
-No lock until the operator accepts the workflow.  P1 / P2 items below
-remain deferred backlog.
+**Status: LOCKED / FROZEN.  UAT: ACCEPTED — 2026-09-04.  Regression: 140 / 140 PASS.**
+No further changes to the Iter136 P0 surface without an explicit unlock
+instruction from the operator.  P1 / P2 items below remain deferred
+backlog only — they are NOT implemented and MUST NOT be started as part
+of this lock.
+
+### Core product principle (binding, visible in every future iteration)
+
+**ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO
+MANUAL RECONCILIATION.**
+
+Iter136 P0 upholds this principle: one Expense row entered from the
+Register drawer is the single source of truth for Vehicle Cost, and it
+never fans out into a second payable in the Vendor / Mechanic Ledgers.
+
+### Manual UAT — ACCEPTED (operator verified)
+- `/expenses` Expense Register renders (filters + KPI + table).
+- Sidebar `ఖర్చులు (Expenses)` navigates to `/expenses`.
+- New Expense drawer opens, creates and edits standalone expenses.
+- Standalone Insurance ₹18,000 (no vehicle) creation confirmed.
+- Vehicle-linked Tyres ₹22,000 creation confirmed.
+- Vehicle selector, Vendor party type + `Party Name` confirmed.
+- Edit Expense confirmed (in-place update, no reversal at P0).
+- Soft-cancel with valid reason (≥ 3 chars) confirmed — row removed from
+  default list.
+- `Show Reversed` toggle does NOT resurrect soft-cancelled rows —
+  confirmed as intended.
+- Date, Vehicle, and Party filters confirmed.
+- Vehicle number chip navigates to canonical `/vehicles/:vid/cost`
+  (Iter135A) and the Vehicle Cost total correctly reflects the new
+  standalone Expense.
+- Expense drawer does NOT expose Vendor Bill / Mechanic Work Order /
+  Repair Event fields — twin-payable guard confirmed.
+- Attachment upload and file-id association confirmed.
+- Pre-existing canonical Repair-Parts / Repair-Labour Expense rows
+  remain intact and untouched.
 
 ### Scope shipped (P0)
 - **Frontend** — new operator-facing pages, both purely a projection of
@@ -74,7 +107,80 @@ Party column) — **both fixed in this iteration**.  Cosmetic cleanups
 - Split-by-vehicle helper
 - Recurring expense templates
 
-**Iter136 P0 is READY FOR MANUAL UAT.  Do not lock until operator accepts.**
+### Files / modules changed in Iter136 P0 (final)
+- `frontend/src/pages/ExpenseRegister.jsx` — new (register + KPIs + filters + table + edit/cancel actions + vehicle chip to `/vehicles/:vid/cost`)
+- `frontend/src/pages/ExpenseForm.jsx` — new (drawer form, conditional `Party Name` input, twin-payable guard)
+- `frontend/src/components/Layout.jsx` — sidebar entry `nav-expenses` (`ఖర్చులు · Expenses`, Receipt icon) added; no other nav entries touched
+- `frontend/src/App.js` — `/expenses` protected route added; no other routes touched
+- `backend/models.py` — `DEFAULT_EXPENDITURE_TYPES` extended with the 11 non-trip categories (Insurance, Road Tax, Permit, Fitness, Tyres, Engine Oil, AdBlue, Repair, Spare Parts, Office / General, Others).  **No schema field additions or removals.**
+- `backend/tests/test_iter136_expense_register.py` — new focused regression suite (14 tests)
+
+Nothing else was modified.  Iter133 / Iter134 / Iter135 / Iter135A code paths are byte-identical to their prior lock state.
+
+### Route map — locked
+| Surface | Locked value |
+|---|---|
+| Expense Register page | `/expenses` (frontend) |
+| New / Edit Expense | Drawer inside `/expenses` (no dedicated route) |
+| Vehicle chip target | `/vehicles/:vid/cost` (canonical Iter135A) |
+| Sidebar entry | `ఖర్చులు (Expenses)` — testid `nav-expenses` |
+
+### Backend endpoints reused (locked as-is — zero schema change)
+- `GET  /api/expenses` — filters: `date_from`, `date_to`, `category`, `vehicle_id`, `party_type`, `party_id`, `trip_id`, `include_reversed`.
+- `POST /api/expenses` — Iter133 write-time invariants apply.  UI payload NEVER carries `vendor_bill_id` or `mechanic_work_order_id`.
+- `PUT  /api/expenses/{eid}` — in-place update; reversal fields are server-preserved.
+- `DELETE /api/expenses/{eid}?reason=<min 3 chars>` — Owner/Admin only soft-cancel.
+- `GET  /api/vehicles` — used to populate the vehicle picker and vehicle filter.
+- `POST /api/files/upload` — used by the drawer attachment field.
+
+### Accounting invariants — LOCKED (must remain unchanged forever)
+- Expense is the canonical cost source (Iter133).
+- Vendor Ledger truth = `VendorBill` + `VendorPayment` + Opening — `db.expenses` is NEVER read by the ledger service or router (Iter135 / Iter135A).
+- Mechanic Ledger truth = `MechanicWorkOrder` + `MechanicPayment` + Opening — same guarantee.
+- A standalone Expense with a `party_name` MUST NOT create a Vendor or Mechanic payable.
+- Vehicle Cost is a projection of Expense only (Iter133).
+- Legacy / canonical XOR behaviour on `vendor_bill_id` / `mechanic_work_order_id` remains untouched — enforced server-side.
+- No duplicate accounting transaction may be introduced through this UI.
+
+### Test totals — LOCKED
+- New focused suite `test_iter136_expense_register.py` — **14 / 14 PASS**.
+- Combined regression across Iter133 + Iter134 + Iter135 + Iter135A + Iter136 — **140 / 140 PASS** (30.25 s serial run, `pytest -o addopts="-n 0"`).
+- No prior locked test was modified.  Full historical coverage preserved.
+
+### Known accepted limitations (accepted by operator during UAT)
+- No pagination — register loads up to 20,000 rows client-side.  Operators must apply a date filter for large datasets.
+- Category filter is exact-match free-text (not a searchable select).
+- Date inputs are native browser pickers (not the shadcn calendar).
+- Edit performs an in-place `PUT` (no reversal + correction chain from this UI at P0).
+- `party_id` is not user-selectable — `party_name` is free-text only (Vendor/Mechanic/Supplier/Driver identity is name-only from this UI).
+- `Show Reversed` reveals `is_reversed=true` rows only; soft-cancelled (`is_deleted=true`) rows never resurface via UI.
+
+### Explicit deferred backlog — NOT IMPLEMENTED, NOT STARTED
+The following are recorded as future discovery items only.  They are
+NOT part of Iter136 and MUST NOT be treated as delivered:
+1. Searchable Vehicle selector
+2. Searchable Category selector
+3. Quick Expense Book / single-point multi-vehicle operational expense entry
+4. Supplier-owned vehicle automatic settlement routing refinement
+5. Negotiated-rate / bill-correction accounting workflow
+6. Separate GST / RTO / statutory architecture discovery
+7. Accident expenditure architecture
+8. Simple Repair Parts Description workflow
+9. Cursor / server-side pagination + server-side KPI aggregates
+10. POST idempotency enforcement
+11. CSV / PDF export of the filtered register
+12. Bulk soft-cancel
+13. Split-by-vehicle helper
+14. Recurring expense templates
+
+### Protection — still LOCKED (no change)
+- 🔒 Iter133 · Expense / Vehicle Cost
+- 🔒 Iter134 · Invoice Enhancement
+- 🔒 Iter135  · Vendor / Mechanic Ledger (Bills + Payments truth)
+- 🔒 Iter135A · Vendor / Mechanic Ledger — ERP Presentation Polish
+- 🔒 C3.1 / C3.2 / C3.4 / C3.5 · C4 CN/DN · C5 §9C · DG-STABILITY-1
+
+**ITER136 P0 — EXPENSE REGISTER + NON-TRIP EXPENSE OPERATOR WORKFLOW — LOCKED — HARD STOP.**
 
 
 
