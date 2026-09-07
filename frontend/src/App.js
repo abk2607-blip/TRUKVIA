@@ -18,6 +18,7 @@ import HaltingVerify from "@/pages/HaltingVerify";
 import Products from "@/pages/Products";
 import Vehicles from "@/pages/Vehicles";
 import VehicleCostReport from "@/pages/VehicleCostReport";
+import VehicleWorkspace from "@/pages/VehicleWorkspace";
 import ExpenseRegister from "@/pages/ExpenseRegister";
 import QuickOperationalExpense from "@/pages/QuickOperationalExpense";
 import PartyLedger from "@/pages/PartyLedger";
@@ -83,6 +84,7 @@ function AppRouter() {
       <Route path="/drivers/:id/ledger" element={<Protected><DriverLedger /></Protected>} />
       <Route path="/reports/halting-verify" element={<Protected><HaltingVerify /></Protected>} />
       <Route path="/vehicles" element={<Protected><Vehicles /></Protected>} />
+      <Route path="/vehicles/:vid" element={<Protected><VehicleWorkspace /></Protected>} />
       <Route path="/expenses" element={<Protected><ExpenseRegister /></Protected>} />
       <Route path="/expenses/quick" element={<Protected><QuickOperationalExpense /></Protected>} />
       <Route path="/vehicles/:vid/cost" element={<Protected><VehicleCostReport /></Protected>} />

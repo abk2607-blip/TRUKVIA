@@ -183,17 +183,17 @@ export default function Vehicles() {
               <tr key={v.id} data-testid={`vehicle-row-${v.id}`} className="border-t border-zinc-100 hover:bg-zinc-50">
                 <td className="px-3 py-3 font-mono font-bold flex items-center gap-2">
                   <Truck size={14} className="text-zinc-400" />
-                  {/* Iter104 · Option A — clicking the vehicle number opens the
-                      Edit modal in read-only View mode. Edit / Delete unaffected. */}
-                  <button
-                    type="button"
+                  {/* Iter141 P0 · Clicking the vehicle number opens the new Vehicle Workspace
+                      at /vehicles/:vid — a read/projection surface that reuses cost-summary
+                      and repair-history endpoints. Existing /vehicles/:vid/cost remains a valid deep link. */}
+                  <a
                     data-testid={`view-vehicle-${v.id}`}
-                    onClick={() => openView(v)}
+                    href={`/vehicles/${v.id}`}
                     className="text-left hover:text-indigo-700 hover:underline"
-                    title="View vehicle details"
+                    title="Open Vehicle Workspace"
                   >
                     {v.vehicle_number}
-                  </button>
+                  </a>
                 </td>
                 <td className="px-3 py-3 text-xs">
                   {v.vehicle_type === "supplier" ? (
@@ -225,6 +225,14 @@ export default function Vehicles() {
                   );
                 })}
                 <td className="px-3 py-3 text-right whitespace-nowrap">
+                  <a
+                    data-testid={`vehicle-workspace-${v.id}`}
+                    href={`/vehicles/${v.id}`}
+                    className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-zinc-200 rounded-sm mr-2 hover:bg-zinc-950 hover:text-white"
+                    title="Open Vehicle Workspace"
+                  >
+                    Workspace
+                  </a>
                   <a
                     data-testid={`vehicle-cost-${v.id}`}
                     href={`/vehicles/${v.id}/cost`}

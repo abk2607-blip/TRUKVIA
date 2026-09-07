@@ -70,6 +70,51 @@ READ-ONLY DISCOVERY of:
 
 
 
+## Iter141 P0 · Vehicle Workspace — IMPLEMENTED / READY FOR UAT — 2026-09-04
+
+**Status: IMPLEMENTED. NOT LOCKED — awaiting operator UAT.**
+Read-only projection surface. Zero schema change, zero new collection,
+zero new backend endpoint. Reuses existing `GET /vehicles/{vid}/cost-summary`
+and `GET /vehicles/{vid}/repair-history`.
+
+### Files changed / added
+- **NEW** `/app/frontend/src/pages/VehicleWorkspace.jsx` — tabbed workspace at `/vehicles/:vid` with Overview / Expenses / Repairs / Reports (placeholder). Bundle stamp `v141-p0`.
+- Modified `/app/frontend/src/App.js` — added `<Route path="/vehicles/:vid" …>`. Existing `/vehicles/:vid/cost` and `/vehicles/:vid/repairs/new` preserved.
+- Modified `/app/frontend/src/pages/Vehicles.jsx` — vehicle-number cell now links to `/vehicles/:vid` (workspace); added a per-row "Workspace" action button. Existing "Cost" and "+ Repair" buttons untouched.
+- **NEW** `/app/backend/tests/test_iter141_vehicle_workspace.py` — 8 focused tests + 3 static frontend guards.
+
+### Behaviour
+- **Header**: vehicle number · own/supplier badge · active status · owner or supplier context · make/model · capacity · expiry dates.
+- **KPIs** (from `cost-summary`): Total Vehicle Cost · Repair Cost · Operational Expense · Trip-linked Cost.
+- **Filters**: From / To / Category — sent to the same endpoint; totals refresh from the authoritative projection.
+- **Overview tab**: Category breakdown + Month-wise cost (already in the response).
+- **Expenses tab**: table with Date · Category · Description · Vendor · Trip/Repair · Amount · Edit (link to Quick Op for `source_type=quick_op` rows). Total footer.
+- **Repairs tab**: table with Date · Description · Workshop · Vendor payable · Mechanic payable · Repair Cost (Σ Expense) · Status · Open →.
+- **Reports tab**: static "Coming in the next release." placeholder — no download buttons, no endpoints created.
+
+### Preservation (Iter141 does NOT change)
+- Vehicle Cost = canonical `Expense.amount` (legacy XOR trip fallback via `has_canonical_expenses` unchanged).
+- Repair Cost = Σ `Expense.amount` (never Bill+WO+Expense).
+- Cancelled / reversed rows automatically excluded.
+- Supplier settlement semantics preserved (read-only context surface).
+- Vendor Ledger stays Bills+Payments only; Vendor-linked visibility card unchanged.
+- Iter140 Today's Entries + Edit + Cancel remain the canonical edit surface (workspace links to it).
+
+### Regression totals
+- Focused **Iter141 + Iter139** together (serial `-n0`): **83 / 83 PASS** in 90 s.
+- Full band Iter133 / 134 / 135 / 135A / 136 / 137A / 139 / 141 (serial `-n0`): **218 / 219 PASS**. The single failure is `test_iter133_expense_turn2d.py::test_high_volume_expenses_1000_no_truncation` — a **pre-existing env-flake load test** (1000-row batch triggered a `ConnectTimeout` against the preview ingress); repeated in isolation with the same result and unrelated to any Iter141 change.
+- Frontend `yarn build` clean.
+
+### Live UAT (screenshots captured)
+- **Own vehicle** `AP31TF063A` — Overview shows Total ₹10,200.00, Category breakdown (Diesel ₹9,500 + Parking ₹700), Month-wise (2026-09 + 2027-07). Own badge · Active · Owner context.
+- **Expenses tab** — 2 rows: `Parking · ₹700` (Quick Op) + `Diesel · ₹9,500` (Quick Op, vendor VW-f94acc). Filtered total ₹10,200 matches KPI. "Edit in Quick Op →" link on each row.
+- **Repairs tab** — Empty state; no repairs; explanation strip: "Repair Cost = Σ canonical Expense.amount (never Bill+WO+Expense)".
+- **Reports tab** — Placeholder "Coming in the next release" (no buttons).
+- **Supplier vehicle** `AP39ZUDC83` — SUPPLIER-OWNED badge + Active + `Supplier: UATSup-38c2fee6` context. No expenses in range.
+- **Deep link** `/vehicles/:vid/cost` — still resolves.
+
+
+
 ## Iter140 · Quick Op Today's Entries + Edit + Cancel — 🔒 LOCKED (UAT PASS) — 2026-09-04
 
 **Status: 🔒 LOCKED. Staff UAT ACCEPTED / PASS. FREEZE.**
