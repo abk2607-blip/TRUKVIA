@@ -608,6 +608,161 @@ def test_diesel_frontend_vendor_uses_searchable_select():
     # Free-text vendor input must be gone.
     assert 'placeholder="Vendor (optional, free text)"' not in src
 
+
+# ── Iter139 follow-up · Vendor-linked Expense Log (visibility on Vendor page) ─
+
+def test_vendor_expense_log_returns_diesel_row(own_veh):
+    """Saved Diesel Expense with vendor link is retrievable from the
+    canonical GET /api/expenses?party_type=vendor&party_id filter — this
+    is the endpoint the new Vendor Expense Log card consumes."""
+    ven = _mk_vendor("LogA")
+    _post_batch(date="2026-12-01", category="Diesel", entries=[{
+        "client_row_id": f"log1-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "qty": 150, "rate": 92.5,
+        "vendor_id": ven["id"], "filled_at": "IOC Nayara Kallur"}])
+    lst = requests.get(f"{API}/expenses", headers=H, params={
+        "party_type": "vendor", "party_id": ven["id"]}, timeout=15).json()
+    matches = [e for e in lst if e["party_id"] == ven["id"]]
+    assert len(matches) == 1
+    assert matches[0]["category"] == "Diesel"
+    assert abs(matches[0]["amount"] - 13875.0) < 0.005
+    assert matches[0]["vehicle_id"] == own_veh["id"]
+    assert "IOC Nayara Kallur" in matches[0]["narration"]
+
+
+def test_vendor_expense_log_aggregates_multiple(own_veh):
+    """Multiple Expenses for the same Vendor accumulate correctly and
+    the total is the plain sum of `amount` — no double count."""
+    ven = _mk_vendor("LogB")
+    _post_batch(date="2026-12-02", category="Diesel", entries=[{
+        "client_row_id": f"logb1-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "qty": 100, "rate": 90.0,
+        "vendor_id": ven["id"]}])
+    _post_batch(date="2026-12-03", category="Diesel", entries=[{
+        "client_row_id": f"logb2-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "qty": 200, "rate": 90.0,
+        "vendor_id": ven["id"]}])
+    lst = requests.get(f"{API}/expenses", headers=H, params={
+        "party_type": "vendor", "party_id": ven["id"]}, timeout=15).json()
+    rows = [e for e in lst if e["party_id"] == ven["id"]]
+    assert len(rows) == 2
+    total = sum(e["amount"] for e in rows)
+    assert abs(total - (9000.0 + 18000.0)) < 0.005
+
+
+def test_vendor_expense_log_no_leak_across_vendors(own_veh):
+    """A Diesel Expense linked to Vendor A must not appear in Vendor B's
+    filter — party_id isolation."""
+    a = _mk_vendor("LogSepA")
+    b = _mk_vendor("LogSepB")
+    _post_batch(date="2026-12-04", category="Diesel", entries=[{
+        "client_row_id": f"sep-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "qty": 100, "rate": 90.0,
+        "vendor_id": a["id"]}])
+    only_b = requests.get(f"{API}/expenses", headers=H, params={
+        "party_type": "vendor", "party_id": b["id"]}, timeout=15).json()
+    assert not any(e["party_id"] == a["id"] for e in only_b)
+
+
+def test_vendor_expense_log_supports_date_filter(own_veh):
+    """The endpoint already supports `date_from`/`date_to` — the card
+    inherits the same date filters used by the Vendor Ledger."""
+    ven = _mk_vendor("LogDate")
+    _post_batch(date="2026-12-05", category="Diesel", entries=[{
+        "client_row_id": f"d1-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "qty": 50, "rate": 100.0,
+        "vendor_id": ven["id"]}])
+    _post_batch(date="2026-12-15", category="Diesel", entries=[{
+        "client_row_id": f"d2-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "qty": 60, "rate": 100.0,
+        "vendor_id": ven["id"]}])
+    mid = requests.get(f"{API}/expenses", headers=H, params={
+        "party_type": "vendor", "party_id": ven["id"],
+        "date_from": "2026-12-10", "date_to": "2026-12-20"}, timeout=15).json()
+    matches = [e for e in mid if e["party_id"] == ven["id"]]
+    assert len(matches) == 1
+    assert matches[0]["date"] == "2026-12-15"
+
+
+def test_vendor_expense_log_does_not_touch_vendor_ledger(own_veh):
+    """Adding Expenses for a Vendor must never change the Vendor Ledger
+    (Bills+Payments) totals — the ledger remains untouched."""
+    ven = _mk_vendor("LogInv")
+    l0 = requests.get(f"{API}/vendors/{ven['id']}/ledger",
+                      headers=H, timeout=15).json()
+    open0 = float(l0.get("opening_balance") or 0)
+    debit0 = float(l0.get("total_debit") or 0)
+    credit0 = float(l0.get("total_credit") or 0)
+    entries0 = len(l0.get("entries") or [])
+    _post_batch(date="2026-12-06", category="Diesel", entries=[{
+        "client_row_id": f"inv-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "qty": 300, "rate": 92.0,
+        "vendor_id": ven["id"]}])
+    l1 = requests.get(f"{API}/vendors/{ven['id']}/ledger",
+                      headers=H, timeout=15).json()
+    assert float(l1.get("opening_balance") or 0) == open0
+    assert float(l1.get("total_debit") or 0) == debit0
+    assert float(l1.get("total_credit") or 0) == credit0
+    assert len(l1.get("entries") or []) == entries0
+
+
+def test_vendor_expense_log_no_bills_or_payments_created(own_veh):
+    """The visibility path must not create VendorBill / VendorPayment."""
+    ven = _mk_vendor("LogNoBillPay")
+    bills0 = requests.get(f"{API}/vendor-bills", headers=H, timeout=15).json()
+    pays0 = requests.get(f"{API}/vendors/{ven['id']}/payments",
+                        headers=H, timeout=15).json()
+    _post_batch(date="2026-12-07", category="Diesel", entries=[{
+        "client_row_id": f"nbp-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "qty": 80, "rate": 100.0,
+        "vendor_id": ven["id"]}])
+    _ = requests.get(f"{API}/expenses", headers=H, params={
+        "party_type": "vendor", "party_id": ven["id"]}, timeout=15).json()
+    bills1 = requests.get(f"{API}/vendor-bills", headers=H, timeout=15).json()
+    pays1 = requests.get(f"{API}/vendors/{ven['id']}/payments",
+                        headers=H, timeout=15).json()
+    assert len(bills0) == len(bills1)
+    assert len(pays0) == len(pays1)
+
+
+def test_vendor_expense_log_vehicle_cost_still_reflects_once(own_veh):
+    """Same Expense appears in Vehicle Cost EXACTLY once — cost is not
+    double-counted just because the Vendor visibility card also reads it."""
+    ven = _mk_vendor("LogVCOnce")
+    d = "2026-12-08"
+    _post_batch(date=d, category="Diesel", entries=[{
+        "client_row_id": f"vco-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "qty": 250, "rate": 92.0,
+        "vendor_id": ven["id"]}])
+    vc = requests.get(f"{API}/expenses", headers=H, params={
+        "vehicle_id": own_veh["id"], "category": "Diesel",
+        "date_from": d, "date_to": d}, timeout=15).json()
+    matches = [e for e in vc if e["party_id"] == ven["id"] and
+               abs(e["amount"] - 23000.0) < 0.005]
+    assert len(matches) == 1
+
+
+def test_vendor_expense_log_frontend_card_present():
+    """Static guard — PartyLedger.jsx has the new Vendor Expense Log
+    card gated on partyType==='vendor', with the right test IDs."""
+    src = Path("/app/frontend/src/pages/PartyLedger.jsx").read_text(encoding="utf-8")
+    for needed in [
+        'data-testid="vendor-expense-log"',
+        'data-testid="vendor-expense-empty"',
+        'data-testid="vendor-expense-total"',
+        'data-testid="vendor-expense-total-cell"',
+        'data-testid="vendor-expense-count"',
+        'data-testid="vendor-expense-category-breakdown"',
+        "vendor-expense-row-",
+        "vendor-expense-amount-",
+        'party_type: "vendor"',
+        "linkedExpenses",
+        "linkedTotal",
+        "linkedByCategory",
+        'partyType === "vendor" && !!id',
+    ]:
+        assert needed in src, f"PartyLedger.jsx missing marker: {needed}"
+
 def _mk_supplier_vehicle():
     """Create a supplier + supplier-owned vehicle and return both."""
     sup_body = {"name": f"UATSup-{uuid.uuid4().hex[:8]}", "opening_balance": 0}

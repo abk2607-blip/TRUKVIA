@@ -46,6 +46,41 @@ export default function PartyLedger({ partyType }) {
     queryFn: async () => (await api.get(`/${base}/${id}/ledger`, { params })).data,
   });
 
+  // Iter139 follow-up · Vendor-linked Expense Log (visibility only).
+  //  • Reads the SAME canonical Expense collection filtered by
+  //    party_type='vendor' + party_id — the endpoint the frontend
+  //    already uses elsewhere. NEVER read as ledger truth (ledger
+  //    stays on Bills+Payments — see source-note at bottom).
+  //  • Enabled only when we are on the Vendor page.
+  const expenseLog = useQuery({
+    queryKey: ["vendor-expense-log", id, params],
+    queryFn: async () => (await api.get("/expenses", {
+      params: {
+        party_type: "vendor",
+        party_id: id,
+        ...(from ? { date_from: from } : {}),
+        ...(to ? { date_to: to } : {}),
+      },
+    })).data,
+    enabled: partyType === "vendor" && !!id,
+  });
+
+  const linkedExpenses = expenseLog.data || [];
+  const linkedTotal = useMemo(
+    () => linkedExpenses.reduce((s, x) => s + (Number(x.amount) || 0), 0),
+    [linkedExpenses]
+  );
+  const linkedByCategory = useMemo(() => {
+    const m = new Map();
+    for (const x of linkedExpenses) {
+      const k = x.category || "—";
+      m.set(k, (m.get(k) || 0) + (Number(x.amount) || 0));
+    }
+    return Array.from(m.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([category, total]) => ({ category, total }));
+  }, [linkedExpenses]);
+
   const applyCorrection = useMutation({
     mutationFn: async () => {
       const key = `pcr-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
@@ -289,6 +324,108 @@ export default function PartyLedger({ partyType }) {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {partyType === "vendor" && (
+        <div className="bg-white border rounded-lg p-4" data-testid="vendor-expense-log">
+          <div className="flex items-center gap-3 flex-wrap mb-3">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-700">
+              Vendor-linked Expenses
+              <span className="ml-2 text-zinc-400 font-normal normal-case tracking-normal">
+                (cost log — read-only visibility, separate from ledger)
+              </span>
+            </h2>
+            <div className="ml-auto text-xs text-zinc-600 flex gap-4">
+              <span data-testid="vendor-expense-count">Rows: {linkedExpenses.length}</span>
+              <span data-testid="vendor-expense-total">
+                Total Linked Expenses: {fmt(linkedTotal)}
+              </span>
+            </div>
+          </div>
+          {expenseLog.isLoading ? (
+            <div className="text-zinc-400 text-sm">Loading…</div>
+          ) : linkedExpenses.length === 0 ? (
+            <div className="text-zinc-400 text-sm" data-testid="vendor-expense-empty">
+              No vendor-linked expenses recorded.
+            </div>
+          ) : (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-zinc-50">
+                    <tr className="text-left">
+                      <th className="py-2 px-2">Date</th>
+                      <th className="py-2 px-2">Category</th>
+                      <th className="py-2 px-2">Vehicle</th>
+                      <th className="py-2 px-2">Description</th>
+                      <th className="py-2 px-2 text-right">Amount</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {linkedExpenses.map((x, i) => (
+                      <tr key={x.id || i} className="border-t"
+                          data-testid={`vendor-expense-row-${i}`}>
+                        <td className="py-2 px-2 whitespace-nowrap">{x.date}</td>
+                        <td className="py-2 px-2" data-testid={`vendor-expense-cat-${i}`}>
+                          {x.category}
+                        </td>
+                        <td className="py-2 px-2 whitespace-nowrap">
+                          {x.vehicle_id ? (
+                            <Link to={`/vehicles/${x.vehicle_id}/cost`}
+                                  className="text-indigo-700 hover:underline font-mono text-xs"
+                                  data-testid={`vendor-expense-vehicle-${i}`}
+                                  title={`Open Vehicle Cost for ${x.vehicle_number || x.vehicle_id}`}>
+                              {x.vehicle_number || x.vehicle_id}
+                            </Link>
+                          ) : (
+                            <span className="text-zinc-400">—</span>
+                          )}
+                        </td>
+                        <td className="py-2 px-2 text-zinc-700">
+                          {x.narration || x.remarks || ""}
+                        </td>
+                        <td className="py-2 px-2 text-right tabular-nums"
+                            data-testid={`vendor-expense-amount-${i}`}>
+                          {fmt(x.amount)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="border-t bg-zinc-50">
+                      <td colSpan={4} className="py-2 px-2 text-right font-semibold">
+                        Total
+                      </td>
+                      <td className="py-2 px-2 text-right tabular-nums font-semibold"
+                          data-testid="vendor-expense-total-cell">
+                        {fmt(linkedTotal)}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+              {linkedByCategory.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-2"
+                     data-testid="vendor-expense-category-breakdown">
+                  {linkedByCategory.map((c) => (
+                    <span key={c.category}
+                          className="text-xs bg-zinc-50 border rounded-full px-3 py-1"
+                          data-testid={`vendor-expense-catchip-${c.category}`}>
+                      {c.category}: {fmt(c.total)}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </>
+          )}
+          <p className="mt-3 text-[11px] text-zinc-400">
+            Reads the canonical Expense collection filtered by
+            <code className="mx-1">party_type='vendor'</code> +
+            <code className="mx-1">party_id</code>. This is a cost log for
+            visibility — it never creates or modifies VendorBill /
+            VendorPayment, and it does not affect the ledger balance above.
+          </p>
         </div>
       )}
 

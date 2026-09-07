@@ -70,6 +70,55 @@ READ-ONLY DISCOVERY of:
 
 
 
+## Iter139 FOLLOW-UP · Vendor-linked Expense Log on Vendor Page — IMPLEMENTED / READY FOR UAT — 2026-09-04
+
+**Status: IMPLEMENTED. NOT LOCKED — awaiting operator UAT.**
+Focused regression: **200/200 PASS** serially across Iter133 / 134 /
+135 / 135A / 136 / 137A / 139 (`-n0` in ~44 s). Zero backend change,
+zero schema change, zero new collection, zero VendorBill/VendorPayment
+side-effect. Vendor Ledger (Bills+Payments) totals unchanged.
+
+### Discovery gate — CASE A (verified by dedicated test)
+- `GET /api/expenses?party_type=vendor&party_id=<vid>&date_from=&date_to=` already existed in `routers/expenses.py:143-178`.
+- Vendor identity on Expense (`party_type/party_id/party_name`) already populated by Iter139 UAT #2 for Diesel-with-Vendor rows.
+- Vendor Ledger builder (`services_party_ledger.py`) reads only `vendor_bills + vendor_payments` — no Expense read anywhere.
+
+### What changed (frontend-only)
+- **`/app/frontend/src/pages/PartyLedger.jsx`** — added:
+  - `useQuery` `queryKey=["vendor-expense-log", id, params]` gated on `partyType === 'vendor' && !!id`, honouring the same `from` / `to` filters as the Vendor Ledger.
+  - `linkedTotal` + `linkedByCategory` memos.
+  - New "Vendor-linked Expenses" card (`data-testid="vendor-expense-log"`) rendered above the source-note, only when `partyType === 'vendor'`. Columns: Date | Category | Vehicle (→ Vehicle Cost link) | Description | Amount. Total footer row + category chips + explicit "cost log — separate from ledger" explainer.
+  - Empty state: `"No vendor-linked expenses recorded."` (`data-testid="vendor-expense-empty"`).
+  - `fmt` (existing helper) reused; double-₹ cosmetic issue in the header/chip fixed.
+
+### Backend
+NO change. Existing endpoint served the entire feature.
+
+### Tests added (backend)
+`/app/backend/tests/test_iter139_quick_operational.py` — 8 new tests:
+- `test_vendor_expense_log_returns_diesel_row`
+- `test_vendor_expense_log_aggregates_multiple`
+- `test_vendor_expense_log_no_leak_across_vendors`
+- `test_vendor_expense_log_supports_date_filter`
+- `test_vendor_expense_log_does_not_touch_vendor_ledger`
+- `test_vendor_expense_log_no_bills_or_payments_created`
+- `test_vendor_expense_log_vehicle_cost_still_reflects_once`
+- `test_vendor_expense_log_frontend_card_present`
+
+### Manual UAT (verified with live screenshot)
+1. `/expenses/quick` → Diesel → vehicle → qty/rate → Filled At → **select existing Vendor** → Save.
+2. Sidebar → Vendors → Ledger icon on that Vendor → `/vendor-ledger/:id`.
+3. Below the classical KPIs + Ledger table, the **"VENDOR-LINKED EXPENSES"** card is present with the Diesel row, total, and category chip.
+4. Adjust From/To dates → card refetches with the same filter range.
+5. Vendor Ledger opening/debit/credit/closing/outstanding remain unchanged (verified by test).
+
+### Regression totals (this session)
+- Focused `test_iter139_quick_operational.py` — 64/64 PASS (5.7 s).
+- Full band Iter133+134+135+135A+136+137A+139 (serial `-n0`) — 200/200 PASS (44.3 s).
+- Frontend `yarn build` — clean (19 s), pre-existing eslint hook warnings only.
+
+
+
 ## Iter139 UAT FIX #2 · Diesel Amount Lock + Vendor Master Link — IMPLEMENTED / READY FOR UAT — 2026-09-04
 
 **Status: IMPLEMENTED. NOT LOCKED — awaiting operator UAT.**
