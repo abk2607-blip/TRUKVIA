@@ -1,5 +1,74 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
+## 📌 BACKLOG NOTE · Vehicle Workspace / Vehicle-Wise Expense Visibility — REQUIREMENT ONLY (2026-09-04)
+
+**Status: REQUIREMENT NOTE — NOT SCHEDULED — NO IMPLEMENTATION.**
+Owner directive: capture as backlog for a future Vehicle Workspace
+enhancement. No schemas, no collections, no accounting-logic changes,
+no locked-iteration modifications, no code changes at this time.
+
+### Observation
+Clicking a vehicle currently lands mainly in the vehicle edit/details
+flow. The vehicle does not yet expose a complete operational view of
+everything financially/operationally recorded against that vehicle.
+
+### Required future direction (captured verbatim)
+1. **Vehicle Workspace** — replace edit-only entry with a proper
+   Vehicle Workspace / Vehicle Dashboard.
+2. **Vehicle-wise Expense Visibility** — inside the workspace, show all
+   applicable canonical `Expense` rows for the vehicle, including:
+   - Quick Operational Expense
+   - Repair / Vendor Bill linked Expense
+   - Mechanic Work Order linked Expense
+   - Trip → canonical Expense bridge
+   - Any other valid canonical vehicle Expense
+   The canonical `Expense` record MUST remain the single source of
+   truth. No parallel vehicle-expense store, no duplicate transactions.
+3. **Internal + External Vehicles** — works for company-owned and
+   supplier-owned vehicles. Supplier-owned semantics preserved:
+   - `supplier_settlement_adjustment`
+   - `company_borne`
+   No accounting rule changes.
+4. **Vehicle Cost Summary** — eventual totals:
+   - Total Expense / Vehicle Cost
+   - Repair Cost
+   - Operational Expenses
+   - Date-wise / category-wise breakdown
+   - Supplier settlement / recovery impact where applicable
+   All figures MUST derive from existing canonical sources; NO double
+   counting.
+5. **Report Generation** — Vehicle-wise Excel + PDF for a selected
+   period; must include vehicle identification/details and the complete
+   applicable expense/cost transactions.
+6. **One Entry → Vehicle Reflection** — any expense entered against a
+   vehicle must auto-appear in the vehicle's workspace. No separate
+   manual vehicle-expense entry ever.
+
+### Binding product principle (unchanged)
+ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY →
+NO MANUAL RECONCILIATION.
+
+### First future step when unblocked
+READ-ONLY DISCOVERY of:
+- Existing Vehicle Details / Edit flow (frontend + backend)
+- Vehicle Cost endpoint (aggregation surface today)
+- Canonical `Expense` sources (Quick, Vendor Bill, Mechanic WO, Trip
+  bridge)
+- Repair History surface
+- Current PDF / Excel reporting capabilities and shared helpers
+
+### Hard constraints while this note lives in backlog
+- ❌ No schema changes
+- ❌ No new collections
+- ❌ No accounting/reporting logic changes
+- ❌ No locked-iteration modifications
+- ❌ No refactors of unrelated code
+- ❌ No new dependencies
+- ❌ No implementation start until an explicit instruction
+
+---
+
+
 ## Iter139 P0 · Quick Operational Expense — IMPLEMENTED / READY FOR UAT — 2026-09-04
 
 **Status: IMPLEMENTED. NOT LOCKED — awaiting operator UAT.**
