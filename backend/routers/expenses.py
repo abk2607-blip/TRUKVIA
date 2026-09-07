@@ -151,14 +151,22 @@ async def list_expenses(
     party_type: Optional[str] = None,
     party_id: Optional[str] = None,
     category: Optional[str] = None,
+    source_type: Optional[str] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     include_reversed: bool = False,
+    include_cancelled: bool = False,
     user=Depends(get_current_user),
 ):
     uid = user["user_id"]
     cid = await _active_company_id(request, user)
-    q: dict = {"user_id": uid, "company_id": cid, "is_deleted": {"$ne": True}}
+    q: dict = {"user_id": uid, "company_id": cid}
+    # Iter140 · include_cancelled surfaces cancelled rows for the Quick Expense
+    # "Today's Entries" strip; every downstream projection (Vehicle Cost /
+    # Expense Register / Vendor-linked view) keeps the default filter and
+    # therefore continues to hide cancelled rows.
+    if not include_cancelled:
+        q["is_deleted"] = {"$ne": True}
     if not include_reversed:
         q["is_reversed"] = {"$ne": True}
     if trip_id: q["trip_id"] = trip_id
@@ -169,6 +177,7 @@ async def list_expenses(
     if party_type: q["party_type"] = party_type
     if party_id: q["party_id"] = party_id
     if category: q["category"] = category
+    if source_type: q["source_type"] = source_type
     if date_from or date_to:
         d: dict = {}
         if date_from: d["$gte"] = date_from
@@ -285,3 +294,95 @@ async def delete_expense(
     except Exception:
         pass
     return {"ok": True}
+
+
+# ── Iter140 · Quick-Op Diesel edit ─────────────────────────────────────────
+# A Diesel-safe edit endpoint that mirrors the create-time authority:
+#   • Amount is computed from qty × rate on the server.
+#   • Optional vendor_id links to the existing Vendor master (party_type /
+#     party_id / party_name — same fields validated at create time).
+#   • Narration is composed server-side ("{qty}L @ ₹{rate:.2f} · filled_at
+#     · vendor_name").
+# NO new schema field. NO VendorBill / VendorPayment side-effect. Vendor
+# Ledger untouched. Only source_type='quick_op' + category='Diesel' rows
+# can use this endpoint.
+@router.put("/expenses/{eid}/quick-diesel")
+async def update_quick_diesel_expense(
+    eid: str, body: dict = Body(...),
+    request: Request = None, user=Depends(get_current_user),
+):
+    uid = user["user_id"]
+    cid = await _active_company_id(request, user)
+    before = await db.expenses.find_one(
+        {"id": eid, "user_id": uid, "company_id": cid},
+        {"_id": 0},
+    )
+    if not before:
+        raise HTTPException(status_code=404, detail="Expense not found")
+    if before.get("is_deleted"):
+        raise HTTPException(status_code=400, detail="Cannot edit a cancelled Expense.")
+    if before.get("is_reversed"):
+        raise HTTPException(status_code=400, detail="Cannot edit a reversed Expense; create a corrective entry instead.")
+    if before.get("category") != "Diesel":
+        raise HTTPException(status_code=400, detail="quick-diesel edit is only valid for Diesel expenses.")
+    if before.get("source_type") != "quick_op":
+        raise HTTPException(status_code=400, detail="quick-diesel edit is only valid for source_type='quick_op' rows.")
+
+    try:
+        qty = float(body.get("qty") or 0)
+    except Exception:
+        qty = 0.0
+    try:
+        rate = float(body.get("rate") or 0)
+    except Exception:
+        rate = 0.0
+    if qty <= 0 or rate <= 0:
+        raise HTTPException(status_code=400, detail="qty and rate must both be > 0 for Diesel.")
+    server_amount = round(qty * rate, 2)
+
+    # Optional vendor linkage — same validation surface as create.
+    party_type = "cash"
+    party_id = ""
+    party_name = ""
+    vid_link = str(body.get("vendor_id") or "").strip()
+    if vid_link:
+        ven = await db.vendors.find_one(
+            {"id": vid_link, "user_id": uid, "company_id": cid},
+            {"_id": 0, "name": 1, "is_active": 1},
+        )
+        if not ven:
+            raise HTTPException(status_code=400, detail="Selected Vendor not found in tenant.")
+        if ven.get("is_active") is False:
+            raise HTTPException(status_code=400, detail="Selected Vendor is inactive.")
+        party_type = "vendor"
+        party_id = vid_link
+        party_name = ven.get("name", "")
+
+    filled_at = str(body.get("filled_at") or "").strip()
+    parts = [f"{qty}L @ ₹{rate:.2f}"]
+    if filled_at:
+        parts.append(filled_at)
+    if party_name:
+        parts.append(party_name)
+    narration = " · ".join(parts)[:400]
+
+    patch = {
+        "amount": server_amount,
+        "narration": narration,
+        "remarks": str(body.get("remarks") or "")[:400],
+        "party_type": party_type,
+        "party_id": party_id,
+        "party_name": party_name,
+        "modified_by": uid,
+        "modified_at": now_utc().isoformat(),
+    }
+    await db.expenses.update_one({"id": eid}, {"$set": patch})
+    after = {**before, **patch}
+    try:
+        await _log_audit({"user_id": uid, "company_id": cid, "email": user.get("email", ""), "name": user.get("name", "")},
+                         "expense", "update", eid, "Diesel", "quick-diesel-edit",
+                         _diff_dict(before, after))
+    except Exception:
+        pass
+    after.pop("_id", None); after.pop("user_id", None)
+    return after

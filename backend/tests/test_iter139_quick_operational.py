@@ -609,6 +609,218 @@ def test_diesel_frontend_vendor_uses_searchable_select():
     assert 'placeholder="Vendor (optional, free text)"' not in src
 
 
+# ── Iter140 · Recent Entries + Edit + Cancel ────────────────────────────────
+
+def test_iter140_today_entries_filter_returns_only_quick_op(own_veh):
+    """GET /api/expenses?source_type=quick_op&date_from=&date_to= is the
+    exact call the Today's Entries strip makes."""
+    d = "2027-05-01"
+    _post_batch(date=d, category="Toll", entries=[{
+        "client_row_id": f"i140-t1-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "amount": 500}])
+    rows = requests.get(f"{API}/expenses", headers=H, params={
+        "source_type": "quick_op", "date_from": d, "date_to": d}, timeout=15).json()
+    assert any(r["source_type"] == "quick_op" and r["date"] == d for r in rows)
+    assert all(r["source_type"] == "quick_op" for r in rows)
+
+
+def test_iter140_source_type_filter_excludes_other_sources(own_veh):
+    """source_type filter must not leak in expenses with other origins
+    (manual / trip_legacy / etc.)."""
+    d = "2027-05-02"
+    _post_batch(date=d, category="Toll", entries=[{
+        "client_row_id": f"i140-t2-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "amount": 700}])
+    rows = requests.get(f"{API}/expenses", headers=H, params={
+        "source_type": "quick_op"}, timeout=15).json()
+    assert rows and all(r["source_type"] == "quick_op" for r in rows)
+
+
+def test_iter140_quick_diesel_edit_recalculates_amount(own_veh):
+    """PUT /expenses/{eid}/quick-diesel with new qty × rate updates
+    amount and narration server-side."""
+    ven = _mk_vendor("EditA")
+    r = _post_batch(date="2027-05-03", category="Diesel", entries=[{
+        "client_row_id": f"i140-de-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "qty": 100, "rate": 90.0,
+        "vendor_id": ven["id"], "filled_at": "Old station"}])
+    eid = r.json()["results"][0]["expense"]["id"]
+    up = requests.put(f"{API}/expenses/{eid}/quick-diesel", headers=H, json={
+        "qty": 200, "rate": 95.0,
+        "filled_at": "New station",
+        "vendor_id": ven["id"], "remarks": "corrected"}, timeout=15)
+    assert up.status_code == 200, up.text
+    doc = up.json()
+    assert abs(doc["amount"] - 19000.0) < 0.005
+    assert "200.0L @ ₹95.00" in doc["narration"]
+    assert "New station" in doc["narration"]
+
+
+def test_iter140_quick_diesel_edit_rejects_zero_qty_or_rate(own_veh):
+    ven = _mk_vendor("EditZero")
+    r = _post_batch(date="2027-05-04", category="Diesel", entries=[{
+        "client_row_id": f"i140-dz-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "qty": 50, "rate": 100.0,
+        "vendor_id": ven["id"]}])
+    eid = r.json()["results"][0]["expense"]["id"]
+    up = requests.put(f"{API}/expenses/{eid}/quick-diesel", headers=H, json={
+        "qty": 0, "rate": 95.0}, timeout=15)
+    assert up.status_code == 400
+    assert "qty and rate" in up.text.lower()
+
+
+def test_iter140_quick_diesel_edit_changes_vendor_link(own_veh):
+    """Editing vendor_id re-points party_type/party_id/party_name and
+    the record is now visible under the NEW vendor via the existing
+    party filter — old vendor no longer sees it."""
+    ven_a = _mk_vendor("EditVenA")
+    ven_b = _mk_vendor("EditVenB")
+    r = _post_batch(date="2027-05-05", category="Diesel", entries=[{
+        "client_row_id": f"i140-dv-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "qty": 100, "rate": 92.0,
+        "vendor_id": ven_a["id"]}])
+    eid = r.json()["results"][0]["expense"]["id"]
+    up = requests.put(f"{API}/expenses/{eid}/quick-diesel", headers=H, json={
+        "qty": 100, "rate": 92.0, "vendor_id": ven_b["id"]}, timeout=15)
+    assert up.status_code == 200
+    doc = up.json()
+    assert doc["party_type"] == "vendor"
+    assert doc["party_id"] == ven_b["id"]
+    # NEW vendor sees the row
+    rows_b = requests.get(f"{API}/expenses", headers=H, params={
+        "party_type": "vendor", "party_id": ven_b["id"]}, timeout=15).json()
+    assert any(x["id"] == eid for x in rows_b)
+    # OLD vendor no longer sees it
+    rows_a = requests.get(f"{API}/expenses", headers=H, params={
+        "party_type": "vendor", "party_id": ven_a["id"]}, timeout=15).json()
+    assert not any(x["id"] == eid for x in rows_a)
+
+
+def test_iter140_quick_diesel_edit_rejects_non_diesel(own_veh):
+    """quick-diesel edit rejects non-Diesel canonical Expenses."""
+    r = _post_batch(date="2027-05-06", category="Toll", entries=[{
+        "client_row_id": f"i140-nd-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "amount": 500}])
+    eid = r.json()["results"][0]["expense"]["id"]
+    up = requests.put(f"{API}/expenses/{eid}/quick-diesel", headers=H, json={
+        "qty": 100, "rate": 92.0}, timeout=15)
+    assert up.status_code == 400
+
+
+def test_iter140_cancel_soft_deletes_and_hides_from_active_views(own_veh):
+    """DELETE /expenses/{eid}?reason=… soft-cancels: hidden from Vehicle
+    Cost, Expense Register, Vendor-linked filter."""
+    ven = _mk_vendor("CancelA")
+    r = _post_batch(date="2027-05-07", category="Diesel", entries=[{
+        "client_row_id": f"i140-cx-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "qty": 150, "rate": 90.0,
+        "vendor_id": ven["id"]}])
+    eid = r.json()["results"][0]["expense"]["id"]
+    # Present before cancel
+    pre = requests.get(f"{API}/expenses", headers=H, params={
+        "vehicle_id": own_veh["id"], "date_from": "2027-05-07",
+        "date_to": "2027-05-07"}, timeout=15).json()
+    assert any(x["id"] == eid for x in pre)
+    # Cancel
+    d = requests.delete(f"{API}/expenses/{eid}", headers=H,
+                        params={"reason": "entered by mistake"}, timeout=15)
+    assert d.status_code == 200
+    # Vehicle-Cost view no longer sees it
+    post_vc = requests.get(f"{API}/expenses", headers=H, params={
+        "vehicle_id": own_veh["id"], "date_from": "2027-05-07",
+        "date_to": "2027-05-07"}, timeout=15).json()
+    assert not any(x["id"] == eid for x in post_vc)
+    # Vendor-linked view no longer sees it
+    post_ven = requests.get(f"{API}/expenses", headers=H, params={
+        "party_type": "vendor", "party_id": ven["id"]}, timeout=15).json()
+    assert not any(x["id"] == eid for x in post_ven)
+    # Today's Entries (default filter) no longer sees it
+    post_today = requests.get(f"{API}/expenses", headers=H, params={
+        "source_type": "quick_op", "date_from": "2027-05-07",
+        "date_to": "2027-05-07"}, timeout=15).json()
+    assert not any(x["id"] == eid for x in post_today)
+    # But include_cancelled surfaces it
+    post_incl = requests.get(f"{API}/expenses", headers=H, params={
+        "source_type": "quick_op", "date_from": "2027-05-07",
+        "date_to": "2027-05-07", "include_cancelled": True}, timeout=15).json()
+    assert any(x["id"] == eid and x.get("is_deleted") for x in post_incl)
+
+
+def test_iter140_cancel_does_not_create_vendor_bill_or_payment(own_veh):
+    """Cancelling a Diesel-with-Vendor Expense must NOT create VendorBill
+    or VendorPayment (Iter133 invariant preserved)."""
+    ven = _mk_vendor("CancelNoBP")
+    bills0 = requests.get(f"{API}/vendor-bills", headers=H, timeout=15).json()
+    pays0 = requests.get(f"{API}/vendors/{ven['id']}/payments",
+                         headers=H, timeout=15).json()
+    r = _post_batch(date="2027-05-08", category="Diesel", entries=[{
+        "client_row_id": f"i140-cnbp-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "qty": 200, "rate": 100.0,
+        "vendor_id": ven["id"]}])
+    eid = r.json()["results"][0]["expense"]["id"]
+    requests.delete(f"{API}/expenses/{eid}", headers=H,
+                    params={"reason": "mistake test"}, timeout=15)
+    bills1 = requests.get(f"{API}/vendor-bills", headers=H, timeout=15).json()
+    pays1 = requests.get(f"{API}/vendors/{ven['id']}/payments",
+                         headers=H, timeout=15).json()
+    assert len(bills0) == len(bills1)
+    assert len(pays0) == len(pays1)
+
+
+def test_iter140_cancel_does_not_touch_vendor_ledger(own_veh):
+    """Vendor Ledger totals must not shift when a Diesel Expense linked
+    to that vendor is cancelled."""
+    ven = _mk_vendor("CancelLedger")
+    l0 = requests.get(f"{API}/vendors/{ven['id']}/ledger",
+                      headers=H, timeout=15).json()
+    r = _post_batch(date="2027-05-09", category="Diesel", entries=[{
+        "client_row_id": f"i140-cle-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "qty": 100, "rate": 92.0,
+        "vendor_id": ven["id"]}])
+    eid = r.json()["results"][0]["expense"]["id"]
+    requests.delete(f"{API}/expenses/{eid}", headers=H,
+                    params={"reason": "ledger check"}, timeout=15)
+    l1 = requests.get(f"{API}/vendors/{ven['id']}/ledger",
+                      headers=H, timeout=15).json()
+    assert float(l1.get("opening_balance") or 0) == float(l0.get("opening_balance") or 0)
+    assert float(l1.get("total_debit") or 0) == float(l0.get("total_debit") or 0)
+    assert float(l1.get("total_credit") or 0) == float(l0.get("total_credit") or 0)
+    assert len(l1.get("entries") or []) == len(l0.get("entries") or [])
+
+
+def test_iter140_frontend_today_entries_edit_cancel_markers_present():
+    """Static guard — QuickOperationalExpense.jsx has the new Today's
+    Entries + Edit + Cancel markers."""
+    src = Path("/app/frontend/src/pages/QuickOperationalExpense.jsx").read_text(encoding="utf-8")
+    for needed in [
+        'data-testid="today-entries"',
+        'data-testid="today-entries-version"',
+        'data-testid="today-entries-empty"',
+        'data-testid="today-entries-total"',
+        'data-testid="today-entries-total-cell"',
+        'data-testid="today-entries-count"',
+        "today-entry-row-",
+        "today-entry-edit-",
+        "today-entry-cancel-",
+        'data-testid="edit-expense-modal"',
+        'data-testid="edit-diesel-qty"',
+        'data-testid="edit-diesel-rate"',
+        'data-testid="edit-diesel-amount"',
+        'testId="edit-diesel-vendor"',
+        'data-testid="edit-expense-save-btn"',
+        'data-testid="cancel-expense-modal"',
+        'data-testid="cancel-expense-reason"',
+        'data-testid="cancel-expense-confirm"',
+        'function TodayEntries',
+        'function EditExpenseModal',
+        'function CancelExpenseModal',
+        "/quick-diesel",
+        'source_type: "quick_op"',
+        "v140",
+    ]:
+        assert needed in src, f"QuickOperationalExpense.jsx missing marker: {needed}"
+
+
 # ── Iter139 follow-up · Vendor-linked Expense Log (visibility on Vendor page) ─
 
 def test_vendor_expense_log_returns_diesel_row(own_veh):

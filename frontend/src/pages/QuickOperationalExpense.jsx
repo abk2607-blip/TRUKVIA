@@ -1,9 +1,9 @@
 import React, { useMemo, useRef, useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/api";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { Plus, Trash2, Save, AlertTriangle } from "lucide-react";
+import { Plus, Trash2, Save, AlertTriangle, Pencil, X } from "lucide-react";
 
 /** Iter139 P0 · Quick Operational Expense — single-point daily entry.
  *  One Date + One Category + N (vehicle, amount) rows → N canonical Expense rows
@@ -40,11 +40,15 @@ const dieselNarration = (row, filled_at) => {
 
 export default function QuickOperationalExpense() {
   const today = new Date().toISOString().slice(0, 10);
+  const qc = useQueryClient();
   const [date, setDate] = useState(today);
   const [category, setCategory] = useState("Toll");
   const [tripId, setTripId] = useState("");
   const [rows, setRows] = useState(() => [{ id: rid(), vehicle_id: "", amount: "", remarks: "", supplier_settlement_mode: "" }]);
   const idemKey = useRef(`qob-${today}-${rid()}`);
+  // Iter140 · Edit / Cancel drawers for Recent Entries.
+  const [editing, setEditing] = useState(null);   // { doc } — the canonical Expense being edited
+  const [cancelling, setCancelling] = useState(null); // { doc, reason }
 
   const vehiclesQ = useQuery({
     queryKey: ["vehicles", "active"],
@@ -126,6 +130,8 @@ export default function QuickOperationalExpense() {
       }
       // Fresh idem key for the next submission (retry uses same key).
       idemKey.current = `qob-${date}-${rid()}`;
+      // Iter140 · Refresh the Today's Entries strip so the just-saved rows show up.
+      qc.invalidateQueries({ queryKey: ["quick-op-today", date] });
     },
     onError: (err) => toast.error(err?.response?.data?.detail || "Save failed"),
   });
@@ -409,6 +415,350 @@ export default function QuickOperationalExpense() {
           </div>
         </div>
       )}
+
+      {/* Iter140 · Today's Entries strip · reads canonical Expense (source_type='quick_op'). */}
+      <TodayEntries
+        date={date}
+        vendorsById={Object.fromEntries((vendors || []).map((v) => [v.id, v]))}
+        onEdit={(doc) => setEditing({ doc })}
+        onCancel={(doc) => setCancelling({ doc, reason: "" })}
+      />
+
+      {editing && (
+        <EditExpenseModal
+          doc={editing.doc}
+          vendorOptions={vendorOptions}
+          onClose={() => setEditing(null)}
+          onSaved={() => {
+            setEditing(null);
+            qc.invalidateQueries({ queryKey: ["quick-op-today"] });
+            toast.success("Expense updated");
+          }}
+        />
+      )}
+
+      {cancelling && (
+        <CancelExpenseModal
+          doc={cancelling.doc}
+          onClose={() => setCancelling(null)}
+          onCancelled={() => {
+            setCancelling(null);
+            qc.invalidateQueries({ queryKey: ["quick-op-today"] });
+            toast.success("Expense cancelled");
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Iter140 · Today's Entries strip ────────────────────────────────────────
+function TodayEntries({ date, vendorsById, onEdit, onCancel }) {
+  const q = useQuery({
+    queryKey: ["quick-op-today", date],
+    queryFn: async () => (await api.get("/expenses", { params: {
+      source_type: "quick_op", date_from: date, date_to: date,
+    }})).data,
+    staleTime: 5_000,
+    enabled: !!date,
+  });
+  const rows = Array.isArray(q.data) ? q.data : [];
+  const total = rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  const rowsSorted = useMemo(
+    () => [...rows].sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")),
+    [rows]
+  );
+  return (
+    <div className="bg-white border rounded-lg p-4 mt-6" data-testid="today-entries">
+      <div className="flex items-center gap-3 flex-wrap mb-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-700">
+          Today's Entries
+          <span className="ml-2 text-zinc-400 font-normal normal-case tracking-normal">
+            (Quick Op · {date} · source-of-truth Expense)
+          </span>
+          <span className="ml-2 text-[10px] text-zinc-300 font-normal normal-case"
+                data-testid="today-entries-version"
+                title="Bundle marker — Ctrl/Cmd+Shift+R if this stamp is missing.">v140</span>
+        </h2>
+        <div className="ml-auto text-xs text-zinc-600 flex gap-4">
+          <span data-testid="today-entries-count">Rows: {rows.length}</span>
+          <span data-testid="today-entries-total">Total: {fmt(total)}</span>
+        </div>
+      </div>
+      {q.isLoading ? (
+        <div className="text-zinc-400 text-sm">Loading…</div>
+      ) : rows.length === 0 ? (
+        <div className="text-zinc-400 text-sm" data-testid="today-entries-empty">
+          No quick-op entries for {date}.
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-zinc-50">
+              <tr className="text-left">
+                <th className="py-2 px-2">Time</th>
+                <th className="py-2 px-2">Category</th>
+                <th className="py-2 px-2">Vehicle</th>
+                <th className="py-2 px-2">Vendor</th>
+                <th className="py-2 px-2">Description</th>
+                <th className="py-2 px-2 text-right">Amount</th>
+                <th className="py-2 px-2 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rowsSorted.map((r, i) => (
+                <tr key={r.id} className="border-t"
+                    data-testid={`today-entry-row-${i}`}
+                    data-eid={r.id}>
+                  <td className="py-2 px-2 whitespace-nowrap text-xs text-zinc-500">
+                    {(r.created_at || "").slice(11, 16)}
+                  </td>
+                  <td className="py-2 px-2">{r.category}</td>
+                  <td className="py-2 px-2 font-mono text-xs">{r.vehicle_number || r.vehicle_id}</td>
+                  <td className="py-2 px-2 text-xs">
+                    {r.party_type === "vendor"
+                      ? (vendorsById[r.party_id]?.name || r.party_name || r.party_id)
+                      : <span className="text-zinc-400">—</span>}
+                  </td>
+                  <td className="py-2 px-2 text-zinc-600 text-xs">{r.narration || r.remarks || ""}</td>
+                  <td className="py-2 px-2 text-right tabular-nums"
+                      data-testid={`today-entry-amount-${i}`}>{fmt(r.amount)}</td>
+                  <td className="py-2 px-2 text-right whitespace-nowrap">
+                    <button
+                      onClick={() => onEdit(r)}
+                      className="text-xs text-indigo-700 hover:underline mr-3"
+                      data-testid={`today-entry-edit-${i}`}>
+                      <Pencil size={12} className="inline mr-1"/>Edit
+                    </button>
+                    <button
+                      onClick={() => onCancel(r)}
+                      className="text-xs text-rose-700 hover:underline"
+                      data-testid={`today-entry-cancel-${i}`}>
+                      <X size={12} className="inline mr-1"/>Cancel
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t bg-zinc-50">
+                <td colSpan={5} className="py-2 px-2 text-right font-semibold">Total</td>
+                <td className="py-2 px-2 text-right tabular-nums font-semibold"
+                    data-testid="today-entries-total-cell">{fmt(total)}</td>
+                <td/>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+      <p className="mt-3 text-[11px] text-zinc-400">
+        Reads canonical Expense with <code>source_type='quick_op'</code>. Edit
+        and Cancel update the SAME Expense — Vehicle Cost, Expense Register
+        and Vendor-linked view reflect the change immediately. Cancel is a
+        soft-delete: accounting history is preserved.
+      </p>
+    </div>
+  );
+}
+
+// ── Iter140 · Edit modal ───────────────────────────────────────────────────
+function EditExpenseModal({ doc, vendorOptions, onClose, onSaved }) {
+  const isDiesel = doc.category === "Diesel";
+  // Best-effort parse of qty / rate from the server-composed narration
+  //   "149.62L @ ₹104.25 · <filled_at> · <vendor>"
+  const parsed = useMemo(() => {
+    const m = /^(\d+(?:\.\d+)?)L\s*@\s*₹\s*(\d+(?:\.\d+)?)/.exec(doc.narration || "");
+    if (m) return { qty: parseFloat(m[1]), rate: parseFloat(m[2]) };
+    return { qty: "", rate: "" };
+  }, [doc.narration]);
+  const [qty, setQty] = useState(String(parsed.qty || ""));
+  const [rate, setRate] = useState(String(parsed.rate || ""));
+  const [filledAt, setFilledAt] = useState(() => {
+    // "qty×rate · filled_at · vendor"
+    const parts = (doc.narration || "").split(" · ");
+    return parts.length >= 2 ? parts[1] : "";
+  });
+  const [vendorId, setVendorId] = useState(doc.party_type === "vendor" ? (doc.party_id || "") : "");
+  const [amount, setAmount] = useState(String(doc.amount || ""));
+  const [remarks, setRemarks] = useState(doc.remarks || "");
+  const computedAmt = isDiesel
+    ? q2((parseFloat(qty) || 0) * (parseFloat(rate) || 0))
+    : (parseFloat(amount) || 0);
+
+  const save = useMutation({
+    mutationFn: async () => {
+      if (isDiesel) {
+        const { data } = await api.put(`/expenses/${doc.id}/quick-diesel`, {
+          qty: parseFloat(qty) || 0,
+          rate: parseFloat(rate) || 0,
+          filled_at: filledAt || "",
+          vendor_id: vendorId || "",
+          remarks: remarks || "",
+        });
+        return data;
+      }
+      // Non-Diesel — canonical PUT /expenses/{id}
+      const payload = { ...doc, amount: computedAmt, remarks };
+      const { data } = await api.put(`/expenses/${doc.id}`, payload);
+      return data;
+    },
+    onSuccess: onSaved,
+    onError: (e) => toast.error(e?.response?.data?.detail || "Update failed"),
+  });
+
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center pt-16"
+         data-testid="edit-expense-modal">
+      <div className="bg-white rounded-lg shadow-xl w-[min(640px,94vw)] max-h-[85vh] overflow-auto">
+        <div className="flex items-start justify-between gap-3 px-5 py-4 border-b">
+          <div>
+            <div className="font-semibold">Edit {doc.category} Expense</div>
+            <div className="text-xs text-zinc-500 mt-0.5">
+              {doc.date} · {doc.vehicle_number || doc.vehicle_id} · {doc.id}
+            </div>
+          </div>
+          <button onClick={onClose} className="text-zinc-400 hover:text-zinc-700"
+                  data-testid="edit-expense-close">×</button>
+        </div>
+        <div className="px-5 py-4 space-y-3 text-sm">
+          {isDiesel ? (
+            <>
+              <div className="grid grid-cols-3 gap-3">
+                <label className="text-xs">Qty (Ltrs)
+                  <input type="number" step="0.01" value={qty}
+                         onChange={(e) => setQty(e.target.value)}
+                         className="w-full border rounded px-2 py-1 mt-0.5"
+                         data-testid="edit-diesel-qty"/>
+                </label>
+                <label className="text-xs">Rate (₹)
+                  <input type="number" step="0.01" value={rate}
+                         onChange={(e) => setRate(e.target.value)}
+                         className="w-full border rounded px-2 py-1 mt-0.5"
+                         data-testid="edit-diesel-rate"/>
+                </label>
+                <label className="text-xs">Amount (server-authoritative)
+                  <input type="text" readOnly value={fmt(computedAmt)}
+                         tabIndex={-1}
+                         onKeyDown={(e) => e.preventDefault()}
+                         onPaste={(e) => e.preventDefault()}
+                         className="w-full border rounded px-2 py-1 mt-0.5 bg-zinc-50 cursor-not-allowed text-right tabular-nums"
+                         data-testid="edit-diesel-amount"/>
+                </label>
+              </div>
+              <label className="text-xs block">Filled At
+                <input type="text" value={filledAt}
+                       onChange={(e) => setFilledAt(e.target.value)}
+                       className="w-full border rounded px-2 py-1 mt-0.5"
+                       data-testid="edit-diesel-filled-at"/>
+              </label>
+              <div className="text-xs">
+                <div className="mb-0.5">Vendor</div>
+                <SearchableSelect
+                  testId="edit-diesel-vendor"
+                  placeholder="Vendor (optional) — search master…"
+                  emptyText="No vendors" allowClear
+                  value={vendorId}
+                  onChange={(v) => setVendorId(v)}
+                  options={vendorOptions}/>
+              </div>
+            </>
+          ) : (
+            <label className="text-xs block">Amount
+              <input type="number" step="0.01" value={amount}
+                     onChange={(e) => setAmount(e.target.value)}
+                     className="w-full border rounded px-2 py-1 mt-0.5"
+                     data-testid="edit-nondiesel-amount"/>
+            </label>
+          )}
+          <label className="text-xs block">Remarks
+            <textarea rows={2} value={remarks}
+                      onChange={(e) => setRemarks(e.target.value)}
+                      className="w-full border rounded px-2 py-1 mt-0.5"
+                      data-testid="edit-remarks"/>
+          </label>
+        </div>
+        <div className="flex justify-end gap-2 px-5 py-3 border-t bg-zinc-50">
+          <button onClick={onClose} className="px-3 py-1.5 border rounded text-sm"
+                  data-testid="edit-expense-cancel-btn">Cancel</button>
+          <button onClick={() => save.mutate()}
+                  disabled={save.isPending}
+                  className="px-3 py-1.5 bg-zinc-900 text-white rounded text-sm disabled:opacity-40"
+                  data-testid="edit-expense-save-btn">
+            {save.isPending ? "Saving…" : "Save Changes"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Iter140 · Cancel modal ─────────────────────────────────────────────────
+function CancelExpenseModal({ doc, onClose, onCancelled }) {
+  const [reason, setReason] = useState("");
+  const del = useMutation({
+    mutationFn: async () => {
+      const r = (reason || "").trim();
+      if (r.length < 3) throw new Error("Please enter a cancellation reason (min 3 chars).");
+      const { data } = await api.delete(`/expenses/${doc.id}`,
+        { params: { reason: r } });
+      return data;
+    },
+    onSuccess: onCancelled,
+    onError: (e) => toast.error(e?.response?.data?.detail || e?.message || "Cancel failed"),
+  });
+  return (
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-start justify-center pt-24"
+         data-testid="cancel-expense-modal">
+      <div className="bg-white rounded-lg shadow-xl w-[min(500px,92vw)]">
+        <div className="flex items-start gap-3 px-5 py-4 border-b bg-rose-50">
+          <AlertTriangle className="text-rose-600 mt-0.5" size={20}/>
+          <div>
+            <div className="font-semibold text-rose-900">Cancel this expense?</div>
+            <div className="text-xs text-rose-800 mt-1">
+              Soft-cancel (accounting history is preserved). Vehicle Cost,
+              Expense Register and Vendor-linked view will hide it.
+            </div>
+          </div>
+        </div>
+        <div className="px-5 py-3 text-sm space-y-2">
+          <div>
+            <div className="text-[11px] uppercase text-zinc-500">Category</div>
+            <div className="font-medium">{doc.category}</div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <div className="text-[11px] uppercase text-zinc-500">Vehicle</div>
+              <div>{doc.vehicle_number || doc.vehicle_id}</div>
+            </div>
+            <div>
+              <div className="text-[11px] uppercase text-zinc-500">Amount</div>
+              <div>{fmt(doc.amount)}</div>
+            </div>
+          </div>
+          {doc.party_type === "vendor" && (
+            <div>
+              <div className="text-[11px] uppercase text-zinc-500">Vendor</div>
+              <div>{doc.party_name || doc.party_id}</div>
+            </div>
+          )}
+          <label className="block text-xs pt-1">Reason (mandatory, min 3 chars)
+            <input type="text" value={reason}
+                   onChange={(e) => setReason(e.target.value)}
+                   className="w-full border rounded px-2 py-1 mt-0.5"
+                   data-testid="cancel-expense-reason"/>
+          </label>
+        </div>
+        <div className="flex justify-end gap-2 px-5 py-3 border-t bg-zinc-50">
+          <button onClick={onClose} className="px-3 py-1.5 border rounded text-sm"
+                  data-testid="cancel-expense-close">Keep it</button>
+          <button onClick={() => del.mutate()}
+                  disabled={del.isPending || (reason || "").trim().length < 3}
+                  className="px-3 py-1.5 bg-rose-600 text-white rounded text-sm disabled:opacity-40"
+                  data-testid="cancel-expense-confirm">
+            {del.isPending ? "Cancelling…" : "Cancel Expense"}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

@@ -70,6 +70,44 @@ READ-ONLY DISCOVERY of:
 
 
 
+## Iter140 · Quick Op Today's Entries + Edit + Cancel — IMPLEMENTED / READY FOR UAT — 2026-09-04
+
+**Status: IMPLEMENTED. NOT LOCKED — awaiting operator UAT.**
+Focused regression: 200/200 PASS band. Zero new collection. Zero
+schema change. Reuses canonical Expense edit / soft-cancel.
+Diesel amount authority is preserved on edit.
+
+### Discovery gate — CASE A (zero schema change, zero new collection)
+- `PUT /api/expenses/{eid}` (canonical edit — reused as-is for non-Diesel).
+- `DELETE /api/expenses/{eid}?reason=…` (canonical soft-cancel — reused).
+- `GET /api/expenses` gained two additive query params (**not breaking**):
+  - `source_type` — used by the Today's Entries strip.
+  - `include_cancelled` — surfaces cancelled rows without changing default projections.
+- New Diesel-safe edit endpoint: `PUT /api/expenses/{eid}/quick-diesel` — computes `amount = q2(qty × rate)` server-side, resolves optional `vendor_id`, re-composes narration. NO schema change, NO VendorBill/VendorPayment side-effect.
+
+### Files changed
+- `/app/backend/routers/expenses.py` — `source_type` + `include_cancelled` params on `list_expenses`; new `update_quick_diesel_expense` endpoint (+65 lines).
+- `/app/frontend/src/pages/QuickOperationalExpense.jsx` — Today's Entries strip (`data-testid="today-entries"` etc), Edit modal (`data-testid="edit-expense-modal"`), Cancel modal (`data-testid="cancel-expense-modal"`), version stamp `v140`. Invalidates `["quick-op-today", date]` on save/edit/cancel.
+- `/app/backend/tests/test_iter139_quick_operational.py` — 10 new Iter140 tests.
+
+### Behaviour
+- **After Save**: toast "N created", entry form resets, the Today's Entries strip auto-refreshes and shows the new rows.
+- **Edit (Diesel)**: qty/rate re-editable, amount computed & read-only, Filled At and Vendor editable; server writes back to the same canonical Expense.
+- **Edit (non-Diesel)**: amount + remarks editable via canonical `PUT /expenses/{id}`.
+- **Cancel**: mandatory reason (min 3 chars) → soft-delete. Row disappears from Vehicle Cost / Expense Register / Vendor-linked / Today's Entries (default); reappears with `include_cancelled=true`.
+
+### Accounting invariants (all guarded by focused tests)
+- No VendorBill / VendorPayment ever created on save, edit, or cancel.
+- Vendor Ledger (Bills+Payments) totals & entries unchanged after cancel.
+- Vehicle Cost & Expense Register hide cancelled rows automatically.
+- Diesel amount cannot be overridden on edit (backend recomputes; qty/rate ≤ 0 → 400).
+
+### Regression totals
+- Focused `test_iter139_quick_operational.py` — 74 / 74 PASS.
+- Full band Iter133/134/135/135A/136/137A/139 (serial `-n0`) — 200 / 200 PASS.
+
+
+
 ## Iter139 UAT RCA · Vendor-linked Expense visibility "empty" report — 2026-09-04
 
 **Reported symptom**: 3 UAT Diesel entries with Vendor `VARMA FILLING STATION KALLURU` succeeded (created 3, duplicate 0, failed 0), but the Vendor page (both classical Ledger + Vendor-linked Expenses card) showed no rows.
