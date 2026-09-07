@@ -369,48 +369,47 @@ def test_duplicate_warning_ui_present():
 # ── Iter139 UAT UX · Diesel row (qty × rate = amount, Filled At, Vendor) ───
 
 def test_diesel_amount_calculated_from_qty_x_rate(own_veh):
-    """Backend accepts calculated amount from the client (320 × 92.50)."""
+    """Server computes Diesel amount authoritatively from qty × rate."""
     r = _post_batch(date="2026-11-01", category="Diesel", entries=[{
         "client_row_id": f"d1-{uuid.uuid4().hex[:6]}",
         "vehicle_id": own_veh["id"],
-        "amount": 320 * 92.50,
-        "narration": "320L @ ₹92.50 · IOC Vijayawada"}])
+        "qty": 320, "rate": 92.50}])
     assert r.status_code == 200, r.text
     doc = r.json()["results"][0]["expense"]
     assert doc["category"] == "Diesel"
     assert abs(doc["amount"] - 29600.0) < 0.005
-    assert "320L" in (doc.get("narration") or "")
-    assert "IOC Vijayawada" in (doc.get("narration") or "")
+    assert "320" in (doc.get("narration") or "")
+    assert "92.50" in (doc.get("narration") or "")
 
 
 def test_diesel_zero_amount_row_failed(own_veh):
-    """Amount 0 (missing qty or rate) fails at row level."""
+    """Missing qty (or rate) fails at row level with the new code."""
     r = _post_batch(date="2026-11-02", category="Diesel", entries=[{
         "client_row_id": f"d0-{uuid.uuid4().hex[:6]}",
-        "vehicle_id": own_veh["id"], "amount": 0}])
-    assert r.json()["results"][0]["error"]["code"] == "INVALID_AMOUNT"
+        "vehicle_id": own_veh["id"], "qty": 0, "rate": 92.50}])
+    assert r.json()["results"][0]["error"]["code"] == "INVALID_DIESEL_QTY_RATE"
 
 
 def test_diesel_narration_preserves_vendor_and_station(own_veh):
-    """Narration is free-text and passes through unaltered — this is
-    how Filled At + Vendor are carried without schema change."""
+    """Server composes narration from qty/rate + filled_at + vendor name —
+    this is how Filled At + Vendor are carried without schema change."""
     r = _post_batch(date="2026-11-03", category="Diesel", entries=[{
         "client_row_id": f"dv-{uuid.uuid4().hex[:6]}",
-        "vehicle_id": own_veh["id"], "amount": 9250,
-        "narration": "100L @ ₹92.50 · IOC Vijayawada Auto Nagar · Indian Oil Corporation"}])
+        "vehicle_id": own_veh["id"], "qty": 100, "rate": 92.50,
+        "filled_at": "IOC Vijayawada Auto Nagar"}])
     doc = r.json()["results"][0]["expense"]
-    assert "Indian Oil Corporation" in doc["narration"]
-    assert "IOC Vijayawada" in doc["narration"]
+    assert "IOC Vijayawada Auto Nagar" in doc["narration"]
+    assert "100" in doc["narration"]
 
 
 def test_diesel_does_not_create_vendor_payable(own_veh):
-    """Free-text vendor attribution in narration must never create a
-    VendorBill or VendorPayment (Iter135 invariant)."""
+    """Diesel expense — with or without Vendor selection — must never
+    create a VendorBill or VendorPayment (Iter135 invariant)."""
     before_b = requests.get(f"{API}/vendor-bills", headers=H, timeout=15).json()
     _post_batch(date="2026-11-04", category="Diesel", entries=[{
         "client_row_id": f"dnp-{uuid.uuid4().hex[:6]}",
-        "vehicle_id": own_veh["id"], "amount": 5000,
-        "narration": "50L @ ₹100 · BPC · Bharat Petroleum"}])
+        "vehicle_id": own_veh["id"], "qty": 50, "rate": 100.0,
+        "filled_at": "BPC"}])
     after_b = requests.get(f"{API}/vendor-bills", headers=H, timeout=15).json()
     assert len(before_b) == len(after_b)
 
@@ -421,8 +420,7 @@ def test_diesel_duplicate_detection_uses_calculated_amount(own_veh):
     d = "2026-11-05"
     _post_batch(date=d, category="Diesel", entries=[{
         "client_row_id": f"dup-{uuid.uuid4().hex[:6]}",
-        "vehicle_id": own_veh["id"], "amount": 320 * 92.50,
-        "narration": "320L @ ₹92.50"}])
+        "vehicle_id": own_veh["id"], "qty": 320, "rate": 92.50}])
     lst = requests.get(f"{API}/expenses", headers=H, params={
         "vehicle_id": own_veh["id"], "category": "Diesel",
         "date_from": d, "date_to": d}, timeout=15).json()
@@ -440,10 +438,175 @@ def test_diesel_frontend_layout_present():
         "quick-expense-row-${i}-vendor",
         "isDiesel",
         "computedAmount",
-        "dieselNarration",
         "readOnly value={fmt(computedAmount",
     ]:
         assert needed in src, f"QuickOperationalExpense.jsx missing marker: {needed}"
+
+
+# ── Iter139 UAT #2 · Diesel amount LOCK + Vendor MASTER link ────────────────
+
+def _mk_vendor(name_prefix="DieselVen"):
+    body = {"name": f"{name_prefix}-{uuid.uuid4().hex[:8]}"}
+    r = requests.post(f"{API}/vendors", headers=H, json=body, timeout=15)
+    assert r.status_code in (200, 201), r.text
+    return r.json()
+
+
+def test_diesel_amount_computed_server_when_no_amount_sent(own_veh):
+    """No `amount` in payload — server computes from qty × rate."""
+    r = _post_batch(date="2026-11-10", category="Diesel", entries=[{
+        "client_row_id": f"noamt-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "qty": 150, "rate": 92.50}])
+    doc = r.json()["results"][0]["expense"]
+    assert abs(doc["amount"] - 13875.0) < 0.005
+
+
+def test_diesel_amount_tampered_rejected(own_veh):
+    """Client sends `amount` that disagrees with qty × rate → row rejected."""
+    r = _post_batch(date="2026-11-11", category="Diesel", entries=[{
+        "client_row_id": f"tamp-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"],
+        "qty": 100, "rate": 92.50, "amount": 12345.67}])
+    res = r.json()["results"][0]
+    assert res["status"] == "failed"
+    assert res["error"]["code"] == "AMOUNT_TAMPERED"
+
+
+def test_diesel_missing_rate_rejected(own_veh):
+    """Missing rate → row rejected with the qty/rate code."""
+    r = _post_batch(date="2026-11-12", category="Diesel", entries=[{
+        "client_row_id": f"norate-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "qty": 150}])
+    assert r.json()["results"][0]["error"]["code"] == "INVALID_DIESEL_QTY_RATE"
+
+
+def test_diesel_vendor_id_persisted_as_party_reference(own_veh):
+    """Selected Vendor is persisted as party_type='vendor', party_id=<vid>,
+    party_name=<vendor.name> — REUSES existing Expense schema."""
+    ven = _mk_vendor()
+    r = _post_batch(date="2026-11-13", category="Diesel", entries=[{
+        "client_row_id": f"ven-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "qty": 100, "rate": 92.50,
+        "vendor_id": ven["id"]}])
+    doc = r.json()["results"][0]["expense"]
+    assert doc["party_type"] == "vendor"
+    assert doc["party_id"] == ven["id"]
+    assert doc["party_name"] == ven["name"]
+    # narration composed with vendor name appended.
+    assert ven["name"] in (doc.get("narration") or "")
+
+
+def test_diesel_vendor_link_visible_via_expense_party_filter(own_veh):
+    """Existing GET /api/expenses?party_type=vendor&party_id=<vid> already
+    supports Vendor-linked Expense visibility — no new endpoint needed."""
+    ven = _mk_vendor()
+    _post_batch(date="2026-11-14", category="Diesel", entries=[{
+        "client_row_id": f"venv-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "qty": 200, "rate": 90.0,
+        "vendor_id": ven["id"]}])
+    lst = requests.get(f"{API}/expenses", headers=H, params={
+        "party_type": "vendor", "party_id": ven["id"]}, timeout=15).json()
+    assert any(e["party_id"] == ven["id"] and e["category"] == "Diesel"
+               and abs(e["amount"] - 18000.0) < 0.005 for e in lst)
+
+
+def test_diesel_vendor_link_does_not_create_vendor_bill_or_payment(own_veh):
+    """Linking a Vendor to a Diesel Expense must NOT create a payable
+    (no VendorBill, no VendorPayment) — Iter133 invariant preserved."""
+    ven = _mk_vendor()
+    bills_before = requests.get(f"{API}/vendor-bills", headers=H, timeout=15).json()
+    pays_before = requests.get(f"{API}/vendors/{ven['id']}/payments",
+                               headers=H, timeout=15).json()
+    _post_batch(date="2026-11-15", category="Diesel", entries=[{
+        "client_row_id": f"vnp-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "qty": 100, "rate": 100.0,
+        "vendor_id": ven["id"]}])
+    bills_after = requests.get(f"{API}/vendor-bills", headers=H, timeout=15).json()
+    pays_after = requests.get(f"{API}/vendors/{ven['id']}/payments",
+                              headers=H, timeout=15).json()
+    assert len(bills_before) == len(bills_after)
+    assert len(pays_before) == len(pays_after)
+
+
+def test_diesel_vendor_link_does_not_affect_vendor_ledger(own_veh):
+    """Vendor Ledger (Bills+Payments) DEBIT/CREDIT rows must stay unchanged
+    when a Diesel Expense links to that vendor — no double count."""
+    ven = _mk_vendor()
+    l0 = requests.get(f"{API}/vendors/{ven['id']}/ledger",
+                      headers=H, timeout=15).json()
+    open0 = float(l0.get("opening_balance") or 0)
+    entries0 = len(l0.get("entries") or [])
+    close0 = float(l0.get("closing_balance") or 0)
+    _post_batch(date="2026-11-16", category="Diesel", entries=[{
+        "client_row_id": f"vled-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "qty": 500, "rate": 95.0,
+        "vendor_id": ven["id"]}])
+    l1 = requests.get(f"{API}/vendors/{ven['id']}/ledger",
+                      headers=H, timeout=15).json()
+    assert float(l1.get("opening_balance") or 0) == open0
+    assert len(l1.get("entries") or []) == entries0
+    assert float(l1.get("closing_balance") or 0) == close0
+
+
+def test_diesel_vendor_not_found_row_failed(own_veh):
+    """Non-existent vendor_id → row-level VENDOR_NOT_FOUND, batch continues."""
+    r = _post_batch(date="2026-11-17", category="Diesel", entries=[{
+        "client_row_id": f"vnf-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "qty": 50, "rate": 90.0,
+        "vendor_id": "ven_does_not_exist"}])
+    res = r.json()["results"][0]
+    assert res["status"] == "failed"
+    assert res["error"]["code"] == "VENDOR_NOT_FOUND"
+
+
+def test_diesel_vendor_optional_still_defaults_to_cash(own_veh):
+    """No vendor_id supplied → Expense stays party_type='cash', party_id=''."""
+    r = _post_batch(date="2026-11-18", category="Diesel", entries=[{
+        "client_row_id": f"nov-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "qty": 40, "rate": 100.0}])
+    doc = r.json()["results"][0]["expense"]
+    assert doc["party_type"] == "cash"
+    assert doc["party_id"] == ""
+
+
+def test_diesel_vehicle_cost_still_reflects_diesel_expense_once(own_veh):
+    """Vehicle Cost must include the canonical Diesel Expense EXACTLY once
+    — no double counting when vendor is linked."""
+    ven = _mk_vendor()
+    d = "2026-11-19"
+    _post_batch(date=d, category="Diesel", entries=[{
+        "client_row_id": f"vc1-{uuid.uuid4().hex[:6]}",
+        "vehicle_id": own_veh["id"], "qty": 100, "rate": 90.0,
+        "vendor_id": ven["id"]}])
+    lst = requests.get(f"{API}/expenses", headers=H, params={
+        "vehicle_id": own_veh["id"], "category": "Diesel",
+        "date_from": d, "date_to": d}, timeout=15).json()
+    matches = [e for e in lst if abs(e["amount"] - 9000.0) < 0.005]
+    assert len(matches) == 1
+
+
+def test_diesel_frontend_amount_hardened_readonly():
+    """Static guard — Diesel amount input is not just readOnly; paste,
+    keydown, and copy are also intercepted so the user cannot force a
+    typed / pasted amount override."""
+    src = Path("/app/frontend/src/pages/QuickOperationalExpense.jsx").read_text(encoding="utf-8")
+    for needed in [
+        "onKeyDown={(e) => e.preventDefault()}",
+        "onPaste={(e) => e.preventDefault()}",
+        "cursor-not-allowed",
+    ]:
+        assert needed in src, f"QuickOperationalExpense.jsx missing amount-lock marker: {needed}"
+
+
+def test_diesel_frontend_vendor_uses_searchable_select():
+    """Static guard — Diesel row uses SearchableSelect bound to
+    /api/vendors, NOT a free-text input."""
+    src = Path("/app/frontend/src/pages/QuickOperationalExpense.jsx").read_text(encoding="utf-8")
+    assert 'testId={`quick-expense-row-${i}-vendor`}' in src
+    assert "vendorOptions" in src
+    assert 'queryKey: ["vendors"' in src
+    # Free-text vendor input must be gone.
+    assert 'placeholder="Vendor (optional, free text)"' not in src
 
 def _mk_supplier_vehicle():
     """Create a supplier + supplier-owned vehicle and return both."""

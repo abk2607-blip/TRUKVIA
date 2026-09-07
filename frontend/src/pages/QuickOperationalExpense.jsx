@@ -54,6 +54,21 @@ export default function QuickOperationalExpense() {
   const vehicles = vehiclesQ.data || [];
   const vehById = useMemo(() => Object.fromEntries(vehicles.map((v) => [v.id, v])), [vehicles]);
 
+  // Iter139 UAT #2 · Vendor master for Diesel selector (searchable).
+  const vendorsQ = useQuery({
+    queryKey: ["vendors", "active"],
+    queryFn: async () => (await api.get("/vendors", { params: { active_only: true } })).data,
+    staleTime: 60_000,
+    enabled: category === "Diesel",
+  });
+  const vendors = vendorsQ.data || [];
+  const vendorOptions = useMemo(() => vendors.map((v) => ({
+    value: v.id,
+    label: v.name || v.id,
+    secondary: [v.city, v.mobile].filter(Boolean).join(" · "),
+    keywords: [v.name, v.mobile, v.contact_person, v.city].filter(Boolean),
+  })), [vendors]);
+
   const vehicleOptions = useMemo(() => vehicles.map((v) => ({
     value: v.id, label: v.vehicle_number || v.id,
     secondary: (v.vehicle_type || "").toLowerCase() === "supplier"
@@ -71,11 +86,23 @@ export default function QuickOperationalExpense() {
       const isDiesel = category === "Diesel";
       const entries = rowsToSubmit.map((r) => {
         const amt = computedAmount(r, category);
-        const narration = isDiesel ? dieselNarration(r, r.filled_at) : "";
+        if (isDiesel) {
+          // Iter139 UAT #2 · Send qty/rate/vendor_id — server is authoritative for amount + narration.
+          return {
+            client_row_id: r.id, vehicle_id: r.vehicle_id,
+            qty: parseFloat(r.qty) || 0,
+            rate: parseFloat(r.rate) || 0,
+            filled_at: r.filled_at || "",
+            vendor_id: r.vendor_id || "",
+            amount: amt, // sent for the server tamper-check only
+            remarks: r.remarks || "",
+            supplier_settlement_mode: r.supplier_settlement_mode || "",
+          };
+        }
         return {
           client_row_id: r.id, vehicle_id: r.vehicle_id,
           amount: amt, remarks: r.remarks || "",
-          narration,
+          narration: "",
           supplier_settlement_mode: r.supplier_settlement_mode || "",
         };
       });
@@ -235,7 +262,10 @@ export default function QuickOperationalExpense() {
                                data-testid={`quick-expense-row-${i}-rate`}/>
                         <input type="text" readOnly value={fmt(computedAmount(r, category))}
                                tabIndex={-1}
-                               className="w-full border rounded px-2 py-1 text-right tabular-nums bg-zinc-50 text-zinc-700"
+                               onKeyDown={(e) => e.preventDefault()}
+                               onPaste={(e) => e.preventDefault()}
+                               onCopy={(e) => e.preventDefault()}
+                               className="w-full border rounded px-2 py-1 text-right tabular-nums bg-zinc-50 text-zinc-700 cursor-not-allowed select-none"
                                data-testid={`quick-expense-row-${i}-amount`}/>
                       </div>
                     ) : (
@@ -253,11 +283,15 @@ export default function QuickOperationalExpense() {
                                placeholder="Filled at (station / location) — optional"
                                className="w-full border rounded px-2 py-1 mb-1"
                                data-testid={`quick-expense-row-${i}-filled-at`}/>
-                        <input value={r.vendor_name || ""}
-                               onChange={(e) => patchRow(r.id, { vendor_name: e.target.value })}
-                               placeholder="Vendor (optional, free text)"
-                               className="w-full border rounded px-2 py-1 mb-1 text-xs"
-                               data-testid={`quick-expense-row-${i}-vendor`}/>
+                        <div className="mb-1">
+                          <SearchableSelect
+                            testId={`quick-expense-row-${i}-vendor`}
+                            placeholder="Vendor (optional) — search master…"
+                            emptyText="No vendors" allowClear
+                            value={r.vendor_id || ""}
+                            onChange={(v) => patchRow(r.id, { vendor_id: v })}
+                            options={vendorOptions}/>
+                        </div>
                       </>
                     )}
                     <input value={r.remarks} onChange={(e) => patchRow(r.id, { remarks: e.target.value })}

@@ -69,6 +69,102 @@ READ-ONLY DISCOVERY of:
 ---
 
 
+
+## Iter139 UAT FIX #2 · Diesel Amount Lock + Vendor Master Link — IMPLEMENTED / READY FOR UAT — 2026-09-04
+
+**Status: IMPLEMENTED. NOT LOCKED — awaiting operator UAT.**
+Focused regression: **204 / 204 PASS** serially across Iter133 / 134 /
+135 / 135A / 136 / 137A / 139 (`-n0` in 44 s). Zero schema change,
+zero new collection, zero VendorBill / VendorPayment side-effect,
+zero Vendor Ledger read-model change.
+
+### Discovery gate result — **CASE A**
+Existing `Expense.party_type` (`Literal[...,'vendor',...]`) +
+`Expense.party_id` + `Expense.party_name` are the canonical Vendor
+reference fields. `_validate_and_normalise` already resolves
+`party_type='vendor' + party_id → db.vendors` (`routers/expenses.py:126-137`).
+`GET /api/expenses?party_type=vendor&party_id=<vid>` already lists all
+Vendor-linked Expenses. Vendor Ledger (`services_party_ledger`) reads
+ONLY `vendor_bills` + `vendor_payments` — no Expense read — preserving
+the Iter133 report-source map.
+
+### What changed
+**1. Diesel amount is now backend-authoritative.**
+Quick-Op batch for `category='Diesel'` requires `qty > 0` **and**
+`rate > 0` per entry. Server computes `amount = q2(qty × rate)` and
+rejects a client-sent `amount` that disagrees (> 0.01 tolerance) with
+row-level `AMOUNT_TAMPERED`. Non-Diesel categories keep the
+client-typed amount path — unchanged.
+
+**2. Diesel Vendor uses the existing Vendor master.**
+Per-entry optional `vendor_id` is looked up in `db.vendors` (tenant +
+active). When present, the Expense is persisted with
+`party_type='vendor', party_id=<vid>, party_name=<vendor.name>` —
+**reusing** the schema field set already validated by
+`_validate_and_normalise`. Non-existent → `VENDOR_NOT_FOUND`;
+inactive → `VENDOR_INACTIVE`.
+
+**3. Narration is server-composed for Diesel.**
+`"{qty}L @ ₹{rate:.2f}"` + optional " · {filled_at}" + optional
+" · {vendor.name}" — capped at 400 chars. Client `narration` for
+Diesel is ignored (server authoritative).
+
+**4. Zero payable / ledger side-effect.**
+Selecting a Vendor on a Diesel Expense does NOT create VendorBill or
+VendorPayment. `Vendor Ledger` (Bills+Payments) opening / entries /
+closing are unchanged after a Diesel Expense with vendor link — a
+test explicitly proves this.
+
+### Files changed
+- **Modified** — `/app/backend/services_quick_expense.py`
+  (Diesel branch: qty/rate authoritative + vendor_id linkage +
+   server-composed narration; pre-check `amt_raw<=0` now skipped for
+   Diesel because qty/rate check enforces it).
+- **Modified** — `/app/frontend/src/pages/QuickOperationalExpense.jsx`
+  (vendors `useQuery` gated on Diesel; free-text Vendor input
+   replaced with `SearchableSelect` bound to the Vendor master;
+   amount input hardened with `onKeyDown` / `onPaste` / `onCopy` =
+   `preventDefault()` + `cursor-not-allowed select-none`; save
+   mutation sends `qty`, `rate`, `filled_at`, `vendor_id` for Diesel).
+- **Modified** — `/app/backend/tests/test_iter139_quick_operational.py`
+  (existing 6 Diesel tests aligned to new payload contract; +12 new
+   tests: `test_diesel_amount_computed_server_when_no_amount_sent`,
+   `test_diesel_amount_tampered_rejected`,
+   `test_diesel_missing_rate_rejected`,
+   `test_diesel_vendor_id_persisted_as_party_reference`,
+   `test_diesel_vendor_link_visible_via_expense_party_filter`,
+   `test_diesel_vendor_link_does_not_create_vendor_bill_or_payment`,
+   `test_diesel_vendor_link_does_not_affect_vendor_ledger`,
+   `test_diesel_vendor_not_found_row_failed`,
+   `test_diesel_vendor_optional_still_defaults_to_cash`,
+   `test_diesel_vehicle_cost_still_reflects_diesel_expense_once`,
+   `test_diesel_frontend_amount_hardened_readonly`,
+   `test_diesel_frontend_vendor_uses_searchable_select`).
+
+### Contract summary — Diesel entry payload (batch endpoint)
+```
+{ client_row_id, vehicle_id,
+  qty, rate,               # required, both > 0
+  filled_at?, vendor_id?,  # optional
+  amount?,                 # optional — rejected if disagrees with qty × rate
+  remarks?, supplier_settlement_mode? }
+```
+
+### Manual UAT — Diesel Amount Lock + Vendor Master
+A. `/expenses/quick` → Category = **Diesel** → row shows Vehicle | Qty | Rate | **Amount (read-only, cursor-not-allowed)** | Filled At | Vendor.
+B. Cannot type, paste, copy, or override Amount. Editing Qty or Rate immediately recomputes Amount.
+C. Vendor field is a searchable dropdown listing existing Vendor master (`GET /api/vendors?active_only=true`). Search by name, mobile, contact, or city.
+D. Select existing Vendor → Save → Expense created with `party_type='vendor', party_id=<vid>, party_name=<name>`.
+E. `/api/expenses?party_type=vendor&party_id=<vid>` returns the Diesel Expense — Vendor account visibility works via the existing endpoint.
+F. Vendor Ledger (Debit/Credit) unchanged: no new bill row, no new payment row.
+G. Server tamper protection: any manually crafted payload with mismatched `amount` returns `AMOUNT_TAMPERED`.
+
+### Regression totals
+- Focused `test_iter139_quick_operational.py` — **56 / 56 PASS**.
+- Iter133 + 134 + 135 + 135A + 136 + 137A + 139 (serial `-n0`) — **204 / 204 PASS** in ~44 s.
+- Frontend build — clean (only pre-existing eslint hook warnings).
+
+
 ## Iter139 P0 · Quick Operational Expense — IMPLEMENTED / READY FOR UAT — 2026-09-04
 
 **Status: IMPLEMENTED. NOT LOCKED — awaiting operator UAT.**

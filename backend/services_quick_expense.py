@@ -100,7 +100,9 @@ async def bulk_create_operational_expenses(uid: str, cid: str, user: dict,
         if not row_id:
             base["error"] = {"code": "INVALID_ROW", "detail": "client_row_id is required"}
             results.append(base); failed += 1; continue
-        if amt_raw <= 0:
+        # Diesel derives amount from qty × rate — skip the pre-check here
+        # and enforce via INVALID_DIESEL_QTY_RATE inside the Diesel branch.
+        if amt_raw <= 0 and category != "Diesel":
             base["error"] = {"code": "INVALID_AMOUNT", "detail": "amount must be > 0"}
             results.append(base); failed += 1; continue
         if not vid:
@@ -132,6 +134,66 @@ async def bulk_create_operational_expenses(uid: str, cid: str, user: dict,
         else:
             derived_owned, derived_mode = False, "n/a"
 
+        # ── Iter139 UAT #2 · Diesel — server-authoritative amount + Vendor link ──
+        #  • Amount is computed strictly from qty × rate; a client-supplied
+        #    `amount` that disagrees is rejected (AMOUNT_TAMPERED). Non-Diesel
+        #    rows are untouched.
+        #  • Optional `vendor_id` is resolved against the existing Vendor
+        #    master. When present, the row is persisted with
+        #    party_type='vendor', party_id=<vid>, party_name=<name>.
+        #    This reuses the field set already validated by
+        #    `_validate_and_normalise` (routers/expenses.py) — NO schema
+        #    change, NO VendorBill / VendorPayment side-effect, Vendor
+        #    Ledger (Bills+Payments) unaffected.
+        narration_override = None
+        party_link = {"party_type": "cash", "party_id": "", "party_name": ""}
+        if category == "Diesel":
+            try:
+                qty = float((e or {}).get("qty") or 0)
+            except Exception:
+                qty = 0.0
+            try:
+                rate = float((e or {}).get("rate") or 0)
+            except Exception:
+                rate = 0.0
+            if qty <= 0 or rate <= 0:
+                base["error"] = {"code": "INVALID_DIESEL_QTY_RATE",
+                                 "detail": "qty and rate must both be > 0 for Diesel"}
+                results.append(base); failed += 1; continue
+            server_amount = _q2(qty * rate)
+            if amt_raw and abs(amt_raw - server_amount) > 0.01:
+                base["error"] = {"code": "AMOUNT_TAMPERED",
+                                 "detail": f"amount ({amt_raw}) does not match qty × rate ({server_amount})"}
+                results.append(base); failed += 1; continue
+            amt_raw = server_amount
+
+            vid_link = ((e or {}).get("vendor_id") or "").strip()
+            vendor_name = ""
+            if vid_link:
+                ven = await db.vendors.find_one(
+                    {"id": vid_link, "user_id": uid, "company_id": cid},
+                    {"_id": 0, "name": 1, "is_active": 1},
+                )
+                if not ven:
+                    base["error"] = {"code": "VENDOR_NOT_FOUND",
+                                     "detail": "Selected Vendor not found in tenant"}
+                    results.append(base); failed += 1; continue
+                if ven.get("is_active") is False:
+                    base["error"] = {"code": "VENDOR_INACTIVE",
+                                     "detail": "Selected Vendor is inactive"}
+                    results.append(base); failed += 1; continue
+                vendor_name = ven.get("name", "")
+                party_link = {"party_type": "vendor", "party_id": vid_link,
+                              "party_name": vendor_name}
+
+            filled_at = str((e or {}).get("filled_at") or "").strip()
+            parts = [f"{qty}L @ ₹{rate:.2f}"]
+            if filled_at:
+                parts.append(filled_at)
+            if vendor_name:
+                parts.append(vendor_name)
+            narration_override = " · ".join(parts)[:400]
+
         source_key = f"quickop:{date}:{cat_slug}:{vid}:{row_id}"
         # Fast-path duplicate check — avoid IX write-attempt when we already know.
         existing = await db.expenses.find_one(
@@ -145,11 +207,14 @@ async def bulk_create_operational_expenses(uid: str, cid: str, user: dict,
         try:
             payload = Expense(
                 date=date, category=category, amount=_q2(amt_raw),
-                narration=str((e or {}).get("narration") or "")[:400],
+                narration=(narration_override if narration_override is not None
+                           else str((e or {}).get("narration") or "")[:400]),
                 remarks=str(remarks or ""),
                 vehicle_id=vid, vehicle_number=veh.get("vehicle_number", ""),
                 trip_id=trip_id or "", repair_event_id="",
-                party_type="cash", party_id="", party_name="",
+                party_type=party_link["party_type"],
+                party_id=party_link["party_id"],
+                party_name=party_link["party_name"],
                 vendor_bill_id="", mechanic_work_order_id="",
                 supplier_owned_vehicle=derived_owned,
                 supplier_settlement_mode=derived_mode,
