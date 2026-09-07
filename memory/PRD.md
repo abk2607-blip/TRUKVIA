@@ -70,6 +70,44 @@ READ-ONLY DISCOVERY of:
 
 
 
+## Iter139 UAT RCA · Vendor-linked Expense visibility "empty" report — 2026-09-04
+
+**Reported symptom**: 3 UAT Diesel entries with Vendor `VARMA FILLING STATION KALLURU` succeeded (created 3, duplicate 0, failed 0), but the Vendor page (both classical Ledger + Vendor-linked Expenses card) showed no rows.
+
+### End-to-end trace (evidence-only, no guessing)
+- **Persistence · CORRECT.** 4 Expense docs in `db.expenses` filtered by `user_id=user_63cdc1a46ace`, `company_id=co_2a9e355badd048b3`, `party_type='vendor'`, `party_id='ven_9e3b29bcc5f6464b'`, `is_reversed=false`, `is_deleted=false`, `source_type='quick_op'`.
+- **Endpoint filter · CORRECT.** Running the exact `GET /api/expenses` composed filter against Mongo returns 4 rows totalling ₹88,849.15.
+- **No payable created.** VendorBills for that vendor = 0, VendorPayments = 0 (Iter133 invariant preserved).
+- **Frontend source · CORRECT.** `PartyLedger.jsx` has 11 references to the new card (`vendor-expense-log`, `Vendor-linked Expenses`, `linkedExpenses`, etc.).
+- **Served bundle · CORRECT.** Live-fetched `/static/js/bundle.js` (10.18 MB) contains the strings `vendor-expense-log` and `Vendor-linked Expenses` after minification.
+
+### Failed layer = CASE C — **browser-side stale bundle / HMR miss**
+The staff's browser tab was serving an older SPA bundle from before Iter139 follow-up. Craco dev-server HMR can silently miss open tabs when the WebSocket disconnects (proxy/timeout). The tab kept running the pre-deployment `PartyLedger.jsx`, so the new card was never rendered.
+
+### Hardening / minimal fix
+- **`PartyLedger.jsx`** — wrap `linkedExpenses` in `useMemo` so downstream memos are stable across re-renders (also silenced the compile-time eslint warning).
+- **`PartyLedger.jsx`** — surface `expenseLog.isError` explicitly with `data-testid="vendor-expense-error"` so a silent HTTP failure can no longer look like an empty state.
+- **`PartyLedger.jsx`** — add a bundle-version stamp `v139-fu2` in the card header (`data-testid="vendor-expense-log-version"`). Staff UAT can now visually confirm they are on the latest bundle — if the stamp is missing, the browser needs a hard refresh.
+- **Cache**: Regenerated a fresh `yarn build` and restarted the frontend supervisor so any static edge-cache is invalidated on next reload.
+
+### Live re-verification (screenshots captured)
+- **Vendor A** (UATA-…): 3 Diesel rows totalling ₹46,250.00, single Diesel category chip.
+- **Vendor B** (UATB-…): 1 Diesel row of ₹23,125.00.
+- Cross-vendor isolation proven — no leakage; each vendor sees only its own rows.
+- Version stamp `v139-fu2` visible on both pages.
+
+### Test coverage additions
+`test_vendor_expense_log_frontend_card_present` now guards for the new markers (`vendor-expense-log-version`, `vendor-expense-loading`, `vendor-expense-error`, `v139-fu2`).
+
+### Regression totals
+- Focused `test_iter139_quick_operational.py` — 64 / 64 PASS.
+- Full band Iter133/134/135/135A/136/137A/139 (`-n0`) — 200 / 200 PASS.
+
+### Staff action item (only remaining)
+On the browser tab that showed the empty card, do **Ctrl + Shift + R** (or **Cmd + Shift + R** on Mac). Confirm the small **`v139-fu2`** stamp is visible in the "Vendor-linked Expenses" card header — if it is, the browser has the correct bundle and the 3 saved Diesel entries will appear.
+
+
+
 ## Iter139 FOLLOW-UP · Vendor-linked Expense Log on Vendor Page — IMPLEMENTED / READY FOR UAT — 2026-09-04
 
 **Status: IMPLEMENTED. NOT LOCKED — awaiting operator UAT.**

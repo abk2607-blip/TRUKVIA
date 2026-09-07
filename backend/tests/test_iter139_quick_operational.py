@@ -753,6 +753,9 @@ def test_vendor_expense_log_frontend_card_present():
         'data-testid="vendor-expense-total-cell"',
         'data-testid="vendor-expense-count"',
         'data-testid="vendor-expense-category-breakdown"',
+        'data-testid="vendor-expense-log-version"',
+        'data-testid="vendor-expense-loading"',
+        'data-testid="vendor-expense-error"',
         "vendor-expense-row-",
         "vendor-expense-amount-",
         'party_type: "vendor"',
@@ -760,6 +763,7 @@ def test_vendor_expense_log_frontend_card_present():
         "linkedTotal",
         "linkedByCategory",
         'partyType === "vendor" && !!id',
+        "v139-fu2",
     ]:
         assert needed in src, f"PartyLedger.jsx missing marker: {needed}"
 

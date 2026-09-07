@@ -65,7 +65,10 @@ export default function PartyLedger({ partyType }) {
     enabled: partyType === "vendor" && !!id,
   });
 
-  const linkedExpenses = expenseLog.data || [];
+  const linkedExpenses = useMemo(
+    () => (Array.isArray(expenseLog.data) ? expenseLog.data : []),
+    [expenseLog.data]
+  );
   const linkedTotal = useMemo(
     () => linkedExpenses.reduce((s, x) => s + (Number(x.amount) || 0), 0),
     [linkedExpenses]
@@ -335,6 +338,11 @@ export default function PartyLedger({ partyType }) {
               <span className="ml-2 text-zinc-400 font-normal normal-case tracking-normal">
                 (cost log — read-only visibility, separate from ledger)
               </span>
+              <span className="ml-2 text-[10px] text-zinc-300 font-normal normal-case tracking-normal"
+                    data-testid="vendor-expense-log-version"
+                    title="Bundle marker — if this is missing on your screen you are on a cached older bundle. Hard-refresh (Ctrl/Cmd+Shift+R).">
+                v139-fu2
+              </span>
             </h2>
             <div className="ml-auto text-xs text-zinc-600 flex gap-4">
               <span data-testid="vendor-expense-count">Rows: {linkedExpenses.length}</span>
@@ -343,8 +351,18 @@ export default function PartyLedger({ partyType }) {
               </span>
             </div>
           </div>
-          {expenseLog.isLoading ? (
-            <div className="text-zinc-400 text-sm">Loading…</div>
+          {expenseLog.isError ? (
+            <div className="text-rose-600 text-sm border border-rose-200 bg-rose-50 rounded px-3 py-2"
+                 data-testid="vendor-expense-error">
+              Failed to load vendor-linked expenses:
+              {" "}{expenseLog.error?.response?.data?.detail
+                    || expenseLog.error?.message
+                    || "unknown error"}
+            </div>
+          ) : expenseLog.isLoading ? (
+            <div className="text-zinc-400 text-sm" data-testid="vendor-expense-loading">
+              Loading…
+            </div>
           ) : linkedExpenses.length === 0 ? (
             <div className="text-zinc-400 text-sm" data-testid="vendor-expense-empty">
               No vendor-linked expenses recorded.
