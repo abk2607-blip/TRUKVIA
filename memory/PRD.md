@@ -70,12 +70,36 @@ READ-ONLY DISCOVERY of:
 
 
 
-## Iter140 · Quick Op Today's Entries + Edit + Cancel — IMPLEMENTED / READY FOR UAT — 2026-09-04
+## Iter140 · Quick Op Today's Entries + Edit + Cancel — 🔒 LOCKED (UAT PASS) — 2026-09-04
 
-**Status: IMPLEMENTED. NOT LOCKED — awaiting operator UAT.**
-Focused regression: 200/200 PASS band. Zero new collection. Zero
+**Status: 🔒 LOCKED. Staff UAT ACCEPTED / PASS. FREEZE.**
+Focused regression: 210 / 210 PASS band. Zero new collection. Zero
 schema change. Reuses canonical Expense edit / soft-cancel.
 Diesel amount authority is preserved on edit.
+
+### 🔒 Frozen invariants — must not silently change
+- Diesel Qty × Rate server-authoritative calculation (create + edit).
+- Vendor master linkage via `Expense.party_type / party_id / party_name`.
+- Vendor-linked Expense visibility on Vendor page.
+- Vehicle Cost reflection via canonical Expense.
+- Expense Register reflection via canonical Expense.
+- Soft cancellation with history (`is_deleted=true` + `deleted_by/at/reason`).
+- Reason/audit requirements on edit and cancel.
+- Idempotency middleware behaviour on the batch endpoint.
+- Duplicate warning behaviour.
+- No VendorBill / VendorPayment ever created by Quick Op save/edit/cancel.
+- Vendor Ledger read-source remains Bills+Payments only.
+
+### Staff UAT verification (accepted)
+- 3 Quick Op Diesel entries created.
+- Same entry edited twice with mandatory reason.
+- Diesel rate modification recalculated correctly.
+- Edited amount reflected correctly in Vendor-linked Expenses.
+- Vendor changed successfully; both old/new Vendor views verified.
+- One entry cancelled with mandatory reason.
+- Cancelled entry disappeared from Today's Entries + Vendor-linked active view.
+- One entry remained untouched with original values.
+- Mixed final state verified successfully.
 
 ### Discovery gate — CASE A (zero schema change, zero new collection)
 - `PUT /api/expenses/{eid}` (canonical edit — reused as-is for non-Diesel).
