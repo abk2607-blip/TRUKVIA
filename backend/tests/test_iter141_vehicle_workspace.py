@@ -154,7 +154,7 @@ def test_frontend_vehicle_workspace_page_present():
         'data-testid="vw-expenses-total"',
         'data-testid="vw-repairs"',
         'data-testid="vw-repairs-total"',
-        'data-testid="vw-reports-placeholder"',
+        'data-testid="vw-reports"',
         'data-testid="vw-filter-from"',
         'data-testid="vw-filter-to"',
         'data-testid="vw-filter-category"',

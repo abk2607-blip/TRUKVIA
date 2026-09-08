@@ -209,11 +209,24 @@ export default function VehicleWorkspace() {
       )}
       {tab === "reports" && (
         <div className="bg-white border rounded-lg p-8 text-center text-zinc-500"
-             data-testid="vw-reports-placeholder">
-          <div className="text-sm font-semibold uppercase tracking-wider text-zinc-700 mb-2">
+             data-testid="vw-reports">
+          <div className="text-sm font-semibold uppercase tracking-wider text-zinc-700 mb-1">
             Vehicle Reports
           </div>
-          <div className="text-xs">Coming in the next release.</div>
+          <div className="text-[11px] text-zinc-500 mb-4">
+            Uses current workspace filters — From: <b>{from || "All"}</b> · To: <b>{to || "All"}</b> · Category: <b>{cat || "All"}</b>
+          </div>
+          <div className="flex justify-center gap-3">
+            <a href={`${process.env.REACT_APP_BACKEND_URL}/api/vehicles/${vid}/cost-summary.pdf?${new URLSearchParams({...(from?{from}:{}),...(to?{to}:{}),...(cat?{category:cat}:{})}).toString()}`}
+               target="_blank" rel="noreferrer"
+               className="px-4 py-2 bg-zinc-900 text-white rounded text-sm hover:bg-zinc-800"
+               data-testid="vw-download-pdf">Download PDF</a>
+            <a href={`${process.env.REACT_APP_BACKEND_URL}/api/vehicles/${vid}/cost-summary.xlsx?${new URLSearchParams({...(from?{from}:{}),...(to?{to}:{}),...(cat?{category:cat}:{})}).toString()}`}
+               target="_blank" rel="noreferrer"
+               className="px-4 py-2 border border-zinc-900 text-zinc-900 rounded text-sm hover:bg-zinc-100"
+               data-testid="vw-download-xlsx">Download Excel</a>
+          </div>
+          <div className="text-[10px] text-zinc-400 mt-4">v142-p0 · pure projection of cost-summary + repair-history</div>
         </div>
       )}
     </div>

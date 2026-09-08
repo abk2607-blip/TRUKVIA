@@ -70,7 +70,48 @@ READ-ONLY DISCOVERY of:
 
 
 
-## Iter141 P0 · Vehicle Workspace — 🔒 LOCKED (UAT PASS + regression clearance) — 2026-09-05
+## Iter142 P0 · Vehicle-wise PDF + Excel Reports — IMPLEMENTED / READY FOR UAT — 2026-09-05
+
+**Status: IMPLEMENTED. NOT LOCKED — awaiting operator UAT.**
+Additive reporting layer over the authoritative Iter141 endpoints. Zero
+schema change, zero new collection, zero accounting logic. Reuses the
+same service calls (`vehicle_cost_summary`, `vehicle_repair_history`)
+the UI already renders → **screen = PDF = Excel** by construction.
+
+### Files added / changed
+- **NEW** `/app/backend/pdf/vehicle_cost.py` — reportlab PDF factory (Cover + Summary + Expense Detail + Repair Detail). Uses `_UNI_FONT` (DejaVuSans) for ₹.
+- **NEW** `/app/backend/xlsx/vehicle_cost.py` — openpyxl 5-sheet workbook (Summary · Expenses · Repairs · By Category · By Month) with freeze panes + CURRENCY_FMT.
+- **APPENDED** `/app/backend/routers/vehicle_reports.py` — two additive endpoints (`.pdf`, `.xlsx`) + `MAX_PDF_ENTRIES=5000` guard mirroring `guard_pdf_size`.
+- **MODIFIED** `/app/frontend/src/pages/VehicleWorkspace.jsx` — Reports tab placeholder replaced with two download links carrying the current From/To/Category filters. Version stamp `v142-p0`.
+- **NEW** `/app/backend/tests/test_iter142_vehicle_reports.py` — 11 focused tests.
+
+### New endpoints (additive only)
+- `GET /api/vehicles/{vid}/cost-summary.pdf?from=&to=&category=` → `application/pdf`
+- `GET /api/vehicles/{vid}/cost-summary.xlsx?from=&to=&category=` → `application/vnd.openxmlformats-officedocument.spreadsheetml.sheet`
+- Filename convention: `Vehicle_<REG>_Cost_<from>_<to>.<ext>` or `Vehicle_<REG>_Cost_All.<ext>`.
+
+### Double-counting safeguards
+- Both endpoints call the same service functions the UI uses → identical dataset. No direct `db.expenses` / `vendor_bills` / `mechanic_work_orders` reads for totals.
+- Repair Cost = Σ Expense.amount (already enforced by `vehicle_repair_history`). Vendor / Mechanic Payable columns rendered as **context only** — never summed into Vehicle Cost.
+- Cancelled/reversed rows excluded automatically (default filter of cost-summary).
+- Legacy `has_canonical_expenses` XOR behaviour preserved.
+
+### Regression totals
+- Iter142 focused: **11/11 PASS** in 12 s.
+- Full band Iter133 / 135 / 135A / 136 / 137A / 139 / 141 / 142 (serial `-n0`, localhost bypass): to be confirmed post-run.
+- Frontend `yarn build` — clean.
+
+### Manual UAT checklist (staff)
+1. Own vehicle → Reports tab → Download PDF · verify Cover + Summary KPIs + Expense Detail total = KPI total.
+2. Own vehicle → Reports tab → Download Excel · open in Excel · 5 sheets · Expenses total row matches Summary Total Vehicle Cost.
+3. Set From/To/Category on the workspace → downloads must respect the same filter.
+4. Supplier-owned vehicle → verify Supplier context on PDF cover + Excel Summary sheet.
+5. Cancel a Diesel Quick Op → refresh Reports tab → download → verify cancelled row is absent from both files.
+6. For a repair with Bill+WO+Expense — verify PDF Repair Detail shows both payable columns but Repair Cost equals only the Expense total.
+7. Filename convention correct.
+8. Vehicle A vs Vehicle B → no cross-leak.
+
+ (UAT PASS + regression clearance) — 2026-09-05
 
 **Status: 🔒 LOCKED. Staff functional UAT ACCEPTED / PASS. Regression clearance
 confirmed with direct-backend proof for the previously flagged

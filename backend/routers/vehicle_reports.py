@@ -381,3 +381,67 @@ async def vehicle_repair_history(
         "events": out_events,
         "generated_at": now_utc().isoformat(),
     }
+
+
+# ── Iter142 P0 · Vehicle-wise PDF + Excel reports (additive, pure projection) ──
+from fastapi.responses import StreamingResponse
+from io import BytesIO
+from pdf.vehicle_cost import build_vehicle_cost_pdf
+from xlsx.vehicle_cost import build_vehicle_cost_xlsx
+
+MAX_PDF_ENTRIES = 5000
+
+
+def _fname_stem(reg: str, dfrom, dto) -> str:
+    reg_s = (reg or "vehicle").replace(" ", "_").replace("/", "_")
+    if dfrom or dto:
+        return f"Vehicle_{reg_s}_Cost_{dfrom or 'All'}_{dto or 'All'}"
+    return f"Vehicle_{reg_s}_Cost_All"
+
+
+async def _report_context(request, user, vid, dfrom, dto, category):
+    uid = user["user_id"]
+    cid = await _active_company_id(request, user)
+    vehicle = await _ensure_vehicle(uid, cid, vid)
+    company = await db.companies.find_one({"id": cid, "user_id": uid}, {"_id": 0}) or {}
+    cost = await vehicle_cost_summary(vid, request=request, date_from=dfrom, date_to=dto,
+                                      category=category, trip_linked=None, user=user)
+    repairs = await vehicle_repair_history(vid, request=request, date_from=dfrom, date_to=dto, user=user)
+    return company, vehicle, cost, repairs
+
+
+@router.get("/vehicles/{vid}/cost-summary.pdf")
+async def vehicle_cost_summary_pdf(
+    vid: str, request: Request,
+    date_from: Optional[str] = Query(None, alias="from"),
+    date_to: Optional[str] = Query(None, alias="to"),
+    category: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    company, vehicle, cost, repairs = await _report_context(request, user, vid, date_from, date_to, category)
+    if len(cost.get("rows") or []) > MAX_PDF_ENTRIES:
+        raise HTTPException(status_code=413,
+            detail=f"Vehicle report contains {len(cost['rows']):,} rows for this range. "
+                   f"Narrow the date range (PDF limit: {MAX_PDF_ENTRIES:,}) or use the Excel export.")
+    pdf_bytes = build_vehicle_cost_pdf(company, vehicle, cost, repairs,
+                                       {"from": date_from, "to": date_to, "category": category})
+    fname = _fname_stem(vehicle.get("vehicle_number"), date_from, date_to) + ".pdf"
+    return StreamingResponse(BytesIO(pdf_bytes), media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{fname}"'})
+
+
+@router.get("/vehicles/{vid}/cost-summary.xlsx")
+async def vehicle_cost_summary_xlsx(
+    vid: str, request: Request,
+    date_from: Optional[str] = Query(None, alias="from"),
+    date_to: Optional[str] = Query(None, alias="to"),
+    category: Optional[str] = None,
+    user=Depends(get_current_user),
+):
+    company, vehicle, cost, repairs = await _report_context(request, user, vid, date_from, date_to, category)
+    xlsx_bytes = build_vehicle_cost_xlsx(company, vehicle, cost, repairs,
+                                         {"from": date_from, "to": date_to, "category": category})
+    fname = _fname_stem(vehicle.get("vehicle_number"), date_from, date_to) + ".xlsx"
+    return StreamingResponse(BytesIO(xlsx_bytes),
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'})
