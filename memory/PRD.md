@@ -1,5 +1,46 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
+## 🟡 Iter144 P1 · Quick Op · Trip Picker (SearchableSelect) — READY FOR UAT (2026-09-08)
+
+**Status: IMPLEMENTED, ALL TESTS GREEN, AWAITING USER UAT & LOCK.**
+
+### Scope delivered
+Replaced the manual `Trip ID (optional)` text input on the Quick Operational Expense screen with an `AsyncSearchableSelect` (Iter68 component, reused as-is).
+
+- Options fetched from the **existing** `GET /api/trips?date={date}&q={query}&limit=50` — strict same-day match. Zero new backend endpoint.
+- Option label format: `LR/26-27/00003 · AP39VF3116 · CHENNAI → RAJAHMUNDRY`, meta line: `OWN|SUPPLIER · Driver · Supplier: …`
+- LR fallback: trips with no `lr_number` show short trip_id (`trip_5f2a…c471`).
+- **Trip selected** → `trip_id` set + every row's `vehicle_id` auto-populated to the trip's vehicle + row Vehicle picker disabled with an inline "Locked by Trip …" hint + top-of-form indigo notice strip explaining all rows link to this trip.
+- **Trip cleared** → `trip_id` cleared, Vehicle pickers re-enabled.
+- **Date changed** → selection cleared automatically (via toast: "Trip cleared — different date selected.") so a stale trip is never carried across days.
+- Empty state (no trips on selected date): amber helper strip reading exactly *"No active trips on this date. Save an expense without a Trip link or change the date."*
+- Supplier trips fully supported — badge shows `SUPPLIER`, supplier name in meta line, vehicle auto-populates just the same.
+
+### Files changed
+- `frontend/src/pages/QuickOperationalExpense.jsx` — imported `AsyncSearchableSelect`, added `selectedTrip` state + `tripLocked` derived flag + `_tripToOption` helper + `TripHelperStrip` inner component; replaced the manual `<input>` at old lines 227-230 with the picker + notice; added `disabled={tripLocked}` to per-row Vehicle picker with `-vehicle-locked` hint testid; date-change now clears the selection.
+- `backend/tests/test_iter144_quick_op_trip_picker.py` — **NEW** — 12 tests (backend contract + FE static guards).
+
+### Zero-change confirmations
+- ZERO backend endpoint changes.
+- ZERO schema / collection / dependency changes.
+- ZERO accounting logic changes.
+- POST `/api/expenses/bulk-operational` payload contract intact (`{date, category, trip_id, entries[]}`).
+- Iter139 (canonical Expense creation, amount rules), Iter140 (Today's Entries · Edit · Cancel), Iter141 (Vehicle Workspace tabs), Iter142 (PDF/Excel), Iter143 P1/P2 (Trip Cost tab + PDF section + Excel sheet) all untouched — verified by regression pass.
+
+### Tests
+- Iter144 focused: **12/12 pass** (`test_iter144_quick_op_trip_picker.py`).
+- Regression (Iter139/141/142/143 P1/P2): **133/133 pass in 78.47s**.
+- Frontend: `webpack compiled successfully` (only pre-existing eslint warnings unchanged by this iter).
+
+### Live UAT proof (dev preview)
+Screenshot at date `2028-03-07` on VBK Logistics shows the new `Trip (Optional)` picker labelled `Search Trip…` with helper strip *"Optional — link this batch to a trip on 2028-03-07. Vehicle auto-fills when a trip is selected."* The old manual input is confirmed removed by both DOM inspection and the FE static test `test_fe_manual_trip_id_input_removed`.
+
+### Not locked yet
+Awaiting user UAT sign-off (walk through: pick trip → confirm vehicle auto-populates and locks → clear trip → confirm vehicle unlocks → change date → confirm selection resets → save an entry and see it on Today's Entries + Vehicle Workspace Trip Cost tab). Once approved, lock Iter144 alongside Iter143.
+
+---
+
+
 ## 🟡 Iter143 P2 · Vehicle-wise Trip Cost in PDF + Excel — READY FOR UAT (2026-09-08)
 
 **Status: IMPLEMENTED, ALL TESTS GREEN, AWAITING USER UAT & LOCK.**

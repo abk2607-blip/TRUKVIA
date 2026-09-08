@@ -3,12 +3,62 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/api";
 import { SearchableSelect } from "@/components/ui/searchable-select";
-import { Plus, Trash2, Save, AlertTriangle, Pencil, X } from "lucide-react";
+import AsyncSearchableSelect from "@/components/AsyncSearchableSelect";
+import { Plus, Trash2, Save, AlertTriangle, Pencil, X, Link2 } from "lucide-react";
 
 /** Iter139 P0 · Quick Operational Expense — single-point daily entry.
  *  One Date + One Category + N (vehicle, amount) rows → N canonical Expense rows
  *  via POST /api/expenses/bulk-operational. Zero touch to Iter136 register.
  */
+// Iter144 · Trip picker helpers.
+function _tripToOption(t) {
+  const trip_ref = (t.lr_number && t.lr_number.trim())
+    ? t.lr_number.trim()
+    : (t.id
+        ? (t.id.length > 14 ? t.id.slice(0, 8) + "…" + t.id.slice(-4) : t.id)
+        : "—");
+  const vnum = t.vehicle_number || "—";
+  const route = (t.from_location || t.to_location)
+    ? `${t.from_location || "—"} → ${t.to_location || "—"}`
+    : "—";
+  const label = `${trip_ref} · ${vnum} · ${route}`;
+  const isSup = (t.vehicle_type || "").toLowerCase() === "supplier";
+  const meta = [
+    isSup ? "SUPPLIER" : "OWN",
+    t.driver_name || t.lr_driver_name || "",
+    isSup && t.supplier_name ? `Supplier: ${t.supplier_name}` : "",
+  ].filter(Boolean).join(" · ");
+  return { value: t.id, label, meta, trip: t };
+}
+
+function TripHelperStrip({ date }) {
+  // Small ping query — one row is enough to know the picker will have
+  // something to show. Runs only when there's no active selection.
+  const ping = useQuery({
+    queryKey: ["trips-exist-for-date", date],
+    queryFn: async () => (await api.get("/trips", { params: { date, limit: 1 } })).data,
+    enabled: !!date,
+    staleTime: 30_000,
+  });
+  const arr = ping.data || [];
+  if (ping.isLoading) return null;
+  if (arr.length === 0) {
+    return (
+      <div className="mt-1 text-[11px] text-amber-700"
+           data-testid="quick-expense-trip-empty-hint">
+        No active trips on this date. Save an expense without a Trip link or
+        change the date.
+      </div>
+    );
+  }
+  return (
+    <div className="mt-1 text-[11px] text-zinc-500"
+         data-testid="quick-expense-trip-hint">
+      Optional — link this batch to a trip on {date}. Vehicle auto-fills when
+      a trip is selected.
+    </div>
+  );
+}
 const CATEGORIES = [
   "Toll", "Diesel", "Parking", "Batta", "Driver Batta",
   "Loading Charges", "Unloading Charges", "Weighment",
@@ -44,6 +94,12 @@ export default function QuickOperationalExpense() {
   const [date, setDate] = useState(today);
   const [category, setCategory] = useState("Toll");
   const [tripId, setTripId] = useState("");
+  // Iter144 · Trip picker state. When a Trip is selected we lock every
+  // row's Vehicle to the Trip's vehicle_id so the operator cannot pick a
+  // vehicle that contradicts the Trip. Cleared automatically when the
+  // Date changes (list stale) or when the user clears the picker.
+  const [selectedTrip, setSelectedTrip] = useState(null); // { value, label, meta, trip }
+  const tripLocked = !!selectedTrip;
   const [rows, setRows] = useState(() => [{ id: rid(), vehicle_id: "", amount: "", remarks: "", supplier_settlement_mode: "" }]);
   const idemKey = useRef(`qob-${today}-${rid()}`);
   // Iter140 · Edit / Cancel drawers for Recent Entries.
@@ -214,7 +270,18 @@ export default function QuickOperationalExpense() {
       <div className="grid grid-cols-3 gap-4 mb-4">
         <label className="text-sm">
           <div className="text-zinc-600 mb-1">Date</div>
-          <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
+          <input type="date" value={date}
+                 onChange={(e) => {
+                   const newDate = e.target.value;
+                   setDate(newDate);
+                   // Iter144 · Trip list is date-scoped. Clear selection on
+                   // date change so we never carry a stale trip across days.
+                   if (selectedTrip) {
+                     setSelectedTrip(null);
+                     setTripId("");
+                     toast.info("Trip cleared — different date selected.");
+                   }
+                 }}
                  className="w-full border rounded px-2 py-1" data-testid="quick-expense-date"/>
         </label>
         <label className="text-sm">
@@ -223,12 +290,54 @@ export default function QuickOperationalExpense() {
             emptyText="No categories" allowClear={false}
             value={category} onChange={setCategory} options={categoryOptions}/>
         </label>
-        <label className="text-sm">
-          <div className="text-zinc-600 mb-1">Trip ID (optional)</div>
-          <input value={tripId} onChange={(e) => setTripId(e.target.value)} placeholder="trip_..."
-                 className="w-full border rounded px-2 py-1 font-mono text-xs" data-testid="quick-expense-trip"/>
+        <label className="text-sm" data-testid="quick-expense-trip-wrap">
+          <div className="text-zinc-600 mb-1">Trip (Optional)</div>
+          <AsyncSearchableSelect
+            dataTestId="quick-expense-trip-picker"
+            placeholder="Search Trip…"
+            value={selectedTrip?.value || ""}
+            selectedOption={selectedTrip}
+            allowClear
+            fetchOptions={async (q) => {
+              if (!date) return [];
+              const { data } = await api.get("/trips", {
+                params: { date, ...(q ? { q } : {}), limit: 50 },
+              });
+              return (data || []).map(_tripToOption);
+            }}
+            onChange={(_val, opt) => {
+              if (!opt) {
+                // User cleared the picker — release the lock.
+                setSelectedTrip(null);
+                setTripId("");
+                return;
+              }
+              const t = opt.trip || {};
+              setSelectedTrip(opt);
+              setTripId(t.id || "");
+              // Auto-populate + lock Vehicle on every row (submission-level).
+              if (t.vehicle_id) {
+                setRows((rs) => rs.map((r) => ({ ...r, vehicle_id: t.vehicle_id })));
+              }
+            }}
+          />
+          {!selectedTrip && (
+            <TripHelperStrip date={date}/>
+          )}
         </label>
       </div>
+
+      {selectedTrip && (
+        <div className="mb-4 flex items-start gap-2 rounded border border-indigo-200 bg-indigo-50 px-3 py-2 text-xs text-indigo-900"
+             data-testid="quick-expense-trip-lock-notice">
+          <Link2 size={14} className="mt-0.5 flex-shrink-0"/>
+          <div className="flex-1">
+            All rows below will be linked to <b>{selectedTrip.label}</b>.
+            Vehicle is auto-selected from this trip and locked. Add rows to
+            accumulate this trip's costs, or clear the trip to unlock.
+          </div>
+        </div>
+      )}
 
       <div className="border rounded overflow-hidden mb-4">
         <table className="w-full text-sm">
@@ -248,9 +357,16 @@ export default function QuickOperationalExpense() {
                 <tr key={r.id} className="border-t align-top" data-testid={`quick-expense-row-${i}`}>
                   <td className="px-3 py-2">
                     <SearchableSelect testId={`quick-expense-row-${i}-vehicle`} placeholder="Search vehicle…"
-                      emptyText="No vehicles" allowClear
+                      emptyText="No vehicles" allowClear={!tripLocked}
+                      disabled={tripLocked}
                       value={r.vehicle_id} onChange={(v) => patchRow(r.id, { vehicle_id: v })}
                       options={vehicleOptions}/>
+                    {tripLocked && (
+                      <div className="mt-1 text-[10px] text-indigo-700"
+                           data-testid={`quick-expense-row-${i}-vehicle-locked`}>
+                        Locked by Trip {selectedTrip.trip?.lr_number || selectedTrip.trip?.id || ""}
+                      </div>
+                    )}
                     {r.__error && <div className="text-xs text-red-600 mt-1">⚠ {r.__error}</div>}
                   </td>
                   <td className="px-3 py-2">
