@@ -26,9 +26,33 @@ def _widths(ws, widths):
         ws.column_dimensions[get_column_letter(i)].width = w
 
 
+def _group_trip_costs_xlsx(rows: list) -> list:
+    """Iter143 P2 · Mirror of pdf.vehicle_cost._group_trip_costs. Zero-cost
+    trips are hidden. Never reads Trip.total_expense / VendorBill /
+    MechanicWO / supplier payable."""
+    groups = {}
+    for r in (rows or []):
+        tid = r.get("trip_id")
+        if not tid or r.get("repair_event_id"):
+            continue
+        amt = float(r.get("amount") or 0)
+        g = groups.setdefault(tid, {"total": 0.0, "categories": {}})
+        g["total"] = round(g["total"] + amt, 2)
+        c = r.get("category") or "Other"
+        g["categories"][c] = round(g["categories"].get(c, 0.0) + amt, 2)
+    out = []
+    for tid, g in groups.items():
+        if g["total"] <= 0:
+            continue
+        out.append({"trip_id": tid, "total": g["total"],
+                    "categories": sorted(g["categories"].items(),
+                                         key=lambda kv: (-kv[1], kv[0]))})
+    return out
+
+
 def build_vehicle_cost_xlsx(company: dict, vehicle: dict,
                              cost_summary: dict, repair_history: dict,
-                             period: dict) -> bytes:
+                             period: dict, trip_meta_map: dict = None) -> bytes:
     wb = openpyxl.Workbook()
 
     # 1 · Summary
@@ -102,7 +126,50 @@ def build_vehicle_cost_xlsx(company: dict, vehicle: dict,
     tv.font = BOLD; tv.number_format = CURRENCY_FMT
     _widths(ws, [12, 30, 22, 16, 16, 14, 12])
 
-    # 4 · By Category
+    # 4 · Iter143 P2 · Trip Cost (additive, Iter142 sheets untouched)
+    ws = wb.create_sheet("Trip Cost")
+    trip_meta_map = trip_meta_map or {}
+    trip_groups = _group_trip_costs_xlsx(cost_summary.get("rows") or [])
+    trip_sum = round(sum(g["total"] for g in trip_groups), 2)
+    trip_linked = round(float(cost_summary.get("trip_linked_total") or 0), 2)
+    if abs(trip_sum - trip_linked) > 0.01:
+        raise ValueError(
+            f"Iter143 P2 reconciliation guard failed (xlsx) — grouped trip total "
+            f"₹{trip_sum:.2f} != cost_summary.trip_linked_total ₹{trip_linked:.2f}. "
+            f"Refusing to emit an inconsistent workbook."
+        )
+    _hdr(ws, ["Trip Date", "Trip Ref", "Route", "Customer / Driver",
+              "Type", "Categories", "Trip Cost"])
+    def _tkey(g):
+        m = trip_meta_map.get(g["trip_id"]) or {}
+        return (m.get("date") or "", g["trip_id"])
+    trip_groups.sort(key=_tkey, reverse=True)
+    r = 2
+    for g in trip_groups:
+        m = trip_meta_map.get(g["trip_id"]) or {}
+        is_sup = m.get("vehicle_type") == "supplier"
+        party = m.get("supplier_name") if is_sup else m.get("customer") or ""
+        drv = m.get("driver_name") or ""
+        party_drv = " · ".join(x for x in (party, drv) if x)
+        fr, to_ = m.get("from_location") or "", m.get("to_location") or ""
+        route = f"{fr} → {to_}" if (fr or to_) else ""
+        trip_ref = m.get("lr_number") or g["trip_id"]
+        cats = ", ".join(f"{c} ₹{a:,.2f}" for c, a in g["categories"])
+        ws.cell(row=r, column=1, value=m.get("date") or "")
+        ws.cell(row=r, column=2, value=trip_ref)
+        ws.cell(row=r, column=3, value=route)
+        ws.cell(row=r, column=4, value=party_drv)
+        ws.cell(row=r, column=5, value="SUPPLIER" if is_sup else "OWN")
+        ws.cell(row=r, column=6, value=cats)
+        c = ws.cell(row=r, column=7, value=float(g["total"]))
+        c.number_format = CURRENCY_FMT
+        r += 1
+    tl = ws.cell(row=r, column=6, value="Total Trip-linked Cost"); tl.font = BOLD
+    tv = ws.cell(row=r, column=7, value=float(trip_sum))
+    tv.font = BOLD; tv.number_format = CURRENCY_FMT
+    _widths(ws, [12, 18, 30, 26, 10, 45, 16])
+
+    # 5 · By Category
     ws = wb.create_sheet("By Category")
     _hdr(ws, ["Category", "Amount"])
     r = 2

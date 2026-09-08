@@ -60,11 +60,17 @@ def test_xlsx_endpoint_ok_and_content_type_and_filename():
 
 
 def test_xlsx_five_sheets_and_totals_match_json():
+    # Iter143 P2 (2026-09-08) additively inserted "Trip Cost" between
+    # "Repairs" and "By Category". All original Iter142 sheets remain
+    # present in the same order — verified below AND by
+    # test_iter143_p2_original_iter142_sheets_intact.
     veh = _first_own_vehicle()
     js = requests.get(f"{API}/vehicles/{veh['id']}/cost-summary", headers=H, timeout=15).json()
     r = requests.get(f"{API}/vehicles/{veh['id']}/cost-summary.xlsx", headers=H, timeout=30)
     wb = openpyxl.load_workbook(BytesIO(r.content))
-    assert wb.sheetnames == ["Summary", "Expenses", "Repairs", "By Category", "By Month"]
+    assert wb.sheetnames == [
+        "Summary", "Expenses", "Repairs", "Trip Cost", "By Category", "By Month",
+    ]
     # Find total row in Expenses (row after last data row = has "Total" in col E)
     ws = wb["Expenses"]
     tot = None

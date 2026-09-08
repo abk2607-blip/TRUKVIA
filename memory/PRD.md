@@ -1,5 +1,48 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
+## 🟡 Iter143 P2 · Vehicle-wise Trip Cost in PDF + Excel — READY FOR UAT (2026-09-08)
+
+**Status: IMPLEMENTED, ALL TESTS GREEN, AWAITING USER UAT & LOCK.**
+
+### Scope delivered
+- **PDF**: New `TRIP-WISE COST SUMMARY` section placed AFTER the KPI band and BEFORE the Category+Month dual table. Columns: Trip Date · Trip Ref · Route · Customer / Driver · Categories · Trip Cost. Total row at bottom of section. Sub-caption reads `Grouped from Expense Detail by Trip · Σ Trip Cost = Trip-linked Cost KPI (₹ …) ✓`. All existing Iter142 sections (Vehicle identity, KPIs, Category+Month, Expense Detail, Repair Detail, footer) untouched. Landscape A4 preserved. Short reports still fit on one page.
+- **Excel**: New `Trip Cost` worksheet inserted between `Repairs` and `By Category`. Columns: Trip Date · Trip Ref · Route · Customer / Driver · Type (OWN/SUPPLIER) · Categories · Trip Cost. Existing five Iter142 sheets remain identical in content, order, and format.
+- **Data source**: `cost_summary.rows[]` grouped by `trip_id` (excluding rows with `repair_event_id`). Zero-cost trips hidden. NEVER reads `Trip.total_expense`, `Trip.expenses`, `Trip.other_expenditures`, VendorBill, MechanicWO, supplier-payable fields, or Fuel — same accounting invariants as Iter143 P1.
+- **Trip metadata**: One `db.trips.find({id: {$in: […]}})` + one `db.customers.find({id: {$in: […]}})` per report. No N+1. Bounded by the number of trip-linked cost rows in the filter window.
+- **Endpoints**: Reuses existing `GET /api/vehicles/{vid}/cost-summary.pdf` and `.xlsx`. ZERO new endpoints. ZERO URL/param changes.
+- **Reconciliation guard**: Both factories raise `ValueError("Iter143 P2 reconciliation guard failed …")` when `Σ(trip totals) != cost_summary.trip_linked_total`. The endpoint handler translates that into HTTP 500 — never emits a wrong report silently.
+- **Filter parity**: `from / to / category` params flow through to `_report_context` → `vehicle_cost_summary` → same authoritative rows used by both formats.
+
+### Files changed
+- `backend/routers/vehicle_reports.py` — added `_build_trip_meta_map` helper (single Mongo IN-query, plus one for customer names), `_report_context` returns `trip_meta` too, both `.pdf` and `.xlsx` handlers pass `trip_meta_map=` to the factories and convert `ValueError` into HTTP 500.
+- `backend/pdf/vehicle_cost.py` — added `_group_trip_costs()` module-level helper, added `trip_meta_map: dict = None` kwarg to `build_vehicle_cost_pdf`, inserted TRIP-WISE COST SUMMARY block with reconciliation guard.
+- `backend/xlsx/vehicle_cost.py` — added `_group_trip_costs_xlsx()` module-level helper, added `trip_meta_map: dict = None` kwarg to `build_vehicle_cost_xlsx`, inserted `Trip Cost` sheet with reconciliation guard.
+- `backend/tests/test_iter142_vehicle_reports.py` — one minimally-updated assertion in `test_xlsx_five_sheets_and_totals_match_json` (now expects the additive `Trip Cost` sheet between `Repairs` and `By Category`). All other Iter142 tests untouched.
+- `backend/tests/test_iter143_p2_vehicle_reports_trip_cost.py` — **NEW** — 22 focused tests.
+
+### Zero-change confirmations
+- ZERO schema changes.
+- ZERO new collections.
+- ZERO new backend endpoints.
+- ZERO accounting-logic changes.
+- ZERO supplier-payable inclusion in Trip Cost.
+- ZERO modifications to locked Iter133–142 behaviour. The Iter142 test assertion was updated to reflect the additive new sheet (an expectation update mandated by the approved P2 scope — content/structure of the original 5 sheets remain intact, verified by `test_p2_original_iter142_sheets_intact`).
+
+### Tests
+- Iter143 P2 focused: **22/22 pass** (`test_iter143_p2_vehicle_reports_trip_cost.py`).
+- Iter139 / 141 / 142 / 143 P1 regression: **all pass alongside** in the combined run.
+- Full P2 + P1 + Iter141 + Iter142 + Iter139 run: **all green** (see finish summary).
+
+### Live UAT proof (dev preview · vehicle AP99IT83657C)
+- PDF (`/api/vehicles/veh_41c0ca28bee94b10/cost-summary.pdf`, 46.8 KB): renders TRIP-WISE COST SUMMARY between KPI and Category+Month, one row: `07-Mar-2028 · LR/26-27/05402 · VJA → KKD · TEST_Iter143 · Diesel ₹8,000.00 · Toll ₹1,200.00 · Batta ₹500.00 · ₹9,700.00`. Section total ₹9,700.00 matches Trip-linked KPI ₹9,700.00. Entire report fits Page 1 of 1.
+- Excel (`.xlsx`, 9.1 KB): sheet order `['Summary','Expenses','Repairs','Trip Cost','By Category','By Month']`. `Trip Cost` sheet contains header + one data row + total row, total 9,700.
+
+### Not locked yet
+Awaiting user UAT sign-off. Once approved, mark Iter143 (P1 + P2) as LOCKED.
+
+---
+
+
 ## 🟡 Iter143 P1 · Vehicle Workspace · Trip Cost Tab — READY FOR UAT (2026-09-08)
 
 **Status: IMPLEMENTED, ALL TESTS GREEN, AWAITING USER UAT & LOCK.**

@@ -399,6 +399,50 @@ def _fname_stem(reg: str, dfrom, dto) -> str:
     return f"Vehicle_{reg_s}_Cost_All"
 
 
+async def _build_trip_meta_map(uid: str, cid: str, cost_rows: list) -> dict:
+    """Iter143 P2 · One IN-query per (vehicle × date-range) — never per-trip.
+    Returns {trip_id: {date, lr_number, from, to, driver, customer, vehicle_type, supplier_name}}.
+    A second IN-query fills customer names. Rows with a `trip_id` whose Trip
+    is no longer retrievable are DELIBERATELY absent → the report factory
+    must render them with the trip_id fallback, never drop the cost."""
+    tids = {r["trip_id"] for r in (cost_rows or [])
+            if r.get("trip_id") and not r.get("repair_event_id")}
+    if not tids:
+        return {}
+    proj = {"_id": 0, "id": 1, "date": 1, "lr_number": 1, "from_location": 1,
+            "to_location": 1, "driver_name": 1, "lr_driver_name": 1,
+            "customer_id": 1, "consignor_name": 1, "supplier_name": 1,
+            "vehicle_type": 1}
+    trips = await db.trips.find(
+        {"id": {"$in": list(tids)}, "user_id": uid, "company_id": cid},
+        proj,
+    ).to_list(length=None)
+    cids = {t.get("customer_id") for t in trips if t.get("customer_id")}
+    name_map = {}
+    if cids:
+        async for c in db.customers.find(
+            {"id": {"$in": list(cids)}, "user_id": uid, "company_id": cid},
+            {"_id": 0, "id": 1, "name": 1},
+        ):
+            name_map[c["id"]] = c.get("name") or ""
+    out = {}
+    for t in trips:
+        customer = (t.get("consignor_name")
+                    or name_map.get(t.get("customer_id"))
+                    or "")
+        out[t["id"]] = {
+            "date": t.get("date") or "",
+            "lr_number": t.get("lr_number") or "",
+            "from_location": t.get("from_location") or "",
+            "to_location": t.get("to_location") or "",
+            "driver_name": t.get("driver_name") or t.get("lr_driver_name") or "",
+            "customer": customer,
+            "vehicle_type": (t.get("vehicle_type") or "own").lower(),
+            "supplier_name": t.get("supplier_name") or "",
+        }
+    return out
+
+
 async def _report_context(request, user, vid, dfrom, dto, category):
     uid = user["user_id"]
     cid = await _active_company_id(request, user)
@@ -407,7 +451,8 @@ async def _report_context(request, user, vid, dfrom, dto, category):
     cost = await vehicle_cost_summary(vid, request=request, date_from=dfrom, date_to=dto,
                                       category=category, trip_linked=None, user=user)
     repairs = await vehicle_repair_history(vid, request=request, date_from=dfrom, date_to=dto, user=user)
-    return company, vehicle, cost, repairs
+    trip_meta = await _build_trip_meta_map(uid, cid, cost.get("rows") or [])
+    return company, vehicle, cost, repairs, trip_meta
 
 
 @router.get("/vehicles/{vid}/cost-summary.pdf")
@@ -418,13 +463,19 @@ async def vehicle_cost_summary_pdf(
     category: Optional[str] = None,
     user=Depends(get_current_user),
 ):
-    company, vehicle, cost, repairs = await _report_context(request, user, vid, date_from, date_to, category)
+    company, vehicle, cost, repairs, trip_meta = await _report_context(
+        request, user, vid, date_from, date_to, category)
     if len(cost.get("rows") or []) > MAX_PDF_ENTRIES:
         raise HTTPException(status_code=413,
             detail=f"Vehicle report contains {len(cost['rows']):,} rows for this range. "
                    f"Narrow the date range (PDF limit: {MAX_PDF_ENTRIES:,}) or use the Excel export.")
-    pdf_bytes = build_vehicle_cost_pdf(company, vehicle, cost, repairs,
-                                       {"from": date_from, "to": date_to, "category": category})
+    try:
+        pdf_bytes = build_vehicle_cost_pdf(company, vehicle, cost, repairs,
+                                           {"from": date_from, "to": date_to, "category": category},
+                                           trip_meta_map=trip_meta)
+    except ValueError as e:
+        # Iter143 P2 reconciliation guard — never emit an inconsistent PDF.
+        raise HTTPException(status_code=500, detail=str(e))
     fname = _fname_stem(vehicle.get("vehicle_number"), date_from, date_to) + ".pdf"
     return StreamingResponse(BytesIO(pdf_bytes), media_type="application/pdf",
         headers={"Content-Disposition": f'inline; filename="{fname}"'})
@@ -438,9 +489,14 @@ async def vehicle_cost_summary_xlsx(
     category: Optional[str] = None,
     user=Depends(get_current_user),
 ):
-    company, vehicle, cost, repairs = await _report_context(request, user, vid, date_from, date_to, category)
-    xlsx_bytes = build_vehicle_cost_xlsx(company, vehicle, cost, repairs,
-                                         {"from": date_from, "to": date_to, "category": category})
+    company, vehicle, cost, repairs, trip_meta = await _report_context(
+        request, user, vid, date_from, date_to, category)
+    try:
+        xlsx_bytes = build_vehicle_cost_xlsx(company, vehicle, cost, repairs,
+                                             {"from": date_from, "to": date_to, "category": category},
+                                             trip_meta_map=trip_meta)
+    except ValueError as e:
+        raise HTTPException(status_code=500, detail=str(e))
     fname = _fname_stem(vehicle.get("vehicle_number"), date_from, date_to) + ".xlsx"
     return StreamingResponse(BytesIO(xlsx_bytes),
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",

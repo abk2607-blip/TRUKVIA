@@ -29,10 +29,39 @@ def _para(text, style):
     return Paragraph(text if text not in (None, "") else "—", style)
 
 
+def _group_trip_costs(rows: list) -> list:
+    """Iter143 P2 · Pure projection over cost_summary.rows[].
+    Groups by trip_id (excluding repair-linked rows), hides zero-total
+    trips, sorts newest first (by trip metadata date fallback), returns
+    a list of {trip_id, total, categories}. Never reads Trip.total_expense,
+    VendorBill, MechanicWO, or supplier-payable fields."""
+    groups = {}
+    for r in (rows or []):
+        tid = r.get("trip_id")
+        if not tid or r.get("repair_event_id"):
+            continue
+        amt = float(r.get("amount") or 0)
+        g = groups.setdefault(tid, {"total": 0.0, "categories": {}})
+        g["total"] = round(g["total"] + amt, 2)
+        c = r.get("category") or "Other"
+        g["categories"][c] = round(g["categories"].get(c, 0.0) + amt, 2)
+    out = []
+    for tid, g in groups.items():
+        if g["total"] <= 0:                       # decision 3 — hide zero-cost
+            continue
+        out.append({"trip_id": tid, "total": g["total"],
+                    "categories": sorted(g["categories"].items(),
+                                         key=lambda kv: (-kv[1], kv[0]))})
+    return out
+
+
 def build_vehicle_cost_pdf(company: dict, vehicle: dict,
                            cost_summary: dict, repair_history: dict,
-                           period: dict) -> bytes:
-    """Landscape A4. period = {"from": str|None, "to": str|None, "category": str|None}."""
+                           period: dict, trip_meta_map: dict = None) -> bytes:
+    """Landscape A4. period = {"from": str|None, "to": str|None, "category": str|None}.
+    Iter143 P2 · optional trip_meta_map = {trip_id: {date, lr_number,
+    from_location, to_location, driver_name, customer, vehicle_type,
+    supplier_name}}."""
     buf = BytesIO()
     doc = SimpleDocTemplate(
         buf, pagesize=landscape(A4),
@@ -139,6 +168,74 @@ def build_vehicle_cost_pdf(company: dict, vehicle: dict,
                             ("TOPPADDING",(0,0),(-1,-1),0),("BOTTOMPADDING",(0,0),(-1,-1),0)]))
     story.append(kt)
     story.append(Spacer(1, 6))
+
+    # ── Iter143 P2 · TRIP-WISE COST SUMMARY ──────────────────────────────
+    # Placement (approved): AFTER the KPI band, BEFORE Category + Month.
+    # Source: cost_summary.rows[] grouped by trip_id — one row per trip.
+    # Reconciliation guard: Σ(trip totals) must equal trip_linked_total.
+    trip_groups = _group_trip_costs(cost_summary.get("rows") or [])
+    trip_meta_map = trip_meta_map or {}
+    trip_sum = round(sum(g["total"] for g in trip_groups), 2)
+    trip_linked = round(float(cost_summary.get("trip_linked_total") or 0), 2)
+    if abs(trip_sum - trip_linked) > 0.01:
+        raise ValueError(
+            f"Iter143 P2 reconciliation guard failed — grouped trip total "
+            f"₹{trip_sum:.2f} != cost_summary.trip_linked_total ₹{trip_linked:.2f}. "
+            f"Refusing to emit an inconsistent PDF."
+        )
+
+    if trip_groups:
+        # Sort newest first by trip metadata date (fallback to trip_id).
+        def _tkey(g):
+            m = trip_meta_map.get(g["trip_id"]) or {}
+            return (m.get("date") or "", g["trip_id"])
+        trip_groups.sort(key=_tkey, reverse=True)
+
+        story.append(Paragraph("TRIP-WISE COST SUMMARY", h2))
+        story.append(Paragraph(
+            "Grouped from Expense Detail by Trip · "
+            f"Σ Trip Cost = Trip-linked Cost KPI (₹ {_fmt(trip_linked)}) ✓",
+            small))
+        story.append(Spacer(1, 2))
+        thead = ["Trip Date", "Trip Ref", "Route", "Customer / Driver",
+                 "Categories", "Trip Cost"]
+        tdata = [thead]
+        for g in trip_groups:
+            m = trip_meta_map.get(g["trip_id"]) or {}
+            is_sup = m.get("vehicle_type") == "supplier"
+            party = m.get("supplier_name") if is_sup else m.get("customer") or ""
+            drv = m.get("driver_name") or ""
+            party_drv_bits = [x for x in (party, drv) if x]
+            party_drv = " · ".join(party_drv_bits) if party_drv_bits else "—"
+            route = "—"
+            fr, to_ = m.get("from_location") or "", m.get("to_location") or ""
+            if fr or to_:
+                route = f"{fr or '—'} → {to_ or '—'}"
+            trip_ref = (m.get("lr_number") or "").strip()
+            if not trip_ref:
+                # Fallback: short trip_id — never silently drop a cost.
+                trip_ref = g["trip_id"]
+                if len(trip_ref) > 14:
+                    trip_ref = trip_ref[:8] + "…" + trip_ref[-4:]
+            badge = " [SUPPLIER]" if is_sup else ""
+            cats_txt = " · ".join(f"{c} ₹{_fmt(a)}" for c, a in g["categories"])
+            tdata.append([
+                _fmt_ind_date(m.get("date")) if m.get("date") else "—",
+                _para(f"<b>{trip_ref}</b>{badge}", body),
+                _para(route, body),
+                _para(party_drv, body),
+                _para(cats_txt or "—", small),
+                _para(f"₹ {_fmt(g['total'])}", right),
+            ])
+        tdata.append(["", "", "", "",
+                      _para("Total Trip-linked Cost", rboldy),
+                      _para(f"₹ {_fmt(trip_sum)}", rboldy)])
+        tt = Table(tdata,
+                   colWidths=[22*mm, 34*mm, 55*mm, 55*mm, 71*mm, 40*mm],
+                   repeatRows=1)
+        tt.setStyle(_tbl_style(total_row=True, striped=True))
+        story.append(tt)
+        story.append(Spacer(1, 6))
 
     # ── CATEGORY + MONTH · side-by-side ──────────────────────────────────
     by_cat = cost_summary.get("by_category") or []
