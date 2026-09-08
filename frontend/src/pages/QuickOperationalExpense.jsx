@@ -206,6 +206,13 @@ export default function QuickOperationalExpense() {
       idemKey.current = `qob-${date}-${rid()}`;
       // Iter140 · Refresh the Today's Entries strip so the just-saved rows show up.
       qc.invalidateQueries({ queryKey: ["quick-op-today", date] });
+      // Iter145 P0 · Trip View reads canonical Expense live; invalidate so
+      // the just-created/edited/cancelled row reflects immediately when the
+      // user navigates back to /trips/{tripId}/view.
+      if (tripId) {
+        qc.invalidateQueries({ queryKey: ["trip-expenses-canonical", tripId] });
+        qc.invalidateQueries({ queryKey: ["trip-view", tripId] });
+      }
     },
     onError: (err) => toast.error(err?.response?.data?.detail || "Save failed"),
   });
@@ -570,6 +577,9 @@ export default function QuickOperationalExpense() {
           onSaved={() => {
             setEditing(null);
             qc.invalidateQueries({ queryKey: ["quick-op-today"] });
+            // Iter145 P0 · reflect edited amount on Trip View immediately.
+            qc.invalidateQueries({ queryKey: ["trip-expenses-canonical"] });
+            qc.invalidateQueries({ queryKey: ["trip-view"] });
             toast.success("Expense updated");
           }}
         />
@@ -582,6 +592,9 @@ export default function QuickOperationalExpense() {
           onCancelled={() => {
             setCancelling(null);
             qc.invalidateQueries({ queryKey: ["quick-op-today"] });
+            // Iter145 P0 · reflect cancelled row disappearance on Trip View.
+            qc.invalidateQueries({ queryKey: ["trip-expenses-canonical"] });
+            qc.invalidateQueries({ queryKey: ["trip-view"] });
             toast.success("Expense cancelled");
           }}
         />

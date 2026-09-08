@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { api, API, fmtCurrency, fmtDate } from "@/api";
@@ -6,6 +6,44 @@ import { openTripLrPdf, downloadTripLrAllCopiesZip } from "@/utils/pdfDownload";
 import { ArrowLeft, Pencil, FileText, ExternalLink, Archive } from "lucide-react";
 import FileAttachments from "@/components/FileAttachments";
 import OverrideBadge from "@/components/OverrideBadge";
+
+// Iter145 P0 · Canonical Expense category → legacy Trip.expenses field mapping.
+// If the tenant tags a canonical Expense with a category outside this map,
+// its amount is aggregated into the legacy "other" bucket so no value is
+// ever silently lost. Cost fields only — customer-side rows
+// (diesel_from_customer, shortage, cash_advance_received) are NOT canonical
+// costs and are always read from the Trip doc.
+const _CANONICAL_TO_LEGACY_FIELD = {
+  "diesel": "diesel",
+  "toll": "toll",
+  "fasttag": "toll",
+  "batta": "batta",
+  "driver batta": "batta",
+  "repair": "repair",
+  "firewood": "firewood",
+  "other": "other",
+};
+function _projectCanonicalToLegacyShape(rows) {
+  // rows: canonical Expense docs, already filtered to active/non-reversed.
+  const out = { diesel: 0, toll: 0, batta: 0, repair: 0, firewood: 0, other: 0 };
+  const otherCats = [];   // categories that landed in "other"
+  let total = 0;
+  for (const r of rows) {
+    const amt = Number(r.amount) || 0;
+    total += amt;
+    const key = String(r.category || "").trim().toLowerCase();
+    const legacyField = _CANONICAL_TO_LEGACY_FIELD[key];
+    if (legacyField) {
+      out[legacyField] = Math.round((out[legacyField] + amt) * 100) / 100;
+    } else {
+      // Unknown / non-standard canonical category → into Other bucket, but
+      // remember the category name so the "Other (…)" label surfaces it.
+      out.other = Math.round((out.other + amt) * 100) / 100;
+      if (r.category && !otherCats.includes(r.category)) otherCats.push(r.category);
+    }
+  }
+  return { proj: out, total: Math.round(total * 100) / 100, otherCats };
+}
 
 export default function TripView() {
   const { id } = useParams();
@@ -19,6 +57,29 @@ export default function TripView() {
   const { data: customers = [] } = useQuery({ queryKey: ["customers"], queryFn: async () => (await api.get("/customers")).data });
   const { data: vehicles = [] } = useQuery({ queryKey: ["vehicles"], queryFn: async () => (await api.get("/vehicles")).data });
   const { data: invoices = [] } = useQuery({ queryKey: ["invoices"], queryFn: async () => (await api.get("/invoices")).data });
+
+  // Iter145 P0 · Canonical Expense projection for the Expenses section.
+  // Reads live from db.expenses via the existing endpoint. Active rows only
+  // (is_deleted=false, is_reversed=false — server enforces both by default).
+  // When at least one canonical row exists we PROJECT (never mutate) it
+  // into the legacy display shape; when none exist we fall back to the
+  // Trip doc's own legacy Trip.expenses scalars unchanged. This is the
+  // same XOR partition used by /vehicles/{vid}/cost-summary so numbers
+  // reconcile 1:1 with Vehicle Workspace · Trip Cost and Vehicle PDF/XLSX.
+  const canonicalQ = useQuery({
+    queryKey: ["trip-expenses-canonical", id],
+    queryFn: async () => (await api.get("/expenses", {
+      params: { trip_id: id, limit: 500 },
+    })).data,
+    enabled: !!id,
+    staleTime: 15_000,
+  });
+  const canonicalRows = canonicalQ.data || [];
+  const canonical = useMemo(
+    () => _projectCanonicalToLegacyShape(canonicalRows),
+    [canonicalRows]
+  );
+  const hasCanonical = canonicalRows.length > 0;
 
   if (!trip) {
     return <div className="text-center text-zinc-500 py-16" data-testid="trip-view-loading">Loading trip…</div>;
@@ -45,7 +106,18 @@ export default function TripView() {
   const supplierProfit = trip.profit != null && isSupplier
     ? Number(trip.profit)
     : (Number(trip.freight_amount || 0) - netPayable);
-  const e = trip.expenses || {};
+  const legacyExpenses = trip.expenses || {};
+  // Iter145 P0 · When canonical rows exist, present canonical values in the
+  // cost fields and the total. Customer-side / adjustment fields (diesel
+  // from customer, shortage, cash advance) are Trip metadata, NOT canonical
+  // costs — always read from the Trip doc.
+  const e = hasCanonical
+    ? { ...legacyExpenses, ...canonical.proj,
+        other_desc: canonical.otherCats.length
+          ? canonical.otherCats.join(" · ")
+          : (legacyExpenses.other_desc || "") }
+    : legacyExpenses;
+  const displayedTotalExpense = hasCanonical ? canonical.total : Number(trip.total_expense || 0);
 
   return (
     <div className="space-y-6" data-testid="trip-view-page">
@@ -83,7 +155,7 @@ export default function TripView() {
         <Stat label="Date" value={fmtDate(trip.date)} />
         <Stat label="Status" value={trip.status === "invoiced" ? "Invoiced" : "Pending"} accent={trip.status === "invoiced" ? "emerald" : "amber"} />
         <Stat label={<>Freight <OverrideBadge trip={trip} field="freight_amount" /></>} value={fmtCurrency(trip.freight_amount)} />
-        <Stat label={isSupplier ? "Net Payable" : "Total Expense"} value={fmtCurrency(trip.total_expense)} accent="rose" />
+        <Stat label={isSupplier ? "Net Payable" : "Total Expense"} value={fmtCurrency(isSupplier ? trip.total_expense : displayedTotalExpense)} accent="rose" />
         <Stat label="Profit" value={fmtCurrency(trip.profit)} accent={trip.profit >= 0 ? "emerald" : "rose"} />
       </div>
 
@@ -272,6 +344,31 @@ export default function TripView() {
       {/* Expenses (own trips) */}
       {!isSupplier && (
         <Section title="Expenses · ఖర్చులు">
+          {/* Iter145 P0 · Source-of-truth indicator strip */}
+          <div
+            className={
+              "mb-3 rounded-sm px-3 py-2 text-[11px] border " +
+              (hasCanonical
+                ? "bg-emerald-50 border-emerald-200 text-emerald-900"
+                : "bg-zinc-50 border-zinc-200 text-zinc-600")
+            }
+            data-testid="trip-view-expense-source"
+            data-source={hasCanonical ? "canonical" : "legacy"}
+          >
+            {hasCanonical ? (
+              <>
+                <b>Live from canonical Expense</b> · {canonicalRows.length}{" "}
+                active row{canonicalRows.length === 1 ? "" : "s"} · edits and
+                cancels in Quick Op / Expense Register reflect here
+                automatically · reconciles with Vehicle Workspace · Trip Cost.
+              </>
+            ) : (
+              <>
+                <b>Legacy trip expense</b> · no canonical Expense rows linked
+                to this trip yet. Values below come from the Trip document.
+              </>
+            )}
+          </div>
           <Grid2>
             <Row k="Diesel" v={fmtCurrency(e.diesel)} mono />
             <Row k="Toll" v={fmtCurrency(e.toll)} mono />
@@ -279,10 +376,10 @@ export default function TripView() {
             <Row k="Repair" v={fmtCurrency(e.repair)} mono />
             <Row k="Firewood" v={fmtCurrency(e.firewood)} mono />
             <Row k={`Other (${e.other_desc || "—"})`} v={fmtCurrency(e.other)} mono />
-            <Row k="Diesel from Customer" v={fmtCurrency(e.diesel_from_customer_amount)} mono />
-            <Row k="Shortage Qty / Amt" v={`${Number(e.shortage_qty || 0)} · ${fmtCurrency(e.shortage_amount)}`} mono />
-            <Row k="Cash Advance Received" v={fmtCurrency(e.cash_advance_received)} mono />
-            <Row k="Total Expense" v={fmtCurrency(trip.total_expense)} mono strong />
+            <Row k="Diesel from Customer" v={fmtCurrency(legacyExpenses.diesel_from_customer_amount)} mono />
+            <Row k="Shortage Qty / Amt" v={`${Number(legacyExpenses.shortage_qty || 0)} · ${fmtCurrency(legacyExpenses.shortage_amount)}`} mono />
+            <Row k="Cash Advance Received" v={fmtCurrency(legacyExpenses.cash_advance_received)} mono />
+            <Row k="Total Expense" v={fmtCurrency(displayedTotalExpense)} mono strong />
           </Grid2>
         </Section>
       )}

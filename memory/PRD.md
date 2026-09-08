@@ -1,5 +1,42 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
+## 🟡 Iter145 P0 · Trip View · Canonical Expense Projection — READY FOR UAT (2026-09-08)
+
+**Status: IMPLEMENTED, ALL TESTS GREEN, AWAITING USER UAT & LOCK.**
+
+### Scope delivered
+Fixed the source-of-truth visibility gap where Trip View → Expenses section rendered ₹0 for trips whose costs were entered via Quick Op (canonical Expense) instead of the legacy `Trip.expenses.*` scalars.
+
+- `TripView.jsx` now issues one additional read-only query: `GET /api/expenses?trip_id={id}&limit=500` (active + non-reversed rows only — server enforces both filters by default).
+- When **≥1 canonical row exists**, the Expenses section PROJECTS those rows into the legacy display shape (`Diesel / Toll / Batta / Repair / Firewood / Other`) via `_projectCanonicalToLegacyShape`. `FastTag` folds into `Toll`; any unknown category (e.g. `Parking`) lumps into `Other` with the category name surfaced in the `Other (…)` sub-label — nothing is silently dropped.
+- `Total Expense` in both the top summary strip AND the Expenses section reads `Σ canonical Expense.amount` — **the same number that Vehicle Workspace · Trip Cost / Vehicle PDF · TRIP-WISE COST SUMMARY / Vehicle XLSX · Trip Cost show for the same Trip.**
+- When **no canonical rows exist**, the section falls back to `trip.expenses.*` unchanged — legacy trips render exactly as before.
+- Customer-side rows (`Diesel from Customer`, `Shortage Qty/Amt`, `Cash Advance Received`) always read from `legacyExpenses.*` — they are Trip metadata, not canonical costs.
+- Source-of-truth indicator strip at the top of the section: emerald "**Live from canonical Expense** · N active rows · edits and cancels in Quick Op / Expense Register reflect here automatically · reconciles with Vehicle Workspace · Trip Cost." OR zinc "**Legacy trip expense** · no canonical Expense rows linked to this trip yet."
+- **React Query invalidation** added to Quick Op save mutation, EditExpenseModal `onSaved`, and CancelExpenseModal `onCancelled` — every Iter140 edit/cancel invalidates `["trip-expenses-canonical", tripId]` and `["trip-view", tripId]` so Trip View reflects immediately.
+
+### Zero-change confirmations
+- ZERO backend / schema / collection / endpoint / dependency changes.
+- ZERO writes back to `Trip.expenses` or `Trip.total_expense` — legacy scalars remain untouched on the Trip doc.
+- ZERO change to canonical Expense semantics.
+- Iter133–144 locks fully preserved (163/163 regression pass).
+
+### Files changed
+- `frontend/src/pages/TripView.jsx` — added `_CANONICAL_TO_LEGACY_FIELD` map + `_projectCanonicalToLegacyShape` helper, `canonicalQ` `useQuery`, `hasCanonical` XOR gate, source strip in Expenses section, `displayedTotalExpense` used in both summary and section total.
+- `frontend/src/pages/QuickOperationalExpense.jsx` — added `["trip-expenses-canonical"]` + `["trip-view"]` invalidation in save `onSuccess`, EditExpenseModal `onSaved`, CancelExpenseModal `onCancelled`.
+- `backend/tests/test_iter145_trip_view_canonical_projection.py` — **NEW** — 14 tests (backend contract + FE static + projection shim).
+
+### Tests
+- Iter145 focused: **14 / 14 pass**.
+- Iter139 / 141 / 142 / 143 P1+P2 / 144 picker / 144 UAT-fix regression + Iter145 = **163 / 163 pass in 102.77 s**.
+- Frontend `webpack compiled successfully`.
+
+### Not locked yet
+Awaiting user UAT sign-off. Once approved, lock Iter143, Iter144, and Iter145 together.
+
+---
+
+
 ## 🔴 Iter144 UAT-FIX · Diesel Amount Regression — RESOLVED (2026-09-08)
 
 **Status: FIXED, ALL TESTS GREEN, READY FOR UAT RE-VERIFICATION.**
