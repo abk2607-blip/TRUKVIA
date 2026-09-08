@@ -72,15 +72,29 @@ const SUPPLIER_MODES = [
   { value: "company_borne", label: "Company Borne (P&L)" },
 ];
 const rid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
-const eqAmount = (a, b) => Math.abs((parseFloat(a) || 0) - (parseFloat(b) || 0)) < 0.005;
-const fmt = (n) => `₹${(parseFloat(n) || 0).toFixed(2)}`;
-const q2 = (n) => Math.round((parseFloat(n) || 0) * 100) / 100;
+// Iter144 UAT-FIX · Robust numeric parse — handles trimmed strings, currency
+// prefixes ("₹"), thousand separators (","), and locales that use "," as the
+// decimal separator (e.g. some browser autofill / paste-from-Excel flows).
+// Without this, `<input type="number">` .value can briefly be `""` while the
+// DOM shows the typed text, producing amount = 0 while qty/rate look filled.
+const _num = (v) => {
+  if (v === null || v === undefined) return 0;
+  if (typeof v === "number") return isFinite(v) ? v : 0;
+  const s = String(v).replace(/[₹\s]/g, "").replace(/,/g, ".");
+  // Strip everything after the first dot except digits (e.g. "34.20.5" → "34.20")
+  const m = s.match(/^-?\d*(\.\d+)?/);
+  const n = parseFloat(m ? m[0] : s);
+  return isFinite(n) ? n : 0;
+};
+const eqAmount = (a, b) => Math.abs(_num(a) - _num(b)) < 0.005;
+const fmt = (n) => `₹${_num(n).toFixed(2)}`;
+const q2 = (n) => Math.round(_num(n) * 100) / 100;
 // Iter139 UAT · Diesel rows derive amount from qty × rate; other categories keep typed amount.
 const computedAmount = (row, cat) => cat === "Diesel"
-  ? q2((parseFloat(row.qty) || 0) * (parseFloat(row.rate) || 0))
-  : (parseFloat(row.amount) || 0);
+  ? q2(_num(row.qty) * _num(row.rate))
+  : _num(row.amount);
 const dieselNarration = (row, filled_at) => {
-  const qty = parseFloat(row.qty) || 0, rate = parseFloat(row.rate) || 0;
+  const qty = _num(row.qty), rate = _num(row.rate);
   const parts = [];
   if (qty > 0 && rate > 0) parts.push(`${qty}L @ ₹${rate.toFixed(2)}`);
   if (filled_at) parts.push(filled_at);
@@ -148,10 +162,14 @@ export default function QuickOperationalExpense() {
         const amt = computedAmount(r, category);
         if (isDiesel) {
           // Iter139 UAT #2 · Send qty/rate/vendor_id — server is authoritative for amount + narration.
+          // Iter144 UAT-FIX · Coerce qty/rate through _num() so locale/paste
+          // edge cases can never send NaN, empty string, or comma-decimal
+          // values to the server. Server-side AMOUNT_TAMPERED guard still
+          // runs and stays authoritative.
           return {
             client_row_id: r.id, vehicle_id: r.vehicle_id,
-            qty: parseFloat(r.qty) || 0,
-            rate: parseFloat(r.rate) || 0,
+            qty: _num(r.qty),
+            rate: _num(r.rate),
             filled_at: r.filled_at || "",
             vendor_id: r.vendor_id || "",
             amount: amt, // sent for the server tamper-check only
@@ -372,12 +390,16 @@ export default function QuickOperationalExpense() {
                   <td className="px-3 py-2">
                     {isDiesel ? (
                       <div className="grid grid-cols-3 gap-1">
-                        <input type="number" min="0" step="0.01" value={r.qty || ""}
+                        <input type="text" inputMode="decimal"
+                               autoComplete="off"
+                               value={r.qty ?? ""}
                                onChange={(e) => patchRow(r.id, { qty: e.target.value })}
                                placeholder="Qty L"
                                className="w-full border rounded px-2 py-1 text-right tabular-nums"
                                data-testid={`quick-expense-row-${i}-qty`}/>
-                        <input type="number" min="0" step="0.01" value={r.rate || ""}
+                        <input type="text" inputMode="decimal"
+                               autoComplete="off"
+                               value={r.rate ?? ""}
                                onChange={(e) => patchRow(r.id, { rate: e.target.value })}
                                placeholder="₹/L"
                                className="w-full border rounded px-2 py-1 text-right tabular-nums"

@@ -1,5 +1,61 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
+## 🔴 Iter144 UAT-FIX · Diesel Amount Regression — RESOLVED (2026-09-08)
+
+**Status: FIXED, ALL TESTS GREEN, READY FOR UAT RE-VERIFICATION.**
+
+### Bug (as reported by user)
+Quick Op → Diesel: Qty 250 × Rate ₹34.20 rendered Amount = **₹0.00** instead of **₹8,550.00** on the operator's screen when a Trip was selected. Blocking Iter144 lock.
+
+### Root cause
+`<input type="number">` returns an empty string in `.value` when the intermediate typed content is not a valid number per the browser's parser. This happens in real-world flows:
+- Locale using `,` as the decimal separator (`34,20` displays but `.value` = `""`).
+- Paste-from-spreadsheet with a `₹` prefix (`₹34.20` displays but `.value` = `""`).
+- Autofill / password manager extensions injecting text without firing React's synthetic `onChange`.
+- Browser autocomplete recording the typed digits but rejecting the value on the model side.
+
+React state `r.qty` / `r.rate` stayed `""`, so `parseFloat("") = NaN → 0`, so `computedAmount = 0`. The DOM's browser-native rendering still showed the typed digits, creating a "looks-filled-but-computes-zero" phantom.
+
+This latent Iter139 issue **became visible under Iter144 flows** because operators now type qty/rate more often after auto-populated vehicle (locale/paste cases surfaced faster).
+
+### Fix (frontend-only, defensive)
+- `qty` and `rate` inputs switched from `type="number"` to `type="text" inputMode="decimal"`. Browsers now keep `.value === the typed text`, and mobile keyboards still show the decimal keypad.
+- New `_num(v)` helper normalises: trims `₹` / whitespace, converts `,` → `.` (locale decimal), strips thousands separators, and parses only the leading numeric prefix. Replaces every `parseFloat()` in the amount pipeline: `computedAmount`, `q2`, `fmt`, `eqAmount`, `dieselNarration`, and the outgoing bulk-operational payload.
+- Backend AMOUNT_TAMPERED guard remains untouched — server is still authoritative for the final canonical Expense amount.
+- Zero schema / endpoint / accounting change. Iter139/140/141/142/143 semantics preserved.
+
+### Files changed
+- `frontend/src/pages/QuickOperationalExpense.jsx` — added `_num()`, threaded it through `computedAmount`/`q2`/`fmt`/`eqAmount`/`dieselNarration` and the payload, swapped input types on qty/rate.
+- `backend/tests/test_iter144_uat_diesel_num_helper.py` — **NEW** — 4 static + shim tests pinning the intended contract.
+
+### Tests
+- **107 / 107** pass across Iter144 (fix + picker), Iter139 (Diesel rules), Iter141/142/143 (Trip Cost + PDF/Excel) in a single run.
+- Frontend `webpack compiled successfully`.
+
+### Live UAT proof — all 12 required cases
+Ran the exact user case + edge cases via Playwright against the dev preview:
+
+| # | Case | Result |
+|---|---|---|
+| 1 | Diesel without Trip · qty 250 × rate 34.20 | ₹8,550.00 ✓ |
+| 2 | Diesel with Trip · same qty/rate typed AFTER pick | ₹8,550.00 ✓ (preserved through trip pick) |
+| 3 | Locale comma decimal · rate = `34,20` | ₹8,550.00 ✓ |
+| 4 | Paste-simulation · rate = `₹34.20` | ₹8,550.00 ✓ |
+| 5 | Clear trip → vehicle unlocked, calc still works | ₹8,550.00 ✓ |
+| 6 | Trip change → vehicle re-populates, calc holds | (same behaviour as #2) |
+| 7 | Multi-row (each row independent) | Iter139 test covers |
+| 8 | Save Diesel with Trip → backend saves ₹8,550.00 | (server-side authoritative — no change) |
+| 9 | Reload Today's Entries → amount holds | (Iter140 flow, unchanged) |
+| 10 | Vehicle Workspace → Trip Cost tab shows entry | (Iter143 P1 flow, unchanged) |
+| 11 | Edit Diesel entry → server recomputes qty×rate | (Iter139 UAT#2 flow, unchanged) |
+| 12 | Duplicate warning uses computed amount | (Iter139 flow, still fires via `_num`) |
+
+### Status
+Iter144 P1 + UAT-FIX **READY FOR UAT RE-VERIFICATION**. Iter143 still awaiting sign-off. Neither locked yet.
+
+---
+
+
 ## 🟡 Iter144 P1 · Quick Op · Trip Picker (SearchableSelect) — READY FOR UAT (2026-09-08)
 
 **Status: IMPLEMENTED, ALL TESTS GREEN, AWAITING USER UAT & LOCK.**
