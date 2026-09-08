@@ -1,5 +1,62 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
+## 🟡 Iter143 P1 · Vehicle Workspace · Trip Cost Tab — READY FOR UAT (2026-09-08)
+
+**Status: IMPLEMENTED, ALL TESTS GREEN, AWAITING USER UAT & LOCK.**
+
+### Scope
+Added a 5th tab **Trip Cost** to the Vehicle Workspace, placed between Expenses and Repairs (order: Overview | Expenses | Trip Cost | Repairs | Reports). Pure client-side projection of the authoritative `GET /api/vehicles/{vid}/cost-summary` response, grouped by `trip_id`. Trip metadata joined ONCE via `GET /api/trips?ids=…` (bypasses the 2000-row cap because it fetches only the trip_ids actually present in cost.rows) — never per-trip, never truncated.
+
+### Files changed
+- `/app/frontend/src/pages/VehicleWorkspace.jsx` — added `TripCostTab` + `TripCostRow` components, inserted `{ id: "trip-cost", label: "Trip Cost" }` in the tab array, wired `tripsQ` (single `ids=`-based fetch derived from cost rows).
+- `/app/backend/tests/test_iter143_trip_cost_tab.py` — 17 new tests (backend row-shape guards + FE static guards).
+
+### Zero-change confirmations
+- ZERO schema changes.
+- ZERO new collections.
+- ZERO new backend endpoints (P2 defers `/api/vehicles/{vid}/trip-costs`).
+- ZERO accounting changes; no touch to Trip → Expense bridge or `has_canonical_expenses` XOR.
+- ZERO modifications to locked Iter133–142.
+
+### Grouping approach
+`cost.rows[].filter(r => r.trip_id && !r.repair_event_id)` → Map by `trip_id` → per-group `{ total, by_category }`. Zero-total groups hidden. O(n) single pass. Total reconciled to `cost.trip_linked_total`.
+
+### Filter parity
+Reuses parent `from / to / category` state (no independent filter). Trip Cost updates automatically when parent filter changes.
+
+### XOR / double-count safety
+Inherits Iter133 XOR partition — a trip's canonical rows and legacy_trip_fallback rows are mutually exclusive by construction in `cost-summary` upstream. Test #8 explicitly asserts no `(canonical, legacy_trip_fallback)` pair exists for the same `(trip, category)`.
+
+### Supplier handling
+Supplier trips appear in the same tab with an amber `SUPPLIER` badge + supplier name. Their supplier-payable fields (`supplier_freight`, `supplier_advance`, `supplier_diesel`, `supplier_net_payable`) NEVER enter Trip Cost — asserted by both backend row-shape and FE static tests.
+
+### Large-data safety
+Replaced the initial `vehicle_id+date` fetch (limit=2000, risk of truncation) with an `ids=`-based fetch. Trip metadata request set is bounded by the number of trip-linked cost rows in the filter window, not by trip history depth. Chunked at 500 IDs per call for URL-length safety.
+
+### Reconciliation footer
+`Trip-linked Costs (₹X) + Non-trip Costs (₹Y) = Vehicle Total (₹Z) ✓` — green if `Σ displayed trip totals == trip_linked_total`, prominent rose warning otherwise. Never silently hides a mismatch.
+
+### Data-testid coverage
+`vw-tab-trip-cost`, `vw-trip-cost`, `vw-trip-cost-total`, `vw-trip-cost-total-cell`, `vw-trip-cost-reconciled` (with `data-reconciled` attr), `vw-trip-cost-empty`, `vw-trip-cost-row-{i}` (with `data-trip-id`, `data-source`), `vw-trip-cost-row-{i}-ref/-badge/-total/-open/-cat-{Category}`, `vw-trip-cost-error`, `vw-trip-cost-loading`, `vw-trip-cost-meta-loading`.
+
+### Tests
+- Iter143 focused: **17/17 pass** (`test_iter143_trip_cost_tab.py`).
+- Locked-iteration regression (Iter139–142): **94/94 pass**.
+- Combined run: **111/111 pass in 47.58s**.
+- Pre-existing unrelated failure: `test_iter40_expenditure_remarks::test_invoice_pdf_renders_remarks` — dates back to 2026-08-09, NOT caused by Iter143. To be tracked as a separate item.
+
+### Live UAT proof (dev preview)
+Vehicle `AP99IT83657C` (`veh_41c0ca28bee94b10`) rendered:
+- 1 grouped trip row: `LR/26-27/05402` · VJA → KKD · OWN · Diesel ₹8,000 · Toll ₹1,200 · Batta ₹500 · Trip Total ₹9,700.00
+- Displayed trip total: ₹9,700.00 (matches KPI "Trip-linked Cost")
+- Reconciliation strip: `Trip-linked Costs (₹9,700.00) + Non-trip Costs (₹24,055.00) = Vehicle Total (₹33,755.00) ✓` — green, data-reconciled=true.
+
+### Not locked yet
+Awaiting user UAT sign-off (steps A–O in the P1 spec) before marking Iter143 as LOCKED.
+
+---
+
+
 ## 📌 BACKLOG NOTE · Vehicle Workspace / Vehicle-Wise Expense Visibility — REQUIREMENT ONLY (2026-09-04)
 
 **Status: REQUIREMENT NOTE — NOT SCHEDULED — NO IMPLEMENTATION.**

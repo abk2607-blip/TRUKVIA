@@ -63,6 +63,44 @@ export default function VehicleWorkspace() {
   });
   const repairs = repairsQ.data;
 
+  // Iter143 P1 · Trip metadata join for Trip Cost tab.
+  //
+  // Large-data safety: the /api/trips endpoint caps at limit=2000. Rather
+  // than fetching every trip on the vehicle (which would truncate for very
+  // long histories), we derive the exact set of trip_ids that actually
+  // appear in cost.rows[] and fetch metadata for ONLY those via the
+  // endpoint's `ids=` parameter (see routers/trips.py:283-297 — bypasses
+  // the 2000 cap because it fetches a specific list). This means the
+  // request set is bounded by the number of trip-linked cost rows, not by
+  // trip history depth. ONE request per tab open — no N+1.
+  const tripIdsForCost = useMemo(() => {
+    if (!cost || !Array.isArray(cost.rows)) return [];
+    const s = new Set();
+    for (const r of cost.rows) {
+      if (r && r.trip_id && !r.repair_event_id) s.add(r.trip_id);
+    }
+    return Array.from(s);
+  }, [cost]);
+
+  const tripsQ = useQuery({
+    queryKey: ["trips-by-ids", vid, tripIdsForCost.join(",")],
+    queryFn: async () => {
+      if (tripIdsForCost.length === 0) return [];
+      // Chunk if the URL would get very long (very defensive — 500/chunk).
+      const CHUNK = 500;
+      const results = [];
+      for (let i = 0; i < tripIdsForCost.length; i += CHUNK) {
+        const slice = tripIdsForCost.slice(i, i + CHUNK);
+        const { data } = await api.get("/trips", { params: { ids: slice.join(",") } });
+        results.push(...(data || []));
+      }
+      return results;
+    },
+    enabled: !!vid && tab === "trip-cost" && tripIdsForCost.length >= 0,
+    staleTime: 15_000,
+  });
+  const tripsMeta = tripsQ.data;
+
   const categories = useMemo(() => {
     const s = new Set(["Toll", "Diesel", "Parking", "Batta"]);
     (cost?.by_category || []).forEach((c) => s.add(c.category));
@@ -181,10 +219,11 @@ export default function VehicleWorkspace() {
       {/* TAB BAR */}
       <div className="flex border-b" data-testid="vw-tabs">
         {[
-          { id: "overview", label: "Overview" },
-          { id: "expenses", label: "Expenses" },
-          { id: "repairs",  label: "Repairs" },
-          { id: "reports",  label: "Reports" },
+          { id: "overview",  label: "Overview" },
+          { id: "expenses",  label: "Expenses" },
+          { id: "trip-cost", label: "Trip Cost" },
+          { id: "repairs",   label: "Repairs" },
+          { id: "reports",   label: "Reports" },
         ].map((t) => (
           <button key={t.id}
                   onClick={() => { setTab(t.id); navigate(`/vehicles/${vid}?tab=${t.id}`, { replace: true }); }}
@@ -203,6 +242,13 @@ export default function VehicleWorkspace() {
       )}
       {tab === "expenses" && (
         <ExpensesTab cost={cost} loading={costQ.isLoading}/>
+      )}
+      {tab === "trip-cost" && (
+        <TripCostTab cost={cost}
+                     costLoading={costQ.isLoading}
+                     costError={costQ.isError}
+                     tripsMeta={tripsMeta}
+                     tripsLoading={tripsQ.isLoading}/>
       )}
       {tab === "repairs" && (
         <RepairsTab data={repairs} loading={repairsQ.isLoading} vid={vid}/>
@@ -444,5 +490,272 @@ function RepairsTab({ data, loading, vid }) {
         are the payable side and do <b>not</b> add to Vehicle Cost.
       </p>
     </div>
+  );
+}
+
+/**
+ * Iter143 P1 · Trip Cost tab.
+ * Pure projection — reuses parent's cost-summary payload (authoritative cost
+ * source) + a single /api/trips?vehicle_id=vid metadata query. NEVER re-sums
+ * from Trip.total_expense / Trip.expenses / VendorBill / MechanicWO / supplier
+ * payable. Zero backend change. Zero new endpoint. XOR safety inherited from
+ * cost-summary rows[] (canonical XOR legacy_trip_fallback — never both).
+ */
+function TripCostTab({ cost, costLoading, costError, tripsMeta, tripsLoading }) {
+  const trips = React.useMemo(() => {
+    if (!cost) return [];
+    const rows = (cost.rows || []).filter(
+      (r) => r.trip_id && !r.repair_event_id
+    );
+    // Group by trip_id — O(n) single pass.
+    const groups = new Map();
+    for (const r of rows) {
+      const tid = r.trip_id;
+      let g = groups.get(tid);
+      if (!g) {
+        g = { trip_id: tid, total: 0, by_category: new Map(), rows: [], sources: new Set() };
+        groups.set(tid, g);
+      }
+      const amt = Number(r.amount) || 0;
+      g.total += amt;
+      g.by_category.set(r.category, (g.by_category.get(r.category) || 0) + amt);
+      g.rows.push(r);
+      g.sources.add(r.source_type || "manual");
+    }
+    // Trip metadata map — O(m). Iter143 rule: never one request per trip.
+    const metaMap = new Map();
+    for (const t of tripsMeta || []) metaMap.set(t.id, t);
+    // Materialise + hide zero-cost + attach meta.
+    const list = [];
+    for (const g of groups.values()) {
+      const total = Math.round(g.total * 100) / 100;
+      if (total <= 0) continue;                      // decision 3: hide zero-cost trips
+      const meta = metaMap.get(g.trip_id) || null;
+      list.push({
+        trip_id: g.trip_id,
+        meta,
+        metaMissing: !meta,
+        total,
+        by_category: Array.from(g.by_category.entries())
+          .map(([category, amount]) => ({
+            category,
+            amount: Math.round(amount * 100) / 100,
+          }))
+          .sort((a, b) => (b.amount - a.amount) || a.category.localeCompare(b.category)),
+        source_kind: g.sources.has("legacy_trip_fallback") ? "legacy_fallback" : "canonical",
+      });
+    }
+    // Sort: newest trip.date first (fallback = trip_id).
+    list.sort((a, b) => {
+      const da = a.meta?.date || "";
+      const db = b.meta?.date || "";
+      if (da !== db) return db.localeCompare(da);
+      return a.trip_id.localeCompare(b.trip_id);
+    });
+    return list;
+  }, [cost, tripsMeta]);
+
+  if (costError) {
+    return (
+      <div className="bg-white border rounded-lg p-4 text-rose-600 text-sm"
+           data-testid="vw-trip-cost-error">
+        Unable to load Vehicle Cost — Trip Cost cannot be computed. Please retry.
+      </div>
+    );
+  }
+  if (costLoading) {
+    return (
+      <div className="text-zinc-400 text-sm" data-testid="vw-trip-cost-loading">
+        Loading…
+      </div>
+    );
+  }
+
+  const displayedTotal = Math.round(
+    trips.reduce((s, t) => s + t.total, 0) * 100
+  ) / 100;
+  const tripLinked = Math.round((Number(cost?.trip_linked_total) || 0) * 100) / 100;
+  const nonTrip = Math.round((Number(cost?.non_trip_total) || 0) * 100) / 100;
+  const vehicleTotal = Math.round((Number(cost?.total_cost) || 0) * 100) / 100;
+  const reconciled = Math.abs(displayedTotal - tripLinked) < 0.01;
+
+  return (
+    <div className="bg-white border rounded-lg p-4" data-testid="vw-trip-cost">
+      <div className="flex items-center gap-3 mb-3">
+        <div className="text-xs font-semibold uppercase tracking-wide text-zinc-600">
+          Trip Cost ({trips.length})
+        </div>
+        {tripsLoading && (
+          <span className="text-[11px] text-zinc-400" data-testid="vw-trip-cost-meta-loading">
+            Loading trip metadata…
+          </span>
+        )}
+        <div className="ml-auto text-xs text-zinc-500" data-testid="vw-trip-cost-total">
+          Displayed trip total:{" "}
+          <b className="tabular-nums text-zinc-900">{fmt(displayedTotal)}</b>
+        </div>
+      </div>
+
+      {trips.length === 0 ? (
+        <div className="text-zinc-400 text-sm" data-testid="vw-trip-cost-empty">
+          No trip-linked costs for this vehicle in the selected period.
+        </div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead className="bg-zinc-50">
+              <tr className="text-left">
+                <th className="py-2 px-2">Trip Date</th>
+                <th className="py-2 px-2">Trip Ref</th>
+                <th className="py-2 px-2">Customer</th>
+                <th className="py-2 px-2">Route</th>
+                <th className="py-2 px-2">Driver</th>
+                <th className="py-2 px-2">Type</th>
+                <th className="py-2 px-2">Categories</th>
+                <th className="py-2 px-2 text-right">Trip Total</th>
+                <th className="py-2 px-2 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody>
+              {trips.map((t, i) => (
+                <TripCostRow key={t.trip_id} row={t} idx={i}/>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t bg-zinc-50">
+                <td colSpan={7} className="py-2 px-2 text-right font-semibold">
+                  Σ Displayed Trip Costs
+                </td>
+                <td className="py-2 px-2 text-right tabular-nums font-semibold"
+                    data-testid="vw-trip-cost-total-cell">
+                  {fmt(displayedTotal)}
+                </td>
+                <td/>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+      )}
+
+      {/* Reconciliation trust strip — never silently hides a mismatch */}
+      <div
+        className={
+          "mt-3 rounded px-3 py-2 text-xs border " +
+          (reconciled
+            ? "bg-emerald-50 border-emerald-200 text-emerald-900"
+            : "bg-rose-50 border-rose-300 text-rose-900 font-semibold")
+        }
+        data-testid="vw-trip-cost-reconciled"
+        data-reconciled={reconciled ? "true" : "false"}
+      >
+        {reconciled ? (
+          <>
+            Trip-linked Costs (<span className="tabular-nums">{fmt(tripLinked)}</span>) +{" "}
+            Non-trip Costs (<span className="tabular-nums">{fmt(nonTrip)}</span>) ={" "}
+            Vehicle Total (<span className="tabular-nums">{fmt(vehicleTotal)}</span>) ✓
+          </>
+        ) : (
+          <>
+            ⚠ Reconciliation mismatch — displayed trip total{" "}
+            <span className="tabular-nums">{fmt(displayedTotal)}</span> ≠
+            trip-linked total{" "}
+            <span className="tabular-nums">{fmt(tripLinked)}</span>. Please refresh
+            or report this to support (never treat this as final).
+          </>
+        )}
+      </div>
+
+      <p className="mt-3 text-[11px] text-zinc-400">
+        Source: <code>GET /api/vehicles/{"{vid}"}/cost-summary → rows[]</code>,
+        grouped client-side by <code>trip_id</code>. Trip metadata joined once via{" "}
+        <code>GET /api/trips?vehicle_id={"{vid}"}</code> — never per-trip.
+        Supplier payable, VendorBill, MechanicWO amounts are never included here
+        (they are the payable side, not cost).
+      </p>
+    </div>
+  );
+}
+
+function TripCostRow({ row, idx }) {
+  const m = row.meta || {};
+  const isSupplier = (m.vehicle_type || "").toLowerCase() === "supplier";
+  const trip_id_short = row.trip_id.length > 12
+    ? row.trip_id.slice(0, 8) + "…" + row.trip_id.slice(-4)
+    : row.trip_id;
+  return (
+    <tr className="border-t align-top"
+        data-testid={`vw-trip-cost-row-${idx}`}
+        data-trip-id={row.trip_id}
+        data-source={row.source_kind}>
+      <td className="py-2 px-2 whitespace-nowrap text-xs">
+        {m.date || <span className="text-zinc-400" data-testid={`vw-trip-cost-row-${idx}-meta-missing`}>meta missing</span>}
+      </td>
+      <td className="py-2 px-2 text-xs font-mono">
+        {row.metaMissing ? (
+          <span title="Cost row references a trip not returned by /api/trips (out of date-range join, or trip since deleted). Cost is still counted; no silent drop.">
+            {trip_id_short}
+          </span>
+        ) : (
+          <Link to={`/trips/${row.trip_id}/view`}
+                className="text-indigo-700 hover:underline"
+                data-testid={`vw-trip-cost-row-${idx}-ref`}>
+            {m.lr_number || trip_id_short}
+          </Link>
+        )}
+      </td>
+      <td className="py-2 px-2 text-xs">
+        {isSupplier ? (m.supplier_name || "—") : (m.consignor_name || m.customer_id || "—")}
+      </td>
+      <td className="py-2 px-2 text-xs whitespace-nowrap">
+        {(m.from_location || "—")}<span className="text-zinc-400 mx-1">→</span>{(m.to_location || "—")}
+      </td>
+      <td className="py-2 px-2 text-xs">{m.driver_name || m.lr_driver_name || "—"}</td>
+      <td className="py-2 px-2">
+        <span
+          className={
+            "text-[10px] uppercase tracking-wider font-semibold px-1.5 py-0.5 rounded " +
+            (isSupplier
+              ? "bg-amber-100 text-amber-800"
+              : "bg-emerald-100 text-emerald-800")
+          }
+          data-testid={`vw-trip-cost-row-${idx}-badge`}
+        >
+          {isSupplier ? "SUPPLIER" : "OWN"}
+        </span>
+        {isSupplier && m.supplier_name && (
+          <div className="text-[10px] text-zinc-500 mt-0.5" title="Supplier">
+            {m.supplier_name}
+          </div>
+        )}
+      </td>
+      <td className="py-2 px-2 text-xs">
+        <div className="flex flex-wrap gap-1">
+          {row.by_category.map((c) => (
+            <span key={c.category}
+                  className="inline-flex items-center gap-1 bg-zinc-100 border border-zinc-200 rounded px-1.5 py-0.5"
+                  data-testid={`vw-trip-cost-row-${idx}-cat-${c.category}`}>
+              <span className="text-zinc-700">{c.category}</span>
+              <span className="tabular-nums text-zinc-900">{fmt(c.amount)}</span>
+            </span>
+          ))}
+        </div>
+        {row.source_kind === "legacy_fallback" && (
+          <div className="text-[10px] text-amber-700 mt-1">
+            legacy fallback (pre-canonical)
+          </div>
+        )}
+      </td>
+      <td className="py-2 px-2 text-right tabular-nums font-medium"
+          data-testid={`vw-trip-cost-row-${idx}-total`}>
+        {fmt(row.total)}
+      </td>
+      <td className="py-2 px-2 text-right whitespace-nowrap">
+        <Link to={`/trips/${row.trip_id}/view`}
+              className="text-xs text-indigo-700 hover:underline"
+              data-testid={`vw-trip-cost-row-${idx}-open`}>
+          Open Trip →
+        </Link>
+      </td>
+    </tr>
   );
 }
