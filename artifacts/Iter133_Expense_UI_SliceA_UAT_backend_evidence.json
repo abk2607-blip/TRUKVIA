@@ -1,20 +1,20 @@
 {
-  "tag": "SLICEA-E390E2",
+  "tag": "SLICEA-DED82B",
   "scenarios": {
     "twin_write_25k": "PASS",
     "payment_no_cost_change": "PASS",
     "supplier_settlement": "PASS"
   },
-  "vendor_id": "ven_b4452cdb48f54c17",
-  "mechanic_id": "mec_b78de62097f049c9",
-  "vehicle_id": "veh_37dd7ecc5bd9474e",
+  "vendor_id": "ven_22ac59113a7b4b1a",
+  "mechanic_id": "mec_e7b8709e05a947ce",
+  "vehicle_id": "veh_2987bf9595d34018",
   "baseline_total_cost": 0,
-  "repair_id": "rev_2ea37733a3984db8",
-  "bill_id": "vbl_c73d389a39b14f0d",
-  "wo_id": "mwo_44153b21c2d64457",
+  "repair_id": "rev_063231304bcc4206",
+  "bill_id": "vbl_9f4039723f504376",
+  "wo_id": "mwo_d35cded2df8b441b",
   "twin_expense_ids": [
-    "exp_a6ff09d93eb94027",
-    "exp_f4790a79a653408a"
+    "exp_bf40375db8764237",
+    "exp_715f43c7d6aa4fdc"
   ],
-  "payment_id": "vpay_18371f77f89a4e6e"
+  "payment_id": "vpay_98249fa831e74c90"
 }
