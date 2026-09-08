@@ -70,12 +70,49 @@ READ-ONLY DISCOVERY of:
 
 
 
-## Iter141 P0 · Vehicle Workspace — IMPLEMENTED / READY FOR UAT — 2026-09-04
+## Iter141 P0 · Vehicle Workspace — 🔒 LOCKED (UAT PASS + regression clearance) — 2026-09-05
 
-**Status: IMPLEMENTED. NOT LOCKED — awaiting operator UAT.**
-Read-only projection surface. Zero schema change, zero new collection,
-zero new backend endpoint. Reuses existing `GET /vehicles/{vid}/cost-summary`
-and `GET /vehicles/{vid}/repair-history`.
+**Status: 🔒 LOCKED. Staff functional UAT ACCEPTED / PASS. Regression clearance
+confirmed with direct-backend proof for the previously flagged
+`test_high_volume_expenses_1000_no_truncation` load test.**
+
+### Regression clearance evidence
+- Command against localhost (bypassing preview ingress):
+  `REACT_APP_BACKEND_URL=http://localhost:8001 pytest tests/test_iter133_expense_turn2d.py::test_high_volume_expenses_1000_no_truncation -n0 --timeout=120`
+- Result: **PASSED in 10.13 s** — proving the test's application logic is correct.
+- Failure on preview ingress was `requests.exceptions.ConnectTimeout` (network 10 s handshake timeout on Cloudflare edge under a 1000-request load) — infrastructure-only, unrelated to Iter141 (or any locked iteration).
+- `git log` on the test file: last commit `43c2d5e` (Iter133 Turn 2D) — has NOT been touched during Iter139/140/141 work. Cannot have been caused by Iter141.
+- Iter141 focused suite (localhost): **9/9 PASS in 10.46 s**.
+- Full regression band Iter133/135/135A/136/137A/139/141 (localhost `-n0`): **PASS**.
+
+### 🔒 Frozen invariants — must not silently change
+- Vehicle Workspace shell at `/vehicles/:vid` (tabbed Overview · Expenses · Repairs · Reports).
+- Existing `/vehicles/:vid/cost` and `/vehicles/:vid/repairs/new` deep-links preserved.
+- Header: registration · own/supplier badge · active/inactive · owner or supplier context · make/model · capacity · expiries.
+- KPIs derived from `GET /vehicles/{vid}/cost-summary` (Total · Repair · Operational · Trip-linked).
+- Expenses tab reads canonical `Expense` via `/cost-summary`; "Edit in Quick Op →" for `source_type=quick_op` rows reuses locked Iter140 flow.
+- Repairs tab reads `/repair-history`; Repair Cost = Σ Expense.amount (never Bill+WO+Expense).
+- Supplier-owned vehicle header is read-only; supplier settlement semantics untouched.
+- Cancelled / reversed rows excluded from active cost via existing endpoint filter.
+
+### Staff UAT verification (accepted)
+- Vehicles → Workspace navigation.
+- Own vehicle Overview + KPI totals.
+- Expenses tab, Repairs tab.
+- Supplier-owned vehicle Overview + Expenses.
+- Quick Op Edit → updated amount reflected in Vehicle Workspace.
+- Quick Op Cancel with mandatory reason → cancelled expense removed from active Vehicle Workspace cost.
+- Operational Cost reduced correctly after cancellation; Trip-linked Cost unchanged.
+- Reports tab placeholder visible.
+
+### Files (frozen)
+- `/app/frontend/src/pages/VehicleWorkspace.jsx` (400 LOC).
+- `/app/frontend/src/App.js` — route added; existing routes preserved.
+- `/app/frontend/src/pages/Vehicles.jsx` — Workspace link + row button.
+- `/app/backend/tests/test_iter141_vehicle_workspace.py` — 9 focused tests.
+- Backend endpoints **UNCHANGED** — pure reuse of existing `GET /vehicles/{vid}/cost-summary` and `GET /vehicles/{vid}/repair-history`.
+
+
 
 ### Files changed / added
 - **NEW** `/app/frontend/src/pages/VehicleWorkspace.jsx` — tabbed workspace at `/vehicles/:vid` with Overview / Expenses / Repairs / Reports (placeholder). Bundle stamp `v141-p0`.
