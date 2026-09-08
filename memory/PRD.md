@@ -1,8 +1,38 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
-## 🟡 Iter145 P0 · Trip View · Canonical Expense Projection — READY FOR UAT (2026-09-08)
+## 🔒 FINAL LOCK RECORD — Iter143 / Iter144 / Iter145 (2026-09-08)
 
-**Status: IMPLEMENTED, ALL TESTS GREEN, AWAITING USER UAT & LOCK.**
+**Bundled lock sign-off**: Iter143 P1, Iter143 P2, Iter144 P1, Iter144 UAT-Fix, and Iter145 P0 are all LOCKED under the same FINAL UAT + REGRESSION EVIDENCE REPORT dated 2026-09-08.
+
+### Automated test evidence
+- Iter143 P1: **17 / 17 pass**
+- Iter143 P2: **22 / 22 pass**
+- Iter144 P1: **12 / 12 pass**
+- Iter144 UAT-Fix: **4 / 4 pass**
+- Iter145 P0: **14 / 14 pass**
+- **Full regression Iter133 → Iter145: 413 passed, 0 failed, 0 skipped, 0 xfail, 0 xpass** (283.40 s).
+- Frontend: `webpack compiled successfully` — only pre-existing `react-hooks/exhaustive-deps` warnings remain.
+- Supervisors: backend + frontend RUNNING.
+
+### Architecture / lock integrity
+- `models.py` · `db.py` · `server.py` — **0-line diff** since Iter142 P0 lock.
+- ZERO schema changes · ZERO new collections · ZERO new endpoints · ZERO accounting-truth changes · ZERO supplier-payable semantic changes · ZERO Vendor/Mechanic ledger truth changes · ZERO Invoice-logic changes.
+- The single Iter142 test-file change (`test_iter142_vehicle_reports.py::test_xlsx_five_sheets_and_totals_match_json`) is an **additive** expectation update to accept the new `Trip Cost` sheet inserted between `Repairs` and `By Category`. Original Iter142 sheet content + order verified byte-consistent by `test_iter143_p2_original_iter142_sheets_intact`.
+
+### Inherited (OUT-OF-SCOPE) failure — separate follow-up
+- `backend/tests/test_iter40_expenditure_remarks.py::test_invoice_pdf_renders_remarks` — asserts a legacy string `'ITER40 SHORTAGE REMARK'` in a rendered invoice PDF; the invoice PDF pipeline now emits a different phrasing. Git history confirms this test file was last touched at commit `516e109` / `5142436`, **both PRIOR to Iter143 work**. Zero code from Iter143/144/145 touches invoice PDF rendering. NOT modified per lock rules. Tracked as a **separate inherited follow-up** outside the Iter143/144/145 scope.
+
+### Binding principle preserved
+`ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO MANUAL RECONCILIATION.`
+
+---
+
+
+## 🔒 Iter145 P0 · Trip View · Canonical Expense Projection — LOCKED (2026-09-08)
+
+**Status: 🔒 LOCKED. Live UAT ACCEPTED / PASS. Regression clearance PASS. FREEZE.**
+
+**Lock record**: Iter145 P0 locked together with Iter143 P1, Iter143 P2, Iter144 P1, and Iter144 UAT-Fix under the same final sign-off (see FINAL UAT + REGRESSION EVIDENCE REPORT dated 2026-09-08).
 
 ### Scope delivered
 Fixed the source-of-truth visibility gap where Trip View → Expenses section rendered ₹0 for trips whose costs were entered via Quick Op (canonical Expense) instead of the legacy `Trip.expenses.*` scalars.
@@ -32,14 +62,14 @@ Fixed the source-of-truth visibility gap where Trip View → Expenses section re
 - Frontend `webpack compiled successfully`.
 
 ### Not locked yet
-Awaiting user UAT sign-off. Once approved, lock Iter143, Iter144, and Iter145 together.
+🔒 **LOCKED 2026-09-08** — Live UAT accepted (see FINAL UAT + REGRESSION EVIDENCE REPORT). Locked together with Iter143 P1/P2 and Iter144 P1/UAT-Fix. Full regression Iter133 → Iter145 = 413/413 pass. Zero schema / API / accounting changes. Frontend `webpack compiled successfully`. `models.py`, `db.py`, `server.py` unchanged since Iter142 lock.
 
 ---
 
 
-## 🔴 Iter144 UAT-FIX · Diesel Amount Regression — RESOLVED (2026-09-08)
+## 🔒 Iter144 UAT-FIX · Diesel Amount Regression — LOCKED as part of Iter144 (2026-09-08)
 
-**Status: FIXED, ALL TESTS GREEN, READY FOR UAT RE-VERIFICATION.**
+**Status: 🔒 LOCKED (bundled with Iter144 P1). Live UAT ACCEPTED / PASS. FREEZE.**
 
 ### Bug (as reported by user)
 Quick Op → Diesel: Qty 250 × Rate ₹34.20 rendered Amount = **₹0.00** instead of **₹8,550.00** on the operator's screen when a Trip was selected. Blocking Iter144 lock.
@@ -93,9 +123,9 @@ Iter144 P1 + UAT-FIX **READY FOR UAT RE-VERIFICATION**. Iter143 still awaiting s
 ---
 
 
-## 🟡 Iter144 P1 · Quick Op · Trip Picker (SearchableSelect) — READY FOR UAT (2026-09-08)
+## 🔒 Iter144 P1 · Quick Op · Trip Picker (SearchableSelect) — LOCKED (2026-09-08)
 
-**Status: IMPLEMENTED, ALL TESTS GREEN, AWAITING USER UAT & LOCK.**
+**Status: 🔒 LOCKED. Live UAT ACCEPTED / PASS. Regression clearance PASS. FREEZE.**
 
 ### Scope delivered
 Replaced the manual `Trip ID (optional)` text input on the Quick Operational Expense screen with an `AsyncSearchableSelect` (Iter68 component, reused as-is).
@@ -129,14 +159,14 @@ Replaced the manual `Trip ID (optional)` text input on the Quick Operational Exp
 Screenshot at date `2028-03-07` on VBK Logistics shows the new `Trip (Optional)` picker labelled `Search Trip…` with helper strip *"Optional — link this batch to a trip on 2028-03-07. Vehicle auto-fills when a trip is selected."* The old manual input is confirmed removed by both DOM inspection and the FE static test `test_fe_manual_trip_id_input_removed`.
 
 ### Not locked yet
-Awaiting user UAT sign-off (walk through: pick trip → confirm vehicle auto-populates and locks → clear trip → confirm vehicle unlocks → change date → confirm selection resets → save an entry and see it on Today's Entries + Vehicle Workspace Trip Cost tab). Once approved, lock Iter144 alongside Iter143.
+🔒 **LOCKED 2026-09-08** — Live UAT accepted (Trip selection → vehicle auto-populate + lock → clear/unlock → date-change reset → save + reflect on Today's Entries + Vehicle Workspace Trip Cost, all verified). Bundled UAT-Fix (Diesel `_num` helper) locked in the same sign-off. Locked together with Iter143 P1/P2 and Iter145 P0.
 
 ---
 
 
-## 🟡 Iter143 P2 · Vehicle-wise Trip Cost in PDF + Excel — READY FOR UAT (2026-09-08)
+## 🔒 Iter143 P2 · Vehicle-wise Trip Cost in PDF + Excel — LOCKED (2026-09-08)
 
-**Status: IMPLEMENTED, ALL TESTS GREEN, AWAITING USER UAT & LOCK.**
+**Status: 🔒 LOCKED. Live UAT ACCEPTED / PASS. Regression clearance PASS. FREEZE.**
 
 ### Scope delivered
 - **PDF**: New `TRIP-WISE COST SUMMARY` section placed AFTER the KPI band and BEFORE the Category+Month dual table. Columns: Trip Date · Trip Ref · Route · Customer / Driver · Categories · Trip Cost. Total row at bottom of section. Sub-caption reads `Grouped from Expense Detail by Trip · Σ Trip Cost = Trip-linked Cost KPI (₹ …) ✓`. All existing Iter142 sections (Vehicle identity, KPIs, Category+Month, Expense Detail, Repair Detail, footer) untouched. Landscape A4 preserved. Short reports still fit on one page.
@@ -172,14 +202,14 @@ Awaiting user UAT sign-off (walk through: pick trip → confirm vehicle auto-pop
 - Excel (`.xlsx`, 9.1 KB): sheet order `['Summary','Expenses','Repairs','Trip Cost','By Category','By Month']`. `Trip Cost` sheet contains header + one data row + total row, total 9,700.
 
 ### Not locked yet
-Awaiting user UAT sign-off. Once approved, mark Iter143 (P1 + P2) as LOCKED.
+🔒 **LOCKED 2026-09-08** — Live UAT accepted (PDF `TRIP-WISE COST SUMMARY` + Excel `Trip Cost` sheet, screen/PDF/Excel parity, filter parity, supplier-payable exclusion, reconciliation guard). Locked together with Iter143 P1, Iter144 P1/UAT-Fix, and Iter145 P0.
 
 ---
 
 
-## 🟡 Iter143 P1 · Vehicle Workspace · Trip Cost Tab — READY FOR UAT (2026-09-08)
+## 🔒 Iter143 P1 · Vehicle Workspace · Trip Cost Tab — LOCKED (2026-09-08)
 
-**Status: IMPLEMENTED, ALL TESTS GREEN, AWAITING USER UAT & LOCK.**
+**Status: 🔒 LOCKED. Live UAT ACCEPTED / PASS. Regression clearance PASS. FREEZE.**
 
 ### Scope
 Added a 5th tab **Trip Cost** to the Vehicle Workspace, placed between Expenses and Repairs (order: Overview | Expenses | Trip Cost | Repairs | Reports). Pure client-side projection of the authoritative `GET /api/vehicles/{vid}/cost-summary` response, grouped by `trip_id`. Trip metadata joined ONCE via `GET /api/trips?ids=…` (bypasses the 2000-row cap because it fetches only the trip_ids actually present in cost.rows) — never per-trip, never truncated.
@@ -229,7 +259,7 @@ Vehicle `AP99IT83657C` (`veh_41c0ca28bee94b10`) rendered:
 - Reconciliation strip: `Trip-linked Costs (₹9,700.00) + Non-trip Costs (₹24,055.00) = Vehicle Total (₹33,755.00) ✓` — green, data-reconciled=true.
 
 ### Not locked yet
-Awaiting user UAT sign-off (steps A–O in the P1 spec) before marking Iter143 as LOCKED.
+🔒 **LOCKED 2026-09-08** — Live UAT accepted (trip-wise grouping, category filter, From/To filter, Trip Ref → Trip View, Trip Edit expense removal → Vehicle Workspace reflected, full Trip expenditure removal, screen/PDF/Excel parity). Locked together with Iter143 P2, Iter144 P1/UAT-Fix, and Iter145 P0.
 
 ---
 
