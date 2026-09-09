@@ -2,6 +2,7 @@ import React, { useMemo, useState } from "react";
 import { api, fmtCurrency } from "@/api";
 import { toast } from "sonner";
 import { X, Upload, CheckCircle2, AlertTriangle, XCircle, Link2 } from "lucide-react";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 
 /* Iter147 P0 · Fleet-card Import Wizard.
  * ------------------------------------------------------------------
@@ -119,9 +120,16 @@ export default function FuelImportWizard({ source, vehicles, onClose, onSuccess 
   }) || [];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4"
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-3 md:p-6"
          data-testid="fuel-import-wizard">
-      <div className="bg-white w-full max-w-6xl border border-zinc-950 rounded-sm max-h-[92vh] flex flex-col">
+      {/* Iter147 P0 UAT-fix (2026-09-09) · Desktop-friendly modal:
+          w-[95vw] h-[85vh] gives operators room to comfortably read
+          IOCL/BPCL Diesel rows and all preview columns without
+          horizontal squeezing. Vertical scroll stays internal. */}
+      <div
+        data-testid="fuel-import-wizard-shell"
+        className="bg-white w-[95vw] max-w-[1600px] h-[85vh] border border-zinc-950 rounded-sm flex flex-col overflow-hidden"
+      >
         <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-200">
           <div>
             <div className="text-[10px] uppercase tracking-[0.15em] text-zinc-500 font-bold">Fleet-card Import</div>
@@ -193,9 +201,9 @@ export default function FuelImportWizard({ source, vehicles, onClose, onSuccess 
                 })}
               </div>
 
-              {/* Rows table */}
-              <div className="border border-zinc-200 rounded-sm overflow-hidden">
-                <table className="w-full text-xs" data-testid="wizard-rows-table">
+              {/* Rows table — wrapped so long tables scroll horizontally only when required */}
+              <div className="border border-zinc-200 rounded-sm overflow-auto">
+                <table className="w-full text-xs min-w-[1100px]" data-testid="wizard-rows-table">
                   <thead className="bg-zinc-50 text-[10px] uppercase tracking-wider text-zinc-500">
                     <tr>
                       <th className="text-left px-3 py-2">Row</th>
@@ -224,19 +232,35 @@ export default function FuelImportWizard({ source, vehicles, onClose, onSuccess 
                           <td className="px-3 py-1.5">{r.row_index}</td>
                           <td className="px-3 py-1.5">{r.date}</td>
                           <td className="px-3 py-1.5 font-semibold">{r.source_vehicle_ref}</td>
-                          <td className="px-3 py-1.5">
+                          <td className="px-3 py-1.5 min-w-[240px]">
                             {activeBucket === "vehicle_mapping_required" ? (
-                              <select
-                                data-testid={`map-select-${r.row_index}`}
+                              /* Iter147 P0 UAT-fix (2026-09-09) · Reuses the
+                                 shared shadcn SearchableSelect combobox
+                                 (same pattern as Quick Op / Expense Register)
+                                 so operators can type-to-search a TRUKVIA
+                                 vehicle instead of scrolling a long list.
+                                 Selecting once persists a FuelVehicleMap
+                                 keyed by (source, source_vehicle_ref) and
+                                 the staged mapping applies to every row
+                                 with the same source_vehicle_ref in this
+                                 preview via `rowMaps` lookup below. */
+                              <SearchableSelect
+                                testId={`map-select-${r.row_index}`}
                                 value={staged?.vehicle_id || ""}
-                                onChange={(e) => e.target.value && saveMapping(r.source_vehicle_ref, e.target.value)}
-                                className="border border-zinc-300 px-2 py-1 rounded-sm text-xs"
-                              >
-                                <option value="">-- select --</option>
-                                {vehicles.map((v) => (
-                                  <option key={v.id} value={v.id}>{v.vehicle_number}</option>
-                                ))}
-                              </select>
+                                placeholder="Search TRUKVIA vehicle…"
+                                emptyText="No matching vehicles"
+                                allowClear={false}
+                                onChange={(v) => v && saveMapping(r.source_vehicle_ref, v)}
+                                options={vehicles.map((v) => ({
+                                  value: v.id,
+                                  label: v.vehicle_number,
+                                  secondary: (v.vehicle_type || "").toUpperCase() === "SUPPLIER"
+                                    ? `${v.supplier_name || "Supplier"} · Supplier`
+                                    : (v.driver_name || (v.vehicle_type || "").toUpperCase()),
+                                  keywords: [v.vehicle_number, v.driver_name, v.supplier_name]
+                                    .filter(Boolean),
+                                }))}
+                              />
                             ) : (
                               <span className="font-semibold">{vehNum || "—"}</span>
                             )}
