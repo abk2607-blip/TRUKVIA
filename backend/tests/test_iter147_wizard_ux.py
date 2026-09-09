@@ -70,12 +70,31 @@ def test_clear_row_selection_is_scoped():
 # ── 4 · SearchableSelect binds value/onChange to per-row identity ──────
 def test_searchable_select_is_per_row_bound():
     s = _src()
-    # Value must read from the per-row selection map.
-    assert 'value={sel?.vehicle_id || ""}' in s
+    # Value must be per-row (pre-fill server auto-resolution if any, else per-row selection).
+    assert 'value={vehId}' in s or 'value={sel?.vehicle_id || ""}' in s
     # testId must include the row_index so DOM identity is per-row.
     assert 'testId={`map-select-${r.row_index}`}' in s
     # onChange must dispatch to selectVehicleForRow with r.row_index.
     assert "selectVehicleForRow(r.row_index" in s
+
+
+# ── 4b · SearchableSelect renders in EVERY non-terminal bucket ─────────
+def test_searchable_select_renders_in_every_editable_bucket():
+    """Iter147 P0 CRITICAL BUG FIX v2: even server-auto-resolved rows
+    (in the Ready bucket) MUST expose the per-row SearchableSelect so
+    operators can override any FuelVehicleMap suggestion per row."""
+    s = _src()
+    # The render guard must be on the row's TERMINAL bucket (error /
+    # exact_duplicate), NOT on the wizard's activeBucket. This ensures
+    # SearchableSelect renders in Ready + Vehicle Mapping + Possible
+    # Duplicate rows alike.
+    assert '{(r.bucket === "exact_duplicate" || r.bucket === "error") ? (' in s, \
+        "SearchableSelect gate must be on r.bucket, not on activeBucket"
+    # The old activeBucket-gated render must be gone.
+    assert 'activeBucket === "vehicle_mapping_required" ? (' not in s, \
+        "old activeBucket-scoped gate must be removed"
+    # Auto-resolved hint present so operators know they can override.
+    assert 'auto-hint-${r.row_index}' in s or "isAutoResolved" in s
 
 
 # ── 5 · Persistent FuelVehicleMap upsert is OPT-IN, not automatic ──────

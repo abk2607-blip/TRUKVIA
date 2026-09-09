@@ -264,27 +264,32 @@ export default function FuelImportWizard({ source, vehicles, onClose, onSuccess 
                       const sel = rowSelections[r.row_index];
                       const vehId = sel?.vehicle_id || r.resolved_vehicle_id || "";
                       const vehNum = sel?.vehicle_number || r.resolved_vehicle_number || "";
+                      const isAutoResolved = !sel && !!r.resolved_vehicle_id;
                       return (
                         <tr key={`${r.row_index}:${r.source_txn_ref}`} data-testid={`wizard-row-${r.row_index}`} className="border-t border-zinc-100">
                           <td className="px-3 py-1.5">{r.row_index}</td>
                           <td className="px-3 py-1.5">{r.date}</td>
                           <td className="px-3 py-1.5 font-semibold">{r.source_vehicle_ref}</td>
                           <td className="px-3 py-1.5 min-w-[280px]">
-                            {activeBucket === "vehicle_mapping_required" ? (
-                              /* Iter147 P0 CRITICAL BUG FIX (2026-09-09) ·
-                                 Row-scoped vehicle selection. State keyed
-                                 by `row_index` (parser-emitted 1-based row
-                                 number of the source file), NEVER by
-                                 `source_vehicle_ref`. Two rows carrying the
-                                 same fleet-card identifier can be mapped to
-                                 different TRUKVIA vehicles in the same
-                                 preview. The persistent FuelVehicleMap is an
-                                 OPT-IN hint (checkbox below) — never a
-                                 forced back-propagation to other rows. */
+                            {/* Iter147 P0 CRITICAL BUG FIX v2 (2026-09-09) ·
+                                Per-row SearchableSelect renders for EVERY
+                                bucket except the terminal ones (exact_duplicate
+                                / error), so operators can always override
+                                whichever vehicle the server auto-resolved
+                                via a persistent FuelVehicleMap. State stays
+                                keyed by `row_index`; a fleet-card identifier
+                                that may point to different physical vehicles
+                                across transactions is now handled correctly:
+                                the operator overrides per row, and the
+                                committed Expense.vehicle_id matches THAT
+                                exact row's selection. */}
+                            {(r.bucket === "exact_duplicate" || r.bucket === "error") ? (
+                              <span className="font-semibold">{vehNum || "—"}</span>
+                            ) : (
                               <div className="space-y-1">
                                 <SearchableSelect
                                   testId={`map-select-${r.row_index}`}
-                                  value={sel?.vehicle_id || ""}
+                                  value={vehId}
                                   placeholder="Search TRUKVIA vehicle…"
                                   emptyText="No matching vehicles"
                                   allowClear={true}
@@ -312,9 +317,14 @@ export default function FuelImportWizard({ source, vehicles, onClose, onSuccess 
                                   />
                                   Save mapping for future uploads (this source ref only)
                                 </label>
+                                {isAutoResolved && (
+                                  <div className="text-[10px] text-amber-700"
+                                       data-testid={`auto-hint-${r.row_index}`}>
+                                    Auto-suggested from a saved mapping. This row is
+                                    editable — change it if the physical vehicle is different.
+                                  </div>
+                                )}
                               </div>
-                            ) : (
-                              <span className="font-semibold">{vehNum || "—"}</span>
                             )}
                           </td>
                           <td className="px-3 py-1.5 text-right">{Number(r.litres || 0).toFixed(2)}</td>
@@ -345,7 +355,7 @@ export default function FuelImportWizard({ source, vehicles, onClose, onSuccess 
                                 </label>
                               </div>
                             )}
-                            {r.bucket === "ready" && <span className="text-emerald-700">OK</span>}
+                            {r.bucket === "ready" && <span className="text-emerald-700">{sel ? `Row ${r.row_index} → ${sel.vehicle_number}` : "OK"}</span>}
                             {r.bucket === "vehicle_mapping_required" && !sel && (
                               <span className="text-sky-700">Pick a TRUKVIA vehicle for THIS row (independent of other rows)</span>
                             )}
