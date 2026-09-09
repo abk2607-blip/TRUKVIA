@@ -20,6 +20,7 @@ from db import db
 from auth import get_current_user
 from company import _active_company_id
 from models import FuelVehicleMap, Expense, now_utc, new_id
+from audit import _log_audit, _diff_dict
 from services_fuel_import import (
     parse_fuel_file, build_preview, commit_rows, unified_fuel_log,
     MAX_ROWS_P0, make_source_key, _content_key,
@@ -253,3 +254,146 @@ async def get_unified_fuel_log(request: Request,
         vehicle_id=vehicle_id, source_filter=source_label,
         limit=max(1, min(limit, 10000)),
     )
+
+
+# ── Iter147 P0 UAT · Post-import Vehicle Correction ────────────────────
+# Narrow, row-level correction endpoint for canonical fleet-card imported
+# Diesel Expenses. ONE Expense.vehicle_id + vehicle_number gets rewritten;
+# everything else that identifies the source transaction stays intact
+# (source, source_txn_ref, source_key, date, amount, narration/remarks
+# with litres, rate, station). No new Expense is created — the same row
+# is updated in place, so Vehicle Cost / Expense Register / Trip Cost /
+# Fuel Log automatically reflect the correction via the existing Iter133
+# canonical read paths.
+#
+# Explicit safety rails:
+#   • ONLY `source_type == "fleet_card_import"` rows are editable here.
+#   • Reversed or soft-deleted rows are rejected.
+#   • FuelVehicleMap is untouched unless the operator opts in via
+#     `persist_mapping=true` on the request body. Even then, the map is
+#     an opt-in HINT for future imports — it never back-mutates any
+#     existing Expense.
+@router.patch("/expenses/{eid}/fleet-card-vehicle")
+async def correct_fleet_card_expense_vehicle(
+    eid: str, request: Request, body: dict = Body(...),
+    user=Depends(get_current_user),
+):
+    uid = user["user_id"]
+    cid = await _active_company_id(request, user)
+    new_vid = str(body.get("vehicle_id") or "").strip()
+    if not new_vid:
+        raise HTTPException(status_code=400, detail="vehicle_id is required")
+
+    before = await db.expenses.find_one(
+        {"id": eid, "user_id": uid, "company_id": cid},
+        {"_id": 0},
+    )
+    if not before:
+        raise HTTPException(status_code=404, detail="Expense not found")
+    if before.get("is_deleted"):
+        raise HTTPException(status_code=400, detail="Cannot edit a cancelled Expense.")
+    if before.get("is_reversed"):
+        raise HTTPException(status_code=400,
+            detail="Cannot edit a reversed Expense; create a corrective entry instead.")
+    if (before.get("source_type") or "") != "fleet_card_import":
+        raise HTTPException(status_code=400,
+            detail="This endpoint is limited to fleet-card imported Diesel rows. "
+                   "Manual/Quick Op edits use their own endpoints; legacy db.fuel is not editable here.")
+    if (before.get("category") or "") != "Diesel":
+        raise HTTPException(status_code=400, detail="Only Diesel rows are editable here.")
+
+    veh = await db.vehicles.find_one(
+        {"id": new_vid, "user_id": uid, "company_id": cid},
+        {"_id": 0, "vehicle_number": 1, "is_active": 1},
+    )
+    if not veh:
+        raise HTTPException(status_code=400, detail="Vehicle not found in tenant")
+
+    prev_vid = before.get("vehicle_id", "")
+    prev_vnum = before.get("vehicle_number", "")
+    new_vnum = veh.get("vehicle_number", "")
+
+    if new_vid == prev_vid:
+        # No-op guard — return the row unchanged.
+        before.pop("_id", None); before.pop("user_id", None)
+        return {"ok": True, "unchanged": True, "expense": before}
+
+    patch = {
+        "vehicle_id": new_vid,
+        "vehicle_number": new_vnum,
+        "modified_by": uid,
+        "modified_at": now_utc().isoformat(),
+    }
+    await db.expenses.update_one({"id": eid}, {"$set": patch})
+    after = {**before, **patch}
+
+    # Audit trail — capture prev/new vehicle explicitly so the correction
+    # is discoverable in /api/audit-logs (existing Iter133 pattern).
+    try:
+        await _log_audit(
+            {"user_id": uid, "company_id": cid,
+             "email": user.get("email", ""), "name": user.get("name", "")},
+            "expense", "update", eid,
+            before.get("category", "Diesel"),
+            f"fleet-card vehicle correction · {prev_vnum or prev_vid} → {new_vnum or new_vid}",
+            _diff_dict(before, after),
+        )
+    except Exception:
+        pass
+
+    # Opt-in only: persist / update the FuelVehicleMap so FUTURE imports
+    # auto-resolve this source_vehicle_ref to the corrected vehicle.
+    # NEVER runs silently — the checkbox on the dialog controls this.
+    persist = bool(body.get("persist_mapping"))
+    persisted_map = None
+    if persist:
+        src = str(before.get("source") or "").lower()
+        # Prefer the caller-supplied source_vehicle_ref (row-scoped and
+        # exact). Fallback: look up an existing FuelVehicleMap whose
+        # vehicle_id matched THIS row's previous vehicle — a deterministic
+        # reverse lookup that never mutates other Expenses.
+        sref = str(body.get("source_vehicle_ref") or "").strip()
+        if not sref:
+            existing_map = await db.fuel_vehicle_maps.find_one(
+                {"user_id": uid, "company_id": cid, "source": src,
+                 "vehicle_id": prev_vid},
+                {"_id": 0, "source_vehicle_ref": 1},
+            )
+            sref = str(existing_map.get("source_vehicle_ref") or "") if existing_map else ""
+        if src in ("iocl", "bpcl") and sref:
+            existing = await db.fuel_vehicle_maps.find_one(
+                {"user_id": uid, "company_id": cid, "source": src,
+                 "source_vehicle_ref": sref},
+                {"_id": 0, "id": 1},
+            )
+            payload = FuelVehicleMap(
+                source=src, source_vehicle_ref=sref,
+                vehicle_id=new_vid, vehicle_number=new_vnum,
+                created_by=uid,
+            )
+            doc = payload.model_dump()
+            doc["user_id"] = uid
+            doc["company_id"] = cid
+            if existing:
+                doc["id"] = existing["id"]
+                doc["modified_by"] = uid
+                doc["modified_at"] = now_utc().isoformat()
+                await db.fuel_vehicle_maps.update_one(
+                    {"user_id": uid, "company_id": cid, "source": src,
+                     "source_vehicle_ref": sref},
+                    {"$set": doc},
+                )
+            else:
+                await db.fuel_vehicle_maps.insert_one(doc)
+            doc.pop("_id", None); doc.pop("user_id", None)
+            persisted_map = doc
+
+    after.pop("_id", None); after.pop("user_id", None)
+    return {
+        "ok": True,
+        "unchanged": False,
+        "previous_vehicle_id": prev_vid,
+        "previous_vehicle_number": prev_vnum,
+        "expense": after,
+        "persisted_map": persisted_map,   # None unless operator opted in
+    }

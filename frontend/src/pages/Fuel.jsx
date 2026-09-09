@@ -1,9 +1,10 @@
 import React, { useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, fmtCurrency, fmtDate } from "@/api";
-import { Fuel as FuelIcon, Upload, Plus, TrendingUp } from "lucide-react";
+import { Fuel as FuelIcon, Upload, Plus, TrendingUp, Pencil } from "lucide-react";
 import FuelImportWizard from "@/components/fuel/FuelImportWizard";
 import ManualFuelDialog from "@/components/fuel/ManualFuelDialog";
+import EditFleetVehicleDialog from "@/components/fuel/EditFleetVehicleDialog";
 
 /* Iter147 P0 · Unified Fuel Log.
  * ------------------------------------------------------------------
@@ -31,6 +32,7 @@ export default function Fuel() {
   const qc = useQueryClient();
   const [wizardSource, setWizardSource] = useState(null); // "iocl" | "bpcl" | null
   const [manualOpen, setManualOpen] = useState(false);
+  const [editRow, setEditRow] = useState(null);     // Iter147 P0 UAT · post-import vehicle correction target
   const [filters, setFilters] = useState({
     date_from: "", date_to: "", vehicle_id: "", source_label: "",
   });
@@ -166,14 +168,15 @@ export default function Fuel() {
                 <th className="text-left px-4 py-2">Source</th>
                 <th className="text-left px-4 py-2">Reference</th>
                 <th className="text-left px-4 py-2">Status</th>
+                <th className="text-right px-4 py-2 pr-4"> </th>
               </tr>
             </thead>
             <tbody className="font-mono">
               {isLoading && (
-                <tr><td colSpan={10} className="px-4 py-12 text-center text-zinc-400">Loading…</td></tr>
+                <tr><td colSpan={11} className="px-4 py-12 text-center text-zinc-400">Loading…</td></tr>
               )}
               {!isLoading && rows.length === 0 && (
-                <tr><td colSpan={10} className="px-4 py-12 text-center text-zinc-400" data-testid="fuel-log-empty">
+                <tr><td colSpan={11} className="px-4 py-12 text-center text-zinc-400" data-testid="fuel-log-empty">
                   No Diesel entries yet. Import a fleet-card file or add a manual entry.
                 </td></tr>
               )}
@@ -202,6 +205,25 @@ export default function Fuel() {
                     {r.source_txn_ref || "—"}
                   </td>
                   <td className="px-4 py-2 text-xs text-emerald-700">{r.status}</td>
+                  <td className="px-3 py-2 text-right pr-4">
+                    {/* Iter147 P0 UAT · Post-import Vehicle Correction.
+                        Visible ONLY on canonical fleet-card imported
+                        rows (IOCL / BPCL Import). Manual / Quick Op /
+                        Trip Legacy / Legacy Fuel rows keep their
+                        existing edit paths untouched. */}
+                    {r.kind === "canonical" && (r.source === "iocl" || r.source === "bpcl") ? (
+                      <button
+                        data-testid={`edit-fleet-vehicle-${r.id}`}
+                        title="Edit Vehicle for this transaction only"
+                        onClick={() => setEditRow(r)}
+                        className="inline-flex items-center gap-1 px-2 py-1 text-[10px] uppercase tracking-wider border border-zinc-300 rounded-sm hover:bg-zinc-100"
+                      >
+                        <Pencil size={11} /> Edit Vehicle
+                      </button>
+                    ) : (
+                      <span className="text-zinc-300 text-[10px]">—</span>
+                    )}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -222,6 +244,14 @@ export default function Fuel() {
           vehicles={vehicles}
           onClose={() => setManualOpen(false)}
           onSuccess={() => { setManualOpen(false); invalidate(); }}
+        />
+      )}
+      {editRow && (
+        <EditFleetVehicleDialog
+          row={editRow}
+          vehicles={vehicles}
+          onClose={() => setEditRow(null)}
+          onSuccess={() => { setEditRow(null); invalidate(); }}
         />
       )}
     </div>
