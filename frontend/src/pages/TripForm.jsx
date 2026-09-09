@@ -41,6 +41,12 @@ export default function TripForm() {
   const [searchParams] = useSearchParams();
   const prefillCustomer = searchParams.get("customer_id");
   const isEdit = Boolean(id);
+  // Iter146 P0 · First-save mode. On /trips/new we present a focused
+  // FIRST-SAVE screen (Trip · Vehicle · Freight · LR · Supplier when
+  // applicable). On /trips/:id/edit the full form is rendered as today.
+  // Zero backend / schema / payload change — every hidden field keeps its
+  // model default at the POST /api/trips call site.
+  const firstSaveMode = !isEdit;
   const [form, setForm] = useState(EMPTY);
 
   // Iter68 — customers are now server-searched inside TripDetailsSection;
@@ -222,7 +228,7 @@ export default function TripForm() {
       }
       return saved;
     },
-    onSuccess: () => {
+    onSuccess: (saved) => {
       toast.success(isEdit ? "Trip updated" : "Trip created");
       qc.invalidateQueries({ queryKey: ["trips"] });
       qc.invalidateQueries({ queryKey: ["dashboard"] });
@@ -231,7 +237,13 @@ export default function TripForm() {
       // Iter126c — clear the preserved draft ONLY after a confirmed Save.
       try { draft.clearOnSuccess(); } catch {}
       idemKeyRef.current = null;
-      nav("/trips");
+      // Iter146 P0 · After a fresh create, navigate to the FULL edit screen
+      // so the operator can complete the remaining details in one click.
+      if (!isEdit && saved && saved.id) {
+        nav(`/trips/${saved.id}/edit`);
+      } else {
+        nav("/trips");
+      }
     },
     onError: (e) => toast.error(e?.response?.data?.detail || "Failed"),
   });
@@ -684,6 +696,7 @@ export default function TripForm() {
           form={form} setForm={setForm}
           customers={customers} vehicles={vehicles} drivers={drivers} products={products}
           setQaOpen={setQaOpen}
+          firstSaveMode={firstSaveMode}
         />
 
         {/* Iter63 · Priority D — Supplier Section moved to render immediately after Trip Details */}
@@ -695,6 +708,7 @@ export default function TripForm() {
             supplierNetPayable={supplierNetPayable}
             supplierProfit={supplierProfit}
             onQuickAddSupplier={() => setQaOpen("supplier")}
+            firstSaveMode={firstSaveMode}
           />
         )}
 
@@ -707,58 +721,64 @@ export default function TripForm() {
           freightQtyUsedLive={freightQtyUsedLive}
           loadedQ={loadedQ}
           unloadedQ={unloadedQ}
+          firstSaveMode={firstSaveMode}
         />
 
-        <UnloadingSection
-          form={form} setForm={setForm}
-          shortageQtyLive={shortageQtyLive} excessQtyLive={excessQtyLive}
-          shortageAmountLive={shortageAmountLive} excessAmountLive={excessAmountLive}
-          custShortageLimitDisplay={custShortageLimitDisplay}
-          custShortageLimitType={custShortageLimitType}
-          custShortageMethod={custShortageMethod}
-          custShortageMethodLabel={custShortageMethodLabel}
-          custAllowedMT={custAllowedMT}
-          netShortageMT={netShortageMT}
-          limitExceeded={limitExceeded}
-          supplierShortageLimitKg={supplierShortageLimitKg}
-          supplierShortageAllowedMT={supplierShortageAllowedMT}
-          supplierNetShortageMT={supplierNetShortageMT}
-          supplierLimitExceeded={supplierLimitExceeded}
-          loadedQ={loadedQ}
-          unloadedQ={unloadedQ}
-        />
+        {/* Iter146 P0 · Advanced sections hidden on first-save; remain on /trips/:id/edit */}
+        {!firstSaveMode && (
+          <>
+            <UnloadingSection
+              form={form} setForm={setForm}
+              shortageQtyLive={shortageQtyLive} excessQtyLive={excessQtyLive}
+              shortageAmountLive={shortageAmountLive} excessAmountLive={excessAmountLive}
+              custShortageLimitDisplay={custShortageLimitDisplay}
+              custShortageLimitType={custShortageLimitType}
+              custShortageMethod={custShortageMethod}
+              custShortageMethodLabel={custShortageMethodLabel}
+              custAllowedMT={custAllowedMT}
+              netShortageMT={netShortageMT}
+              limitExceeded={limitExceeded}
+              supplierShortageLimitKg={supplierShortageLimitKg}
+              supplierShortageAllowedMT={supplierShortageAllowedMT}
+              supplierNetShortageMT={supplierNetShortageMT}
+              supplierLimitExceeded={supplierLimitExceeded}
+              loadedQ={loadedQ}
+              unloadedQ={unloadedQ}
+            />
 
-        <HaltingSection
-          form={form} setForm={setForm}
-          datesPresent={_datesPresent}
-          totalHaltingDaysLive={totalHaltingDaysLive}
-          autoChargeableDays={autoChargeableDays}
-          haltingAmountLive={haltingAmountLive}
-        />
+            <HaltingSection
+              form={form} setForm={setForm}
+              datesPresent={_datesPresent}
+              totalHaltingDaysLive={totalHaltingDaysLive}
+              autoChargeableDays={autoChargeableDays}
+              haltingAmountLive={haltingAmountLive}
+            />
 
-        <ReceivedFromCustomerSection form={form} setForm={setForm} />
+            <ReceivedFromCustomerSection form={form} setForm={setForm} />
 
-        <ExpensesSection
-          form={form} setForm={setForm} setExp={setExp}
-          totalExpense={totalExpense} freight={freight} profit={profit}
-        />
+            <ExpensesSection
+              form={form} setForm={setForm} setExp={setExp}
+              totalExpense={totalExpense} freight={freight} profit={profit}
+            />
 
-        <OtherExpenditureSection
-          form={form} setForm={setForm}
-          expenditureTypes={expenditureTypes}
-          onCreateType={async (name) => {
-            try {
-              const { data } = await api.post("/expenditure-types", { name });
-              qc.invalidateQueries({ queryKey: ["expenditure-types"] });
-              return data;
-            } catch (err) {
-              toast.error(err?.response?.data?.detail || "Could not add type");
-              return null;
-            }
-          }}
-        />
+            <OtherExpenditureSection
+              form={form} setForm={setForm}
+              expenditureTypes={expenditureTypes}
+              onCreateType={async (name) => {
+                try {
+                  const { data } = await api.post("/expenditure-types", { name });
+                  qc.invalidateQueries({ queryKey: ["expenditure-types"] });
+                  return data;
+                } catch (err) {
+                  toast.error(err?.response?.data?.detail || "Could not add type");
+                  return null;
+                }
+              }}
+            />
+          </>
+        )}
 
-        <LRSection form={form} setForm={setForm} isEdit={isEdit} id={id} />
+        <LRSection form={form} setForm={setForm} isEdit={isEdit} id={id} firstSaveMode={firstSaveMode}/>
 
         {isEdit && (
           <Section title="Attachments · LR proof / Weighbridge slip">
@@ -766,9 +786,11 @@ export default function TripForm() {
           </Section>
         )}
 
-        <Section title="గమనికలు · Notes">
-          <textarea data-testid="trip-notes" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={inputCls} />
-        </Section>
+        {!firstSaveMode && (
+          <Section title="గమనికలు · Notes">
+            <textarea data-testid="trip-notes" rows={2} value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={inputCls} />
+          </Section>
+        )}
 
         {/* Iter63 · Priority Q3 — Sticky Save/Cancel bar (visible on every scroll position) */}
         <div className="sticky bottom-[64px] md:bottom-0 -mx-4 md:mx-0 z-40 bg-white/95 backdrop-blur border-t border-zinc-200 px-4 py-3 flex items-center justify-between gap-3 shadow-[0_-6px_16px_-8px_rgba(15,23,42,0.15)]" data-testid="trip-form-sticky-bar">

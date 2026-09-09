@@ -31,6 +31,7 @@ export default function FreightSection({
   freightQtyBasisLabel,
   freightQtyUsedLive,
   loadedQ, unloadedQ,
+  firstSaveMode = false,
 }) {
   const rate = Number(form.rate_per_ton || 0);
   const fixedLump = Number(form.fixed_amount || 0);
@@ -56,6 +57,7 @@ export default function FreightSection({
   return (
     <Section title="ఫ్రైట్ · Freight Calculation">
       {/* ═════════ Freight Policy Snapshot (frozen at trip creation) ═════════ */}
+      {!firstSaveMode && (
       <div
         className="mb-4 border border-zinc-950 rounded-sm bg-gradient-to-br from-slate-50 to-white p-3"
         data-testid="freight-policy-panel"
@@ -73,6 +75,7 @@ export default function FreightSection({
           <Chip testid="freight-policy-unloading" label="Unloading Qty" value={`${unloadedQ.toFixed(3)} MT`} />
         </div>
       </div>
+      )}
 
       <div className="flex gap-3 mb-4">
         <label data-testid="freight-mode-per-ton" className={`flex-1 border p-3 rounded-sm cursor-pointer ${form.freight_mode === "per_ton" ? "border-zinc-950 bg-zinc-50" : "border-zinc-200"}`}>
@@ -126,7 +129,7 @@ export default function FreightSection({
       )}
 
       {/* ═════════ Freight Breakdown Chain — shows for both per-ton AND round-trip ═════════ */}
-      {!isFixedLump && (
+      {!firstSaveMode && !isFixedLump && (
         <div className="mt-4 border border-zinc-200 rounded-sm bg-white p-3" data-testid="freight-breakdown-chain">
           <div className="text-[10px] uppercase tracking-[0.15em] font-black text-zinc-950 mb-2">
             🧮 Freight Breakdown · Verification

@@ -15,6 +15,7 @@ export default function TripDetailsSection({
   form, setForm,
   customers, vehicles, drivers, products,
   setQaOpen,
+  firstSaveMode = false,
 }) {
   // Iter68 — Fetch selected customer's full record (name + ship_sites) via
   // the paginated endpoint using `ids`. Only runs when customer_id is set.
@@ -244,16 +245,18 @@ export default function TripDetailsSection({
             <div className="text-[10px] text-zinc-500 mt-1">No sites saved for this customer. The "To" location above will be used as the fallback ship-to on the invoice.</div>
           )}
         </Field>
-        <Field label="Customer Ref / Ref No. · కస్టమర్ రిఫరెన్స్">
-          <input
-            data-testid="trip-customer-reference"
-            value={form.customer_reference_number || ""}
-            onChange={(e) => setForm({ ...form, customer_reference_number: e.target.value })}
-            className={inputCls}
-            placeholder="e.g. CUS-INV-2026-4567"
-          />
-          <div className="text-[10px] text-zinc-500 mt-1">Customer's own invoice / reference number for this trip. Blank stays blank — never inherited from another trip.</div>
-        </Field>
+        {!firstSaveMode && (
+          <Field label="Customer Ref / Ref No. · కస్టమర్ రిఫరెన్స్">
+            <input
+              data-testid="trip-customer-reference"
+              value={form.customer_reference_number || ""}
+              onChange={(e) => setForm({ ...form, customer_reference_number: e.target.value })}
+              className={inputCls}
+              placeholder="e.g. CUS-INV-2026-4567"
+            />
+            <div className="text-[10px] text-zinc-500 mt-1">Customer's own invoice / reference number for this trip. Blank stays blank — never inherited from another trip.</div>
+          </Field>
+        )}
       </div>
     </Section>
   );

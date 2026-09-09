@@ -8,7 +8,7 @@ import { Section, Field } from "./FormPrimitives";
 import { inputCls } from "./tripFormDefaults";
 import { openTripLrPdf, previewLrFromDraft } from "@/utils/pdfDownload";
 
-export default function LRSection({ form, setForm, isEdit, id }) {
+export default function LRSection({ form, setForm, isEdit, id, firstSaveMode = false }) {
   const [busy, setBusy] = useState(""); // "" | "preview" | "download"
   const [lrCopy, setLrCopy] = useState("original"); // Iter115 · which copy stamp
 
@@ -37,13 +37,13 @@ export default function LRSection({ form, setForm, isEdit, id }) {
         <Field label="LR Number (auto)">
           <input data-testid="trip-lr-number" value={form.lr_number} onChange={(e) => setForm({ ...form, lr_number: e.target.value })} className={inputCls} placeholder="Leave blank for auto-generation" />
         </Field>
-        <Field label="LR Time">
+        {!firstSaveMode && (<Field label="LR Time">
           <input data-testid="trip-lr-time" type="time" value={form.lr_time} onChange={(e) => setForm({ ...form, lr_time: e.target.value })} className={inputCls} />
-        </Field>
+        </Field>)}
         <Field label="External Invoice # (BPCL/HPCL)">
           <input data-testid="trip-ext-invoice" value={form.external_invoice_no} onChange={(e) => setForm({ ...form, external_invoice_no: e.target.value })} className={inputCls} placeholder="MUM-26-27-00220" />
         </Field>
-        <Field label="Customer Invoice #">
+        {!firstSaveMode && (<><Field label="Customer Invoice #">
           <input data-testid="trip-cust-invoice" value={form.customer_invoice_no} onChange={(e) => setForm({ ...form, customer_invoice_no: e.target.value })} className={inputCls} />
         </Field>
         <Field label="Customer Purchased At">
@@ -55,12 +55,14 @@ export default function LRSection({ form, setForm, isEdit, id }) {
         <Field label="Waybill No.">
           <input data-testid="trip-waybill" value={form.waybill_no} onChange={(e) => setForm({ ...form, waybill_no: e.target.value })} className={inputCls} />
         </Field>
+        </>)}
         <Field label="Consignor Name">
           <input data-testid="trip-consignor" value={form.consignor_name} onChange={(e) => setForm({ ...form, consignor_name: e.target.value })} className={inputCls} placeholder="BPCL - Mumbai" />
         </Field>
         <Field label="Consignee Site Location">
           <input data-testid="trip-site-loc" value={form.consignee_site_location} onChange={(e) => setForm({ ...form, consignee_site_location: e.target.value })} className={inputCls} />
         </Field>
+        {!firstSaveMode && (<>
         <Field label="Site Contact Person">
           <input data-testid="trip-site-contact" value={form.consignee_site_contact} onChange={(e) => setForm({ ...form, consignee_site_contact: e.target.value })} className={inputCls} placeholder="Name & phone" />
         </Field>
@@ -85,8 +87,10 @@ export default function LRSection({ form, setForm, isEdit, id }) {
         <Field label="To Pincode">
           <input data-testid="trip-to-pin" value={form.to_pincode} onChange={(e) => setForm({ ...form, to_pincode: e.target.value })} className={inputCls} />
         </Field>
+        </>)}
       </div>
 
+      {!firstSaveMode && (
       <div className="mt-5 border-t border-zinc-200 pt-4 flex flex-wrap items-center gap-3">
         <button
           type="button"
@@ -129,6 +133,7 @@ export default function LRSection({ form, setForm, isEdit, id }) {
           {isEdit ? "" : " Download activates after Save (auto-assigns the LR series number)."}
         </span>
       </div>
+      )}
     </Section>
   );
 }

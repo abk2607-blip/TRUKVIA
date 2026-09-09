@@ -1,5 +1,36 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
+## 🟡 Iter146 P0 · Trip Entry · First-Save Screen UX Simplification — READY FOR UAT (2026-09-08)
+
+**Status: IMPLEMENTED, ALL TESTS GREEN, AWAITING USER UAT & LOCK.**
+
+### Scope delivered
+`/trips/new` renders a focused first-save screen (Trip Details · Vehicle · Freight · LR + Supplier when applicable). `/trips/:id/edit` remains the FULL existing form with every advanced field. Post-create navigates to `/trips/{id}/edit` so the operator flows into the full form to complete remaining details.
+
+### Files changed (FE only)
+- `frontend/src/pages/TripForm.jsx` — added `firstSaveMode = !isEdit`; wrapped UnloadingSection/HaltingSection/ReceivedFromCustomerSection/ExpensesSection/OtherExpenditureSection/Notes in `{!firstSaveMode && …}`; pass `firstSaveMode` to TripDetails/Supplier/Freight/LR sections; `onSuccess(saved)` navigates to `/trips/${saved.id}/edit` on first save.
+- `frontend/src/components/tripform/TripDetailsSection.jsx` — accept `firstSaveMode` prop.
+- `frontend/src/components/tripform/FreightSection.jsx` — gates the Freight Policy Snapshot panel + Freight Breakdown Chain behind `!firstSaveMode`. Keeps Freight Mode toggle + Rate/Amount inputs + live preview always visible.
+- `frontend/src/components/tripform/LRSection.jsx` — `firstSaveMode` prop; hides LR Time, Customer Invoice, Purchased-At, Invoice Value, Waybill, Site Contact, Gross/Tare Wt, Seal, Driver Name/Mobile LR, Pincodes, and the LR PDF preview buttons block on first save. Keeps LR Number, External Invoice, Consignor Name, Consignee Site Location.
+- `backend/tests/test_iter146_trip_entry_first_screen.py` — **NEW** — 8 tests (FE static + backend contract).
+
+### Zero-change confirmations
+- ZERO backend / schema / collection / endpoint / dependency change.
+- POST `/api/trips` payload contract intact. Supplier validation (FE + BE) preserved verbatim.
+- Iter47 Phase-3 supplier hard-guard preserved (verified by `test_post_trips_still_requires_supplier_for_supplier_vehicle`).
+- Iter133–145 locks unchanged.
+
+### Tests
+- Iter146 focused: **8 / 8 pass** in 6.04 s.
+- Combined Iter133 (Turn2A/B/C) + 136 + 139 + 141 + 142 + 143 + 144 + 145 + 146: **all pass**.
+- Frontend `webpack compiled successfully` (only pre-existing eslint warnings).
+
+### Not locked yet
+Awaiting user UAT sign-off. Once approved, lock Iter146.
+
+---
+
+
 ## 🔒 FINAL LOCK RECORD — Iter143 / Iter144 / Iter145 (2026-09-08)
 
 **Bundled lock sign-off**: Iter143 P1, Iter143 P2, Iter144 P1, Iter144 UAT-Fix, and Iter145 P0 are all LOCKED under the same FINAL UAT + REGRESSION EVIDENCE REPORT dated 2026-09-08.
