@@ -26,7 +26,15 @@ export default function FuelImportWizard({ source, vehicles, onClose, onSuccess 
   const [preview, setPreview] = useState(null); // { source, rows, counts, unmapped_refs }
   const [activeBucket, setActiveBucket] = useState("ready");
   const [overrides, setOverrides] = useState({});          // row_index -> "keep" | "skip"
-  const [rowMaps, setRowMaps] = useState({});              // source_vehicle_ref -> vehicle_id (staged during wizard)
+  // Iter147 P0 CRITICAL BUG FIX (2026-09-09) — vehicle selection state is
+  // ROW-SCOPED. Keyed by the parser's per-row identity (`row_index`, the
+  // 1-based row number inside the fleet-card statement file), NEVER by
+  // `source_vehicle_ref`. A fleet-card identifier may legitimately map
+  // to different physical vehicles across different transactions (rotated
+  // cards, re-issued fleet IDs), so every preview row must carry its
+  // OWN vehicle assignment. Row A's selection MUST NEVER mutate Row B.
+  const [rowSelections, setRowSelections] = useState({});  // row_index -> { vehicle_id, vehicle_number }
+  const [persistedSrefs, setPersistedSrefs] = useState({}); // source_vehicle_ref -> true (once persisted-hint recorded)
 
   const doPreview = async () => {
     if (!file) return;
@@ -52,30 +60,55 @@ export default function FuelImportWizard({ source, vehicles, onClose, onSuccess 
     }
   };
 
-  const saveMapping = async (sref, vehicleId) => {
-    try {
-      const veh = vehicles.find((v) => v.id === vehicleId);
-      await api.post("/fuel/vehicle-maps", {
+  // Iter147 P0 CRITICAL BUG FIX · row-scoped selection.
+  // `selectVehicleForRow` mutates ONLY the caller's row_index — never touches
+  // any other row, even those with an identical source_vehicle_ref. The
+  // persistent FuelVehicleMap upsert is an OPT-IN hint the operator can
+  // choose via the "Save mapping for future uploads" checkbox — it never
+  // back-propagates into other rows' current selections.
+  const selectVehicleForRow = (rowIndex, sref, vehicleId, persistHint) => {
+    const veh = vehicles.find((v) => v.id === vehicleId);
+    if (!veh) return;
+    setRowSelections((m) => ({
+      ...m,
+      [rowIndex]: { vehicle_id: vehicleId, vehicle_number: veh.vehicle_number || "" },
+    }));
+    if (persistHint && sref && !persistedSrefs[sref]) {
+      api.post("/fuel/vehicle-maps", {
         source, source_vehicle_ref: sref, vehicle_id: vehicleId,
+      }).then(() => {
+        setPersistedSrefs((s) => ({ ...s, [sref]: true }));
+        toast.success(`Row ${rowIndex}: ${veh.vehicle_number} · mapping saved for future uploads`);
+      }).catch((e) => {
+        toast.error(e?.response?.data?.detail || "Row saved (mapping persist failed)");
       });
-      setRowMaps((m) => ({ ...m, [sref]: { vehicle_id: vehicleId, vehicle_number: veh?.vehicle_number || "" } }));
-      toast.success(`Mapped ${sref} → ${veh?.vehicle_number || vehicleId}`);
-    } catch (e) {
-      toast.error(e?.response?.data?.detail || "Failed to save mapping");
+    } else {
+      toast.success(`Row ${rowIndex} → ${veh.vehicle_number}`);
     }
+  };
+
+  const clearRowSelection = (rowIndex) => {
+    setRowSelections((m) => {
+      const copy = { ...m };
+      delete copy[rowIndex];
+      return copy;
+    });
   };
 
   const rowsForCommit = useMemo(() => {
     if (!preview) return [];
     return preview.rows
       .map((r) => {
-        // Apply staged in-wizard mapping if the row was originally unmapped.
-        if (!r.resolved_vehicle_id && rowMaps[r.source_vehicle_ref]) {
+        // Iter147 P0 CRITICAL BUG FIX · per-row selection ALWAYS wins over
+        // server-auto-resolution. If the operator picked a vehicle for THIS
+        // row, use only THIS row's selection — never inherit another row's.
+        const sel = rowSelections[r.row_index];
+        if (sel) {
           return {
             ...r,
             bucket: "ready",
-            resolved_vehicle_id: rowMaps[r.source_vehicle_ref].vehicle_id,
-            resolved_vehicle_number: rowMaps[r.source_vehicle_ref].vehicle_number,
+            resolved_vehicle_id: sel.vehicle_id,
+            resolved_vehicle_number: sel.vehicle_number,
           };
         }
         return r;
@@ -86,7 +119,7 @@ export default function FuelImportWizard({ source, vehicles, onClose, onSuccess 
         if (!r.resolved_vehicle_id) return false;
         return true;
       });
-  }, [preview, overrides, rowMaps]);
+  }, [preview, overrides, rowSelections]);
 
   const doCommit = async () => {
     if (!preview) return;
@@ -109,12 +142,15 @@ export default function FuelImportWizard({ source, vehicles, onClose, onSuccess 
   };
 
   const visibleRows = preview?.rows.filter((r) => {
-    // If a mapping was staged, force the row into ready bucket
+    // Iter147 P0 CRITICAL BUG FIX · row-scoped bucket flip
+    // A row with a per-row selection counts as ready — never influenced by
+    // sibling rows sharing the same source_vehicle_ref.
+    const sel = rowSelections[r.row_index];
     if (activeBucket === "ready") {
-      return r.bucket === "ready" || (r.bucket === "vehicle_mapping_required" && rowMaps[r.source_vehicle_ref]);
+      return r.bucket === "ready" || (r.bucket === "vehicle_mapping_required" && sel);
     }
     if (activeBucket === "vehicle_mapping_required") {
-      return r.bucket === "vehicle_mapping_required" && !rowMaps[r.source_vehicle_ref];
+      return r.bucket === "vehicle_mapping_required" && !sel;
     }
     return r.bucket === activeBucket;
   }) || [];
@@ -182,10 +218,11 @@ export default function FuelImportWizard({ source, vehicles, onClose, onSuccess 
               {/* Bucket tabs */}
               <div className="flex flex-wrap gap-2" data-testid="wizard-buckets">
                 {Object.entries(BUCKET_META).map(([k, meta]) => {
+                  const selectedCount = Object.keys(rowSelections).length;
                   const isMappedNow = k === "ready"
-                    ? preview.counts.ready + Object.values(rowMaps).length
+                    ? preview.counts.ready + selectedCount
                     : k === "vehicle_mapping_required"
-                      ? Math.max(0, preview.counts.vehicle_mapping_required - Object.values(rowMaps).length)
+                      ? Math.max(0, preview.counts.vehicle_mapping_required - selectedCount)
                       : preview.counts[k];
                   const Icon = meta.icon;
                   return (
@@ -224,43 +261,58 @@ export default function FuelImportWizard({ source, vehicles, onClose, onSuccess 
                       </td></tr>
                     )}
                     {visibleRows.map((r) => {
-                      const staged = rowMaps[r.source_vehicle_ref];
-                      const vehId = staged?.vehicle_id || r.resolved_vehicle_id || "";
-                      const vehNum = staged?.vehicle_number || r.resolved_vehicle_number || "";
+                      const sel = rowSelections[r.row_index];
+                      const vehId = sel?.vehicle_id || r.resolved_vehicle_id || "";
+                      const vehNum = sel?.vehicle_number || r.resolved_vehicle_number || "";
                       return (
                         <tr key={`${r.row_index}:${r.source_txn_ref}`} data-testid={`wizard-row-${r.row_index}`} className="border-t border-zinc-100">
                           <td className="px-3 py-1.5">{r.row_index}</td>
                           <td className="px-3 py-1.5">{r.date}</td>
                           <td className="px-3 py-1.5 font-semibold">{r.source_vehicle_ref}</td>
-                          <td className="px-3 py-1.5 min-w-[240px]">
+                          <td className="px-3 py-1.5 min-w-[280px]">
                             {activeBucket === "vehicle_mapping_required" ? (
-                              /* Iter147 P0 UAT-fix (2026-09-09) · Reuses the
-                                 shared shadcn SearchableSelect combobox
-                                 (same pattern as Quick Op / Expense Register)
-                                 so operators can type-to-search a TRUKVIA
-                                 vehicle instead of scrolling a long list.
-                                 Selecting once persists a FuelVehicleMap
-                                 keyed by (source, source_vehicle_ref) and
-                                 the staged mapping applies to every row
-                                 with the same source_vehicle_ref in this
-                                 preview via `rowMaps` lookup below. */
-                              <SearchableSelect
-                                testId={`map-select-${r.row_index}`}
-                                value={staged?.vehicle_id || ""}
-                                placeholder="Search TRUKVIA vehicle…"
-                                emptyText="No matching vehicles"
-                                allowClear={false}
-                                onChange={(v) => v && saveMapping(r.source_vehicle_ref, v)}
-                                options={vehicles.map((v) => ({
-                                  value: v.id,
-                                  label: v.vehicle_number,
-                                  secondary: (v.vehicle_type || "").toUpperCase() === "SUPPLIER"
-                                    ? `${v.supplier_name || "Supplier"} · Supplier`
-                                    : (v.driver_name || (v.vehicle_type || "").toUpperCase()),
-                                  keywords: [v.vehicle_number, v.driver_name, v.supplier_name]
-                                    .filter(Boolean),
-                                }))}
-                              />
+                              /* Iter147 P0 CRITICAL BUG FIX (2026-09-09) ·
+                                 Row-scoped vehicle selection. State keyed
+                                 by `row_index` (parser-emitted 1-based row
+                                 number of the source file), NEVER by
+                                 `source_vehicle_ref`. Two rows carrying the
+                                 same fleet-card identifier can be mapped to
+                                 different TRUKVIA vehicles in the same
+                                 preview. The persistent FuelVehicleMap is an
+                                 OPT-IN hint (checkbox below) — never a
+                                 forced back-propagation to other rows. */
+                              <div className="space-y-1">
+                                <SearchableSelect
+                                  testId={`map-select-${r.row_index}`}
+                                  value={sel?.vehicle_id || ""}
+                                  placeholder="Search TRUKVIA vehicle…"
+                                  emptyText="No matching vehicles"
+                                  allowClear={true}
+                                  onChange={(v) => {
+                                    if (!v) return clearRowSelection(r.row_index);
+                                    const box = document.querySelector(`[data-testid="persist-${r.row_index}"]`);
+                                    const persist = box ? box.checked : false;
+                                    selectVehicleForRow(r.row_index, r.source_vehicle_ref, v, persist);
+                                  }}
+                                  options={vehicles.map((v) => ({
+                                    value: v.id,
+                                    label: v.vehicle_number,
+                                    secondary: (v.vehicle_type || "").toUpperCase() === "SUPPLIER"
+                                      ? `${v.supplier_name || "Supplier"} · Supplier`
+                                      : (v.driver_name || (v.vehicle_type || "").toUpperCase()),
+                                    keywords: [v.vehicle_number, v.driver_name, v.supplier_name]
+                                      .filter(Boolean),
+                                  }))}
+                                />
+                                <label className="inline-flex items-center gap-1 text-[10px] text-zinc-500 select-none">
+                                  <input
+                                    type="checkbox"
+                                    data-testid={`persist-${r.row_index}`}
+                                    defaultChecked={false}
+                                  />
+                                  Save mapping for future uploads (this source ref only)
+                                </label>
+                              </div>
                             ) : (
                               <span className="font-semibold">{vehNum || "—"}</span>
                             )}
@@ -294,11 +346,11 @@ export default function FuelImportWizard({ source, vehicles, onClose, onSuccess 
                               </div>
                             )}
                             {r.bucket === "ready" && <span className="text-emerald-700">OK</span>}
-                            {r.bucket === "vehicle_mapping_required" && !staged && (
-                              <span className="text-sky-700">Pick a TRUKVIA vehicle to map & auto-resolve future uploads</span>
+                            {r.bucket === "vehicle_mapping_required" && !sel && (
+                              <span className="text-sky-700">Pick a TRUKVIA vehicle for THIS row (independent of other rows)</span>
                             )}
-                            {r.bucket === "vehicle_mapping_required" && staged && (
-                              <span className="text-emerald-700">Mapped · will be imported</span>
+                            {r.bucket === "vehicle_mapping_required" && sel && (
+                              <span className="text-emerald-700">Row {r.row_index} → {sel.vehicle_number} · will be imported</span>
                             )}
                           </td>
                         </tr>

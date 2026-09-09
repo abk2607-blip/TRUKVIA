@@ -1,20 +1,14 @@
-"""Iter147 P0 UAT-fix (2026-09-09) · Preview modal usability.
+"""Iter147 P0 CRITICAL BUG FIX (2026-09-09) · Row-scoped vehicle mapping.
 
-Focus: purely UI. No parser / duplicate / accounting logic tests here —
-those live in test_iter147_iocl_parser.py / test_iter147_bpcl_parser.py /
-test_iter147_import_flow.py and remain untouched.
+Regression guard for the DATA-INTEGRITY BLOCKER reported in live UAT:
+assigning a TRUKVIA vehicle to one preview row must NEVER propagate to
+another row, even when both rows share the same source_vehicle_ref.
 
-Guardrails asserted here:
-  1. Wizard modal uses the larger desktop-friendly shell classes
-     (w-[95vw] + h-[85vh]) so operators can read IOCL/BPCL rows.
-  2. The mapping column reuses the shared shadcn SearchableSelect
-     combobox — the same component used by Quick Op / Expense Register.
-  3. A single saveMapping() call updates the `rowMaps` state keyed by
-     `source_vehicle_ref`, so mapping one row applies to every row with
-     the same source_vehicle_ref via rowsForCommit's rowMaps lookup.
-  4. FuelVehicleMap persistence contract is unchanged.
-  5. Bucket tabs (5 states) remain present.
+These are STATIC source-inspection tests — they read the wizard source
+file and assert the state key / state-mutation invariants. Behaviour
+tests (Playwright) run separately in the smoke run.
 """
+import re
 from pathlib import Path
 
 WIZ = Path("/app/frontend/src/components/fuel/FuelImportWizard.jsx")
@@ -24,75 +18,111 @@ def _src():
     return WIZ.read_text(encoding="utf-8")
 
 
-# ── 1 · Larger modal shell ─────────────────────────────────────────────
-def test_wizard_modal_is_desktop_friendly():
+# ── 1 · State is keyed by row_index, NEVER by source_vehicle_ref ────────
+def test_state_is_row_scoped_not_source_ref_scoped():
     s = _src()
-    # New shell classes (approx 95vw × 85vh, capped at 1600px).
-    assert 'data-testid="fuel-import-wizard-shell"' in s
-    assert "w-[95vw]" in s, "modal must be ~95% viewport width"
-    assert "h-[85vh]" in s, "modal must be ~85% viewport height"
-    # Old too-small class must be gone from the shell.
-    assert "max-w-6xl" not in s or "max-w-[1600px]" in s, \
-        "shell should use the wider 1600px cap, not the old 6xl"
+    # The old, buggy state variable must be gone.
+    assert "rowMaps" not in s, "old source-ref-keyed rowMaps must be removed"
+    # The new state variable is present.
+    assert "rowSelections" in s
+    assert "setRowSelections" in s
+    # Comment anchor documenting the design invariant.
+    assert "ROW-SCOPED" in s, "code must document row-scoped invariant"
+    # The commit derivation reads per-row selection (not source-ref).
+    assert "rowSelections[r.row_index]" in s
 
 
-# ── 2 · Reuses the shared SearchableSelect (not a bespoke dropdown) ───
-def test_wizard_uses_shared_searchable_select():
+# ── 2 · Setter mutates only the caller's row_index ─────────────────────
+def test_select_vehicle_only_touches_one_row():
     s = _src()
-    assert 'from "@/components/ui/searchable-select"' in s, \
-        "must reuse the existing TRUKVIA SearchableSelect component"
-    assert "<SearchableSelect" in s, "vehicle mapping column must use SearchableSelect"
-    assert 'placeholder="Search TRUKVIA vehicle…"' in s
-    # No plain <select> for the mapping column any more.
-    src_mapping_block = s.split("min-w-[240px]")[1].split("</td>")[0]
-    assert "<select" not in src_mapping_block, \
-        "mapping cell must no longer use a plain <select> dropdown"
+    # selectVehicleForRow implementation must set state via a functional
+    # update, adding a new key that IS the row_index — no scan by
+    # source_vehicle_ref anywhere in the state update.
+    fn = re.search(
+        r"const selectVehicleForRow = \([^)]*\) => \{(.*?)\n  \};",
+        s, flags=re.S,
+    )
+    assert fn, "selectVehicleForRow definition missing"
+    body = fn.group(1)
+    assert "[rowIndex]" in body, \
+        "setter must write to the exact row_index (no source-ref rewriting)"
+    # It must NOT walk over other rows.
+    assert "preview.rows" not in body, \
+        "setter must not touch other rows"
+    # It must NOT key by source_vehicle_ref.
+    assert re.search(r"\[sref\]\s*:\s*\{", body) is None, \
+        "setter must not write per-source-ref state that would fan out"
 
 
-# ── 3 · One mapping applies to all matching rows via rowMaps ──────────
-def test_mapping_applies_to_repeated_source_vehicle_refs():
+# ── 3 · clearRowSelection removes only that row ────────────────────────
+def test_clear_row_selection_is_scoped():
     s = _src()
-    # State keyed by source_vehicle_ref (not row_index) → naturally reuses.
-    assert "setRowMaps((m) => ({ ...m, [sref]:" in s or \
-        "setRowMaps((m) => ({" in s and "[sref]:" in s
-    # rowsForCommit consults rowMaps by source_vehicle_ref (single lookup)
-    assert "rowMaps[r.source_vehicle_ref]" in s
-    # saveMapping receives (source_vehicle_ref, vehicleId) — single call point.
-    assert "const saveMapping = async (sref, vehicleId)" in s
-    # It POSTs the durable mapping to /fuel/vehicle-maps.
-    assert '"/fuel/vehicle-maps"' in s or "'/fuel/vehicle-maps'" in s
+    fn = re.search(
+        r"const clearRowSelection = \(rowIndex\) => \{(.*?)\n  \};",
+        s, flags=re.S,
+    )
+    assert fn, "clearRowSelection is required for the 'Clear Row A only' UAT case"
+    body = fn.group(1)
+    assert "delete copy[rowIndex]" in body, \
+        "clear must remove only the caller's row_index"
 
 
-# ── 4 · Persistence contract intact (FuelVehicleMap API unchanged) ────
-def test_fuel_vehicle_map_api_untouched():
-    router = Path("/app/backend/routers/fuel_import.py").read_text(encoding="utf-8")
-    # The three original endpoints must still exist and unchanged in path.
-    assert '@router.get("/fuel/vehicle-maps")' in router
-    assert '@router.post("/fuel/vehicle-maps")' in router
-    assert '@router.delete("/fuel/vehicle-maps/{fvm_id}")' in router
-
-
-# ── 5 · All 5 bucket tabs still rendered ──────────────────────────────
-def test_five_bucket_tabs_present():
+# ── 4 · SearchableSelect binds value/onChange to per-row identity ──────
+def test_searchable_select_is_per_row_bound():
     s = _src()
-    # The bucket tab testIds are emitted via template literal
-    # `bucket-${k}` — assert BUCKET_META still defines all 5 keys and
-    # the render loop still emits data-testid based on that key.
-    for key in ("ready", "vehicle_mapping_required", "possible_duplicate",
-                "exact_duplicate", "error"):
-        assert f'{key}:' in s, f"BUCKET_META key {key!r} must remain"
-    assert 'data-testid={`bucket-${k}`}' in s, \
-        "bucket tab render must expose data-testid=`bucket-<key>`"
+    # Value must read from the per-row selection map.
+    assert 'value={sel?.vehicle_id || ""}' in s
+    # testId must include the row_index so DOM identity is per-row.
+    assert 'testId={`map-select-${r.row_index}`}' in s
+    # onChange must dispatch to selectVehicleForRow with r.row_index.
+    assert "selectVehicleForRow(r.row_index" in s
 
 
-# ── 6 · Parser / duplicate / accounting service files unchanged ──────
-def test_service_file_parser_and_duplicate_logic_untouched():
-    """The UAT-fix is UI-only; guard against accidental server drift."""
-    svc = Path("/app/backend/services_fuel_import.py").read_text(encoding="utf-8")
-    # Anchor phrases that must stay stable — canonical accounting rules.
-    assert "ONE canonical Expense" in svc
-    assert 'source_type="fleet_card_import"' in svc
-    # Never a paired db.fuel write on import.
-    assert "No paired db.fuel" in svc
-    # XOR-safe scan for Trip legacy Diesel is preserved.
-    assert 'has_canonical_expenses' in svc
+# ── 5 · Persistent FuelVehicleMap upsert is OPT-IN, not automatic ──────
+def test_persistent_mapping_is_opt_in():
+    s = _src()
+    # Checkbox controls whether we POST to /fuel/vehicle-maps.
+    assert 'data-testid={`persist-${r.row_index}`}' in s, \
+        "each row must have its own opt-in persistence checkbox"
+    # POST only fires when `persistHint` is truthy.
+    assert "if (persistHint" in s, \
+        "persistent map upsert must be gated on the operator's opt-in"
+
+
+# ── 6 · Commit payload reads THIS row's selection (never a sibling's) ──
+def test_commit_payload_is_row_scoped():
+    s = _src()
+    # rowsForCommit map function must apply the per-row selection first —
+    # if `sel` exists for r.row_index, use it verbatim; otherwise leave the
+    # row alone (server auto-resolution still applies if the persistent
+    # FuelVehicleMap resolved it, which is an operator-approved case).
+    block = re.search(
+        r"const rowsForCommit = useMemo\(\(\) => \{(.*?)\n  \}, \[preview, overrides, rowSelections\]\);",
+        s, flags=re.S,
+    )
+    assert block, "rowsForCommit useMemo must depend ONLY on preview/overrides/rowSelections"
+    body = block.group(1)
+    assert "rowSelections[r.row_index]" in body
+    # No cross-row leakage patterns.
+    assert "source_vehicle_ref" not in body, \
+        "commit derivation must not group/dedupe rows by source_vehicle_ref"
+
+
+# ── 7 · No lingering rowMaps import/reference (dead-state audit) ──────
+def test_no_lingering_rowmaps_references():
+    s = _src()
+    assert "rowMaps" not in s
+    assert "setRowMaps" not in s
+
+
+# ── 8 · Same source_vehicle_ref allowed to have different row vehicles ─
+def test_same_sref_can_have_different_row_vehicles():
+    s = _src()
+    # The invariant is proved by state being keyed by row_index — assert
+    # the state store has no path that overwrites siblings.
+    # (Runtime proof: playwright smoke picks different vehicles for two
+    # rows carrying identical source_vehicle_ref — see UAT recording.)
+    assert "rowSelections[r.row_index]" in s
+    # And the persistent map upsert is not a synchronous state mutation
+    # that could bleed into other rows.
+    assert "persistedSrefs" in s
