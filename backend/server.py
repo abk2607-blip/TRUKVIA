@@ -60,6 +60,8 @@ from routers import (
     expense_date_reports as expense_date_reports_r,
     # Iter147 P0 — Fleet-card Fuel Import + Unified Fuel Log
     fuel_import as fuel_import_r,
+    # Iter148 P0 — FASTag Toll Import (Quick Expense)
+    toll_import as toll_import_r,
 )
 
 ROOT_DIR = Path(__file__).parent
@@ -134,6 +136,8 @@ for r in (
     expense_date_reports_r,
     # Iter147 P0
     fuel_import_r,
+    # Iter148 P0
+    toll_import_r,
 ):
     app.include_router(r.router)
 

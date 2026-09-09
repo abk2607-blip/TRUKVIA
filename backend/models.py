@@ -1122,7 +1122,7 @@ class Expense(BaseModel):
     # source for imported IOCL/BPCL fleet-card Diesel rows. Never a paired
     # `db.fuel` write; canonical Expense is the single truth.
     source_type: Literal["manual", "trip_legacy", "trip_other_expenditure",
-                         "quick_op", "fleet_card_import"] = "manual"
+                         "quick_op", "fleet_card_import", "fastag_import"] = "manual"
     source_key: str = ""
     source_trip_id: str = ""    # denormalised for fast cleanup queries
     # Iter147 P0 · additive — sub-source identity for fleet-card imports.

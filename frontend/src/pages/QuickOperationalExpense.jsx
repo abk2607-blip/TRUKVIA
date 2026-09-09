@@ -1,4 +1,5 @@
 import React, { useMemo, useRef, useState } from "react";
+import TollImportWizard from "@/components/quickexp/TollImportWizard";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/api";
@@ -119,6 +120,9 @@ export default function QuickOperationalExpense() {
   // Iter140 · Edit / Cancel drawers for Recent Entries.
   const [editing, setEditing] = useState(null);   // { doc } — the canonical Expense being edited
   const [cancelling, setCancelling] = useState(null); // { doc, reason }
+  const [tollWizardOpen, setTollWizardOpen] = useState(false);
+  const vehiclesQuery = useQuery({ queryKey: ["vehicles"], queryFn: async () => (await api.get("/vehicles")).data });
+  const vehiclesList = vehiclesQuery.data || [];
 
   const vehiclesQ = useQuery({
     queryKey: ["vehicles", "active"],
@@ -289,8 +293,24 @@ export default function QuickOperationalExpense() {
     <div className="p-6 max-w-5xl" data-testid="quick-expense-page">
       <div className="flex items-baseline justify-between mb-6">
         <h1 className="text-2xl font-semibold">Quick Operational Expense</h1>
-        <div className="text-xs text-zinc-500">Enter once → reflects in Vehicle Cost, Trip Cost, Expense Register automatically.</div>
+        <div className="flex items-center gap-3">
+          <div className="text-xs text-zinc-500 hidden md:block">Enter once → reflects in Vehicle Cost, Trip Cost, Expense Register automatically.</div>
+          <button
+            data-testid="upload-tolls-btn"
+            onClick={() => setTollWizardOpen(true)}
+            className="inline-flex items-center gap-1 px-3 py-1.5 text-xs uppercase tracking-wider border border-zinc-950 text-zinc-950 rounded hover:bg-zinc-100"
+          >
+            Upload Tolls
+          </button>
+        </div>
       </div>
+      {tollWizardOpen && (
+        <TollImportWizard
+          vehicles={vehiclesList || []}
+          onClose={() => setTollWizardOpen(false)}
+          onSuccess={() => { setTollWizardOpen(false); }}
+        />
+      )}
 
       <div className="grid grid-cols-3 gap-4 mb-4">
         <label className="text-sm">
