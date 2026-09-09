@@ -1,8 +1,32 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
-## 🟡 Iter146 P0 UAT-FIX · LR Details full on First-Save (2026-09-09)
+## 🔒 FINAL LOCK RECORD — Iter146 (2026-09-09)
 
-**Status: FIXED, READY FOR UAT RE-VERIFICATION. Iter146 remains NOT LOCKED.**
+**Bundled lock sign-off**: Iter146 P0 (Trip Entry First-Save Screen UX Simplification) and Iter146 UAT-FIX (LR Details full on First-Save) are both LOCKED under the same real-time UAT sign-off dated 2026-09-09.
+
+### Real-time UAT evidence
+- **OWN vehicle** — Focused first-save · Save · Navigation to Trip View · Full Edit · Full LR + Preview + PDF: **ALL PASS**.
+- **SUPPLIER vehicle** — First-save · Supplier details · Settlement section · Diesel entries · Advance entry & persistence: **ALL PASS**. Numeric reconciliation verified: Advance ₹5,000 + Diesel ₹14,977.50 · Freight ₹52,727.50 · Net Payable ₹32,750.00 · Profit ₹42,575.00 · retained across Edit & Trip View.
+
+### Automated evidence
+- Iter146 focused + UAT-Fix tests pass.
+- Combined regression Iter139 / 141 / 142 / 143 P1+P2 / 144 P1+UAT-Fix / 145 / 146 = **172 / 172 pass in 113.94 s**.
+- Frontend: `webpack compiled successfully` (only pre-existing eslint warnings remain).
+
+### Architecture / lock integrity
+- ZERO schema changes · ZERO new collections · ZERO new endpoints · ZERO accounting changes · ZERO supplier-settlement semantic changes.
+- Iter133 – Iter145 LOCKED behaviour untouched.
+- The single Iter142 test-file change from the Iter143 P2 lock remains the only recorded change to a locked test artefact; no additional touches introduced by Iter146.
+
+### Binding principle preserved
+`ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO MANUAL RECONCILIATION.`
+
+---
+
+
+## 🔒 Iter146 P0 UAT-FIX · LR Details full on First-Save — LOCKED as part of Iter146 (2026-09-09)
+
+**Status: 🔒 LOCKED (bundled with Iter146 P0). Live UAT ACCEPTED / PASS. FREEZE.**
 
 ### UAT finding
 First-save screen trimmed LR Details too aggressively — operator lost access to LR Number, LR Time, Waybill, Gross/Tare, Seal, Driver-LR, Pincodes and (crucially) the LR Preview / PDF button at Trip Entry.
@@ -22,9 +46,9 @@ Iter139 + 141 + 142 + 143 P1/P2 + 144 P1/UAT-fix + 145 + 146 (including the 3 re
 ---
 
 
-## 🟡 Iter146 P0 · Trip Entry · First-Save Screen UX Simplification — READY FOR UAT (2026-09-08)
+## 🔒 Iter146 P0 · Trip Entry · First-Save Screen UX Simplification — LOCKED (2026-09-09)
 
-**Status: IMPLEMENTED, ALL TESTS GREEN, AWAITING USER UAT & LOCK.**
+**Status: 🔒 LOCKED. Live UAT ACCEPTED / PASS. Regression clearance PASS. FREEZE.**
 
 ### Scope delivered
 `/trips/new` renders a focused first-save screen (Trip Details · Vehicle · Freight · LR + Supplier when applicable). `/trips/:id/edit` remains the FULL existing form with every advanced field. Post-create navigates to `/trips/{id}/edit` so the operator flows into the full form to complete remaining details.
@@ -48,7 +72,22 @@ Iter139 + 141 + 142 + 143 P1/P2 + 144 P1/UAT-fix + 145 + 146 (including the 3 re
 - Frontend `webpack compiled successfully` (only pre-existing eslint warnings).
 
 ### Not locked yet
-Awaiting user UAT sign-off. Once approved, lock Iter146.
+🔒 **LOCKED 2026-09-09** — Live UAT accepted for BOTH flows.
+
+**OWN vehicle** — Focused first-save screen PASS · Save PASS · Navigation to Trip View PASS · Full Edit screen PASS · Full LR Details on first-save PASS · LR Preview PASS · LR PDF action PASS.
+
+**SUPPLIER vehicle** — First-save flow PASS · Supplier details PASS · Supplier settlement section PASS · Supplier Diesel entries PASS · Supplier Advance entry & persistence PASS.
+Verified numbers reconcile end-to-end:
+- Supplier Advance ₹5,000.00
+- Supplier Diesel ₹14,977.50
+- Supplier Freight ₹52,727.50
+- Net Payable = ₹52,727.50 − ₹5,000.00 − ₹14,977.50 = **₹32,750.00** ✓
+- Trip Profit = **₹42,575.00** ✓
+- Values retained across Edit and Trip View · Full existing Edit workflow PASS · Full LR + Preview + PDF PASS.
+
+**Automated evidence** — Iter146 focused/UAT-fix + combined regression Iter139/141/142/143 P1+P2/144 P1+UAT-fix/145/146 = **172 / 172 pass in 113.94 s**. Frontend `webpack compiled successfully`.
+
+**Architecture integrity** — ZERO schema changes · ZERO collection changes · ZERO new endpoints · ZERO accounting changes · ZERO supplier-settlement semantic changes. Iter143 / Iter144 / Iter145 LOCKED behaviour untouched. Iter146 UAT-Fix (LR full on first-save) locked in the same sign-off.
 
 ---
 
