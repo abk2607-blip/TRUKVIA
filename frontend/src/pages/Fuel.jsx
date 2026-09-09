@@ -1,263 +1,251 @@
-import React, { useState } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import React, { useMemo, useState } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, fmtCurrency, fmtDate } from "@/api";
-import { toast } from "sonner";
-import { Plus, Trash2, X, Fuel as FuelIcon, TrendingUp, UploadCloud } from "lucide-react";
+import { Fuel as FuelIcon, Upload, Plus, TrendingUp } from "lucide-react";
+import FuelImportWizard from "@/components/fuel/FuelImportWizard";
+import ManualFuelDialog from "@/components/fuel/ManualFuelDialog";
 
-const EMPTY = {
-  date: new Date().toISOString().slice(0, 10),
-  vehicle_id: "", vehicle_number: "",
-  litres: 0, rate_per_litre: 0, amount: 0,
-  odometer: 0, station_name: "", notes: "",
+/* Iter147 P0 · Unified Fuel Log.
+ * ------------------------------------------------------------------
+ * Operator-facing single view over every Diesel projection:
+ *   IOCL Import · BPCL Import · Quick Op · Manual · Trip Legacy · Legacy Fuel
+ * Never a new accounting truth — pure projection. Buttons for IOCL /
+ * BPCL fleet-card imports and canonical manual entry. */
+
+const SOURCE_OPTIONS = [
+  "IOCL Import", "BPCL Import", "Quick Op", "Manual",
+  "Trip Legacy", "Legacy Fuel",
+];
+
+const SOURCE_COLORS = {
+  "IOCL Import": "bg-orange-100 text-orange-800 border-orange-200",
+  "BPCL Import": "bg-amber-100 text-amber-800 border-amber-200",
+  "Quick Op": "bg-emerald-100 text-emerald-800 border-emerald-200",
+  "Manual": "bg-sky-100 text-sky-800 border-sky-200",
+  "Trip Legacy": "bg-zinc-100 text-zinc-700 border-zinc-200",
+  "Legacy Fuel": "bg-zinc-100 text-zinc-500 border-zinc-200",
+  "Fleet Card Import": "bg-orange-100 text-orange-800 border-orange-200",
 };
 
 export default function Fuel() {
   const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
-  const [form, setForm] = useState(EMPTY);
-  const [dragOver, setDragOver] = useState(false);
-  const [bulkResult, setBulkResult] = useState(null);
-  const [bulkBusy, setBulkBusy] = useState(false);
+  const [wizardSource, setWizardSource] = useState(null); // "iocl" | "bpcl" | null
+  const [manualOpen, setManualOpen] = useState(false);
+  const [filters, setFilters] = useState({
+    date_from: "", date_to: "", vehicle_id: "", source_label: "",
+  });
 
-  const { data: entries = [] } = useQuery({
-    queryKey: ["fuel"],
-    queryFn: async () => (await api.get("/fuel")).data,
+  const { data: rows = [], isLoading } = useQuery({
+    queryKey: ["fuel-log", filters],
+    queryFn: async () => {
+      const p = new URLSearchParams();
+      if (filters.date_from) p.set("date_from", filters.date_from);
+      if (filters.date_to) p.set("date_to", filters.date_to);
+      if (filters.vehicle_id) p.set("vehicle_id", filters.vehicle_id);
+      if (filters.source_label) p.set("source_label", filters.source_label);
+      const { data } = await api.get(`/fuel-log?${p.toString()}`);
+      return data;
+    },
   });
-  const { data: summary } = useQuery({
-    queryKey: ["fuel-summary"],
-    queryFn: async () => (await api.get("/fuel/summary")).data,
-  });
+
   const { data: vehicles = [] } = useQuery({
     queryKey: ["vehicles"],
     queryFn: async () => (await api.get("/vehicles")).data,
   });
 
-  const save = useMutation({
-    mutationFn: async () => {
-      const payload = {
-        ...form,
-        litres: Number(form.litres),
-        rate_per_litre: Number(form.rate_per_litre),
-        amount: Number(form.amount) || Number(form.litres) * Number(form.rate_per_litre),
-        odometer: Number(form.odometer || 0),
-      };
-      return (await api.post("/fuel", payload)).data;
-    },
-    onSuccess: () => {
-      toast.success("Fuel entry added");
-      qc.invalidateQueries({ queryKey: ["fuel"] });
-      qc.invalidateQueries({ queryKey: ["fuel-summary"] });
-      setOpen(false); setForm(EMPTY);
-    },
-    onError: (e) => toast.error(e?.response?.data?.detail || "Failed"),
-  });
+  const totals = useMemo(() => {
+    const t = { count: 0, litres: 0, amount: 0 };
+    rows.forEach((r) => {
+      t.count += 1;
+      t.litres += Number(r.litres || 0);
+      t.amount += Number(r.amount || 0);
+    });
+    return t;
+  }, [rows]);
 
-  const del = useMutation({
-    mutationFn: async (id) => (await api.delete(`/fuel/${id}`)).data,
-    onSuccess: () => { toast.success("Deleted"); qc.invalidateQueries({ queryKey: ["fuel"] }); qc.invalidateQueries({ queryKey: ["fuel-summary"] }); },
-  });
-
-  const openNew = () => { setForm(EMPTY); setOpen(true); };
-  const liveAmt = (Number(form.litres) || 0) * (Number(form.rate_per_litre) || 0);
-
-  const bulkUpload = async (files) => {
-    if (!files || files.length === 0) return;
-    setBulkBusy(true);
-    setBulkResult(null);
-    try {
-      const fd = new FormData();
-      Array.from(files).forEach((f) => fd.append("files", f));
-      const { data } = await api.post("/files/bulk-upload?category=fuel_bill", fd, { headers: { "Content-Type": "multipart/form-data" } });
-      setBulkResult(data);
-      toast.success(`${data.uploaded} of ${data.total} uploaded`);
-    } catch (e) {
-      toast.error(e?.response?.data?.detail || "Bulk upload failed");
-    } finally {
-      setBulkBusy(false);
-    }
+  const invalidate = () => {
+    qc.invalidateQueries({ queryKey: ["fuel-log"] });
   };
 
   return (
     <div className="space-y-6" data-testid="fuel-page">
-      <header className="flex items-end justify-between border-b border-zinc-200 pb-4">
+      <header className="flex items-end justify-between border-b border-zinc-200 pb-4 gap-3 flex-wrap">
         <div>
-          <div className="text-[11px] uppercase tracking-[0.15em] text-zinc-500 font-bold">Log</div>
+          <div className="text-[11px] uppercase tracking-[0.15em] text-zinc-500 font-bold">Diesel · Unified Log</div>
           <h1 className="mt-1 text-4xl font-black tracking-tighter">
             <span className="telugu">డీజిల్ లాగ్</span>
             <span className="text-zinc-400"> · Fuel Log</span>
           </h1>
+          <div className="mt-1 text-xs text-zinc-500">
+            Every Diesel transaction — IOCL, BPCL, Quick Op, Manual, Trip Legacy — in one place.
+          </div>
         </div>
-        <button data-testid="add-fuel-btn" onClick={openNew} className="px-3 py-2 text-xs uppercase tracking-wider font-semibold bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 inline-flex items-center gap-2">
-          <Plus size={14} /> New Fill
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            data-testid="import-iocl-btn"
+            onClick={() => setWizardSource("iocl")}
+            className="px-3 py-2 text-xs uppercase tracking-wider font-semibold border border-orange-500 text-orange-700 rounded-sm hover:bg-orange-50 inline-flex items-center gap-2"
+          >
+            <Upload size={14} /> Import IOCL
+          </button>
+          <button
+            data-testid="import-bpcl-btn"
+            onClick={() => setWizardSource("bpcl")}
+            className="px-3 py-2 text-xs uppercase tracking-wider font-semibold border border-amber-500 text-amber-700 rounded-sm hover:bg-amber-50 inline-flex items-center gap-2"
+          >
+            <Upload size={14} /> Import BPCL
+          </button>
+          <button
+            data-testid="manual-fuel-btn"
+            onClick={() => setManualOpen(true)}
+            className="px-3 py-2 text-xs uppercase tracking-wider font-semibold bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 inline-flex items-center gap-2"
+          >
+            <Plus size={14} /> Manual Fuel
+          </button>
+        </div>
       </header>
 
-      <section
-        data-testid="fuel-bulk-dropzone"
-        onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-        onDragLeave={() => setDragOver(false)}
-        onDrop={(e) => { e.preventDefault(); setDragOver(false); bulkUpload(e.dataTransfer.files); }}
-        className={`border-2 border-dashed rounded-sm p-6 text-center transition-colors ${dragOver ? "border-zinc-950 bg-amber-50" : "border-zinc-300 bg-white"}`}
-      >
-        <UploadCloud size={28} className="mx-auto text-zinc-400" />
-        <div className="mt-2 text-sm font-semibold">Drag &amp; drop fuel bill photos here</div>
-        <div className="text-xs text-zinc-500 mt-1">
-          File name pattern <span className="font-mono">AP16TA1234_2026-02-05_hp.jpg</span> auto-tags vehicle and date.
-        </div>
-        <label className="inline-flex items-center gap-2 mt-3 px-3 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm cursor-pointer hover:bg-zinc-800">
-          {bulkBusy ? "Uploading..." : "Or Choose Files"}
-          <input data-testid="fuel-bulk-input" type="file" multiple accept="image/*,application/pdf" disabled={bulkBusy} onChange={(e) => bulkUpload(e.target.files)} className="hidden" />
-        </label>
-        {bulkResult && (
-          <div className="mt-4 text-left max-w-2xl mx-auto" data-testid="bulk-result">
-            <div className="text-xs font-bold uppercase tracking-wider mb-2">Result — {bulkResult.uploaded}/{bulkResult.total} uploaded</div>
-            <div className="max-h-48 overflow-y-auto border border-zinc-200 rounded-sm">
-              <table className="w-full text-xs">
-                <tbody>
-                  {bulkResult.results.map((r, i) => (
-                    <tr key={i} className="border-t border-zinc-100">
-                      <td className="px-3 py-1.5 truncate">{r.filename}</td>
-                      <td className="px-3 py-1.5 text-xs text-zinc-500">{r.tags?.vehicle_number || "—"}</td>
-                      <td className="px-3 py-1.5 text-xs text-zinc-500">{r.tags?.date || "—"}</td>
-                      <td className={`px-3 py-1.5 text-xs ${r.ok ? "text-emerald-700" : "text-rose-700"}`}>{r.ok ? "OK" : r.error}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
+      {/* Filters */}
+      <section className="grid grid-cols-2 md:grid-cols-5 gap-3" data-testid="fuel-filters">
+        <F label="From">
+          <input type="date" value={filters.date_from} data-testid="filter-date-from"
+            onChange={(e) => setFilters({ ...filters, date_from: e.target.value })} className={ic} />
+        </F>
+        <F label="To">
+          <input type="date" value={filters.date_to} data-testid="filter-date-to"
+            onChange={(e) => setFilters({ ...filters, date_to: e.target.value })} className={ic} />
+        </F>
+        <F label="Vehicle">
+          <select value={filters.vehicle_id} data-testid="filter-vehicle"
+            onChange={(e) => setFilters({ ...filters, vehicle_id: e.target.value })} className={ic}>
+            <option value="">All Vehicles</option>
+            {vehicles.map((v) => <option key={v.id} value={v.id}>{v.vehicle_number}</option>)}
+          </select>
+        </F>
+        <F label="Source">
+          <select value={filters.source_label} data-testid="filter-source"
+            onChange={(e) => setFilters({ ...filters, source_label: e.target.value })} className={ic}>
+            <option value="">All Sources</option>
+            {SOURCE_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </F>
+        <F label=" ">
+          <button
+            data-testid="clear-filters-btn"
+            onClick={() => setFilters({ date_from: "", date_to: "", vehicle_id: "", source_label: "" })}
+            className={`${ic} text-left hover:bg-zinc-100`}
+          >
+            Clear filters
+          </button>
+        </F>
       </section>
 
-      {summary?.by_vehicle?.length > 0 && (
-        <section className="border border-zinc-200 bg-white rounded-sm">
-          <div className="px-5 py-3 border-b border-zinc-200 text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-            <TrendingUp size={14} /> By Vehicle
-          </div>
-          <table className="w-full text-sm" data-testid="fuel-summary-table">
+      {/* Totals strip */}
+      <section className="grid grid-cols-3 gap-3" data-testid="fuel-totals">
+        <Kpi label="Entries" value={totals.count} />
+        <Kpi label="Litres" value={totals.litres.toFixed(2)} />
+        <Kpi label="Amount" value={fmtCurrency(totals.amount)} icon={<TrendingUp size={14} />} />
+      </section>
+
+      {/* Table */}
+      <section className="border border-zinc-200 bg-white rounded-sm">
+        <div className="px-5 py-3 border-b border-zinc-200 text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+          <FuelIcon size={14} /> Unified Fuel Log
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm" data-testid="fuel-log-table">
             <thead className="bg-zinc-50 text-[10px] uppercase tracking-wider text-zinc-500">
               <tr>
+                <th className="text-left px-4 py-2">Date</th>
                 <th className="text-left px-4 py-2">Vehicle</th>
-                <th className="text-right px-4 py-2">Fills</th>
                 <th className="text-right px-4 py-2">Litres</th>
+                <th className="text-right px-4 py-2">Rate</th>
                 <th className="text-right px-4 py-2">Amount</th>
-                <th className="text-right px-4 py-2">KM Run</th>
-                <th className="text-right px-4 py-2">Km/Litre</th>
+                <th className="text-left px-4 py-2">Station</th>
+                <th className="text-right px-4 py-2">ODO</th>
+                <th className="text-left px-4 py-2">Source</th>
+                <th className="text-left px-4 py-2">Reference</th>
+                <th className="text-left px-4 py-2">Status</th>
               </tr>
             </thead>
             <tbody className="font-mono">
-              {summary.by_vehicle.map((s) => (
-                <tr key={s.vehicle_number} className="border-t border-zinc-100">
-                  <td className="px-4 py-2 font-semibold">{s.vehicle_number}</td>
-                  <td className="px-4 py-2 text-right">{s.entries}</td>
-                  <td className="px-4 py-2 text-right">{s.litres.toFixed(2)}</td>
-                  <td className="px-4 py-2 text-right">{fmtCurrency(s.amount)}</td>
-                  <td className="px-4 py-2 text-right">{s.km_run.toFixed(0)}</td>
-                  <td className={`px-4 py-2 text-right font-bold ${s.km_per_litre >= 3 ? "text-emerald-700" : s.km_per_litre > 0 ? "text-amber-700" : "text-zinc-400"}`}>
-                    {s.km_per_litre > 0 ? s.km_per_litre.toFixed(2) : "—"}
+              {isLoading && (
+                <tr><td colSpan={10} className="px-4 py-12 text-center text-zinc-400">Loading…</td></tr>
+              )}
+              {!isLoading && rows.length === 0 && (
+                <tr><td colSpan={10} className="px-4 py-12 text-center text-zinc-400" data-testid="fuel-log-empty">
+                  No Diesel entries yet. Import a fleet-card file or add a manual entry.
+                </td></tr>
+              )}
+              {rows.map((r) => (
+                <tr key={`${r.kind}:${r.id}`} data-testid={`fuel-row-${r.id}`} className="border-t border-zinc-100">
+                  <td className="px-4 py-2 text-xs">{fmtDate(r.date)}</td>
+                  <td className="px-4 py-2 font-semibold">{r.vehicle_number || "—"}</td>
+                  <td className="px-4 py-2 text-right">{Number(r.litres || 0) > 0 ? Number(r.litres).toFixed(2) : "—"}</td>
+                  <td className="px-4 py-2 text-right">{Number(r.rate || 0) > 0 ? fmtCurrency(r.rate) : "—"}</td>
+                  <td className="px-4 py-2 text-right font-semibold">{fmtCurrency(r.amount)}</td>
+                  <td className="px-4 py-2 text-xs text-zinc-600 max-w-[240px] truncate" title={r.station_name}>
+                    {r.station_name || "—"}
                   </td>
+                  <td className="px-4 py-2 text-right text-xs">
+                    {r.odometer > 0 ? Number(r.odometer).toFixed(0) : "—"}
+                  </td>
+                  <td className="px-4 py-2">
+                    <span
+                      data-testid={`source-chip-${r.id}`}
+                      className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold border ${SOURCE_COLORS[r.source_label] || "bg-zinc-100 text-zinc-700 border-zinc-200"}`}
+                    >
+                      {r.source_label}
+                    </span>
+                  </td>
+                  <td className="px-4 py-2 text-xs text-zinc-500 max-w-[160px] truncate" title={r.source_txn_ref}>
+                    {r.source_txn_ref || "—"}
+                  </td>
+                  <td className="px-4 py-2 text-xs text-emerald-700">{r.status}</td>
                 </tr>
               ))}
             </tbody>
           </table>
-        </section>
-      )}
-
-      <section className="border border-zinc-200 bg-white rounded-sm">
-        <div className="px-5 py-3 border-b border-zinc-200 text-sm font-bold uppercase tracking-wider flex items-center gap-2">
-          <FuelIcon size={14} /> Fill-up Log
         </div>
-        <table className="w-full text-sm" data-testid="fuel-table">
-          <thead className="bg-zinc-50 text-[10px] uppercase tracking-wider text-zinc-500">
-            <tr>
-              <th className="text-left px-4 py-2">Date</th>
-              <th className="text-left px-4 py-2">Vehicle</th>
-              <th className="text-right px-4 py-2">Litres</th>
-              <th className="text-right px-4 py-2">Rate</th>
-              <th className="text-right px-4 py-2">Amount</th>
-              <th className="text-right px-4 py-2">Odo</th>
-              <th className="text-left px-4 py-2">Station</th>
-              <th className="px-4 py-2"></th>
-            </tr>
-          </thead>
-          <tbody className="font-mono">
-            {entries.map((f) => (
-              <tr key={f.id} data-testid={`fuel-row-${f.id}`} className="border-t border-zinc-100">
-                <td className="px-4 py-2 text-xs">{fmtDate(f.date)}</td>
-                <td className="px-4 py-2 font-semibold">{f.vehicle_number}</td>
-                <td className="px-4 py-2 text-right">{Number(f.litres).toFixed(2)}</td>
-                <td className="px-4 py-2 text-right">{fmtCurrency(f.rate_per_litre)}</td>
-                <td className="px-4 py-2 text-right font-semibold">{fmtCurrency(f.amount)}</td>
-                <td className="px-4 py-2 text-right">{f.odometer ? Number(f.odometer).toFixed(0) : "—"}</td>
-                <td className="px-4 py-2 text-xs text-zinc-600">{f.station_name || "—"}</td>
-                <td className="px-4 py-2 text-right">
-                  <button data-testid={`delete-fuel-${f.id}`} onClick={() => { if (window.confirm("Delete?")) del.mutate(f.id); }} className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-rose-200 text-rose-700 rounded-sm hover:bg-rose-50">
-                    <Trash2 size={12} />
-                  </button>
-                </td>
-              </tr>
-            ))}
-            {entries.length === 0 && (
-              <tr><td colSpan={8} className="px-4 py-12 text-center text-zinc-400">No fuel entries yet.</td></tr>
-            )}
-          </tbody>
-        </table>
       </section>
 
-      {open && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4" data-testid="fuel-modal">
-          <div className="bg-white w-full max-w-lg border border-zinc-950 rounded-sm">
-            <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-200">
-              <h3 className="font-bold">New Fuel Fill</h3>
-              <button onClick={() => setOpen(false)}><X size={18} /></button>
-            </div>
-            <form onSubmit={(e) => { e.preventDefault(); save.mutate(); }} className="p-5 grid grid-cols-1 md:grid-cols-2 gap-3">
-              <F label="Date *"><input required data-testid="fuel-date" type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} className={ic} /></F>
-              <F label="Vehicle *">
-                <select
-                  data-testid="fuel-vehicle"
-                  required
-                  value={form.vehicle_id || form.vehicle_number}
-                  onChange={(e) => {
-                    const v = vehicles.find((x) => x.id === e.target.value);
-                    if (v) setForm({ ...form, vehicle_id: v.id, vehicle_number: v.vehicle_number });
-                    else setForm({ ...form, vehicle_id: "", vehicle_number: e.target.value });
-                  }}
-                  className={ic}
-                >
-                  <option value="">-- Select --</option>
-                  {vehicles.map((v) => <option key={v.id} value={v.id}>{v.vehicle_number}</option>)}
-                </select>
-              </F>
-              <F label="Litres *"><input required data-testid="fuel-litres" type="number" step="0.01" min="0" value={form.litres} onChange={(e) => setForm({ ...form, litres: e.target.value })} className={ic} /></F>
-              <F label="Rate (₹/L) *"><input required data-testid="fuel-rate" type="number" step="0.01" min="0" value={form.rate_per_litre} onChange={(e) => setForm({ ...form, rate_per_litre: e.target.value })} className={ic} /></F>
-              <F label="Amount (auto)">
-                <div className={`${ic} bg-amber-50 font-mono font-bold`}>{fmtCurrency(liveAmt)}</div>
-              </F>
-              <F label="Odometer"><input data-testid="fuel-odo" type="number" step="0.01" min="0" value={form.odometer} onChange={(e) => setForm({ ...form, odometer: e.target.value })} className={ic} /></F>
-              <div className="md:col-span-2">
-                <F label="Station"><input data-testid="fuel-station" value={form.station_name} onChange={(e) => setForm({ ...form, station_name: e.target.value })} className={ic} placeholder="HP - NH16 Bypass" /></F>
-              </div>
-              <div className="md:col-span-2 flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setOpen(false)} className="px-4 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm">Cancel</button>
-                <button data-testid="save-fuel-btn" type="submit" disabled={save.isPending} className="px-4 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 disabled:opacity-50">
-                  {save.isPending ? "Saving..." : "Save"}
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
+      {wizardSource && (
+        <FuelImportWizard
+          source={wizardSource}
+          vehicles={vehicles}
+          onClose={() => setWizardSource(null)}
+          onSuccess={() => { setWizardSource(null); invalidate(); }}
+        />
+      )}
+      {manualOpen && (
+        <ManualFuelDialog
+          vehicles={vehicles}
+          onClose={() => setManualOpen(false)}
+          onSuccess={() => { setManualOpen(false); invalidate(); }}
+        />
       )}
     </div>
   );
 }
 
 const ic = "w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none bg-white";
+
 function F({ label, children }) {
   return (
     <div>
       <label className="text-[10px] font-bold uppercase tracking-wider text-zinc-500">{label}</label>
       <div className="mt-1">{children}</div>
+    </div>
+  );
+}
+
+function Kpi({ label, value, icon }) {
+  return (
+    <div className="border border-zinc-200 bg-white rounded-sm p-4">
+      <div className="text-[10px] uppercase tracking-wider text-zinc-500 font-bold flex items-center gap-1">
+        {icon} {label}
+      </div>
+      <div className="mt-1 text-2xl font-black tracking-tight font-mono">{value}</div>
     </div>
   );
 }

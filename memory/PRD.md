@@ -1,5 +1,83 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
+
+## ⏳ Iter147 P0 · Fleet-card Fuel Import + Unified Fuel Log — IMPLEMENTED, READY FOR UAT (2026-09-09)
+
+**Status:** ⏳ **READY FOR UAT — NOT YET LOCKED.** Awaiting explicit UAT approval before lock.
+
+### Scope Delivered
+- Two format-specific parsers built against **real IOCL (.xls BIFF) + BPCL (.xlsx) statements** supplied in Phase 0.
+- **Auto-detection** by content signature (extension is a hint only).
+- **Vehicle mapping** collection `fuel_vehicle_maps` with unique `(company_id, source, source_vehicle_ref)` upsert.
+- **Preview → Commit two-phase flow** with 5 buckets: `ready`, `vehicle_mapping_required`, `possible_duplicate`, `exact_duplicate`, `error`.
+- **Exact-duplicate hard block** via deterministic `source_key = "fuel:{src}:{cid}:{txn_ref}"` (fallback SHA-1 hash when statement lacks txn_ref).
+- **Possible-duplicate soft warning** across three XOR-safe lanes: canonical Diesel Expense + legacy `db.fuel` + Trip legacy `expenses.diesel` (only where `has_canonical_expenses=false`). Never triggered on date+vehicle alone.
+- **Manual Diesel entry** rewired to canonical Expense (`source_type="manual"`) — same accounting truth as Quick Op / fleet-card. Legacy `POST /api/fuel` kept alive (deprecated in UI).
+- **Unified Fuel Log** (`GET /api/fuel-log`) as pure projection over canonical Expense + legacy `db.fuel` + Trip legacy diesel. Zero new accounting truth.
+- **Row cap 2000** synchronous; clean 413 rejection above.
+
+### Additive Model Changes (no locked-behaviour touch)
+- `Expense.source_type` Literal extended with `"fleet_card_import"`.
+- `Expense.source: str` (values `"iocl" | "bpcl" | ""`) and `Expense.source_txn_ref: str` added — required for exact-duplicate identity and statement audit.
+- New model `FuelVehicleMap` (id, source, source_vehicle_ref, vehicle_id, vehicle_number, created_by/at, modified_by/at).
+- Iter133–146 canonical/XOR contract unchanged.
+
+### New Backend Files
+- `backend/services_fuel_import.py` — parsers, preview orchestrator, commit writer, unified-log builder, XOR-safe scan.
+- `backend/routers/fuel_import.py` — endpoints (see below).
+
+### New Endpoints
+- `POST /api/fuel-import/preview` (multipart) — auto-detects + parses + buckets.
+- `POST /api/fuel-import/commit` — persists ready rows as canonical Expenses (batch_id per commit).
+- `GET  /api/fuel/vehicle-maps` (optional `?source=iocl|bpcl`).
+- `POST /api/fuel/vehicle-maps` — upsert.
+- `DELETE /api/fuel/vehicle-maps/{fvm_id}`.
+- `GET  /api/fuel-log` — unified projection (filters: date_from, date_to, vehicle_id, source_label).
+- `POST /api/fuel-manual` — canonical manual Diesel entry.
+
+### Frontend
+- `frontend/src/pages/Fuel.jsx` rewritten as the Unified Fuel Log (filters + totals + source-chip table + [Import IOCL] [Import BPCL] [+ Manual Fuel]).
+- `frontend/src/components/fuel/FuelImportWizard.jsx` — upload → preview → inline vehicle mapping → possible-dup override → commit.
+- `frontend/src/components/fuel/ManualFuelDialog.jsx` — canonical Diesel entry (server-authoritative amount).
+
+### Tests (all Iter147-specific — Iter133–146 tests untouched)
+- `backend/tests/fixtures/iter147/IOCL_FUEL_FILE.xls` (real, 44 KB).
+- `backend/tests/fixtures/iter147/BPCL_SALES_FILE.xlsx` (real, 23 KB).
+- `test_iter147_iocl_parser.py` — 8 tests (auto-detect, Diesel-only, apostrophe strip, txn_ref normalisation, vehicle ref, expected count, exact row match, dispatch).
+- `test_iter147_bpcl_parser.py` — 6 tests (auto-detect, Diesel-only, Petrol skipped, expected count, first row data, unrecognised-file rejection).
+- `test_iter147_import_flow.py` — 14 tests (preview + detection + bucketing, unrecognised rejection, vehicle mapping upsert, first import, exact duplicate on re-upload, possible duplicate cross-source, XOR safety of Trip legacy, manual entry canonical write + bad input rejection, unified log + filters, tenant isolation, 2000-row rejection contract).
+- **Result:** 28 / 28 pass · 0.53 s (parsers) + 11.0 s (flow).
+
+### Regression
+- Iter133–146 focused regression: **252 / 253 pass** under parallel xdist.
+- The one xdist-only failure (`test_iter143_p2::test_p2_xlsx_supplier_payable_not_in_trip_cost`) is a known shared-tenant race — **passes cleanly in isolation** (`-n0` single run). Unrelated to Iter147 (no touch on Iter143 code paths).
+- Frontend: `webpack compiled successfully` — only pre-existing eslint warnings remain.
+
+### Live UI Verification
+- `/fuel` renders Unified Fuel Log with real data (Trip Legacy rows, canonical Diesel rows).
+- All 7 core testids present: `fuel-page`, `import-iocl-btn`, `import-bpcl-btn`, `manual-fuel-btn`, `fuel-log-table`, `filter-source`, `fuel-totals`.
+
+### Accounting Safety
+- ONE real-world Diesel transaction → ONE canonical Expense. No paired `db.fuel` row.
+- Vehicle Cost / Expense Register / Trip Cost reflect imported Diesel automatically via existing canonical Expense reads. No new report path.
+- Legacy `db.fuel` remains untouched, visible only in the Unified Fuel Log projection labelled "Legacy Fuel", never contributes to those reports.
+
+### Known Limitations (deferred to P1)
+- Historical `db.fuel → Expense` backfill (not started).
+- Bulk reclassification of committed Expenses after a vehicle-mapping correction.
+- Automatic Trip-linkage heuristic (fleet-card row → open trip).
+- Vendor linking / payables (fleet-card statement → Vendor bill).
+- Fuel-efficiency analytics (km/L).
+- Excel / PDF export from Unified Fuel Log.
+- Async / chunked ingest above 2000 rows.
+- Format-drift versioning (basic unrecognised-format protection ships in P0).
+- Fleet-card wallet-balance analytics.
+
+### TRUKVIA Principle Preserved
+`ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO MANUAL RECONCILIATION.`
+
+---
+
 ## 🔒 FINAL LOCK RECORD — Iter146 (2026-09-09)
 
 **Bundled lock sign-off**: Iter146 P0 (Trip Entry First-Save Screen UX Simplification) and Iter146 UAT-FIX (LR Details full on First-Save) are both LOCKED under the same real-time UAT sign-off dated 2026-09-09.

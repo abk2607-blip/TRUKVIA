@@ -1118,9 +1118,21 @@ class Expense(BaseModel):
     #   trip:{trip_id}:oe:{row_id}      for Trip.other_expenditures[]
     # Never uses amount/date/vendor heuristics. `source_type='manual'` means
     # user-typed via the Expense API (no auto-materialisation).
-    source_type: Literal["manual", "trip_legacy", "trip_other_expenditure", "quick_op"] = "manual"
+    # Iter147 P0 · additive — "fleet_card_import" is a new canonical write
+    # source for imported IOCL/BPCL fleet-card Diesel rows. Never a paired
+    # `db.fuel` write; canonical Expense is the single truth.
+    source_type: Literal["manual", "trip_legacy", "trip_other_expenditure",
+                         "quick_op", "fleet_card_import"] = "manual"
     source_key: str = ""
     source_trip_id: str = ""    # denormalised for fast cleanup queries
+    # Iter147 P0 · additive — sub-source identity for fleet-card imports.
+    #   source          → "iocl" | "bpcl" | ""   (empty for non-import rows)
+    #   source_txn_ref  → raw transaction ID as printed on the statement
+    # These enable EXACT-duplicate protection and audit traceability of an
+    # imported row back to the original statement line without changing
+    # any locked Iter133–146 report contract.
+    source: str = ""
+    source_txn_ref: str = ""
     file_ids: List[str] = Field(default_factory=list)
     created_by: str = ""
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
@@ -1208,6 +1220,34 @@ class MechanicPayment(BaseModel):
     deleted_by: str = ""
     deleted_at: str = ""
     deletion_reason: str = ""
+
+
+class FuelVehicleMap(BaseModel):
+    """Iter147 P0 · Fleet-card source-vehicle → TRUKVIA vehicle mapping.
+
+    Fleet-card statements print a `Vehicle No. (Card)` / `Vehicle Number`
+    that is NOT a real RTO registration. This lookup resolves that raw
+    reference to the canonical `vehicle_id` inside TRUKVIA so imported
+    Diesel Expenses point at the right vehicle.
+
+    Immutable-history contract:
+      • Changing the mapping affects FUTURE imports only.
+      • Previously imported Expenses stay pointing to the vehicle they
+        were committed against (audit-safe).
+      • The mapping NEVER mutates Vehicle / Trip / Supplier / Expense
+        records.
+
+    Uniqueness key: (company_id, source, source_vehicle_ref).
+    """
+    id: str = Field(default_factory=lambda: new_id("fvm_"))
+    source: Literal["iocl", "bpcl"]
+    source_vehicle_ref: str
+    vehicle_id: str
+    vehicle_number: str = ""
+    created_by: str = ""
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+    modified_by: str = ""
+    modified_at: str = ""
 
 
 class PaymentCorrection(BaseModel):
