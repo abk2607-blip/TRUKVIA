@@ -1,5 +1,27 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
+## 🟡 Iter146 P0 UAT-FIX · LR Details full on First-Save (2026-09-09)
+
+**Status: FIXED, READY FOR UAT RE-VERIFICATION. Iter146 remains NOT LOCKED.**
+
+### UAT finding
+First-save screen trimmed LR Details too aggressively — operator lost access to LR Number, LR Time, Waybill, Gross/Tare, Seal, Driver-LR, Pincodes and (crucially) the LR Preview / PDF button at Trip Entry.
+
+### Fix (frontend-only, one line at the call-site)
+`frontend/src/pages/TripForm.jsx` — removed the `firstSaveMode={firstSaveMode}` prop from the `<LRSection …>` call-site. LR now falls back to its default `firstSaveMode=false`, rendering every existing LR field + Preview/PDF actions on `/trips/new` — identical to Edit. The LRSection component still accepts the prop (kept in-file for a potential future opt-in), but TripForm no longer passes it. All other trims (Unloading / Halting / ReceivedFromCustomer / Expenses / OtherExpenditure / Notes, plus Freight snapshot/breakdown, plus TripDetails Customer-Ref) remain in place. Zero backend / schema / accounting change.
+
+### Test update
+`backend/tests/test_iter146_trip_entry_first_screen.py::test_fe_lr_advanced_fields_hidden_on_first_save` inverted to `LR must render full functionality on /trips/new — call-site must not gate` + new `test_fe_lr_full_fields_present_on_first_save_call_site` asserting 18 LR data-testids remain reachable.
+
+### Live UAT proof
+DOM audit on `/trips/new`: `lr_number · lr_time · ext_invoice · cust_invoice · waybill · consignor · site_loc · site_contact · gross_wt · tare_wt · seal · lr_driver_name · driver_mobile · from_pin · to_pin · preview_lr_btn = ALL PRESENT`. Advanced sections still hidden: `trip-unloaded-qty · trip-notes = HIDDEN`.
+
+### Regression
+Iter139 + 141 + 142 + 143 P1/P2 + 144 P1/UAT-fix + 145 + 146 (including the 3 revised Iter146 tests) = **172 / 172 pass in 113.94 s**. Frontend `webpack compiled successfully`.
+
+---
+
+
 ## 🟡 Iter146 P0 · Trip Entry · First-Save Screen UX Simplification — READY FOR UAT (2026-09-08)
 
 **Status: IMPLEMENTED, ALL TESTS GREEN, AWAITING USER UAT & LOCK.**

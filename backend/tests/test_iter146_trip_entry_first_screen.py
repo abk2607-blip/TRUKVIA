@@ -57,11 +57,35 @@ def test_fe_advanced_sections_wrapped_first_save():
 
 
 def test_fe_lr_advanced_fields_hidden_on_first_save():
-    src = LR.read_text(encoding="utf-8")
-    assert "firstSaveMode = false" in src
-    assert "{!firstSaveMode && (" in src
-    # Preview button block is now gated
-    assert "runPreview" in src
+    """Iter146 P0 UAT-FIX (2026-09-09) · LR remains FULL on first-save.
+    Business requirement: LR preview / PDF actions must be available at
+    Trip Entry. Trimming was reverted at the TripForm call-site — LR
+    section is now invoked WITHOUT firstSaveMode, so all LR fields render.
+    The LRSection component itself still accepts the prop (safe / harmless)
+    but TripForm does not pass it any more."""
+    src = TF.read_text(encoding="utf-8")
+    # LR call-site MUST NOT pass firstSaveMode.
+    assert "<LRSection form={form} setForm={setForm} isEdit={isEdit} id={id} />" in src, (
+        "LR must render full functionality on /trips/new — call-site must not gate"
+    )
+    # LRSection component still owns the prop for future use.
+    lr_src = LR.read_text(encoding="utf-8")
+    assert "firstSaveMode = false" in lr_src
+
+
+def test_fe_lr_full_fields_present_on_first_save_call_site():
+    """Static verification: every LR field/action data-testid is still
+    reachable when firstSaveMode=false (the LR default)."""
+    lr_src = LR.read_text(encoding="utf-8")
+    for tid in [
+        'trip-lr-number', 'trip-lr-time', 'trip-ext-invoice',
+        'trip-cust-invoice', 'trip-purchased-at', 'trip-invoice-value',
+        'trip-waybill', 'trip-consignor', 'trip-site-loc',
+        'trip-site-contact', 'trip-gross-wt', 'trip-tare-wt',
+        'trip-seal', 'trip-lr-driver-name', 'trip-driver-mobile',
+        'trip-from-pin', 'trip-to-pin', 'preview-lr-btn',
+    ]:
+        assert f'data-testid="{tid}"' in lr_src, f"LR field missing: {tid}"
 
 
 def test_fe_freight_snapshot_and_breakdown_hidden_on_first_save():

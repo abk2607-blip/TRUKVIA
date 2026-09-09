@@ -778,7 +778,11 @@ export default function TripForm() {
           </>
         )}
 
-        <LRSection form={form} setForm={setForm} isEdit={isEdit} id={id} firstSaveMode={firstSaveMode}/>
+        {/* Iter146 P0 UAT-FIX · LR Details remain FULL on first-save. Trip
+            operators need LR preview / PDF actions immediately at Trip
+            Entry, not deferred to Edit. Only the *other* advanced
+            sections stay trimmed. */}
+        <LRSection form={form} setForm={setForm} isEdit={isEdit} id={id} />
 
         {isEdit && (
           <Section title="Attachments · LR proof / Weighbridge slip">
