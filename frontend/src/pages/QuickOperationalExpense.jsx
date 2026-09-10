@@ -1,5 +1,6 @@
 import React, { useMemo, useRef, useState } from "react";
 import TollImportWizard from "@/components/quickexp/TollImportWizard";
+import LinkTollToTripDialog from "@/components/quickexp/LinkTollToTripDialog";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@/api";
@@ -658,6 +659,9 @@ function TodayEntries({ date, vehicles = [], vendorsById, onEdit, onCancel }) {
   // consistent with Vehicle Cost / Expense Register.
   const [vehId, setVehId] = useState("");         // "" = all vehicles
   const [cat, setCat] = useState("");             // "" = all categories
+  // Iter149 P0 · row-scoped "Link Trip" dialog for FASTag Toll rows.
+  const [linkTollRow, setLinkTollRow] = useState(null);
+  const qc = useQueryClient();
   const q = useQuery({
     queryKey: ["quick-op-today", date, vehId, cat],
     queryFn: async () => (await api.get("/expenses", { params: {
@@ -806,10 +810,17 @@ function TodayEntries({ date, vehicles = [], vendorsById, onEdit, onCancel }) {
                             <X size={12} className="inline mr-1"/>Cancel
                           </button>
                         </>
+                      ) : st === "fastag_import" && r.category === "Toll" ? (
+                        <button
+                          data-testid={`toll-link-trip-btn-${r.id}`}
+                          onClick={() => setLinkTollRow(r)}
+                          className="text-xs text-indigo-700 hover:underline">
+                          <Link2 size={12} className="inline mr-1"/>
+                          {r.trip_id ? `Trip · unlink` : "Link Trip"}
+                        </button>
                       ) : (
                         <span className="text-[10px] text-zinc-400" data-testid={`today-entry-readonly-${i}`}>
-                          {st === "fastag_import" ? "Edit vehicle from Fuel Log" :
-                           st === "fleet_card_import" ? "Edit vehicle from Fuel Log" :
+                          {st === "fleet_card_import" ? "Edit vehicle from Fuel Log" :
                            "Read-only here"}
                         </span>
                       )}
@@ -835,6 +846,19 @@ function TodayEntries({ date, vehicles = [], vendorsById, onEdit, onCancel }) {
         remain limited to Quick Op rows; other sources are read-only here (use their
         own edit paths). Cancel is a soft-delete; accounting history preserved.
       </p>
+      {linkTollRow && (
+        <LinkTollToTripDialog
+          expense={linkTollRow}
+          onClose={() => setLinkTollRow(null)}
+          onSuccess={() => {
+            setLinkTollRow(null);
+            qc.invalidateQueries({ queryKey: ["quick-op-today"] });
+            qc.invalidateQueries({ queryKey: ["trip-expenses-canonical"] });
+            qc.invalidateQueries({ queryKey: ["trip-view"] });
+            qc.invalidateQueries({ queryKey: ["vehicle-cost-summary"] });
+          }}
+        />
+      )}
     </div>
   );
 }

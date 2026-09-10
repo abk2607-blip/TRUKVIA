@@ -28,6 +28,7 @@ from services import (
 from services_expense_bridge import (
     sync_trip_expenses_to_canonical,
     delete_trip_canonical_expenses,
+    unlink_operator_expenses_on_trip_delete,
 )
 
 router = APIRouter(prefix="/api")
@@ -907,6 +908,14 @@ async def delete_trip(tid: str, request: Request, reason: str = "", user=Depends
         await delete_trip_canonical_expenses(user["user_id"], cid, tid, reason=f"trip_deleted:{reason[:60]}")
     except Exception as _e:
         logger.warning(f"canonical expense sync (delete) failed: {_e}")
+    # Iter149 P0 · L.2 — Clear trip_id on operator-linked canonical
+    # Expenses (e.g. FASTag Tolls linked via /expenses/{eid}/toll-trip)
+    # so no dangling trip reference remains. Never soft-deletes; those
+    # rows own their own cost identity.
+    try:
+        await unlink_operator_expenses_on_trip_delete(user["user_id"], cid, tid)
+    except Exception as _e:
+        logger.warning(f"operator-linked expense cleanup (trip delete) failed: {_e}")
     # Iter61 · Phase C — Remove mirrored ledger entry (Trip = SSoT)
     try:
         from routers.driver_ledger import delete_trip_recovery_from_ledger

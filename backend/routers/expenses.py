@@ -395,3 +395,143 @@ async def update_quick_diesel_expense(
         pass
     after.pop("_id", None); after.pop("user_id", None)
     return after
+
+
+
+# ── Iter149 P0 · Toll Trip Linkage ────────────────────────────────────────
+# Narrow, source-preserving endpoint that lets an operator attach a
+# FASTag-imported canonical Toll Expense to an existing Trip (or unlink).
+# Zero accounting side-effects: writes ONLY `expense.trip_id` +
+# `modified_by`/`modified_at`. Every downstream projection (Trip View,
+# Vehicle Workspace → Trip Cost, Vehicle Cost KPI, Vehicle PDF/Excel,
+# Expense Register, Today's Expenses) auto-reflects the change via the
+# existing Iter133 canonical read paths.
+#
+# Safety rails (frozen for Iter149 P0):
+#   • Only source_type == "fastag_import" AND category == "Toll" rows.
+#   • Not is_deleted, not is_reversed.
+#   • Trip must exist in tenant.
+#   • Trip.vehicle_id must match Expense.vehicle_id.
+#   • L.1 · Trip.has_canonical_expenses must be true (legacy trips
+#     blocked — no auto-flip).
+#   • Trip.date within ±2 days of Expense.date unless force=true.
+#   • Idempotent — re-posting the same trip_id is a no-op.
+#   • trip_id="" unlinks (audit-logged; always allowed).
+#   • Role gate: Owner / Admin / Ops.
+@router.patch("/expenses/{eid}/toll-trip")
+async def link_toll_expense_to_trip(
+    eid: str, request: Request, body: dict = Body(...),
+    user=Depends(get_current_user),
+):
+    role = (user.get("effective_role") or "").lower()
+    if role not in ("owner", "admin", "ops"):
+        raise HTTPException(status_code=403, detail="Owner, Admin, or Ops role required.")
+    uid = user["user_id"]
+    cid = await _active_company_id(request, user)
+
+    new_tid = str(body.get("trip_id") or "").strip()   # "" == unlink
+    force = bool(body.get("force"))
+
+    before = await db.expenses.find_one(
+        {"id": eid, "user_id": uid, "company_id": cid},
+        {"_id": 0},
+    )
+    if not before:
+        raise HTTPException(status_code=404, detail="Expense not found")
+    if before.get("is_deleted"):
+        raise HTTPException(status_code=400, detail="Cannot link a cancelled Expense.")
+    if before.get("is_reversed"):
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot link a reversed Expense; create a corrective entry instead.",
+        )
+    if (before.get("source_type") or "") != "fastag_import":
+        raise HTTPException(
+            status_code=400,
+            detail="This endpoint is limited to FASTag-imported Toll rows "
+                   "(source_type='fastag_import').",
+        )
+    if (before.get("category") or "") != "Toll":
+        raise HTTPException(status_code=400, detail="Only Toll rows are linkable here.")
+
+    prev_tid = before.get("trip_id", "") or ""
+    trip = None
+
+    if new_tid:
+        trip = await db.trips.find_one(
+            {"id": new_tid, "user_id": uid, "company_id": cid},
+            {"_id": 0, "id": 1, "vehicle_id": 1, "vehicle_number": 1,
+             "date": 1, "lr_number": 1, "has_canonical_expenses": 1},
+        )
+        if not trip:
+            raise HTTPException(status_code=400, detail="Trip not found in tenant")
+        # L.1 · Legacy trip blocked (no auto-flip in P0).
+        if not bool(trip.get("has_canonical_expenses")):
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot link Toll to a legacy Trip "
+                       "(has_canonical_expenses=false). Convert the trip's "
+                       "legacy expenses first, or add a canonical Expense "
+                       "on that trip before linking.",
+            )
+        # Vehicle match — never link across vehicles.
+        if (trip.get("vehicle_id") or "") != (before.get("vehicle_id") or ""):
+            raise HTTPException(
+                status_code=400,
+                detail="Trip.vehicle_id does not match Expense.vehicle_id",
+            )
+        # ±2-day window unless force=true.
+        if not force:
+            e_date = before.get("date", "") or ""
+            t_date = trip.get("date", "") or ""
+            try:
+                from datetime import date as _dt
+                ed = _dt.fromisoformat(e_date)
+                td = _dt.fromisoformat(t_date)
+                if abs((ed - td).days) > 2:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Trip date {t_date} is more than ±2 days from "
+                               f"Expense date {e_date}. Pass force=true to override.",
+                    )
+            except HTTPException:
+                raise
+            except Exception:
+                # Malformed dates: don't block; audit + proceed.
+                pass
+
+    if new_tid == prev_tid:
+        before.pop("_id", None); before.pop("user_id", None)
+        return {"ok": True, "unchanged": True, "expense": before}
+
+    patch = {
+        "trip_id": new_tid,
+        "modified_by": uid,
+        "modified_at": now_utc().isoformat(),
+    }
+    await db.expenses.update_one({"id": eid}, {"$set": patch})
+    after = {**before, **patch}
+
+    # Audit — capture prev/new trip explicitly.
+    action_desc = (
+        f"toll-trip link · {prev_tid or '—'} → {new_tid or '—'}"
+        + (f" · LR {trip.get('lr_number', '')}" if trip and trip.get("lr_number") else "")
+        + (" · force=true" if (new_tid and force) else "")
+    )
+    try:
+        await _log_audit(
+            {"user_id": uid, "company_id": cid,
+             "email": user.get("email", ""), "name": user.get("name", "")},
+            "expense", "update", eid, "Toll", action_desc,
+            _diff_dict(before, after),
+        )
+    except Exception:
+        pass
+
+    after.pop("_id", None); after.pop("user_id", None)
+    return {
+        "ok": True,
+        "unchanged": False,
+        "previous_trip_id": prev_tid,
+        "expense": after,
+    }

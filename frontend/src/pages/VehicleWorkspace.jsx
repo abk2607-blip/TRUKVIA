@@ -10,8 +10,10 @@
  */
 import React, { useMemo, useState } from "react";
 import { useParams, Link, useLocation, useNavigate } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/api";
+import { Link2 } from "lucide-react";
+import LinkTollToTripDialog from "@/components/quickexp/LinkTollToTripDialog";
 
 const fmt = (n) => {
   const x = Number(n) || 0;
@@ -335,6 +337,11 @@ function OverviewTab({ cost, loading, vid }) {
 }
 
 function ExpensesTab({ cost, loading }) {
+  // Iter149 P0 · row-scoped "Link Trip" dialog for FASTag Toll rows.
+  // Hooks MUST run in the same order every render — declared BEFORE
+  // any early return.
+  const [linkTollRow, setLinkTollRow] = useState(null);
+  const qc = useQueryClient();
   if (loading) return <div className="text-zinc-400 text-sm" data-testid="vw-expenses-loading">Loading…</div>;
   const rows = cost?.rows || [];
   return (
@@ -391,6 +398,14 @@ function ExpensesTab({ cost, loading }) {
                             title="Edit / Cancel via Today's Entries (Iter140)">
                         Edit in Quick Op →
                       </Link>
+                    ) : r.source_type === "fastag_import" && r.category === "Toll" ? (
+                      <button
+                        data-testid={`vw-toll-link-trip-btn-${r.id}`}
+                        onClick={() => setLinkTollRow(r)}
+                        className="text-indigo-700 hover:underline">
+                        <Link2 size={12} className="inline mr-1"/>
+                        {r.trip_id ? "Trip · unlink" : "Link Trip"}
+                      </button>
                     ) : (
                       <span className="text-zinc-400">read-only</span>
                     )}
@@ -415,6 +430,18 @@ function ExpensesTab({ cost, loading }) {
         Repair-linked and Trip-linked canonical Expenses are counted exactly once.
         Cancelled or reversed rows are automatically excluded.
       </p>
+      {linkTollRow && (
+        <LinkTollToTripDialog
+          expense={linkTollRow}
+          onClose={() => setLinkTollRow(null)}
+          onSuccess={() => {
+            setLinkTollRow(null);
+            qc.invalidateQueries({ queryKey: ["vehicle-cost-summary"] });
+            qc.invalidateQueries({ queryKey: ["trip-expenses-canonical"] });
+            qc.invalidateQueries({ queryKey: ["trip-view"] });
+          }}
+        />
+      )}
     </div>
   );
 }

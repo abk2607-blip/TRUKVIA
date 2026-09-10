@@ -220,3 +220,28 @@ async def delete_trip_canonical_expenses(uid: str, cid: str, tid: str, reason: s
         }},
     )
     return int(r.modified_count or 0)
+
+
+async def unlink_operator_expenses_on_trip_delete(uid: str, cid: str, tid: str) -> int:
+    """Iter149 P0 · L.2 · Clear `trip_id` on operator-linked canonical
+    Expenses when the Trip is deleted.
+
+    These rows (currently: FASTag-imported Tolls linked via
+    `PATCH /api/expenses/{eid}/toll-trip`) OWN their own cost identity —
+    they must NOT be soft-deleted (unlike bridge-materialised legacy
+    Trip.expenses rows that `delete_trip_canonical_expenses` handles).
+
+    Identified by `trip_id == tid` AND `source_trip_id != tid` (bridge-
+    materialised rows have `source_trip_id == tid` and are handled by
+    the sibling function). Idempotent, tenant-scoped, active rows only.
+    """
+    if not tid:
+        return 0
+    now_iso = now_utc().isoformat()
+    r = await db.expenses.update_many(
+        {"user_id": uid, "company_id": cid,
+         "trip_id": tid, "source_trip_id": {"$ne": tid},
+         "is_deleted": {"$ne": True}},
+        {"$set": {"trip_id": "", "modified_at": now_iso, "modified_by": uid}},
+    )
+    return int(r.modified_count or 0)
