@@ -151,7 +151,7 @@ async def list_expenses(
     party_type: Optional[str] = None,
     party_id: Optional[str] = None,
     category: Optional[str] = None,
-    source_type: Optional[str] = None,
+    source_type: Optional[str] = None,   # Iter148 UAT-fix: comma-separated allowed
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     include_reversed: bool = False,
@@ -177,7 +177,16 @@ async def list_expenses(
     if party_type: q["party_type"] = party_type
     if party_id: q["party_id"] = party_id
     if category: q["category"] = category
-    if source_type: q["source_type"] = source_type
+    if source_type:
+        # Iter148 UAT-fix · accept a comma-separated list so "Today's Expenses"
+        # can render every canonical operational Expense source in one query
+        # (quick_op + fastag_import + fleet_card_import + manual …). A single
+        # value continues to work unchanged.
+        parts = [s.strip() for s in source_type.split(",") if s.strip()]
+        if len(parts) > 1:
+            q["source_type"] = {"$in": parts}
+        elif parts:
+            q["source_type"] = parts[0]
     if date_from or date_to:
         d: dict = {}
         if date_from: d["$gte"] = date_from

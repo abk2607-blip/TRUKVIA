@@ -581,7 +581,10 @@ export default function QuickOperationalExpense() {
         </div>
       )}
 
-      {/* Iter140 · Today's Entries strip · reads canonical Expense (source_type='quick_op'). */}
+      {/* Iter148 UAT-fix · Today's Expenses reads canonical Expense across
+          every operational source (quick_op + fastag_import + fleet_card_import
+          + manual) so imported Toll / Diesel rows appear alongside Quick Op
+          entries. No new accounting truth — pure read widening. */}
       <TodayEntries
         date={date}
         vendorsById={Object.fromEntries((vendors || []).map((v) => [v.id, v]))}
@@ -624,11 +627,35 @@ export default function QuickOperationalExpense() {
 }
 
 // ── Iter140 · Today's Entries strip ────────────────────────────────────────
+// Iter148 UAT-fix (2026-09-09) · Renamed "Today's Entries" → "Today's Expenses".
+// Reads canonical Expense across every operational source_type so imported
+// FASTag Toll / fleet-card Diesel rows are visible alongside Quick Op entries.
+// A Source badge column reveals origin per row. Edit/Cancel remain gated to
+// source_type='quick_op' (existing behaviour); other sources are read-only
+// here — FASTag rows use their own vehicle-correction path.
+const SOURCE_LABEL = {
+  quick_op: "Quick Op",
+  fastag_import: "FASTag",
+  fleet_card_import: "Fleet Card",
+  manual: "Manual",
+  trip_legacy: "Trip Legacy",
+  trip_other_expenditure: "Trip Other",
+};
+const SOURCE_BADGE = {
+  quick_op: "bg-emerald-100 text-emerald-800 border-emerald-200",
+  fastag_import: "bg-amber-100 text-amber-800 border-amber-200",
+  fleet_card_import: "bg-orange-100 text-orange-800 border-orange-200",
+  manual: "bg-sky-100 text-sky-800 border-sky-200",
+  trip_legacy: "bg-zinc-100 text-zinc-700 border-zinc-200",
+  trip_other_expenditure: "bg-zinc-100 text-zinc-700 border-zinc-200",
+};
+
 function TodayEntries({ date, vendorsById, onEdit, onCancel }) {
   const q = useQuery({
     queryKey: ["quick-op-today", date],
     queryFn: async () => (await api.get("/expenses", { params: {
-      source_type: "quick_op", date_from: date, date_to: date,
+      source_type: "quick_op,fastag_import,fleet_card_import,manual",
+      date_from: date, date_to: date,
     }})).data,
     staleTime: 5_000,
     enabled: !!date,
@@ -643,13 +670,13 @@ function TodayEntries({ date, vendorsById, onEdit, onCancel }) {
     <div className="bg-white border rounded-lg p-4 mt-6" data-testid="today-entries">
       <div className="flex items-center gap-3 flex-wrap mb-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-700">
-          Today's Entries
+          Today's Expenses
           <span className="ml-2 text-zinc-400 font-normal normal-case tracking-normal">
-            (Quick Op · {date} · source-of-truth Expense)
+            (Quick Op · FASTag · Fleet Card · Manual · {date} · canonical Expense)
           </span>
           <span className="ml-2 text-[10px] text-zinc-300 font-normal normal-case"
                 data-testid="today-entries-version"
-                title="Bundle marker — Ctrl/Cmd+Shift+R if this stamp is missing.">v140</span>
+                title="Bundle marker — Ctrl/Cmd+Shift+R if this stamp is missing.">v148</span>
         </h2>
         <div className="ml-auto text-xs text-zinc-600 flex gap-4">
           <span data-testid="today-entries-count">Rows: {rows.length}</span>
@@ -660,7 +687,7 @@ function TodayEntries({ date, vendorsById, onEdit, onCancel }) {
         <div className="text-zinc-400 text-sm">Loading…</div>
       ) : rows.length === 0 ? (
         <div className="text-zinc-400 text-sm" data-testid="today-entries-empty">
-          No quick-op entries for {date}.
+          No expenses for {date}.
         </div>
       ) : (
         <div className="overflow-x-auto">
@@ -668,6 +695,7 @@ function TodayEntries({ date, vendorsById, onEdit, onCancel }) {
             <thead className="bg-zinc-50">
               <tr className="text-left">
                 <th className="py-2 px-2">Time</th>
+                <th className="py-2 px-2">Source</th>
                 <th className="py-2 px-2">Category</th>
                 <th className="py-2 px-2">Vehicle</th>
                 <th className="py-2 px-2">Vendor</th>
@@ -677,43 +705,64 @@ function TodayEntries({ date, vendorsById, onEdit, onCancel }) {
               </tr>
             </thead>
             <tbody>
-              {rowsSorted.map((r, i) => (
-                <tr key={r.id} className="border-t"
-                    data-testid={`today-entry-row-${i}`}
-                    data-eid={r.id}>
-                  <td className="py-2 px-2 whitespace-nowrap text-xs text-zinc-500">
-                    {(r.created_at || "").slice(11, 16)}
-                  </td>
-                  <td className="py-2 px-2">{r.category}</td>
-                  <td className="py-2 px-2 font-mono text-xs">{r.vehicle_number || r.vehicle_id}</td>
-                  <td className="py-2 px-2 text-xs">
-                    {r.party_type === "vendor"
-                      ? (vendorsById[r.party_id]?.name || r.party_name || r.party_id)
-                      : <span className="text-zinc-400">—</span>}
-                  </td>
-                  <td className="py-2 px-2 text-zinc-600 text-xs">{r.narration || r.remarks || ""}</td>
-                  <td className="py-2 px-2 text-right tabular-nums"
-                      data-testid={`today-entry-amount-${i}`}>{fmt(r.amount)}</td>
-                  <td className="py-2 px-2 text-right whitespace-nowrap">
-                    <button
-                      onClick={() => onEdit(r)}
-                      className="text-xs text-indigo-700 hover:underline mr-3"
-                      data-testid={`today-entry-edit-${i}`}>
-                      <Pencil size={12} className="inline mr-1"/>Edit
-                    </button>
-                    <button
-                      onClick={() => onCancel(r)}
-                      className="text-xs text-rose-700 hover:underline"
-                      data-testid={`today-entry-cancel-${i}`}>
-                      <X size={12} className="inline mr-1"/>Cancel
-                    </button>
-                  </td>
-                </tr>
-              ))}
+              {rowsSorted.map((r, i) => {
+                const st = r.source_type || "manual";
+                const editable = st === "quick_op";
+                return (
+                  <tr key={r.id} className="border-t"
+                      data-testid={`today-entry-row-${i}`}
+                      data-eid={r.id}
+                      data-source-type={st}>
+                    <td className="py-2 px-2 whitespace-nowrap text-xs text-zinc-500">
+                      {(r.created_at || "").slice(11, 16)}
+                    </td>
+                    <td className="py-2 px-2">
+                      <span data-testid={`today-entry-source-${i}`}
+                        className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold border ${SOURCE_BADGE[st] || SOURCE_BADGE.manual}`}>
+                        {SOURCE_LABEL[st] || st}
+                      </span>
+                    </td>
+                    <td className="py-2 px-2">{r.category}</td>
+                    <td className="py-2 px-2 font-mono text-xs">{r.vehicle_number || r.vehicle_id}</td>
+                    <td className="py-2 px-2 text-xs">
+                      {r.party_type === "vendor"
+                        ? (vendorsById[r.party_id]?.name || r.party_name || r.party_id)
+                        : <span className="text-zinc-400">—</span>}
+                    </td>
+                    <td className="py-2 px-2 text-zinc-600 text-xs">{r.narration || r.remarks || ""}</td>
+                    <td className="py-2 px-2 text-right tabular-nums"
+                        data-testid={`today-entry-amount-${i}`}>{fmt(r.amount)}</td>
+                    <td className="py-2 px-2 text-right whitespace-nowrap">
+                      {editable ? (
+                        <>
+                          <button
+                            onClick={() => onEdit(r)}
+                            className="text-xs text-indigo-700 hover:underline mr-3"
+                            data-testid={`today-entry-edit-${i}`}>
+                            <Pencil size={12} className="inline mr-1"/>Edit
+                          </button>
+                          <button
+                            onClick={() => onCancel(r)}
+                            className="text-xs text-rose-700 hover:underline"
+                            data-testid={`today-entry-cancel-${i}`}>
+                            <X size={12} className="inline mr-1"/>Cancel
+                          </button>
+                        </>
+                      ) : (
+                        <span className="text-[10px] text-zinc-400" data-testid={`today-entry-readonly-${i}`}>
+                          {st === "fastag_import" ? "Edit vehicle from Fuel Log" :
+                           st === "fleet_card_import" ? "Edit vehicle from Fuel Log" :
+                           "Read-only here"}
+                        </span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
             <tfoot>
               <tr className="border-t bg-zinc-50">
-                <td colSpan={5} className="py-2 px-2 text-right font-semibold">Total</td>
+                <td colSpan={6} className="py-2 px-2 text-right font-semibold">Total</td>
                 <td className="py-2 px-2 text-right tabular-nums font-semibold"
                     data-testid="today-entries-total-cell">{fmt(total)}</td>
                 <td/>
@@ -723,10 +772,10 @@ function TodayEntries({ date, vendorsById, onEdit, onCancel }) {
         </div>
       )}
       <p className="mt-3 text-[11px] text-zinc-400">
-        Reads canonical Expense with <code>source_type='quick_op'</code>. Edit
-        and Cancel update the SAME Expense — Vehicle Cost, Expense Register
-        and Vendor-linked view reflect the change immediately. Cancel is a
-        soft-delete: accounting history is preserved.
+        Reads canonical Expense across <code>quick_op</code>, <code>fastag_import</code>,
+        <code>fleet_card_import</code>, and canonical <code>manual</code>. Edit/Cancel
+        remain limited to Quick Op rows; other sources are read-only here (use their
+        own edit paths). Cancel is a soft-delete; accounting history preserved.
       </p>
     </div>
   );

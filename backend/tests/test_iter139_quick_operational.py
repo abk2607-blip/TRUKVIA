@@ -815,8 +815,10 @@ def test_iter140_frontend_today_entries_edit_cancel_markers_present():
         'function EditExpenseModal',
         'function CancelExpenseModal',
         "/quick-diesel",
-        'source_type: "quick_op"',
-        "v140",
+        # Iter148 UAT-fix (2026-09-09) · widened Today's Expenses source filter
+        # from single "quick_op" to CSV covering every operational source.
+        'source_type: "quick_op,fastag_import,fleet_card_import,manual"',
+        "v148",
     ]:
         assert needed in src, f"QuickOperationalExpense.jsx missing marker: {needed}"
 
