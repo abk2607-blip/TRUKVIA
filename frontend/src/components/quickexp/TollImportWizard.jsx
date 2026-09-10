@@ -1,17 +1,26 @@
 import React, { useMemo, useState } from "react";
 import { api, fmtCurrency } from "@/api";
 import { toast } from "sonner";
-import { X, Upload, CheckCircle2, AlertTriangle, XCircle, Link2 } from "lucide-react";
+import { X, Upload, CheckCircle2, AlertTriangle, XCircle, Link2, Eye } from "lucide-react";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 
 /* Iter148 P0 · FASTag Toll Import Wizard.
  * ------------------------------------------------------------------
  * Flow: Upload → Auto-detect (IDFC / LIVQ) → Preview (5 buckets) →
  *       Row-scoped vehicle mapping → Confirm & Commit → results.
- * Reuses the Iter147 wizard skeleton and row-scoped state pattern:
- * vehicle selection state is keyed by `row_index` — never by
- * `source_vehicle_ref`. Two rows sharing the same Truck Number
- * always retain independent selections. */
+ *
+ * Iter148 UAT-FIX (Q2 · possible-duplicate handling):
+ *   - Possible-duplicate rows require an EXPLICIT per-row decision
+ *     (Import Anyway / Skip). No decision → commit is BLOCKED so a
+ *     valid source Toll can never be silently excluded.
+ *   - Amber banner surfaces the unreviewed count at the top.
+ *   - Footer shows the full breakdown of what will be imported vs
+ *     skipped by category.
+ *   - Match details (existing canonical/legacy row) are shown inline
+ *     with each possible-duplicate row so the operator can compare
+ *     source vs existing before deciding.
+ *   - Exact-duplicate remains a hard block (unchanged).
+ */
 
 const BUCKET_META = {
   ready:                    { label: "Ready to Import",   color: "text-emerald-700 border-emerald-300 bg-emerald-50",   icon: CheckCircle2 },
@@ -27,8 +36,9 @@ export default function TollImportWizard({ vehicles, onClose, onSuccess }) {
   const [committing, setCommitting] = useState(false);
   const [preview, setPreview] = useState(null);
   const [activeBucket, setActiveBucket] = useState("ready");
-  const [overrides, setOverrides] = useState({});          // row_index -> "keep"
+  const [overrides, setOverrides] = useState({});          // row_index -> "keep" | "skip"
   const [rowSelections, setRowSelections] = useState({});  // row_index -> {vehicle_id, vehicle_number}
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   const doPreview = async () => {
     if (!file) return;
@@ -40,6 +50,7 @@ export default function TollImportWizard({ vehicles, onClose, onSuccess }) {
         headers: { "Content-Type": "multipart/form-data" },
       });
       setPreview(data);
+      setOverrides({});
       const firstNonZero = ["ready", "vehicle_mapping_required", "possible_duplicate", "exact_duplicate", "error"]
         .find((b) => (data.counts?.[b] || 0) > 0) || "ready";
       setActiveBucket(firstNonZero);
@@ -61,6 +72,24 @@ export default function TollImportWizard({ vehicles, onClose, onSuccess }) {
     setRowSelections((m) => { const c = { ...m }; delete c[rowIndex]; return c; });
   };
 
+  // Possible-duplicate accounting: EXPLICIT per-row decision.
+  const possibleDupRows = useMemo(
+    () => (preview?.rows || []).filter((r) => r.bucket === "possible_duplicate"),
+    [preview],
+  );
+  const unreviewedPossibleDupRows = useMemo(
+    () => possibleDupRows.filter((r) => overrides[r.row_index] !== "keep" && overrides[r.row_index] !== "skip"),
+    [possibleDupRows, overrides],
+  );
+  const possibleDupKeepCount = useMemo(
+    () => possibleDupRows.filter((r) => overrides[r.row_index] === "keep").length,
+    [possibleDupRows, overrides],
+  );
+  const possibleDupSkipCount = useMemo(
+    () => possibleDupRows.filter((r) => overrides[r.row_index] === "skip").length,
+    [possibleDupRows, overrides],
+  );
+
   const rowsForCommit = useMemo(() => {
     if (!preview) return [];
     return preview.rows
@@ -78,16 +107,34 @@ export default function TollImportWizard({ vehicles, onClose, onSuccess }) {
       });
   }, [preview, overrides, rowSelections]);
 
-  const doCommit = async () => {
+  const attemptCommit = () => {
     if (!preview || rowsForCommit.length === 0) {
-      return toast.error("Nothing to import. Map unmapped vehicles or approve possible duplicates.");
+      if (unreviewedPossibleDupRows.length > 0) {
+        return toast.error(`${unreviewedPossibleDupRows.length} possible-duplicate row(s) need a decision (Import Anyway or Skip) before you can commit.`);
+      }
+      return toast.error("Nothing to import. Map unmapped vehicles or review possible duplicates.");
     }
+    if (unreviewedPossibleDupRows.length > 0) {
+      setConfirmOpen(true);
+      setActiveBucket("possible_duplicate");
+      return;
+    }
+    doCommit();
+  };
+
+  const doCommit = async () => {
+    setConfirmOpen(false);
     setCommitting(true);
     try {
       const { data } = await api.post("/toll-import/commit", {
         vendor: preview.vendor, rows: rowsForCommit,
       });
-      toast.success(`Imported ${data.created} · ${data.duplicate} duplicate · ${data.failed} failed`);
+      const skipped = possibleDupSkipCount + unreviewedPossibleDupRows.length;
+      const parts = [`Imported ${data.created}`];
+      if (data.duplicate) parts.push(`${data.duplicate} exact duplicate`);
+      if (skipped) parts.push(`${skipped} possible dup skipped`);
+      if (data.failed) parts.push(`${data.failed} failed`);
+      toast.success(parts.join(" · "));
       onSuccess?.();
     } catch (e) {
       toast.error(e?.response?.data?.detail || "Import commit failed");
@@ -103,6 +150,12 @@ export default function TollImportWizard({ vehicles, onClose, onSuccess }) {
     return r.bucket === activeBucket;
   }) || [];
 
+  const totalToSkip = preview
+    ? (preview.counts.exact_duplicate || 0)
+      + (preview.counts.error || 0)
+      + possibleDupSkipCount + unreviewedPossibleDupRows.length
+    : 0;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-3 md:p-6"
          data-testid="toll-import-wizard">
@@ -110,7 +163,7 @@ export default function TollImportWizard({ vehicles, onClose, onSuccess }) {
         className="bg-white w-[95vw] max-w-[1600px] h-[85vh] border border-zinc-950 rounded-sm flex flex-col overflow-hidden">
         <div className="flex items-center justify-between px-5 py-3 border-b border-zinc-200">
           <div>
-            <div className="text-[10px] uppercase tracking-[0.15em] text-zinc-500 font-bold">FASTag Statement Import</div>
+            <div className="text-[10px] uppercase tracking-[0.15em] text-zinc-500 font-bold">FASTag Statement Import · v148-uat</div>
             <h3 className="font-bold text-lg">Upload Tolls · {preview?.vendor ? preview.vendor.toUpperCase() : "IDFC / LIVQ"}</h3>
           </div>
           <button data-testid="close-toll-wizard-btn" onClick={onClose}><X size={18}/></button>
@@ -140,6 +193,30 @@ export default function TollImportWizard({ vehicles, onClose, onSuccess }) {
           )}
           {preview && (
             <div className="p-4 space-y-4">
+              {/* Iter148 UAT-FIX · Q2 · Possible-duplicate REVIEW BANNER */}
+              {unreviewedPossibleDupRows.length > 0 && (
+                <div className="border-2 border-amber-400 bg-amber-50 rounded-sm p-3 flex items-start gap-3"
+                     data-testid="toll-possible-dup-banner">
+                  <AlertTriangle size={20} className="text-amber-700 shrink-0 mt-0.5"/>
+                  <div className="flex-1 text-xs text-amber-900">
+                    <div className="font-bold uppercase tracking-wider text-amber-900">
+                      {unreviewedPossibleDupRows.length} row(s) need a duplicate decision
+                    </div>
+                    <div className="mt-1">
+                      These rows look similar to an existing Toll entry (±1 day / ±2 % amount, same vehicle).
+                      No valid source transaction will be silently excluded — you MUST explicitly choose
+                      <span className="font-bold"> Import Anyway</span> or <span className="font-bold">Skip</span> for each,
+                      before commit is enabled.
+                    </div>
+                  </div>
+                  <button data-testid="toll-review-possible-dup-btn"
+                    onClick={() => setActiveBucket("possible_duplicate")}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 text-[11px] uppercase tracking-wider bg-amber-700 text-white rounded-sm hover:bg-amber-800">
+                    <Eye size={12}/> Review now
+                  </button>
+                </div>
+              )}
+
               <div className="flex flex-wrap gap-2" data-testid="toll-buckets">
                 {Object.entries(BUCKET_META).map(([k, meta]) => {
                   const selCount = Object.keys(rowSelections).length;
@@ -147,10 +224,17 @@ export default function TollImportWizard({ vehicles, onClose, onSuccess }) {
                     : k === "vehicle_mapping_required" ? Math.max(0, preview.counts.vehicle_mapping_required - selCount)
                     : preview.counts[k];
                   const Icon = meta.icon;
+                  const unreviewedHere = k === "possible_duplicate" && unreviewedPossibleDupRows.length > 0;
                   return (
                     <button key={k} data-testid={`toll-bucket-${k}`} onClick={() => setActiveBucket(k)}
-                      className={`inline-flex items-center gap-2 px-3 py-2 text-xs uppercase tracking-wider border rounded-sm ${activeBucket === k ? "bg-zinc-950 text-white border-zinc-950" : `${meta.color} hover:opacity-80`}`}>
+                      className={`inline-flex items-center gap-2 px-3 py-2 text-xs uppercase tracking-wider border rounded-sm ${activeBucket === k ? "bg-zinc-950 text-white border-zinc-950" : `${meta.color} hover:opacity-80`} ${unreviewedHere ? "ring-2 ring-amber-500 ring-offset-1" : ""}`}>
                       <Icon size={14}/> {meta.label} <span className="font-mono font-bold">{count || 0}</span>
+                      {unreviewedHere && (
+                        <span data-testid="toll-bucket-possible-dup-unreviewed"
+                              className="ml-1 px-1.5 py-0.5 text-[9px] rounded-sm bg-amber-600 text-white font-bold">
+                          {unreviewedPossibleDupRows.length} unreviewed
+                        </span>
+                      )}
                     </button>
                   );
                 })}
@@ -179,8 +263,10 @@ export default function TollImportWizard({ vehicles, onClose, onSuccess }) {
                       const vehId = sel?.vehicle_id || r.resolved_vehicle_id || "";
                       const vehNum = sel?.vehicle_number || r.resolved_vehicle_number || "";
                       const isAuto = !sel && !!r.resolved_vehicle_id;
+                      const decision = overrides[r.row_index]; // "keep" | "skip" | undefined
                       return (
-                        <tr key={`${r.row_index}:${r.source_txn_ref}`} data-testid={`toll-row-${r.row_index}`} className="border-t border-zinc-100">
+                        <tr key={`${r.row_index}:${r.source_txn_ref}`} data-testid={`toll-row-${r.row_index}`}
+                            className={`border-t border-zinc-100 ${r.bucket === "possible_duplicate" && !decision ? "bg-amber-50/40" : ""}`}>
                           <td className="px-3 py-1.5">{r.row_index}</td>
                           <td className="px-3 py-1.5">{r.date}</td>
                           <td className="px-3 py-1.5 font-semibold">{r.source_vehicle_raw || r.source_vehicle_ref}</td>
@@ -216,18 +302,55 @@ export default function TollImportWizard({ vehicles, onClose, onSuccess }) {
                           <td className="px-3 py-1.5 text-xs">{r.plaza || r.description || "—"}</td>
                           <td className="px-3 py-1.5 text-xs">{r.source_txn_ref}</td>
                           <td className="px-3 py-1.5 text-xs uppercase">{r.source}</td>
-                          <td className="px-3 py-1.5 text-xs">
+                          <td className="px-3 py-1.5 text-xs min-w-[300px]">
                             {r.bucket === "error" && <span className="text-rose-700">{r.error}</span>}
-                            {r.bucket === "exact_duplicate" && <span className="text-zinc-500">{r.duplicate_reason}</span>}
+                            {r.bucket === "exact_duplicate" && (
+                              <span className="text-zinc-500" data-testid={`toll-exact-dup-reason-${r.row_index}`}>
+                                {r.duplicate_reason || "Already imported earlier"}
+                              </span>
+                            )}
                             {r.bucket === "possible_duplicate" && (
-                              <div className="space-y-1">
-                                <div className="text-amber-700">{r.possible_matches?.length || 0} similar existing txn(s)</div>
-                                <label className="inline-flex items-center gap-1 text-[11px]">
-                                  <input type="checkbox" data-testid={`toll-override-${r.row_index}`}
-                                    checked={overrides[r.row_index] === "keep"}
-                                    onChange={(e) => setOverrides({ ...overrides, [r.row_index]: e.target.checked ? "keep" : "skip" })}/>
-                                  Import anyway
-                                </label>
+                              <div className="space-y-1.5">
+                                <div className="text-amber-700 font-semibold uppercase text-[10px] tracking-wider">
+                                  {r.possible_matches?.length || 0} similar existing entry
+                                </div>
+                                {(r.possible_matches || []).map((m, i) => (
+                                  <div key={i} data-testid={`toll-possible-match-${r.row_index}-${i}`}
+                                       className="text-[11px] text-amber-900 border border-amber-200 bg-amber-50 rounded-sm px-2 py-1">
+                                    <span className="font-bold">{m.source_label || m.kind}</span>
+                                    <span className="mx-1">·</span>
+                                    <span>{m.date}</span>
+                                    <span className="mx-1">·</span>
+                                    <span className="font-mono">{fmtCurrency(m.amount || 0)}</span>
+                                    <span className="mx-1">·</span>
+                                    <span>{m.vehicle_number}</span>
+                                    {m.narration && (
+                                      <div className="text-zinc-600 text-[10px] mt-0.5 truncate">{m.narration}</div>
+                                    )}
+                                  </div>
+                                ))}
+                                <div className="flex items-center gap-3 pt-1">
+                                  <label className="inline-flex items-center gap-1 text-[11px]">
+                                    <input type="radio" name={`toll-dup-${r.row_index}`}
+                                      data-testid={`toll-override-keep-${r.row_index}`}
+                                      checked={decision === "keep"}
+                                      onChange={() => setOverrides({ ...overrides, [r.row_index]: "keep" })}/>
+                                    <span className="text-emerald-700 font-semibold">Import Anyway</span>
+                                  </label>
+                                  <label className="inline-flex items-center gap-1 text-[11px]">
+                                    <input type="radio" name={`toll-dup-${r.row_index}`}
+                                      data-testid={`toll-override-skip-${r.row_index}`}
+                                      checked={decision === "skip"}
+                                      onChange={() => setOverrides({ ...overrides, [r.row_index]: "skip" })}/>
+                                    <span className="text-zinc-700">Skip</span>
+                                  </label>
+                                  {!decision && (
+                                    <span data-testid={`toll-decision-pending-${r.row_index}`}
+                                          className="text-[10px] uppercase tracking-wider text-amber-700 font-bold">
+                                      · decision required
+                                    </span>
+                                  )}
+                                </div>
                               </div>
                             )}
                             {r.bucket === "ready" && <span className="text-emerald-700">{sel ? `Row ${r.row_index} → ${sel.vehicle_number}` : "OK"}</span>}
@@ -248,13 +371,40 @@ export default function TollImportWizard({ vehicles, onClose, onSuccess }) {
           )}
         </div>
         <div className="border-t border-zinc-200 px-5 py-3 flex items-center justify-between">
-          <div className="text-xs text-zinc-500">
-            {preview ? (<>Rows selected for import: <span className="font-bold text-zinc-950" data-testid="toll-commit-count">{rowsForCommit.length}</span> · Total: <span className="font-bold">{preview.total_rows}</span></>) : "Choose a statement to preview."}
+          <div className="text-xs text-zinc-500" data-testid="toll-commit-footer">
+            {preview ? (
+              <div className="space-y-0.5">
+                <div>
+                  <span className="text-emerald-700 font-bold" data-testid="toll-footer-import-count">Import {rowsForCommit.length}</span>
+                  <span className="mx-2">·</span>
+                  <span className="text-zinc-500">Skip <span data-testid="toll-footer-skip-count" className="font-bold">{totalToSkip}</span></span>
+                  {unreviewedPossibleDupRows.length > 0 && (
+                    <>
+                      <span className="mx-2">·</span>
+                      <span className="text-amber-700 font-bold" data-testid="toll-footer-pending-review">
+                        {unreviewedPossibleDupRows.length} pending review
+                      </span>
+                    </>
+                  )}
+                </div>
+                <div className="text-[10px] text-zinc-500">
+                  <span data-testid="toll-footer-breakdown">
+                    Ready {preview.counts.ready + Object.keys(rowSelections).length}
+                    <span className="mx-1">·</span>
+                    Possible Dup: keep {possibleDupKeepCount} / skip {possibleDupSkipCount} / pending {unreviewedPossibleDupRows.length}
+                    <span className="mx-1">·</span>
+                    Exact Dup {preview.counts.exact_duplicate || 0}
+                    <span className="mx-1">·</span>
+                    Errors {preview.counts.error || 0}
+                  </span>
+                </div>
+              </div>
+            ) : "Choose a statement to preview."}
           </div>
           <div className="flex gap-2">
             <button onClick={onClose} className="px-4 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm">Cancel</button>
             {preview && (
-              <button data-testid="toll-commit-btn" onClick={doCommit}
+              <button data-testid="toll-commit-btn" onClick={attemptCommit}
                 disabled={committing || rowsForCommit.length === 0}
                 className="px-4 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 disabled:opacity-50">
                 {committing ? "Importing…" : `Confirm & Import (${rowsForCommit.length})`}
@@ -262,6 +412,36 @@ export default function TollImportWizard({ vehicles, onClose, onSuccess }) {
             )}
           </div>
         </div>
+
+        {confirmOpen && (
+          <div className="absolute inset-0 z-10 flex items-center justify-center bg-zinc-900/50 p-6"
+               data-testid="toll-commit-confirm-dialog">
+            <div className="bg-white border-2 border-amber-500 rounded-sm p-5 max-w-md w-full space-y-3">
+              <div className="flex items-center gap-2 text-amber-800">
+                <AlertTriangle size={20}/>
+                <div className="font-bold uppercase tracking-wider text-sm">Possible duplicates need review</div>
+              </div>
+              <div className="text-xs text-zinc-700">
+                <span className="font-bold">{unreviewedPossibleDupRows.length}</span> row(s) are flagged as possible
+                duplicates and still have <span className="font-bold">no decision</span>. If you commit now, those
+                rows will NOT be imported. Review each row and pick <span className="font-bold">Import Anyway</span>
+                &nbsp;or&nbsp;<span className="font-bold">Skip</span> so nothing is silently excluded.
+              </div>
+              <div className="flex justify-end gap-2 pt-2">
+                <button data-testid="toll-commit-confirm-review"
+                  onClick={() => { setConfirmOpen(false); setActiveBucket("possible_duplicate"); }}
+                  className="px-3 py-1.5 text-[11px] uppercase tracking-wider bg-amber-700 text-white rounded-sm hover:bg-amber-800">
+                  Review now
+                </button>
+                <button data-testid="toll-commit-confirm-proceed"
+                  onClick={doCommit}
+                  className="px-3 py-1.5 text-[11px] uppercase tracking-wider border border-zinc-300 rounded-sm hover:bg-zinc-50">
+                  Import {rowsForCommit.length} anyway (skip the {unreviewedPossibleDupRows.length} pending)
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -1,6 +1,60 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
 
+## ⏳ Iter148 UAT-FIX Q2 · Possible-Duplicate UX Hardening — IMPLEMENTED, READY FOR UAT (2026-09-10)
+
+**Status:** ⏳ READY FOR UAT · Not yet locked. Fixes the Sep-9 UAT data-integrity report where an IDFC ₹570 Toll for AP31TF4858 was silently excluded from commit.
+
+### Root Cause (proved via live simulation)
+- Parser correctly extracted **all 81 IDFC Debit rows** including all 3 AP31TF4858 rows (₹135 + ₹360 + ₹570 = ₹1,065). Zero parser errors.
+- Preview correctly bucketed the ₹570 row (Txn `0010002609091930473905`, Tangatur Toll Plaza) into `possible_duplicate` because a **manual Quick-Op Toll ₹570** for the same vehicle existed on 2026-09-08 (1 day prior, `exp_84df9edee8794307`) — matched by the ±1-day / ±2 %-amount / same-vehicle rule in `_scan_possible_duplicates`.
+- Frontend commit filter excluded the row because the operator did NOT tick the "Import anyway" checkbox in the possible-duplicate bucket. The row was surfaced, but the UX made it easy to miss → the operator perceived it as a silent drop.
+- **Zero parser bug.** UX exclusion path fixed below.
+
+### Full Reconciliation (source vs DB, per vehicle)
+| Vehicle | Src # | Src ₹ | DB # (pre-fix) | DB ₹ (pre-fix) | Post-fix ₹ |
+|---|---|---|---|---|---|
+| AP31TF4858 | 3 | 1,065 | 2 | 495 | **1,065 ✓** |
+| Other 15 vehicles | 78 | 29,837 | 78 | 29,837 | 29,837 |
+| **TOTAL** | **81** | **30,902** | **80** | **30,332** | **30,902 ✓** |
+
+Post-fix: ₹570 IDFC row (Expense `exp_ea28d490e02943da`, batch `tib_a86708fcb3ed`) exists exactly once as canonical `fastag_import` Toll. Manual Quick-Op ₹570 on 2026-09-08 (`exp_84df9edee8794307`) preserved untouched per Q1c decision.
+
+### UX Hardening (frontend-only, `TollImportWizard.jsx` v148-uat)
+- Prominent amber banner at top of wizard when unreviewed possible-duplicate rows exist (`toll-possible-dup-banner`) — count + one-click "Review now" jumping to the bucket tab.
+- Possible-duplicate tab gets a ring highlight + "N unreviewed" badge (`toll-bucket-possible-dup-unreviewed`) when unreviewed count > 0.
+- **Explicit binary per-row decision** (radio buttons) replaces the single "Import Anyway" checkbox — operator MUST pick `Import Anyway` (`toll-override-keep-{row_index}`) or `Skip` (`toll-override-skip-{row_index}`). Pending state marked visually (`toll-decision-pending-{row_index}`).
+- **Match details rendered inline** per possible-duplicate row (`toll-possible-match-{row_index}-{i}`): source_label (MANUAL Toll / IDFC / LIVQ), date, amount, vehicle_number, narration. Operator sees WHY the row is flagged before deciding.
+- **Full commit-time breakdown** in footer: `Ready N · Possible Dup: keep X / skip Y / pending Z · Exact Dup · Errors`. No more single "Rows selected" line.
+- **Confirmation dialog** (`toll-commit-confirm-dialog`) when commit is clicked with unreviewed possible-duplicate rows: forces the operator to acknowledge those rows will not import, or jump back to review.
+- Exact-duplicate remains a HARD block (unchanged); source-key uniqueness preserved.
+
+### Backend
+- ZERO change. `services_toll_import.py` and `routers/toll_import.py` untouched — parser + preview + commit contracts preserved.
+
+### Files changed
+- `frontend/src/components/quickexp/TollImportWizard.jsx` — rewritten with Q2 UX contract; version stamp `v148-uat`.
+- `backend/tests/fixtures/iter148/FASTag_IDFC_UAT_20260909.xlsx` — added real UAT fixture (176-row, 81 debits).
+- `backend/tests/test_iter148_possible_dup_ux.py` — **NEW** — 11 tests covering parser reconciliation against real UAT file + backend bucketing + frontend static UX contract.
+
+### Tests
+- Iter148 UAT-Fix focused: **11/11 pass** in 0.35 s.
+- Iter147 + Iter148 combined: **87/87 pass, 1 skipped** in 86.48 s.
+- Frontend `yarn build` — clean (only pre-existing eslint hook warnings).
+
+### Live UAT Recovery (executed via override commit)
+- Called `services_toll_import.commit_rows` with the ₹570 IDFC row explicitly overridden (bucket forced to `ready`).
+- Result: `{'created': 1, 'expense_id': 'exp_ea28d490e02943da', 'batch_id': 'tib_a86708fcb3ed'}`.
+- Verified: `db.expenses.count_documents({source_txn_ref: '0010002609091930473905', is_deleted: {$ne: true}}) == 1`.
+- Verified: AP31TF4858 · 2026-09-09 · FASTag Toll total = ₹1,065.00.
+- Manual Quick-Op `exp_84df9edee8794307` (₹570 · 2026-09-08) preserved unchanged per user directive.
+
+### TRUKVIA Principle Preserved
+`ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO MANUAL RECONCILIATION.` Zero double-count: manual (₹570 on 08-Sep) and IDFC (₹570 on 09-Sep Tangatur) are BOTH VALID DISTINCT canonical rows per operator confirmation.
+
+---
+
+
 ## ⏳ Iter147 P0 · Fleet-card Fuel Import + Unified Fuel Log — IMPLEMENTED, READY FOR UAT (2026-09-09)
 
 **Status:** ⏳ **READY FOR UAT — NOT YET LOCKED.** Awaiting explicit UAT approval before lock.

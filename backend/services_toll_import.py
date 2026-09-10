@@ -178,8 +178,14 @@ def parse_fastag(blob: bytes) -> tuple[Optional[str], list[dict]]:
         date_iso = _parse_dt(row[col_time])
         txn_id = str(row[col_txn] or "").strip()
         # openpyxl may parse numeric txn IDs to float — normalise "745729331.0"
+        # AND guard against precision loss on very long numeric txn IDs by
+        # rejecting rows where the string form is scientific notation
+        # (indicates data corruption; row surfaces as error rather than
+        # silently mismatching against source).
         if txn_id.endswith(".0"):
             txn_id = txn_id[:-2]
+        # Detect precision-loss corruption: scientific notation like '1.001e+22'
+        _precision_lost = ("e+" in txn_id.lower() or "e-" in txn_id.lower())
         description = str(row[col_desc] or "").strip()[:400]
         plaza = _extract_plaza(description)
         err = None
@@ -189,6 +195,9 @@ def parse_fastag(blob: bytes) -> tuple[Optional[str], list[dict]]:
             err = "Amount must be > 0"
         elif not txn_id:
             err = "Missing Transaction ID"
+        elif _precision_lost:
+            err = (f"Transaction ID stored as number and precision lost "
+                   f"({txn_id!r}). Please format that Excel column as Text and re-upload.")
         rows.append({
             "source": vendor_raw.lower(),
             "source_txn_ref": txn_id,
