@@ -1,6 +1,103 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
 
+## 🔒 Iter149 P0 · Toll Trip Linkage — LOCKED (2026-09-10)
+
+**Status: 🔒 LOCKED. Live UAT ACCEPTED / PASS. FREEZE.** Locked-band advances to **Iter133–149**.
+
+### Final scope (frozen)
+Operator-confirmed linkage of imported FASTag Toll canonical Expenses to existing Trips. Zero new accounting truth. Writes ONLY `Expense.trip_id` (+ modified_by / modified_at). Every downstream projection auto-reflects via existing Iter133 canonical read paths — no report code needed a change.
+
+### 🔒 Revised legacy-conflict rule (frozen predicate)
+`is_legacy_conflicting_toll_trip(trip: dict) -> bool` in `services_expense_bridge.py`:
+- If `Trip.has_canonical_expenses is True` → **False** (bridge already reconciled — safe).
+- Else block iff **only** the Toll surface has a non-zero legacy value:
+  - `Trip.expenses.toll > 0`, OR
+  - Any `Trip.other_expenditures[]` row with `type` (case-insensitive) == `"toll"` AND `amount > 0`.
+- Diesel / Batta / Repair / Other / Firewood legacy scalars are irrelevant to Toll linkage → those trips stay eligible.
+- **Tenant impact (live abk2607 tenant):** 53 of 76 trips are eligible (was 1 under the old over-broad rule); 5 are genuinely legacy-Toll-conflicting and blocked.
+
+### 🔒 Frozen invariants — must not silently change
+- One canonical FASTag Toll → at most one Trip (`Expense.trip_id` is scalar).
+- Writes ONLY `expense.trip_id`, `expense.modified_by`, `expense.modified_at`. Every other Expense field is byte-preserved (source_type, source, source_txn_ref, source_key, amount, date, vehicle_id, vehicle_number, category, narration, supplier_owned_vehicle, supplier_settlement_mode, settlement_mode, created_at, created_by).
+- Guards (all enforced by `PATCH /api/expenses/{eid}/toll-trip`):
+  - `source_type == "fastag_import"` only.
+  - `category == "Toll"` only.
+  - Not `is_deleted`, not `is_reversed`.
+  - Trip must exist in tenant.
+  - `Trip.vehicle_id == Expense.vehicle_id` — hard, non-forceable.
+  - `is_legacy_conflicting_toll_trip(trip)` must be False — hard, non-forceable (revised L.1).
+  - `abs(Trip.date − Expense.date) <= 2` days unless `force: true` in request body.
+  - Idempotent — re-posting the same `trip_id` returns `unchanged: true` with zero DB writes beyond nothing.
+  - `trip_id: ""` unlinks (always allowed, audit-logged).
+  - Role gate: Owner / Admin / Ops.
+- Zero side-effects: no VendorBill, no VendorPayment, no SupplierPayment, no Trip.expenses.* writes, no Trip.supplier_net_payable mutation, no Trip.has_canonical_expenses flip, no Vehicle Cost recomputation write.
+- Trip-delete cleanup (L.2): `unlink_operator_expenses_on_trip_delete(uid, cid, tid)` clears `Expense.trip_id` on rows where `trip_id == tid AND source_trip_id != tid AND is_deleted != True`. Never soft-deletes operator-linked rows. Bridge-materialised rows (`source_trip_id == tid`) continue to be soft-deleted by `delete_trip_canonical_expenses` — Iter133 Turn 2A behaviour untouched.
+- Every mutation is `_log_audit`-recorded with action_desc `toll-trip link · {prev_tid} → {new_tid} · LR {lr}` (+ `force=true` marker when applicable).
+
+### UI (frozen)
+- `LinkTollToTripDialog.jsx` — modal fetches candidate trips via `GET /api/trips?vehicle_id&date_from&date_to&limit=50` (window = Expense.date ± 2 days). Client-side predicate `isLegacyConflictingTollTrip(trip)` mirrors the backend exactly. Candidates sorted by date proximity. NEVER auto-picks. Radio + explicit "Link Trip" / "Unlink" / "Cancel" actions. Force checkbox appears only when a selected trip is outside the ±2-day window.
+- Per-row **🔗 Link Trip** / **Trip · unlink** button in:
+  - `QuickOperationalExpense.jsx` → Today's Expenses action cell (testid `toll-link-trip-btn-{eid}`).
+  - `VehicleWorkspace.jsx` → Expenses tab action cell (testid `vw-toll-link-trip-btn-{eid}`).
+- Query invalidations on success: `quick-op-today`, `trip-expenses-canonical`, `trip-view`, `vehicle-cost-summary` — so Trip Cost / Trip View / Vehicle Cost KPI / Today's Expenses all refresh instantly.
+
+### 🔒 Frozen files
+- `backend/routers/expenses.py` — new `PATCH /api/expenses/{eid}/toll-trip` (~110 LOC).
+- `backend/services_expense_bridge.py` — new `is_legacy_conflicting_toll_trip(trip)` predicate + new `unlink_operator_expenses_on_trip_delete(uid, cid, tid)`.
+- `backend/routers/trips.py` — delete_trip handler calls both bridge cleanups (bridge-materialised + operator-linked).
+- `frontend/src/components/quickexp/LinkTollToTripDialog.jsx` — modal (~230 LOC) with mirrored client-side predicate.
+- `frontend/src/pages/QuickOperationalExpense.jsx` — Today's Expenses action cell wires dialog for fastag_import Toll rows.
+- `frontend/src/pages/VehicleWorkspace.jsx` — Expenses tab action cell wires dialog for fastag_import Toll rows.
+- `backend/tests/test_iter149_toll_trip_linkage.py` — **34 tests · all PASS**.
+
+### 🔒 Frozen endpoints
+- `PATCH /api/expenses/{eid}/toll-trip` — { trip_id: str, force?: bool }
+- `GET /api/trips?vehicle_id&date_from&date_to&limit=50` — REUSED as candidate query (no change).
+- `DELETE /api/trips/{tid}` — extended with operator-linked cleanup (existing endpoint; behaviour additive).
+
+### Live UAT evidence (operator, 2026-09-10)
+- ✅ Normal FASTag Toll → Trip linkage works end-to-end.
+- ✅ Trip View reflects linked Toll under Toll bucket.
+- ✅ Vehicle Workspace → Trip Cost tab reflects linked Toll under the correct LR.
+- ✅ Vehicle total_cost unchanged by linkage (no double count).
+- ✅ Unlink works — clears only `trip_id`; row survives.
+- ✅ Wrong-vehicle guard → HTTP 400 with clear detail; Expense unchanged; no duplicate.
+- ✅ Revised legacy-conflict guard correctly blocks 5 genuine legacy-Toll-conflicting live trips.
+- ✅ 53 of 76 modern/empty trips correctly ELIGIBLE (was 1 under old rule).
+- ✅ Source identity byte-preserved (source_type, source, source_txn_ref, source_key, amount, date, vehicle_id).
+- ✅ Zero duplicate Expense rows created across link/unlink cycles.
+- ✅ Zero side-effects on Supplier / Vendor / Payment accounting.
+- ✅ Trip-delete cleanup verified by regression (`test_trip_delete_unlinks_operator_fastag_toll_without_soft_delete`, `test_trip_delete_still_soft_deletes_bridge_materialised_rows`).
+
+### Tests / regression clearance
+- **Iter149 focused suite: 34 / 34 PASS** in 38.89 s (`pytest -n0`).
+- Iter141 + Iter143-P2 + Iter145 (locked-band adjacent, Vehicle Workspace / Trip Cost / Trip View canonical projection): **45 / 45 PASS** in 53.71 s.
+- Iter148 (FASTag Import + Possible-Duplicate UX): **28 / 28 PASS** in 41.07 s.
+- Iter147 (Fuel Import + Vehicle Correction): unchanged, previously locked (12 / 12 pass in isolation).
+- Frontend `yarn build` — clean (only pre-existing eslint hook warnings, unrelated).
+
+### 🔒 Locked-band advances
+`Iter133 – Iter149` is the current locked band. No new writes into any of these files without explicit re-open of the corresponding iteration.
+
+### Scope frozen — future improvements go to NEW iterations
+- Fleet-card Fuel → Trip linkage (Iter150+).
+- Bulk-link (multi-row selection).
+- Maker-checker approval / Day-Closing block on unlink.
+- Legacy-conflict trip auto-conversion helper.
+- Trip Toll heuristic auto-suggest based on plaza→route corridor.
+- Additional FASTag providers (SBI, ICICI, HDFC, IHMCL).
+- Toll Plaza Master (normalisation).
+- Razorpay integration (payment collection / payouts) — parked per operator directive.
+
+### Binding principle preserved
+`ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO MANUAL RECONCILIATION.`
+
+Zero double-count. Zero silent drop. Zero side-effect. One canonical Expense → at most one Trip → automatically reflected across every read surface via the Iter133 XOR contract.
+
+---
+
+
 ## 🔒 Iter148 UAT-FIX Q2 · Possible-Duplicate UX Hardening — LOCKED (2026-09-10)
 
 **Status: 🔒 LOCKED. Live UAT ACCEPTED / PASS. FREEZE.**
