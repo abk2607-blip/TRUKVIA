@@ -1,6 +1,108 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
 
+## 🟡 Iter150A-1 · TRUKVIA Financial Control Foundation — READY FOR UAT (2026-02-11)
+
+**Status: 🟡 READY FOR UAT. NOT LOCKED.** Backend-only foundation. No UI, no write-path hooks, no changes to Iter133–149 business logic.
+
+### Scope delivered
+Read-only projection layer (`FinTxn`) derived from existing authoritative documents. Single-sided ledger convention: `direction="in"` = Debit, `direction="out"` = Credit; `amount` always positive; every leg carries `counter_account_code` for drill-through. Idempotency enforced by UNIQUE `(user_id, company_id, ref_source_key)`.
+
+### Files added
+- `backend/models.py` (append) — `Account`, `FinTxn`, `FIN_SYSTEM_ACCOUNTS` catalog.
+- `backend/services_fin_txn.py` — pure projection logic, per-source functions, `reproject_source`, `backfill_tenant`, `_run_invariants`, `ensure_indexes`.
+- `backend/routers/fin_day_book.py` — read-only Day Book + Accounts + owner-only `POST /api/fin/reproject` admin bridge.
+- `backend/scripts/backfill_fintxn.py` — CLI with `--dry-run --company-id --user-id/--email --verbose`.
+- `backend/tests/test_iter150a1_fin_txn_foundation.py` — 31 tests, all PASS (`pytest -n0` · 46.35 s).
+- `backend/server.py` — wires router + calls `ensure_indexes()` at startup.
+
+### System accounts seeded per tenant (minimum stable set — 13)
+`CASH · BANK_DEFAULT · WALLET_FASTAG · WALLET_FUEL · AR · AP_SUPPLIER · AP_VENDOR · AP_MECHANIC · SALES · EXPENSE_DEFAULT · CUSTOMER_ADVANCE · SUSPENSE · INTER_ACCOUNT`. Category-specific expense sub-accounts (Diesel/Toll/Halting…) are captured on `FinTxn.category` (denorm from `Expense.category`) rather than creating hundreds of Account rows. Future expansion is additive.
+
+### Approved source types projected (per M.1–M.24)
+| Source | Legs | Notes |
+| --- | --- | --- |
+| Invoice raise | AR debit + SALES credit (total_amount) | + offset pair `CUSTOMER_ADVANCE debit + SALES credit` when adv/diesel deductions > 0 |
+| Invoice payments (embedded) | BANK/CASH debit + AR credit | mode → account resolver |
+| CN issued | AR credit + SALES debit | Draft/cancelled ignored |
+| DN issued | AR debit + SALES credit | Draft/cancelled ignored |
+| Supplier payment (out/in) | AP_SUPPLIER + BANK/CASH | direction per `type` |
+| Vendor payment (out/in) | AP_VENDOR + BANK/CASH | direction per `type` |
+| Mechanic payment (out/in) | AP_MECHANIC + BANK/CASH | direction per `type` |
+| Expense · payable via VendorBill | EXPENSE + AP_VENDOR | paired-Expense authoritative |
+| Expense · payable via MechWO | EXPENSE + AP_MECHANIC | paired-Expense authoritative |
+| Expense · cash_now | EXPENSE + CASH | **incl. Iter139 M.17 Model A** (vendor cash_now stays on CASH; AP_VENDOR untouched; NO VendorPayment side-effect) |
+| Expense · FASTag Toll (fastag_import) | EXPENSE + WALLET_FASTAG | consumption only — recharge is Iter150B |
+| Expense · Fleet-card Diesel (fleet_card_import) | EXPENSE + WALLET_FUEL | consumption only |
+| Expense · supplier_settlement_adjustment | EXPENSE + AP_SUPPLIER | `is_supplier_settlement_recovery=True` on AP leg |
+| Expense · company_borne | EXPENSE + CASH | supplier settlement untouched |
+| VendorBill (orphan only) | SUSPENSE + AP_VENDOR | no-op when paired Expense exists |
+| MechanicWO (orphan only) | SUSPENSE + AP_MECHANIC | no-op when paired Expense exists |
+| Trip.customer_receipts | BANK/CASH + CUSTOMER_ADVANCE | AR untouched (Invoice.total_amount already net) |
+
+### Endpoints (all `/api` prefix, tenant-scoped)
+- `GET /api/fin/accounts` — list seeded + tenant accounts (idempotent seed on first hit).
+- `GET /api/fin/day-book?date_from&date_to[&account_code&account_id&source_type&party_id&vehicle_id&trip_id&limit]` — grouped movements with per-account totals `{in, out, net}`.
+- `GET /api/fin/fin-txn/{txid}` — single row + source doc back-reference.
+- `POST /api/fin/reproject` — **OWNER-ONLY** temporary admin bridge. Body: `{source_type, source_id[, dry_run]}` or `{full: true[, dry_run]}`. Response tagged `temporary_iter150a1_bridge=true`. NOT a permanent write-path substitute — Iter150A-2 will install real write hooks.
+
+### Backfill CLI
+```
+python -m backend.scripts.backfill_fintxn --dry-run --email <owner_email> [--verbose]
+python -m backend.scripts.backfill_fintxn --user-id <uid> --company-id <cid>
+```
+Exits non-zero on invariant mismatch (real runs only).
+
+### Real-tenant DRY-RUN — 2026-02-11
+- **Tenant**: `user_63cdc1a46ace` / `co_2a9e355badd048b3` (live TRUKVIA operator).
+- **Sources scanned**: invoices=15 · CDN=4 (1 non-issued skipped) · supplier_payments=0 · vendor_payments=2 · mechanic_payments=1 · expenses=167 (11 skipped: reversed/zero/historical) · vendor_bills=2 (both paired ⇒ 0 legs) · mechanic_work_orders=2 (both paired ⇒ 0 legs) · trip_customer_receipts across 58 trips (12 legs from trips with actual receipts; 53 with none skipped).
+- **Total projected legs (would be written)**: **370**.
+- **Invariants**: expense_source_sum = ₹641,219.81; zero mismatches; zero errors.
+- **Demo tenant** (`demo@bitumen-transport.local`): 131,182 legs projected; zero mismatches; zero errors.
+
+### Backend test result
+`pytest -n0 tests/test_iter150a1_fin_txn_foundation.py` → **31 / 31 PASS in 46.35 s** covering:
+1. Index uniqueness (UNIQUE ref_source_key).
+2. Seed idempotency.
+3. Golden-path per source type (Invoice / Invoice+deductions / Invoice+payment cascade / CN / DN / draft-CN skip / SupplierPayment × 2 dirs / VendorPayment / MechanicPayment / Expense vendor-payable / Expense mech-payable / **Quick-Op Model A (M.17)** / supplier-settlement-recovery / company-borne / FASTag Toll wallet / Fleet-card Diesel wallet).
+4. VendorBill + paired Expense **no double-count**.
+5. VendorBill orphan → SUSPENSE + AP_VENDOR.
+6. MechanicWO + paired Expense **no double-count**.
+7. Trip customer_receipts → CUSTOMER_ADVANCE (never AR).
+8. Idempotent replay (2× projection == identical rows).
+9. Tenant isolation (UNIQUE (user_id, company_id, ref_source_key) — same key co-exists across tenants).
+10. Correction/reprojection removes stale rows after source edit.
+11. `/api/fin/accounts` returns 13 seed accounts; repeat hit yields no duplicates.
+12. Day Book grouping + `source_type` filter.
+13. `POST /api/fin/reproject` — dry_run writes nothing; real reproject returns counts; unauthorised call returns 401.
+14. `GET /api/fin/fin-txn/{id}` — returns source back-reference.
+15. Unsupported source_type → 400.
+16. Full-tenant dry-run endpoint writes nothing.
+
+### Locked-band regression
+`pytest -n0` on `test_iter147_bpcl_parser · test_iter147_iocl_parser · test_iter147_import_flow · test_iter148_fastag · test_iter148_possible_dup_ux · test_iter148_today_expenses · test_iter148_today_filters · test_iter149_toll_trip_linkage`  → **100 PASS · 1 pre-existing skip · 0 fail** in 101.82 s.
+
+### Unresolved risks / known limitations
+1. Category-specific expense sub-accounts: EXPENSE_DEFAULT captures all P&L expense in A-1; UI will split by `FinTxn.category` denorm. Future iter can promote select categories to their own Account rows without a data migration (projection reads codes).
+2. AR net vs `Invoice.balance_due` invariant is currently a soft check (5% tolerance) because Iter132a CN/DN totals don't back-write into `Invoice.balance_due`. Fine for A-1 — real reconciliation ships in Iter150E.
+3. `Trip.supplier_advance_entries` / `supplier_diesel_entries` are NOT projected in A-1: per `SupplierPayment` docstring these are ledger-derivation inputs, not independent cash flows. Every real cash movement to a supplier is already captured via `SupplierPayment`. Documented gap — revisit in Iter150C ledger drill.
+4. `/api/fin/reproject` is explicitly temporary; Iter150A-2 will install write-path hooks and this endpoint will be reduced to `dry_run` diagnostics only.
+
+### UAT instructions (operator)
+1. `GET /api/fin/accounts` → confirm all 13 seed codes appear.
+2. `POST /api/fin/reproject` with `{"full": true, "dry_run": true}` (owner Bearer) → confirm per-source counts + `mismatches: []`.
+3. Repeat with `{"full": true}` (writes) → operator sees actual FinTxn rows.
+4. `GET /api/fin/day-book?date_from=YYYY-MM-01&date_to=YYYY-MM-31` → validate grouped movements + per-account totals against a hand-picked invoice / expense.
+5. Confirm existing UI (Vendor Ledger / Supplier Ledger / Trip Cost / Expense Register) is UNCHANGED and continues to return identical values.
+6. Approve → Iter150A-2 write-path hooks land in a fresh context.
+
+### Binding principle preserved
+`ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE`. `FinTxn` is a projection cache; every business source of truth (Invoice / Expense / VendorBill / MechanicWorkOrder / SupplierPayment / VendorPayment / MechanicPayment / Trip.customer_receipts) is byte-untouched.
+
+---
+
+
+
 ## 🔒 Iter149 P0 · Toll Trip Linkage — LOCKED (2026-09-10)
 
 **Status: 🔒 LOCKED. Live UAT ACCEPTED / PASS. FREEZE.** Locked-band advances to **Iter133–149**.

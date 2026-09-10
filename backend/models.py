@@ -1267,3 +1267,148 @@ class PaymentCorrection(BaseModel):
     force_reconciled_override: bool = False
     corrected_by: str = ""
     corrected_at: str = Field(default_factory=lambda: now_utc().isoformat())
+
+
+
+# ============================================================================
+# Iter150A-1 · TRUKVIA Financial Control Foundation — Projection layer
+# ----------------------------------------------------------------------------
+# STRICT ARCHITECTURAL BOUNDARY:
+#   * `Account` / `FinTxn` are a READ-ONLY projection cache derived from
+#     existing authoritative documents (Invoice, CreditDebitNote, Expense,
+#     VendorBill, MechanicWorkOrder, SupplierPayment, VendorPayment,
+#     MechanicPayment, Trip.customer_receipts).
+#   * They NEVER replace the authoritative source. Every business write
+#     path continues to touch its own authoritative collection unchanged.
+#   * The Customer / Supplier / Vendor / Mechanic ledgers stay authoritative
+#     for their party balances. FinTxn is a *finance* view (Day Book,
+#     Source Ledgers, Recon Center) that reads projected movements grouped
+#     by system Account.
+# CONVENTION (single-sided, per approved M-decisions):
+#   * direction="in"  == Debit on that account's ledger
+#   * direction="out" == Credit on that account's ledger
+#   * `amount` is always positive. Direction encodes sign.
+#   * Every leg carries `counter_account_id` (denorm) so the Day Book can
+#     drill-through to the paired leg without a join.
+# ============================================================================
+
+
+class Account(BaseModel):
+    """Iter150A-1 · Tenant-scoped chart-of-accounts row.
+
+    System accounts are seeded once per (user_id, company_id) with
+    `is_system=True` and never deleted. Custom accounts can be added
+    later without breaking projections (projection resolves target
+    accounts via stable `code` constants, not by id).
+    """
+    id: str = Field(default_factory=lambda: new_id("acc_"))
+    company_id: str = ""
+    code: str                              # stable machine key, e.g. "CASH", "AR", "AP_VENDOR"
+    name: str                              # human-friendly name
+    type: Literal[
+        "cash", "bank", "wallet",          # asset-side money
+        "ar",                              # accounts receivable (customers)
+        "ap",                              # accounts payable (suppliers/vendors/mechanics)
+        "income",                          # revenue
+        "expense",                         # P&L expense
+        "contra",                          # inter-account / suspense / advance
+    ]
+    is_system: bool = False
+    is_active: bool = True
+    remarks: str = ""
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+
+
+class FinTxn(BaseModel):
+    """Iter150A-1 · Single-sided financial movement row (projection).
+
+    ONE authoritative source document typically emits 2+ FinTxn rows
+    (one per account leg). Idempotency is enforced by `ref_source_key`,
+    a UNIQUE (user_id, company_id, ref_source_key) key. Re-projection
+    is safe: delete all rows for a given (source_type, source_id) then
+    re-insert; consumers only see the final consistent view.
+    """
+    id: str = Field(default_factory=lambda: new_id("fintxn_"))
+    company_id: str = ""
+
+    # ── When did the financial event happen? ISO date, sortable.
+    txn_date: str
+
+    # ── Which system account is affected + which direction?
+    account_id: str
+    account_code: str = ""                 # denorm — Day Book grouping without join
+    direction: Literal["in", "out"]        # in=Debit  · out=Credit
+    amount: float                          # always positive
+
+    # ── Counter-leg reference (denormalised for drill-through).
+    counter_account_id: str = ""
+    counter_account_code: str = ""
+
+    # ── Semantic label ("invoice_raise", "supplier_payment_out", …).
+    txn_type: str = ""
+
+    # ── Source doc identity — the authoritative record this leg is derived from.
+    source_type: str                       # e.g. "invoice", "expense", "supplier_payment"
+    source_id: str                         # id of the source doc
+    source_key: str = ""                   # denorm from source.source_key when present
+    ref_source_key: str                    # UNIQUE per (user_id, company_id, ref_source_key)
+
+    # ── Denormalised party / physical-asset references (for filtering).
+    party_type: str = ""                   # "customer" | "supplier" | "vendor" | "mechanic" | "driver" | ""
+    party_id: str = ""
+    party_name: str = ""
+    vehicle_id: str = ""
+    trip_id: str = ""
+    category: str = ""                     # denorm from Expense.category or txn_type
+
+    narration: str = ""
+
+    # ── Iter150B group markers (kept as placeholders; unused in A-1).
+    transfer_group_id: str = ""
+    adjustment_group_id: str = ""
+
+    # ── Reversal + status.
+    reversal_of: str = ""
+    is_reversal: bool = False
+    status: Literal["active", "reversed"] = "active"
+
+    # ── Iter150A-1 explicit flag: True when this leg represents a supplier
+    #    settlement recovery (Expense.supplier_settlement_mode ==
+    #    "supplier_settlement_adjustment"). The Expense debit is real P&L,
+    #    but the AP_SUPPLIER credit reduces settlement owed to supplier.
+    #    Consumers use this to isolate supplier-recovery movements from
+    #    ordinary AP movements.
+    is_supplier_settlement_recovery: bool = False
+
+    # ── Iter150E placeholders (unused in A-1).
+    reconciled_at: str = ""
+    reconciled_ref: str = ""
+
+    # ── Audit timestamps.
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+    projected_at: str = Field(default_factory=lambda: now_utc().isoformat())
+
+
+# Iter150A-1 · System-account seed catalog.
+# Keeps the minimum stable set (per M-decisions). Category-specific
+# expense sub-accounts (e.g. EXPENSE_DIESEL, EXPENSE_TOLL) are captured
+# on the FinTxn row via `category` (denorm from Expense.category) rather
+# than by proliferating dozens of Account rows. Future expansion is
+# additive: seed a new code, add a resolver clause, historic projections
+# keep working since Account is resolved by stable `code`.
+FIN_SYSTEM_ACCOUNTS: List[dict] = [
+    {"code": "CASH",              "name": "Cash on Hand",         "type": "cash"},
+    {"code": "BANK_DEFAULT",      "name": "Bank — Default",       "type": "bank"},
+    {"code": "WALLET_FASTAG",     "name": "FASTag Wallet",        "type": "wallet"},
+    {"code": "WALLET_FUEL",       "name": "Fleet-card Fuel Wallet","type": "wallet"},
+    {"code": "AR",                "name": "Accounts Receivable",  "type": "ar"},
+    {"code": "AP_SUPPLIER",       "name": "Suppliers Payable",    "type": "ap"},
+    {"code": "AP_VENDOR",         "name": "Vendors Payable",      "type": "ap"},
+    {"code": "AP_MECHANIC",       "name": "Mechanics Payable",    "type": "ap"},
+    {"code": "SALES",             "name": "Freight Revenue",      "type": "income"},
+    {"code": "EXPENSE_DEFAULT",   "name": "Operating Expense",    "type": "expense"},
+    {"code": "CUSTOMER_ADVANCE",  "name": "Customer Advance (Unapplied)", "type": "contra"},
+    {"code": "SUSPENSE",          "name": "Suspense",             "type": "contra"},
+    {"code": "INTER_ACCOUNT",     "name": "Inter-Account Transit","type": "contra"},
+]
+

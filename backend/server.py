@@ -62,6 +62,8 @@ from routers import (
     fuel_import as fuel_import_r,
     # Iter148 P0 — FASTag Toll Import (Quick Expense)
     toll_import as toll_import_r,
+    # Iter150A-1 · TRUKVIA Financial Control Foundation (read-only + owner reproject)
+    fin_day_book as fin_day_book_r,
 )
 
 ROOT_DIR = Path(__file__).parent
@@ -138,6 +140,8 @@ for r in (
     fuel_import_r,
     # Iter148 P0
     toll_import_r,
+    # Iter150A-1 · Financial Control Foundation (read-only)
+    fin_day_book_r,
 ):
     app.include_router(r.router)
 
@@ -1334,6 +1338,13 @@ async def startup_event():
         logger.info("Idempotency TTL index ensured (24h replay window)")
     except Exception as e:
         logger.warning(f"Idempotency index setup failed: {e}")
+    # Iter150A-1 — FinTxn / Account indexes (fast, idempotent, small).
+    try:
+        from services_fin_txn import ensure_indexes as ensure_fin_indexes
+        await ensure_fin_indexes()
+        logger.info("Iter150A-1 FinTxn/Account indexes ensured")
+    except Exception as e:
+        logger.warning(f"Iter150A-1 FinTxn index setup failed: {e}")
     try:
         from scheduler import start_scheduler
         start_scheduler()
