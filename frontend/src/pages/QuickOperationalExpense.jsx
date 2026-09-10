@@ -587,6 +587,7 @@ export default function QuickOperationalExpense() {
           entries. No new accounting truth — pure read widening. */}
       <TodayEntries
         date={date}
+        vehicles={vehiclesList || []}
         vendorsById={Object.fromEntries((vendors || []).map((v) => [v.id, v]))}
         onEdit={(doc) => setEditing({ doc })}
         onCancel={(doc) => setCancelling({ doc, reason: "" })}
@@ -650,12 +651,20 @@ const SOURCE_BADGE = {
   trip_other_expenditure: "bg-zinc-100 text-zinc-700 border-zinc-200",
 };
 
-function TodayEntries({ date, vendorsById, onEdit, onCancel }) {
+function TodayEntries({ date, vehicles = [], vendorsById, onEdit, onCancel }) {
+  // Iter148 UAT-fix v2 (2026-09-09) · Per-row Vehicle + Category filters.
+  // Date remains the primary filter. Vehicle/Category are pushed to the
+  // canonical `/api/expenses` query (server-side) so results stay
+  // consistent with Vehicle Cost / Expense Register.
+  const [vehId, setVehId] = useState("");         // "" = all vehicles
+  const [cat, setCat] = useState("");             // "" = all categories
   const q = useQuery({
-    queryKey: ["quick-op-today", date],
+    queryKey: ["quick-op-today", date, vehId, cat],
     queryFn: async () => (await api.get("/expenses", { params: {
       source_type: "quick_op,fastag_import,fleet_card_import,manual",
       date_from: date, date_to: date,
+      ...(vehId ? { vehicle_id: vehId } : {}),
+      ...(cat ? { category: cat } : {}),
     }})).data,
     staleTime: 5_000,
     enabled: !!date,
@@ -665,6 +674,10 @@ function TodayEntries({ date, vendorsById, onEdit, onCancel }) {
   const rowsSorted = useMemo(
     () => [...rows].sort((a, b) => (b.created_at || "").localeCompare(a.created_at || "")),
     [rows]
+  );
+  const catOptions = useMemo(
+    () => Array.from(new Set(CATEGORIES)).map((c) => ({ value: c, label: c })),
+    []
   );
   return (
     <div className="bg-white border rounded-lg p-4 mt-6" data-testid="today-entries">
@@ -682,6 +695,51 @@ function TodayEntries({ date, vendorsById, onEdit, onCancel }) {
           <span data-testid="today-entries-count">Rows: {rows.length}</span>
           <span data-testid="today-entries-total">Total: {fmt(total)}</span>
         </div>
+      </div>
+      {/* Filters row */}
+      <div className="flex flex-wrap items-end gap-3 mb-3" data-testid="today-entries-filters">
+        <div className="min-w-[220px]">
+          <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-semibold">Vehicle</label>
+          <div className="mt-1">
+            <SearchableSelect
+              testId="today-entries-vehicle-filter"
+              value={vehId}
+              placeholder="All Vehicles"
+              emptyText="No matching vehicles"
+              allowClear={true}
+              onChange={(v) => setVehId(v || "")}
+              options={vehicles.map((v) => ({
+                value: v.id,
+                label: v.vehicle_number,
+                secondary: (v.vehicle_type || "").toUpperCase() === "SUPPLIER"
+                  ? `${v.supplier_name || "Supplier"} · Supplier`
+                  : (v.driver_name || (v.vehicle_type || "").toUpperCase()),
+                keywords: [v.vehicle_number, v.driver_name, v.supplier_name].filter(Boolean),
+              }))}
+            />
+          </div>
+        </div>
+        <div className="min-w-[160px]">
+          <label className="text-[10px] uppercase tracking-wider text-zinc-500 font-semibold">Category</label>
+          <select
+            data-testid="today-entries-category-filter"
+            value={cat}
+            onChange={(e) => setCat(e.target.value)}
+            className="mt-1 block w-full border border-zinc-300 rounded px-2 py-1.5 text-sm bg-white"
+          >
+            <option value="">All Categories</option>
+            {catOptions.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
+          </select>
+        </div>
+        {(vehId || cat) && (
+          <button
+            data-testid="today-entries-clear-filters"
+            onClick={() => { setVehId(""); setCat(""); }}
+            className="text-xs uppercase tracking-wider text-zinc-500 hover:text-zinc-800 mb-1"
+          >
+            Clear filters
+          </button>
+        )}
       </div>
       {q.isLoading ? (
         <div className="text-zinc-400 text-sm">Loading…</div>
