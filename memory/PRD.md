@@ -1,6 +1,67 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
 
+## 🔒 Iter148 UAT-FIX Q2 · Possible-Duplicate UX Hardening — LOCKED (2026-09-10)
+
+**Status: 🔒 LOCKED. Live UAT ACCEPTED / PASS. FREEZE.**
+
+### Live UAT evidence (operator, 2026-09-10)
+Re-uploaded the ORIGINAL `IDFC TOLL GATES FILE 9-9-2026.xlsx` AFTER the ₹570 AP31TF4858 was recovered via explicit possible-duplicate override:
+
+| Bucket | Count |
+|---|---|
+| Exact Duplicate | **81** |
+| Ready to Import | 0 |
+| Possible Duplicate | 0 |
+| Error / Invalid | 0 |
+| **Confirm & Import** | **0** |
+
+Confirms end-to-end contract:
+- ✅ Previously missing ₹570 (Txn `0010002609091930473905`, Tangatur Toll Plaza) now exists exactly once as canonical `fastag_import` Expense `exp_ea28d490e02943da`.
+- ✅ Re-upload creates zero duplicates — deterministic `source_key` (`toll:idfc:{cid}:{txn_id}`) enforced.
+- ✅ Exact source identity / duplicate protection is working.
+- ✅ Possible-Duplicate → explicit override (Import Anyway / Skip) → canonical Expense flow works.
+- ✅ AP31TF4858 · 2026-09-09 FASTag Total = ₹1,065.00 (all 3 real-world tolls).
+- ✅ Manual Quick-Op ₹570 on 2026-09-08 (`exp_84df9edee8794307`) preserved untouched.
+
+### Root cause (recap)
+Parser was correct; ₹570 was correctly bucketed as `possible_duplicate` against a manual Quick-Op Toll for the same vehicle 1 day earlier (`_scan_possible_duplicates`, ±1 day / ±2 % amount / same vehicle). The frontend commit filter excluded it because the operator did not tick "Import anyway" — the UX made the skip look silent. Zero parser bug. All 81 IDFC Debits (₹30,902 total) surface correctly, no row silently dropped.
+
+### 🔒 Frozen invariants — must not silently change
+- Parser extracts every Debit row where Vendor∈{IDFC, LIVQ}, Nature=Debit, Truck Number non-blank.
+- Exact-duplicate is a HARD BLOCK via `source_key = toll:{vendor}:{cid}:{txn_id}` — always.
+- Possible-duplicate is a SOFT WARNING requiring an EXPLICIT per-row decision (`overrides[row_index] === "keep"` to import, `=== "skip"` to explicitly skip).
+- Frontend commit filter: `possible_duplicate` rows only join the commit payload when `overrides[row_index] === "keep"`.
+- Amber banner + tab ring highlight surface whenever `unreviewedPossibleDupRows > 0`.
+- Confirmation dialog fires on commit click if `unreviewedPossibleDupRows > 0`.
+- Footer breakdown shows `Ready N · Possible Dup: keep X / skip Y / pending Z · Exact Dup · Errors`.
+- Match details rendered inline per possible-duplicate row (source_label, date, amount, vehicle, narration).
+- Zero backend logic change from Iter148 P0 — `services_toll_import.py` and `routers/toll_import.py` untouched.
+- One IDFC Debit → exactly ONE canonical Expense (`source_type="fastag_import"`).
+
+### Files (frozen)
+- `frontend/src/components/quickexp/TollImportWizard.jsx` — v148-uat.
+- `backend/tests/fixtures/iter148/FASTag_IDFC_UAT_20260909.xlsx` — real UAT fixture (13.4 KB, 176 rows, 81 debits, ₹30,902 total).
+- `backend/tests/test_iter148_possible_dup_ux.py` — 11 focused tests (parser reconciliation + backend bucketing against real fixture + FE static contract).
+
+### Tests
+- Iter148 UAT-Fix focused: **11/11 pass** in 0.35 s.
+- Iter147 + Iter148 combined regression: **87/87 pass, 1 skipped** in 86.48 s.
+- Frontend `yarn build` — clean (only pre-existing eslint hook warnings).
+
+### Full reconciliation (source vs post-fix DB)
+| Vehicle | Src # | Src ₹ | DB # (post-fix) | DB ₹ (post-fix) | Δ |
+|---|---|---|---|---|---|
+| AP31TF4858 | 3 | 1,065 | 3 | 1,065 | 0 ✓ |
+| Other 15 vehicles | 78 | 29,837 | 78 | 29,837 | 0 |
+| **TOTAL** | **81** | **30,902** | **81** | **30,902** | **0 ✓** |
+
+### Binding principle preserved
+`ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO MANUAL RECONCILIATION.` The manual Quick-Op ₹570 (2026-09-08) and the IDFC ₹570 (2026-09-09, Tangatur) are both valid distinct real-world tolls — confirmed by operator (Q1c). Zero double-count, zero silent drop.
+
+---
+
+
 ## ⏳ Iter148 UAT-FIX Q2 · Possible-Duplicate UX Hardening — IMPLEMENTED, READY FOR UAT (2026-09-10)
 
 **Status:** ⏳ READY FOR UAT · Not yet locked. Fixes the Sep-9 UAT data-integrity report where an IDFC ₹570 Toll for AP31TF4858 was silently excluded from commit.
