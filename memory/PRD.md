@@ -116,6 +116,60 @@ Post-fix: ₹570 IDFC row (Expense `exp_ea28d490e02943da`, batch `tib_a86708fcb3
 ---
 
 
+## 🔒 Iter147 P0 · Fleet-card Fuel Import + Unified Fuel Log — LOCKED (2026-09-10)
+
+**Status: 🔒 LOCKED. Live UAT ACCEPTED / PASS. FREEZE.**
+
+### Live UAT evidence (operator, 2026-09-10)
+- ✅ IOCL / BPCL imported Diesel rows visible in Unified Fuel Log.
+- ✅ Row-level vehicle correction (`PATCH /api/expenses/{eid}/fleet-card-vehicle`) works end-to-end.
+- ✅ Corrected Diesel transaction moved from the old vehicle to the correct vehicle in-place.
+- ✅ Fuel Log reflects the corrected vehicle.
+- ✅ Vehicle Workspace of the corrected vehicle now includes the transaction.
+- ✅ Vehicle Workspace of the old vehicle no longer includes that Diesel cost.
+- ✅ Vehicle Cost totals recalculate correctly on both sides.
+- ✅ Canonical Expense remains the single source of truth.
+- ✅ No duplicate Expense created during vehicle correction.
+- ✅ LIVE UAT screenshots captured (Fuel Log → Vehicle Correction → Correct Vehicle Workspace → Cost reflection).
+
+### 🔒 Frozen invariants — must not silently change
+- One real-world Diesel transaction → exactly ONE canonical Expense (`source_type="fleet_card_import"` or `"manual"`).
+- Exact-duplicate hard block via deterministic `source_key = "fuel:{src}:{cid}:{txn_ref}"`.
+- Possible-duplicate soft warning across three XOR-safe lanes (canonical Diesel Expense + legacy `db.fuel` + Trip legacy `expenses.diesel` gated by `has_canonical_expenses=false`).
+- Manual Diesel entry writes canonical Expense (`source_type="manual"`); legacy `POST /api/fuel` deprecated in UI but preserved.
+- `GET /api/fuel-log` is a PURE PROJECTION over canonical Expense + legacy `db.fuel` + Trip legacy Diesel. Zero new accounting truth.
+- Row-cap 2000 synchronous; clean 413 rejection above.
+- Vehicle correction via `PATCH /api/expenses/{eid}/fleet-card-vehicle` is IN-PLACE (moves same canonical Expense to new vehicle; never duplicates).
+- Row-scoped wizard vehicle mapping keyed by `row_index`, never by `source_vehicle_ref`.
+- Iter133–146 canonical / XOR contract unchanged.
+
+### Files (frozen)
+- `backend/services_fuel_import.py`, `backend/routers/fuel_import.py`.
+- `frontend/src/pages/Fuel.jsx`, `frontend/src/components/fuel/FuelImportWizard.jsx`, `frontend/src/components/fuel/ManualFuelDialog.jsx`, `frontend/src/components/fuel/EditFleetVehicleDialog.jsx`.
+- Fixtures: `backend/tests/fixtures/iter147/IOCL_FUEL_FILE.xls` (44 KB, real BIFF), `BPCL_SALES_FILE.xlsx` (23 KB, real).
+- Tests: `test_iter147_iocl_parser.py`, `test_iter147_bpcl_parser.py`, `test_iter147_import_flow.py`, `test_iter147_wizard_ux.py`, `test_iter147_edit_vehicle.py`.
+
+### Endpoints (frozen)
+- `POST /api/fuel-import/preview` · `POST /api/fuel-import/commit`
+- `GET /api/fuel/vehicle-maps` · `POST /api/fuel/vehicle-maps` · `DELETE /api/fuel/vehicle-maps/{fvm_id}`
+- `GET /api/fuel-log`
+- `POST /api/fuel-manual`
+- `PATCH /api/expenses/{eid}/fleet-card-vehicle`
+
+### Tests / regression clearance
+- Iter147 focused parsers + import flow + wizard UX + edit-vehicle: **all pass**.
+- Iter147 + Iter148 combined regression: **87 / 87 pass, 1 skipped** in 86.48 s (as of 2026-09-10 Iter148 UAT-Fix lock).
+- Frontend `yarn build` — clean (only pre-existing eslint hook warnings).
+
+### Scope frozen
+- Any future fuel-import improvement (bulk reclassify of already-committed Diesel Expenses after a corrected vehicle map, historical `db.fuel → Expense` backfill, Trip-linkage heuristic, vendor-bill linkage, km/L analytics, Fuel Log Excel/PDF export, async / chunked > 2000-row ingest, format-drift versioning, fleet-card wallet balance analytics) MUST be handled as a NEW iteration — Iter147 is frozen.
+
+### Binding principle preserved
+`ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO MANUAL RECONCILIATION.`
+
+---
+
+
 ## ⏳ Iter147 P0 · Fleet-card Fuel Import + Unified Fuel Log — IMPLEMENTED, READY FOR UAT (2026-09-09)
 
 **Status:** ⏳ **READY FOR UAT — NOT YET LOCKED.** Awaiting explicit UAT approval before lock.
