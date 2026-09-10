@@ -294,15 +294,111 @@ def test_invalid_trip_400():
         ctx.teardown()
 
 
-def test_legacy_trip_blocked_400():
-    """L.1 · has_canonical_expenses=false must be a hard block."""
+def test_legacy_trip_with_toll_scalar_blocked_400():
+    """L.1 REVISED (2026-09-10) · A trip with `expenses.toll > 0` and
+    has_canonical_expenses=false is a genuine XOR conflict → blocked."""
     ctx = _Ctx()
     try:
         vid, vnum = ctx.vehicle()
-        eid, _ = ctx.toll(vid, vnum, txn=f"T11_{ctx.tag}")
-        tid = ctx.trip(vid, vnum, has_canonical=False)
+        eid, _ = ctx.toll(vid, vnum, txn=f"T11a_{ctx.tag}")
+        tid = ctx.trip(vid, vnum, has_canonical=False,
+                       extra={"expenses": {"toll": 9000.0, "diesel": 0.0,
+                                           "batta": 0.0, "repair": 0.0,
+                                           "other": 0.0, "firewood": 0.0}})
         r = _patch(eid, {"trip_id": tid})
-        assert r.status_code == 400 and "legacy" in r.text.lower()
+        assert r.status_code == 400
+        assert "legacy" in r.text.lower() or "toll" in r.text.lower()
+    finally:
+        ctx.teardown()
+
+
+def test_legacy_trip_with_toll_typed_other_expenditure_blocked_400():
+    """A trip with an `other_expenditures[]` row of type='Toll' (any
+    case) AND amount>0 while has_canonical_expenses=false is also a
+    conflict → blocked."""
+    ctx = _Ctx()
+    try:
+        vid, vnum = ctx.vehicle()
+        eid, _ = ctx.toll(vid, vnum, txn=f"T11b_{ctx.tag}")
+        tid = ctx.trip(vid, vnum, has_canonical=False,
+                       extra={"expenses": {}, "other_expenditures": [
+                           {"id": "oe1", "type": "Toll", "amount": 250.0,
+                            "remarks": "legacy toll oe"}]})
+        r = _patch(eid, {"trip_id": tid})
+        assert r.status_code == 400
+    finally:
+        ctx.teardown()
+
+
+def test_fresh_modern_trip_with_empty_expenses_allowed():
+    """L.1 REVISED · Modern trip with all-zero legacy Trip.expenses and
+    no Toll-typed OE row must be ELIGIBLE even when has_canonical=false
+    (this is the shape of virtually every modern trip in production)."""
+    ctx = _Ctx()
+    try:
+        vid, vnum = ctx.vehicle()
+        eid, _ = ctx.toll(vid, vnum, txn=f"T11c_{ctx.tag}")
+        tid = ctx.trip(vid, vnum, has_canonical=False,
+                       extra={"expenses": {"toll": 0.0, "diesel": 0.0,
+                                           "batta": 0.0, "repair": 0.0,
+                                           "other": 0.0, "firewood": 0.0},
+                              "other_expenditures": []})
+        r = _patch(eid, {"trip_id": tid})
+        assert r.status_code == 200, r.text
+        after = ctx.d.expenses.find_one({"id": eid}, {"_id": 0})
+        assert after["trip_id"] == tid
+    finally:
+        ctx.teardown()
+
+
+def test_legacy_trip_with_only_diesel_still_allowed_for_toll_link():
+    """A trip with `expenses.diesel = 30000` but zero Toll surface must
+    still be eligible for FASTag Toll linkage. Diesel legacy is NOT a
+    Toll conflict — only the Toll surface is checked."""
+    ctx = _Ctx()
+    try:
+        vid, vnum = ctx.vehicle()
+        eid, _ = ctx.toll(vid, vnum, txn=f"T11d_{ctx.tag}")
+        tid = ctx.trip(vid, vnum, has_canonical=False,
+                       extra={"expenses": {"diesel": 30000.0, "toll": 0.0,
+                                           "batta": 0.0, "repair": 0.0,
+                                           "other": 0.0, "firewood": 0.0}})
+        r = _patch(eid, {"trip_id": tid})
+        assert r.status_code == 200, r.text
+    finally:
+        ctx.teardown()
+
+
+def test_has_canonical_true_allowed_even_with_legacy_toll():
+    """When has_canonical_expenses=true, the bridge has already
+    materialised the legacy Toll into canonical — no conflict, so
+    linkage MUST be allowed even if `expenses.toll` is still non-zero
+    on the trip document."""
+    ctx = _Ctx()
+    try:
+        vid, vnum = ctx.vehicle()
+        eid, _ = ctx.toll(vid, vnum, txn=f"T11e_{ctx.tag}")
+        tid = ctx.trip(vid, vnum, has_canonical=True,
+                       extra={"expenses": {"toll": 9000.0, "diesel": 0.0,
+                                           "batta": 0.0, "repair": 0.0,
+                                           "other": 0.0, "firewood": 0.0}})
+        r = _patch(eid, {"trip_id": tid})
+        assert r.status_code == 200, r.text
+    finally:
+        ctx.teardown()
+
+
+def test_legacy_trip_with_zero_toll_other_expenditure_allowed():
+    """A Toll-typed OE row with amount=0 is a no-op — must not block."""
+    ctx = _Ctx()
+    try:
+        vid, vnum = ctx.vehicle()
+        eid, _ = ctx.toll(vid, vnum, txn=f"T11f_{ctx.tag}")
+        tid = ctx.trip(vid, vnum, has_canonical=False,
+                       extra={"expenses": {}, "other_expenditures": [
+                           {"id": "oe1", "type": "Toll", "amount": 0.0}]})
+        r = _patch(eid, {"trip_id": tid})
+        assert r.status_code == 200, r.text
     finally:
         ctx.teardown()
 
@@ -551,9 +647,15 @@ def test_link_dialog_calls_correct_endpoint():
     assert "api.patch(" in src
 
 
-def test_link_dialog_honours_force_flag():
+def test_link_dialog_has_client_side_legacy_predicate():
+    """FE must mirror the backend predicate — reject trips with
+    Trip.expenses.toll>0 OR Toll-typed other_expenditures[] entries."""
     src = _read(DIALOG_FILE)
-    assert "force: true" in src
+    assert "isLegacyConflictingTollTrip" in src, "dialog must define the predicate"
+    assert "has_canonical_expenses === true" in src, "predicate must short-circuit on has_canonical=true"
+    assert "exp.toll" in src, "predicate must check Trip.expenses.toll"
+    assert "other_expenditures" in src, "predicate must check other_expenditures"
+    assert '=== "toll"' in src, "predicate must match Toll type case-insensitively"
 
 
 def test_quickop_today_expenses_wires_link_button_for_fastag_toll():

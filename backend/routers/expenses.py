@@ -461,18 +461,25 @@ async def link_toll_expense_to_trip(
         trip = await db.trips.find_one(
             {"id": new_tid, "user_id": uid, "company_id": cid},
             {"_id": 0, "id": 1, "vehicle_id": 1, "vehicle_number": 1,
-             "date": 1, "lr_number": 1, "has_canonical_expenses": 1},
+             "date": 1, "lr_number": 1, "has_canonical_expenses": 1,
+             "expenses": 1, "other_expenditures": 1},
         )
         if not trip:
             raise HTTPException(status_code=400, detail="Trip not found in tenant")
-        # L.1 · Legacy trip blocked (no auto-flip in P0).
-        if not bool(trip.get("has_canonical_expenses")):
+        # L.1 REVISED (2026-09-10) · Only block trips whose legacy Toll
+        # surface would conflict with the canonical projection. Empty /
+        # modern trips with no legacy Toll scalar (and no Toll-typed
+        # other_expenditures row) are eligible even when
+        # has_canonical_expenses is false.
+        from services_expense_bridge import is_legacy_conflicting_toll_trip
+        if is_legacy_conflicting_toll_trip(trip):
             raise HTTPException(
                 status_code=400,
-                detail="Cannot link Toll to a legacy Trip "
-                       "(has_canonical_expenses=false). Convert the trip's "
-                       "legacy expenses first, or add a canonical Expense "
-                       "on that trip before linking.",
+                detail="Cannot link Toll to a legacy-conflicting Trip "
+                       "(this trip already carries a legacy Toll amount "
+                       "in Trip.expenses.toll or a Toll-typed "
+                       "other_expenditure). Convert the legacy Toll to "
+                       "canonical first, or link to a different trip.",
             )
         # Vehicle match — never link across vehicles.
         if (trip.get("vehicle_id") or "") != (before.get("vehicle_id") or ""):

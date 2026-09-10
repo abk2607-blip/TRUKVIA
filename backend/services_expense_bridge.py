@@ -34,6 +34,51 @@ _LEGACY_CATEGORY_MAP: dict[str, str] = {
 }
 
 
+def is_legacy_conflicting_toll_trip(trip: dict) -> bool:
+    """Iter149 P0 · L.1 REVISED (2026-09-10) · Authoritative predicate.
+
+    Returns True iff attaching a canonical FASTag Toll to this trip
+    would cause a Toll double-count against the legacy XOR fallback
+    in vehicle_reports.
+
+    Rule:
+      • If `has_canonical_expenses == True`, the bridge has already
+        materialised every legacy `Trip.expenses.*` + `other_expenditures[]`
+        scalar into canonical Expenses — nothing to conflict with.
+        Return False.
+      • Else check ONLY the Toll surface (Diesel/Batta/Repair etc are
+        irrelevant to Toll linkage):
+          – `Trip.expenses.toll > 0`
+          – any `Trip.other_expenditures[]` item where
+            `type` (case-insensitive strip) equals "toll" AND
+            `amount > 0`
+
+    Empty / modern trips (all-zero legacy scalars, no Toll-typed OE
+    row, has_canonical_expenses may be False because operators use
+    Quick Op / Fuel Import / FASTag Import to write canonical directly)
+    are ELIGIBLE for operator-confirmed FASTag Toll linkage.
+    """
+    if trip.get("has_canonical_expenses") is True:
+        return False
+    exp = trip.get("expenses") or {}
+    try:
+        if float(exp.get("toll") or 0) > 0:
+            return True
+    except Exception:
+        pass
+    for oe in (trip.get("other_expenditures") or []):
+        try:
+            amt = float(oe.get("amount") or 0)
+        except Exception:
+            amt = 0.0
+        if amt <= 0:
+            continue
+        t = (oe.get("type") or "").strip().lower()
+        if t == "toll":
+            return True
+    return False
+
+
 def _build_desired_rows(trip_dict: dict) -> dict[str, dict]:
     """Return {source_key: partial_expense_fields} for the current trip state."""
     tid = trip_dict.get("id") or ""

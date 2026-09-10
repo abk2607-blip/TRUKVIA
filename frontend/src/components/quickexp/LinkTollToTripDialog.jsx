@@ -14,7 +14,27 @@ import { X, Link2, AlertTriangle, Truck, CheckCircle2 } from "lucide-react";
  * Contract: writes ONLY via `PATCH /api/expenses/{eid}/toll-trip`.
  * Success invalidates every canonical projection queryKey so Trip Cost
  * / Trip View / Vehicle Cost / Today's Expenses update instantly.
+ *
+ * L.1 REVISED (2026-09-10) · A trip is considered legacy-conflicting
+ * (i.e. blocked in the picker) ONLY when it carries a real legacy
+ * Toll amount that vehicle-cost XOR fallback would still count:
+ *   • Trip.expenses.toll > 0, OR
+ *   • any Trip.other_expenditures[] row of type "Toll" with amount>0
+ * Modern/fresh trips with zero legacy Toll surface are eligible even
+ * when has_canonical_expenses=false. This exactly mirrors the backend
+ * `is_legacy_conflicting_toll_trip` predicate.
  */
+function isLegacyConflictingTollTrip(trip) {
+  if (trip?.has_canonical_expenses === true) return false;
+  const exp = trip?.expenses || {};
+  if (Number(exp.toll || 0) > 0) return true;
+  for (const oe of trip?.other_expenditures || []) {
+    const amt = Number(oe?.amount || 0);
+    if (amt <= 0) continue;
+    if (String(oe?.type || "").trim().toLowerCase() === "toll") return true;
+  }
+  return false;
+}
 export default function LinkTollToTripDialog({ expense, onClose, onSuccess }) {
   const [selectedTripId, setSelectedTripId] = useState(expense?.trip_id || "");
   const [force, setForce] = useState(false);
@@ -158,7 +178,7 @@ export default function LinkTollToTripDialog({ expense, onClose, onSuccess }) {
               <div className="space-y-2" data-testid="candidate-trip-picker">
                 {candidates.map((t) => {
                   const active = t.id === selectedTripId;
-                  const legacyBlocked = t.has_canonical_expenses === false;
+                  const legacyBlocked = isLegacyConflictingTollTrip(t);
                   const daysDelta = (() => {
                     try {
                       return Math.round((new Date(t.date + "T00:00:00Z") - new Date(eDate + "T00:00:00Z")) / (1000*60*60*24));
@@ -200,7 +220,7 @@ export default function LinkTollToTripDialog({ expense, onClose, onSuccess }) {
                           <div className="mt-1 text-[10px] text-rose-700 font-bold uppercase"
                                data-testid={`candidate-legacy-blocked-${t.id}`}>
                             <AlertTriangle size={11} className="inline mr-1"/>
-                            Legacy trip — cannot link (has_canonical_expenses=false)
+                            Legacy-conflicting trip — cannot link (Toll already recorded in legacy Trip.expenses)
                           </div>
                         )}
                       </div>
