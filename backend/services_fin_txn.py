@@ -610,10 +610,15 @@ def project_trip_customer_receipts(trip: dict) -> List[dict]:
         return []
     trip_id = trip["id"]
     legs: List[dict] = []
-    for r in receipts:
-        rid = r.get("id") or ""
+    for i, r in enumerate(receipts):
+        # Iter150A-1 UAT-fix #1 · Legacy Iter39/40 Trip.customer_receipts do
+        # NOT carry an `id`. To keep every real cash movement projected —
+        # while preserving idempotency — fall back to a deterministic key
+        # derived from the receipt's stable array position. Existing rows
+        # that DO carry an explicit `id` remain byte-preserved.
+        rid = str(r.get("id") or "").strip() or f"idx{i}"
         amt = _q2(r.get("amount") or 0)
-        if amt <= 0 or not rid:
+        if amt <= 0:
             continue
         date = r.get("date") or trip.get("date") or ""
         mode = r.get("mode") or "Bank"

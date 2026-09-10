@@ -613,6 +613,82 @@ def test_trip_customer_receipts(ctx):
         assert r["counter_account_code"] == "CUSTOMER_ADVANCE"
 
 
+def test_trip_customer_receipts_legacy_shape_without_id(ctx):
+    """Iter150A-1 UAT-fix #1: legacy Iter39/40 receipts without an `id`
+    must still project via deterministic position-based fallback (`idx0`,
+    `idx1`, …). Receipts that already have an id remain byte-preserved."""
+    cust = ctx.customer()
+    trip = ctx.trip_with_receipts(cust, receipts=[
+        # legacy shape — NO id
+        {"date": "2026-08-15", "type": "diesel", "litres": 50,
+         "rate": 90.0, "amount": 4500.0, "remarks": "Diesel at loading"},
+        {"date": "2026-08-15", "type": "advance", "mode": "UPI",
+         "ref_no": "UPI0000", "amount": 10000.0, "remarks": "Trip advance"},
+    ])
+    _reproject("trip_customer_receipt", trip)
+    rows = list(ctx.d.fin_txn.find({
+        "user_id": ctx.uid, "source_type": "trip_customer_receipt",
+        "trip_id": trip,
+    }))
+    # 2 receipts × 2 legs each = 4 legs.
+    assert len(rows) == 4, f"expected 4 legs, got {len(rows)}"
+    # Deterministic identifiers derived from array position.
+    source_ids = sorted({r["source_id"] for r in rows})
+    assert source_ids == [f"{trip}:idx0", f"{trip}:idx1"], source_ids
+    # ref_source_key format: trip_customer_receipt:{trip}:idx{n}:{leg}
+    ref_keys = sorted(r["ref_source_key"] for r in rows)
+    assert ref_keys == [
+        f"trip_customer_receipt:{trip}:idx0:bank_debit",
+        f"trip_customer_receipt:{trip}:idx0:cust_adv_credit",
+        f"trip_customer_receipt:{trip}:idx1:bank_debit",
+        f"trip_customer_receipt:{trip}:idx1:cust_adv_credit",
+    ]
+    # Amounts match both receipts and mode → account resolved correctly.
+    idx0_bank = next(r for r in rows if r["source_id"] == f"{trip}:idx0"
+                     and r["direction"] == "in")
+    # First receipt has no `mode` → defaults to Bank → BANK_DEFAULT.
+    assert idx0_bank["account_code"] == "BANK_DEFAULT"
+    assert idx0_bank["amount"] == 4500.0
+    idx1_bank = next(r for r in rows if r["source_id"] == f"{trip}:idx1"
+                     and r["direction"] == "in")
+    # Second receipt mode=UPI → BANK_DEFAULT (mode map).
+    assert idx1_bank["account_code"] == "BANK_DEFAULT"
+    assert idx1_bank["amount"] == 10000.0
+    # AR must remain untouched (correction #6 still holds).
+    assert not any(r["account_code"] == "AR" for r in rows)
+
+    # Idempotent replay — still exactly 4 legs, no duplicates.
+    _reproject("trip_customer_receipt", trip)
+    rows2 = list(ctx.d.fin_txn.find({
+        "user_id": ctx.uid, "source_type": "trip_customer_receipt",
+        "trip_id": trip,
+    }))
+    assert len(rows2) == 4
+    ref_keys2 = sorted(r["ref_source_key"] for r in rows2)
+    assert ref_keys2 == ref_keys
+
+
+def test_trip_customer_receipts_mixed_id_and_legacy(ctx):
+    """Mixed shape: receipt[0] has explicit id, receipt[1] is legacy.
+    Explicit-id receipt keeps its id in the ref_source_key; legacy uses idx1."""
+    cust = ctx.customer()
+    trip = ctx.trip_with_receipts(cust, receipts=[
+        {"id": "rcpt_explicit_1", "date": "2026-08-15", "type": "advance",
+         "amount": 2000.0, "mode": "Cash"},
+        {"date": "2026-08-16", "type": "diesel", "amount": 3000.0,
+         "mode": "Bank"},
+    ])
+    _reproject("trip_customer_receipt", trip)
+    rows = list(ctx.d.fin_txn.find({
+        "user_id": ctx.uid, "source_type": "trip_customer_receipt",
+        "trip_id": trip,
+    }))
+    assert len(rows) == 4
+    source_ids = sorted({r["source_id"] for r in rows})
+    # First (id set) keeps its explicit id; second (no id) becomes idx1.
+    assert source_ids == [f"{trip}:idx1", f"{trip}:rcpt_explicit_1"], source_ids
+
+
 def test_idempotent_replay(ctx):
     """Reprojecting the same source twice yields the same row set."""
     cust = ctx.customer()
