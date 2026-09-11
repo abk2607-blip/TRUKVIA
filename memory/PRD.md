@@ -1,6 +1,72 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
 
+## 🔒 Iter150A-2 · Phase 3B-ii-a — Trip Bridge (CREATE / UPDATE) Hooks — LOCKED (2026-02-11)
+
+**STATUS: 🔒 LOCKED**
+**UAT: PASS**
+**PHASE-3B-ii-a TESTS: 21 / 21**
+**A-1 TESTS: 33 / 33**
+**PHASE-1 TESTS: 14 / 14**
+**PHASE-2 TESTS: 15 / 15**
+**PHASE-3A TESTS: 20 / 20**
+**PHASE-3B-i: baseline preserved**
+**LOCKED-BAND: 121 pass / 1 skip / 0 fail**
+**BLOCKERS: NONE**
+**MAJOR ISSUES: NONE**
+
+### Locked scope (3 hook sites, single function)
+- `backend/services_expense_bridge.py` :: `sync_trip_expenses_to_canonical`
+  - **B1a**: existing-row UPDATE / resurrection branch — hook after `expenses.update_one`
+  - **B1b**: new-row INSERT branch — hook after `expenses.insert_one`
+  - **B1c**: removed-line SOFT-DELETE branch — hook after `expenses.update_one`
+
+All three sites invoke the identical Phase-1 API: `await hook_after_source_write(uid, cid, "expense", eid)`. Non-raising. Failures queue to `fin_hook_failures`.
+
+**NOT part of this lock** (verified `0 diff` and programmatically confirmed via `inspect.getsource`):
+- `delete_trip_canonical_expenses` — **DEFERRED TO PHASE 3B-ii-b**
+- `unlink_operator_expenses_on_trip_delete` — **DEFERRED TO PHASE 3B-ii-b**
+- `db.trips.update_one({has_canonical_expenses: ...})` — NO hook (correctly; this is a Trip flag, not an Expense mutation)
+
+### Verified semantics
+- Trip CREATE → per canonical row insert fires exactly one hook → 2 FinTxn legs per canonical Expense with correct `source_type` ∈ {`trip_legacy`, `trip_other_expenditure`}, `source_key = "trip:{tid}:legacy:{field}"` or `"trip:{tid}:oe:{row_id}"`, `source_trip_id=tid`.
+- Trip UPDATE (existing line) → same Expense id + same `source_key` retained; A-1 delete-then-insert refreshes projection idempotently.
+- Trip UPDATE (add line) → new canonical row + 2 legs; existing rows untouched.
+- Trip UPDATE (remove line) → canonical row soft-deleted; A-1 short-circuits on `is_deleted`; legs vanish.
+- Resurrection → same `id` + same `source_key` + same `ref_source_key` restored; exactly 2 legs.
+- 5× identical PUT → stable Expense ids, stable leg count, no duplicates.
+- Failure queue: forced projection failure keeps Trip + canonical Expense authoritative; row queued with `status=pending`; replay via `replay_fin_hook_failures` CLI restores 2 legs.
+- Tenant isolation: same `ref_source_key` co-exists across two `user_id`s.
+- Day Book / Accounts reflect every mutation immediately; no manual `/api/fin/reproject` required.
+- Iter149 FASTag Tolls linked via Phase-3A `PATCH /toll-trip` are untouched by Trip UPDATEs (amount, source_key, account, vehicle all stable).
+- XOR / `has_canonical_expenses` model unchanged.
+- Double-count guarded: `trip_legacy` Diesel + `fleet_card_import` Diesel same date/vehicle → distinct `source_key`s, disjoint `ref_source_key`s.
+
+### Lock covenants (binding)
+1. Do not modify Phase-3B-ii-a code after lock.
+2. Do not modify Iter150A-1 / Phase-1 / Phase-2 / Phase-3A / Phase-3B-i locked files.
+3. Do not modify `routers/trips.py`.
+4. Do not modify `delete_trip_canonical_expenses` or `unlink_operator_expenses_on_trip_delete` (Phase 3B-ii-b scope).
+5. Do not add Trip DELETE hooks in this lock.
+6. Do not install Invoice / CN-DN / VendorBill / MechanicWO primary hooks (Phase 4+).
+7. Do not start Iter150B (Wallet writes) / Day Closing / Reconciliation / Razorpay.
+8. Do not add background retry, advisory locking, or in-process dedupe cache.
+
+### Deferred (out of Phase-3B-ii-a scope · DO NOT FIX NOW)
+- **Trip DELETE bridge hooks** — DEFERRED TO PHASE 3B-ii-b:
+  - `delete_trip_canonical_expenses` (bulk soft-delete of Trip-derived canonical Expenses)
+  - `unlink_operator_expenses_on_trip_delete` (Iter149 `trip_id=""` denorm refresh)
+  - Pre-collection of affected ids + per-id hook invocation
+- Phase 4+: primary write-path hooks on VendorBill / MechanicWorkOrder / Invoice / CN-DN / Trip customer_receipts
+- Iter150B: Wallet Recharge + Transfer + Adjustment write endpoints
+- Iter150C-E: Source Ledgers UI / Day Closing / Reconciliation Center
+- Razorpay integration (parked)
+
+### Binding product principle
+ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO MANUAL RECONCILIATION.
+
+---
+
 ## 🔒 Iter150A-2 · Phase 3B-i — Bulk Import Service Hooks — LOCKED (2026-02-11)
 
 **STATUS: 🔒 LOCKED**
