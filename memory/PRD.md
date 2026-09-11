@@ -1,6 +1,54 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
 
+## 🔒 Iter150A-2 · Phase 1 — Hook Foundation + Failure Queue — LOCKED (2026-02-11)
+
+**STATUS: 🔒 LOCKED**
+**UAT: PASS**
+**PHASE-1 TESTS: 14 / 14**
+**A-1 TESTS: 33 / 33**
+**BLOCKERS: NONE**
+**MAJOR ISSUES: NONE**
+**SOURCE WRITE HOOKS: NOT YET INSTALLED**
+**STARTUP RETRY: NOT WIRED**
+**UI: NOT ADDED**
+
+### Files locked (Phase 1)
+- `backend/services_fin_txn_hooks.py` — `hook_after_source_write` + durable `fin_hook_failures` queue + `replay_pending_failures` retry driver + `ensure_hook_indexes`.
+- `backend/scripts/replay_fin_hook_failures.py` — CLI (`--dry-run`, `--company-id`, `--user-id`, `--limit`, `--ignore-schedule`, `--verbose`).
+- `backend/tests/test_iter150a2_hook_foundation.py` — 14 focused tests (A–I).
+
+### Locked semantics
+- `direction=in`=Debit, `direction=out`=Credit, single-sided A-1 projection remains authoritative.
+- FinTxn is a rebuildable projection; source docs remain byte-authoritative.
+- Hook failure NEVER rolls back the source; it enqueues a durable `fin_hook_failures` row.
+- **No TTL** on `fin_hook_failures`. Rows are permanent until explicitly resolved or manually recovered from `permanently_failed`.
+- `permanently_failed` = TERMINAL for automatic replay; MANUALLY RECOVERABLE via explicit operator DB action.
+- Tenant isolation: UNIQUE `(user_id, company_id, source_type, source_id)` guarantees one row per source per tenant.
+- A-1 `services_fin_txn.py` imported as dependency only; zero re-implementation, zero symbol shadow.
+
+### Lock covenants (binding)
+1. Do not modify any Phase-1 implementation after lock.
+2. Do not modify Iter150A-1 locked files.
+3. Do not modify Iter133–149 business logic except under separately approved Phase-2 hook changes.
+4. Do not add automatic background retry/scheduler to Phase 1.
+5. Do not add the deferred advisory-lock mechanism to Phase 1.
+6. Do not add the deferred in-process duplicate cache.
+7. Do not change the durable failure-queue semantics.
+8. Do not silently alter `permanently_failed` semantics.
+9. Do not clean the pre-existing Iter147 fixture failures as part of this lock.
+
+### Deferred (out of Phase-1 scope · DO NOT FIX NOW)
+- 2 pre-existing Iter147 IOCL fixture failures (baseline unchanged; git-verified untouched).
+- Automatic background retry loop wired at server startup (Phase 2+ scope).
+- Concurrency / advisory-locking against concurrent same-source hooks (Phase 2+ scope).
+- Any broader hardening.
+
+### Binding product principle
+ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO MANUAL RECONCILIATION.
+
+---
+
 ## 🔒 Iter150A-1 · TRUKVIA Financial Control Foundation — LOCKED (2026-02-11)
 
 **STATUS: 🔒 LOCKED**
