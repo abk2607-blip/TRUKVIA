@@ -13,6 +13,9 @@ from models import MechanicWorkOrder, now_utc
 from auth import get_current_user
 from company import _active_company_id
 from audit import _log_audit, _diff_dict
+# Iter150A-2 Phase 4 · MechanicWorkOrder projection hook (paired-Expense
+# guard lives in A-1 project_mechanic_work_order via _has_paired_expense).
+from services_fin_txn_hooks import hook_after_source_write
 
 router = APIRouter(prefix="/api")
 
@@ -96,6 +99,8 @@ async def create_mechanic_work_order(payload: MechanicWorkOrder, request: Reques
     doc["created_at"] = now_utc().isoformat()
     doc["is_deleted"] = False
     await db.mechanic_work_orders.insert_one(doc)
+    # Iter150A-2 Phase 4 · fire hook after authoritative insert.
+    await hook_after_source_write(uid, cid, "mechanic_work_order", doc["id"])
     try:
         await _log_audit({"user_id": uid, "company_id": cid, "email": user.get("email", ""), "name": user.get("name", "")},
                          "mechanic_work_order", "create", doc["id"], mec_name, "", {})
@@ -136,6 +141,8 @@ async def update_mechanic_work_order(wid: str, payload: MechanicWorkOrder, reque
     patch["modified_by"] = uid
     patch["modified_at"] = now_utc().isoformat()
     await db.mechanic_work_orders.update_one({"id": wid}, {"$set": patch})
+    # Iter150A-2 Phase 4 · fire hook after successful update.
+    await hook_after_source_write(uid, cid, "mechanic_work_order", wid)
     after = {**before, **patch}
     try:
         await _log_audit({"user_id": uid, "company_id": cid, "email": user.get("email", ""), "name": user.get("name", "")},
@@ -178,6 +185,9 @@ async def delete_mechanic_work_order(
             "modified_at": now_utc().isoformat(),
         }},
     )
+    # Iter150A-2 Phase 4 · fire hook after soft-delete; A-1
+    # project_mechanic_work_order short-circuits on is_deleted → 0 legs.
+    await hook_after_source_write(uid, cid, "mechanic_work_order", wid)
     try:
         await _log_audit({"user_id": uid, "company_id": cid, "email": user.get("email", ""), "name": user.get("name", "")},
                          "mechanic_work_order", "delete", wid, "", reason, {})

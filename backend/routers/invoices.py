@@ -20,6 +20,8 @@ from company import (
     _backfill_company_id, _backfill_to_default,
 )
 from audit import _log_audit, _diff_dict
+# Iter150A-2 Phase 4 · Invoice + invoice_payment cascade projection hook.
+from services_fin_txn_hooks import hook_after_source_write
 from services import (
     _compute_trip, _trip_billable, _recompute_invoice,
     _next_invoice_number, _next_invoice_number_for_company,
@@ -99,6 +101,8 @@ async def override_invoice_number(
         reason=payload.reason.strip(),
         changes={"old_number": old_num, "new_number": new_num},
     )
+    # Iter150A-2 Phase 4 · refresh projection narration after metadata mutation.
+    await hook_after_source_write(user["user_id"], existing.get("company_id", ""), "invoice", iid)
     return await db.invoices.find_one({"id": iid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
 
 
@@ -377,6 +381,8 @@ async def create_invoice(payload: InvoiceCreateRequest, request: Request, user=D
     doc = inv.model_dump()
     doc["user_id"] = user["user_id"]
     await db.invoices.insert_one(doc)
+    # Iter150A-2 Phase 4 · fire projection hook after authoritative insert.
+    await hook_after_source_write(user["user_id"], cid, "invoice", inv.id)
 
     # Mark trips as invoiced
     await db.trips.update_many(
@@ -435,6 +441,8 @@ async def update_invoice(iid: str, payload: InvoiceUpdateRequest, user=Depends(g
     changes = _diff_dict(existing, {**existing, **updates}, list(updates.keys()))
     await _log_audit(user, "invoice", "update", entity_id=iid, entity_ref=existing.get("invoice_number", ""), reason=payload.reason, changes=changes)
     updated = await db.invoices.find_one({"id": iid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
+    # Iter150A-2 Phase 4 · fire hook after final persisted state (post-_recompute_invoice).
+    await hook_after_source_write(user["user_id"], (updated or {}).get("company_id", ""), "invoice", iid)
     # Auto-save PDF snapshot to storage (best-effort, non-blocking on failure)
     try:
         customer = await db.customers.find_one({"id": updated["customer_id"], "user_id": user["user_id"]}, {"_id": 0}) or {}
@@ -484,6 +492,9 @@ async def delete_invoice(iid: str, reason: str = "", user=Depends(get_current_us
         {"$set": {"status": "pending", "invoice_id": None}},
     )
     await db.invoices.delete_one({"id": iid, "user_id": user["user_id"]})
+    # Iter150A-2 Phase 4 · fire hook after hard delete; A-1 clears invoice
+    # legs + cascades invoice_payment:{iid}:* legs (no doc → 0 legs written).
+    await hook_after_source_write(user["user_id"], doc.get("company_id", ""), "invoice", iid)
     await _log_audit(user, "invoice", "delete", entity_id=iid, entity_ref=doc.get("invoice_number", ""),
                      reason=reason, changes={"snapshot": {k: doc.get(k) for k in ("invoice_number", "customer_id", "total_amount", "amount_paid", "trip_ids")}})
     return {"ok": True}
@@ -510,6 +521,18 @@ async def add_payment(iid: str, payload: PaymentAdd, user=Depends(get_current_us
     inv["payments"] = payments
     inv["amount_paid"] = amount_paid
     inv["balance_due"] = balance_due
+    # Iter150A-2 Phase 4 · fire hook on parent Invoice; A-1 rebuilds all
+    # invoice_payment:{iid}:* legs from the refreshed payments[] array.
+    await hook_after_source_write(user["user_id"], inv.get("company_id", ""), "invoice", iid)
+    # Iter150A-2 Phase 4 · targeted audit gap fix — record the payment add.
+    await _log_audit(
+        user, "invoice_payment", "add",
+        entity_id=iid, entity_ref=inv.get("invoice_number", ""),
+        reason=payload.note or "",
+        changes={"payment_id": p.id, "amount": p.amount, "mode": p.mode,
+                 "date": p.date, "amount_paid": amount_paid,
+                 "balance_due": balance_due},
+    )
     inv.pop("user_id", None)
     return inv
 

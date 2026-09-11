@@ -21,6 +21,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from db import db
 from auth import get_current_user, _has_perm
 from audit import _log_audit
+# Iter150A-2 Phase 4 · CN/DN projection hook (draft = 0 legs by A-1).
+from services_fin_txn_hooks import hook_after_source_write
 from models import (
     CreditDebitNote, CDNCreateRequest, CDNCancelRequest, CDNLine,
     new_id,
@@ -217,6 +219,9 @@ async def create_credit_note(payload: CDNCreateRequest, user=Depends(get_current
         doc["approved_at"] = now_utc().isoformat()
 
     await db.credit_debit_notes.insert_one(doc)
+    # Iter150A-2 Phase 4 · fire hook after authoritative insert.
+    # draft → project_credit_debit_note returns []; auto-issued → legs projected.
+    await hook_after_source_write(user["user_id"], doc.get("company_id", ""), "credit_debit_note", doc["id"])
     await _log_audit(
         user, "credit_note", "create" if doc["status"] == "draft" else "issue",
         entity_id=doc["id"], entity_ref=doc.get("note_number", ""),
@@ -261,6 +266,8 @@ async def issue_credit_note(nid: str, user=Depends(get_current_user)):
         winner = await db.credit_debit_notes.find_one({"id": nid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
         return winner
     await _log_audit(user, "credit_note", "issue", entity_id=nid, entity_ref=note_number)
+    # Iter150A-2 Phase 4 · fire hook after draft→issued — legs come alive.
+    await hook_after_source_write(user["user_id"], note.get("company_id", ""), "credit_debit_note", nid)
     updated = await db.credit_debit_notes.find_one({"id": nid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
     return updated
 
@@ -288,6 +295,9 @@ async def cancel_credit_note(nid: str, payload: CDNCancelRequest, user=Depends(g
     )
     await _log_audit(user, "credit_note", "cancel", entity_id=nid,
                      entity_ref=note.get("note_number", ""), reason=payload.reason.strip())
+    # Iter150A-2 Phase 4 · fire hook after cancel — A-1 short-circuits on
+    # status="cancelled" → all legs vanish.
+    await hook_after_source_write(user["user_id"], note.get("company_id", ""), "credit_debit_note", nid)
     updated = await db.credit_debit_notes.find_one({"id": nid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
     return updated
 
@@ -317,6 +327,8 @@ async def update_credit_note(nid: str, payload: CDNCreateRequest, user=Depends(g
     )
     await _log_audit(user, "credit_note", "update", entity_id=nid,
                      entity_ref=note.get("note_number", ""), reason=payload.reason_text.strip())
+    # Iter150A-2 Phase 4 · draft-only update; hook safe (returns 0 legs).
+    await hook_after_source_write(user["user_id"], note.get("company_id", ""), "credit_debit_note", nid)
     updated = await db.credit_debit_notes.find_one({"id": nid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
     return updated
 
@@ -453,6 +465,9 @@ async def _create_debit_note_impl(payload: CDNCreateRequest, user: dict) -> dict
         doc["approved_by"] = user["user_id"]
         doc["approved_at"] = now_utc().isoformat()
     await db.credit_debit_notes.insert_one(doc)
+    # Iter150A-2 Phase 4 · fire hook after DN insert. Same idempotency
+    # semantics as CN: draft → 0 legs; auto-issued → legs projected.
+    await hook_after_source_write(user["user_id"], doc.get("company_id", ""), "credit_debit_note", doc["id"])
     await _log_audit(
         user, "debit_note", "create" if doc["status"] == "draft" else "issue",
         entity_id=doc["id"], entity_ref=doc.get("note_number", ""),
@@ -501,6 +516,8 @@ async def issue_debit_note(nid: str, user=Depends(get_current_user)):
             {"id": nid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
         return winner
     await _log_audit(user, "debit_note", "issue", entity_id=nid, entity_ref=num)
+    # Iter150A-2 Phase 4 · fire hook after DN draft→issued.
+    await hook_after_source_write(user["user_id"], note.get("company_id", ""), "credit_debit_note", nid)
     return await db.credit_debit_notes.find_one(
         {"id": nid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
 
@@ -529,6 +546,8 @@ async def cancel_debit_note(nid: str, payload: CDNCancelRequest, user=Depends(ge
     )
     await _log_audit(user, "debit_note", "cancel", entity_id=nid,
                      entity_ref=note.get("note_number", ""), reason=payload.reason.strip())
+    # Iter150A-2 Phase 4 · fire hook after DN cancel — legs vanish.
+    await hook_after_source_write(user["user_id"], note.get("company_id", ""), "credit_debit_note", nid)
     return await db.credit_debit_notes.find_one(
         {"id": nid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
 
@@ -560,6 +579,8 @@ async def update_debit_note(nid: str, payload: CDNCreateRequest, user=Depends(ge
     )
     await _log_audit(user, "debit_note", "update", entity_id=nid,
                      entity_ref=note.get("note_number", ""), reason=payload.reason_text.strip())
+    # Iter150A-2 Phase 4 · draft-only DN update; hook safe (0 legs).
+    await hook_after_source_write(user["user_id"], note.get("company_id", ""), "credit_debit_note", nid)
     return await db.credit_debit_notes.find_one(
         {"id": nid, "user_id": user["user_id"]}, {"_id": 0, "user_id": 0})
 

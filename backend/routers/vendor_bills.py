@@ -16,6 +16,9 @@ from models import VendorBill, now_utc
 from auth import get_current_user
 from company import _active_company_id
 from audit import _log_audit, _diff_dict
+# Iter150A-2 Phase 4 · VendorBill projection hook (paired-Expense guard
+# lives in A-1 project_vendor_bill via _has_paired_expense).
+from services_fin_txn_hooks import hook_after_source_write
 
 router = APIRouter(prefix="/api")
 
@@ -107,6 +110,8 @@ async def create_vendor_bill(payload: VendorBill, request: Request, user=Depends
     doc["created_at"] = now_utc().isoformat()
     doc["is_deleted"] = False
     await db.vendor_bills.insert_one(doc)
+    # Iter150A-2 Phase 4 · fire hook after authoritative insert.
+    await hook_after_source_write(uid, cid, "vendor_bill", doc["id"])
     try:
         await _log_audit({"user_id": uid, "company_id": cid, "email": user.get("email", ""), "name": user.get("name", "")},
                          "vendor_bill", "create", doc["id"], doc.get("bill_number", ""), "", {})
@@ -147,6 +152,8 @@ async def update_vendor_bill(bid: str, payload: VendorBill, request: Request, us
     patch["modified_by"] = uid
     patch["modified_at"] = now_utc().isoformat()
     await db.vendor_bills.update_one({"id": bid}, {"$set": patch})
+    # Iter150A-2 Phase 4 · fire hook after successful update.
+    await hook_after_source_write(uid, cid, "vendor_bill", bid)
     after = {**before, **patch}
     try:
         await _log_audit({"user_id": uid, "company_id": cid, "email": user.get("email", ""), "name": user.get("name", "")},
@@ -190,6 +197,9 @@ async def delete_vendor_bill(
             "modified_at": now_utc().isoformat(),
         }},
     )
+    # Iter150A-2 Phase 4 · fire hook after soft-delete; A-1
+    # project_vendor_bill short-circuits on is_deleted → 0 legs.
+    await hook_after_source_write(uid, cid, "vendor_bill", bid)
     try:
         await _log_audit({"user_id": uid, "company_id": cid, "email": user.get("email", ""), "name": user.get("name", "")},
                          "vendor_bill", "delete", bid, doc.get("bill_number", ""), reason, {})
