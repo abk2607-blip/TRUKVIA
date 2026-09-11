@@ -1,40 +1,73 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
 
-## 🟢 Iter150A-2 · Phase 4 — Invoice + CN/DN + VendorBill + MechanicWO Hooks — IMPLEMENTATION COMPLETE (2026-02-11)
+## 🔒 Iter150A-2 · Phase 4 — Invoice + CN/DN + VendorBill + MechanicWO Hooks — LOCKED (2026-02-11)
 
-**STATUS: READY FOR PHASE 4 LOCK-CLEARANCE**
-**PHASE-4 TESTS: 82 / 82 (Invoice 22/22 · CN/DN 24/24 · VendorBill 18/18 · MechanicWO 18/18)**
-**A-1 + Phase-1: 47 / 47 · Phase-2: 15 / 15 · Phase-3A: 20 / 20 · Phase-3B-i: 24 non-perf PASS · Phase-3B-ii-a: 21 / 21 · Phase-3B-ii-b: 26 / 26**
-**LOCKED-BAND Iter147+148+149: 121 pass / 1 skip / 0 fail — baseline preserved**
-**BLOCKERS: NONE**
+**STATUS: 🔒 LOCKED**
+**UAT: PASS**
+**LOCK-CLEARANCE: PASS**
+**LOCKED COMMIT: `aa465e044b373acec9984904f23013f9d21ca392`** (short: `aa465e0`)
+**PHASE-4 TESTS: 82 / 82** (Invoice 22/22 · CN/DN 24/24 · VendorBill 18/18 · MechanicWO 18/18)
+**A-1 TESTS: 33 / 33 · PHASE-1: 14 / 14 · PHASE-2: 15 / 15 · PHASE-3A: 20 / 20 · PHASE-3B-i: 23 non-perf + perf_1000 PASS (perf_2000 = accepted 240s pytest-cap, unchanged) · PHASE-3B-ii-a: 21 / 21 · PHASE-3B-ii-b: 26 / 26**
+**LOCKED-BAND: 121 pass / 1 skip / 0 fail (Iter147 49/0/0 · Iter148+149 72/0/1) — baseline preserved**
+**BLOCKERS: NONE · MAJOR ISSUES: NONE**
 
-### Wired hooks (19 sites · single `hook_after_source_write` call each)
-- Invoice (5): `create_invoice`, `override_invoice_number`, `update_invoice`, `delete_invoice`, `add_payment`. `invoice_pdf` remains hook-free (read path).
-- CN/DN (8): `create_credit_note`, `issue_credit_note`, `cancel_credit_note`, `update_credit_note`, `create_debit_note`, `issue_debit_note`, `cancel_debit_note`, `update_debit_note`.
-- VendorBill (3): `create_vendor_bill`, `update_vendor_bill`, `delete_vendor_bill`.
-- MechanicWorkOrder (3): `create_mechanic_work_order`, `update_mechanic_work_order`, `delete_mechanic_work_order`.
+### Locked scope (19 hook sites across 4 routers)
+- **Invoice (5)** in `routers/invoices.py`: `create_invoice`, `override_invoice_number`, `update_invoice`, `delete_invoice`, `add_payment`.
+- **CN/DN (8)** in `routers/notes.py`: `create_credit_note`, `issue_credit_note`, `cancel_credit_note`, `update_credit_note`, `create_debit_note`, `issue_debit_note`, `cancel_debit_note`, `update_debit_note`.
+- **VendorBill (3)** in `routers/vendor_bills.py`: `create_vendor_bill`, `update_vendor_bill`, `delete_vendor_bill`.
+- **MechanicWorkOrder (3)** in `routers/mechanic_work_orders.py`: `create_mechanic_work_order`, `update_mechanic_work_order`, `delete_mechanic_work_order`.
+- `invoice_pdf` (read path) remains hook-free.
+- One authorized audit event added: `_log_audit(user, "invoice_payment", "add", …)` inside `add_payment`.
 
-### Files changed
-Production (4 authorized routers only):
-- `backend/routers/invoices.py` (+23)
-- `backend/routers/notes.py` (+21)
-- `backend/routers/vendor_bills.py` (+10)
-- `backend/routers/mechanic_work_orders.py` (+10)
+### Source-type / source-key matrix (frozen)
+| source_type | source_key | dispatch pattern |
+|---|---|---|
+| `invoice` | `invoice:{iid}` | single `hook_after_source_write` (parent cascade drives `invoice_payment:{iid}:*` legs) |
+| `credit_debit_note` | `credit_debit_note:{nid}` | single call — draft = 0 legs; issued = legs; cancelled = 0 legs |
+| `vendor_bill` | `vendor_bill:{bid}` | single call — paired-Expense guard in A-1 `project_vendor_bill` |
+| `mechanic_work_order` | `mechanic_work_order:{wid}` | single call — paired-Expense guard |
 
-Tests (4 new):
-- `backend/tests/test_iter150a2_phase4_invoice_hooks.py`
-- `backend/tests/test_iter150a2_phase4_cn_dn_hooks.py`
-- `backend/tests/test_iter150a2_phase4_vendor_bill_hooks.py`
-- `backend/tests/test_iter150a2_phase4_mechanic_wo_hooks.py`
+### Financial-principle proofs (test refs)
+- CANONICAL PROJECTION: Invoice #1, CN #1, VB #1, WO #1 (exactly 2 legs with correct signs)
+- DAY BOOK: Invoice #18, CN #15, VB #12, WO #12 (`source_id` visible in `/api/fin/day-book`)
+- ACCOUNTS: Invoice #19, CN #16, VB #13, WO #13 (deltas match authoritative doc amount)
+- PAYMENT CASCADE: Invoice #11 (2 legs) · #12 (multi 4 legs)
+- CN/DN SIGN INVERSION: CN/DN #12
+- OVER-CREDIT GUARD: CN/DN #13 (422 with "invoice effective total negative")
+- FAILURE QUEUE + REPLAY: Invoice #15/#16 · CN #10/#11 · VB #08/#09 · WO #08/#09
+- IDEMPOTENCY: Invoice #13/#14 · CN #09/#18 · VB #07/#11 · WO #07/#11
+- TENANT ISOLATION: Invoice #17 · CN #17 · VB #10 · WO #10
+- DELETE / REVERSAL: Invoice #8/#9/#10 · CN #3/#4/#5 · VB #4/#5 · WO #4/#5
+- A-1 IMMUTABILITY: Invoice #21/#22 · CN #23 · VB #17 · WO #17
 
-Locked-band files (0 diff): `services_fin_txn.py`, `services_fin_txn_hooks.py`, `routers/trips.py`, `models.py`, `routers/expenses.py`, `services.py`.
+### Files in lock scope (exactly 8)
+Production:
+1. `backend/routers/invoices.py` (+23)
+2. `backend/routers/notes.py` (+21)
+3. `backend/routers/vendor_bills.py` (+10)
+4. `backend/routers/mechanic_work_orders.py` (+10)
 
-### Authorized audit event added
-`_log_audit(user, "invoice_payment", "add", ...)` inside `add_payment` — the previously-identified audit gap.
+Tests (NEW):
+5. `backend/tests/test_iter150a2_phase4_invoice_hooks.py`
+6. `backend/tests/test_iter150a2_phase4_cn_dn_hooks.py`
+7. `backend/tests/test_iter150a2_phase4_vendor_bill_hooks.py`
+8. `backend/tests/test_iter150a2_phase4_mechanic_wo_hooks.py`
 
-### Awaiting
-User's explicit lock-clearance command.
+**Locked-band files (0 diff since Phase-3B-ii-a lock):** `services_fin_txn.py`, `services_fin_txn_hooks.py`, `routers/trips.py`, `models.py`, `routers/expenses.py`, `services.py`.
+
+**Direct `fin_txn` mutations in the 4 target routers: 0.**
+
+### Hook-wiring integrity (frozen at lock)
+- `routers/invoices.py` — 6 refs (5 sites + 1 import)
+- `routers/notes.py` — 9 refs (8 sites + 1 import)
+- `routers/vendor_bills.py` — 4 refs (3 sites + 1 import)
+- `routers/mechanic_work_orders.py` — 4 refs (3 sites + 1 import)
+
+### Post-lock state
+- No code/test/branding/integration modifications performed during locking.
+- Phase 5 · Iter150B/C/D/E · Branding · UI/UX · Mobile · Integrations — **all NOT STARTED**.
+- No automatic continuation triggered.
 
 
 ## 🔒 Iter150A-2 · Phase 3B-ii-b — Trip DELETE Bridge Hooks — LOCKED (2026-02-11)
