@@ -21,6 +21,8 @@ from __future__ import annotations
 import logging
 from db import db
 from models import now_utc, new_id
+# Iter150A-2 Phase 3B-ii-a · service-level Expense hook (Trip bridge path).
+from services_fin_txn_hooks import hook_after_source_write
 
 logger = logging.getLogger(__name__)
 
@@ -204,6 +206,10 @@ async def sync_trip_expenses_to_canonical(uid: str, cid: str, trip_dict: dict) -
                 "deletion_reason": "",
             }
             await db.expenses.update_one({"id": prev["id"]}, {"$set": patch})
+            # Iter150A-2 Phase 3B-ii-a · fire hook after authoritative
+            # update / resurrection. Non-raising; failures land in
+            # fin_hook_failures.
+            await hook_after_source_write(uid, cid, "expense", prev["id"])
         else:
             new_doc = {
                 **fields,
@@ -221,6 +227,8 @@ async def sync_trip_expenses_to_canonical(uid: str, cid: str, trip_dict: dict) -
                 "is_historical": False,
             }
             await db.expenses.insert_one(new_doc)
+            # Iter150A-2 Phase 3B-ii-a · fire hook after authoritative insert.
+            await hook_after_source_write(uid, cid, "expense", new_doc["id"])
 
     # Soft-delete rows the trip no longer contains.
     for key, prev in existing_by_key.items():
@@ -239,6 +247,9 @@ async def sync_trip_expenses_to_canonical(uid: str, cid: str, trip_dict: dict) -
                 "modified_at": now_iso,
             }},
         )
+        # Iter150A-2 Phase 3B-ii-a · fire hook after authoritative
+        # soft-delete; A-1 short-circuits on is_deleted and legs vanish.
+        await hook_after_source_write(uid, cid, "expense", prev["id"])
 
     active_count = len(desired)
     await db.trips.update_one(
