@@ -30,6 +30,7 @@ from services_expense_bridge import (
     delete_trip_canonical_expenses,
     unlink_operator_expenses_on_trip_delete,
 )
+from services_fin_txn_hooks import hook_after_source_write
 
 router = APIRouter(prefix="/api")
 
@@ -580,6 +581,11 @@ async def create_trip(payload: Trip, request: Request, user=Depends(get_current_
     doc.pop("user_id", None)
     doc.pop("_id", None)
     await _log_audit(user, "trip", "create", entity_id=doc["id"], entity_ref=doc.get("vehicle_number", ""))
+    # Iter150A-2 · Phase 5 — project Trip.customer_receipts (BANK/CASH +
+    # CUSTOMER_ADVANCE) via the frozen A-1 identity `{tid}:{rid}`. No-op
+    # for trips created without receipts. Non-raising: failures queue to
+    # `fin_hook_failures`.
+    await hook_after_source_write(user["user_id"], cid, "trip_customer_receipt", doc["id"])
     return doc
 
 @router.patch("/trips/{tid}/customer-ref")
@@ -734,6 +740,12 @@ async def update_trip(tid: str, payload: Trip, request: Request, user=Depends(ge
         await _recompute_invoice(existing["invoice_id"], user)
     changes = _diff_dict(existing, doc, ["freight_amount", "tons", "rate_per_ton", "supplier_freight", "total_expense", "profit", "vehicle_number", "vehicle_type"])
     await _log_audit(user, "trip", "update", entity_id=tid, entity_ref=doc.get("vehicle_number", ""), changes=changes)
+    # Iter150A-2 · Phase 5 — refresh Trip.customer_receipts projection.
+    # Cascade delete (via A-1 prefix pattern) drops any receipt legs that
+    # were removed in this edit; upsert-by-ref_source_key updates or
+    # inserts the surviving receipts. Non-raising: failures queue to
+    # `fin_hook_failures`.
+    await hook_after_source_write(user["user_id"], cid, "trip_customer_receipt", tid)
     doc.pop("user_id", None)
     return doc
 
@@ -872,6 +884,12 @@ async def bulk_delete_trips(
                 changes={"snapshot": {k: t.get(k) for k in ("date", "customer_id", "vehicle_number", "freight_amount", "invoice_id")},
                          "bulk": True},
             )
+            # Iter150A-2 · Phase 5 — clear projected customer_receipts legs
+            # for this deleted Trip. A-1 prefix cascade removes every
+            # `{tid}:{rid}` leg; the empty projection re-run keeps replay
+            # idempotent. Non-raising: failures queue to fin_hook_failures.
+            await hook_after_source_write(
+                user["user_id"], cid, "trip_customer_receipt", t["id"])
         except Exception as e:
             skipped.append({"trip_id": t["id"], "error": str(e)})
     # Recompute affected invoices once each
@@ -926,6 +944,11 @@ async def delete_trip(tid: str, request: Request, reason: str = "", user=Depends
         await _recompute_invoice(linked_invoice_id, user)
     await _log_audit(user, "trip", "delete", entity_id=tid, entity_ref=existing.get("vehicle_number", ""), reason=reason,
                      changes={"snapshot": {k: existing.get(k) for k in ("date", "customer_id", "vehicle_number", "freight_amount", "invoice_id")}})
+    # Iter150A-2 · Phase 5 — clear projected customer_receipts legs for
+    # this deleted Trip. A-1 prefix cascade removes every `{tid}:{rid}`
+    # leg; project_trip_customer_receipts short-circuits on the missing
+    # source doc → 0 legs re-written. Non-raising.
+    await hook_after_source_write(user["user_id"], cid, "trip_customer_receipt", tid)
     return {"ok": True, "linked_invoice_id": linked_invoice_id}
 
 
@@ -965,6 +988,10 @@ async def duplicate_trip(tid: str, request: Request, user=Depends(get_current_us
     doc.pop("_id", None)
     doc.pop("user_id", None)
     await _log_audit(user, "trip", "create", entity_id=doc["id"], entity_ref=doc.get("vehicle_number", ""), reason=f"Duplicated from {tid}")
+    # Iter150A-2 · Phase 5 — cloned trips inherit customer_receipts from
+    # the source; project them under the NEW trip_id so the ledger sees
+    # every real cash movement. No-op when the source had none.
+    await hook_after_source_write(user["user_id"], cid, "trip_customer_receipt", doc["id"])
     return doc
 
 
@@ -1889,6 +1916,9 @@ async def quick_repeat_trip(last_trip_id: str, request: Request, user=Depends(ge
     doc.pop("_id", None)
     doc.pop("user_id", None)
     await _log_audit(user, "trip", "create", entity_id=doc["id"], entity_ref=f"quick-repeat from {last_trip_id}")
+    # Iter150A-2 · Phase 5 — quick-repeat carries the source trip's
+    # customer_receipts. Project under the NEW trip_id.
+    await hook_after_source_write(user["user_id"], cid, "trip_customer_receipt", doc["id"])
     return doc
 
 

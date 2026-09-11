@@ -763,6 +763,14 @@ async def reproject_source(
         if source_type == "invoice":
             deleted += await _delete_by_source(uid, cid, "invoice_payment",
                                                 f"{source_id}:*")
+        # Iter150A-2 · Phase 5 — trip_customer_receipt legs are stored with
+        # source_id="{tid}:{rid}" (per-receipt identity). The exact-match
+        # delete below would miss them, leaving stale legs after receipt
+        # removal or Trip DELETE. Cascade via the same prefix pattern
+        # already used for invoice_payment.
+        if source_type == "trip_customer_receipt":
+            deleted += await _delete_by_source(
+                uid, cid, "trip_customer_receipt", f"{source_id}:*")
         deleted += await _delete_by_source(uid, cid, source_type, source_id)
 
     legs: List[dict] = []
