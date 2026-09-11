@@ -1,6 +1,73 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
 
+## 🔒 Iter150A-2 · Phase 3B-i — Bulk Import Service Hooks — LOCKED (2026-02-11)
+
+**STATUS: 🔒 LOCKED**
+**UAT: PASS**
+**PHASE-3B-i TESTS: 26 / 26** (25 core + 1 stress test run standalone)
+**A-1 TESTS: 33 / 33**
+**PHASE-1 TESTS: 14 / 14**
+**PHASE-2 TESTS: 15 / 15**
+**PHASE-3A TESTS: 20 / 20**
+**LOCKED-BAND REGRESSION: 121 pass / 1 skip / 0 fail**
+**BLOCKERS: NONE**
+**MAJOR ISSUES: NONE**
+
+### Locked scope (3 service hook sites)
+- `backend/services_quick_expense.py` :: `bulk_create_operational_expenses` — 1 per-row hook after successful `insert_one`; fires ONLY on `status="created"`.
+- `backend/services_fuel_import.py` :: `commit_rows` — 1 per-row hook after successful `insert_one`; fires ONLY on `status="created"`.
+- `backend/services_toll_import.py` :: `commit_rows` — 1 per-row hook after successful `insert_one`; fires ONLY on `status="created"`.
+
+All three sites call the identical Phase-1 `hook_after_source_write(uid, cid, "expense", eid)`. Non-raising. Failures queue to `fin_hook_failures`.
+
+### Verified semantics
+- **Quick-Op**: Toll / Diesel qty×rate / supplier-recovery (EXPENSE + AP_SUPPLIER) / Model A cash_now vendor (EXPENSE + CASH, NO AP_VENDOR, NO VendorPayment). Duplicate `source_key` → zero hook, zero extra FinTxn.
+- **Fleet-card Fuel Import**: exactly one hook per created row; exact-duplicate row skipped (no hook); possible-dup override still creates + hooks; source identity (`source_type`, `source`, `source_txn_ref`, `source_key`) stable across import → Phase-3A `PATCH /fleet-card-vehicle` refresh.
+- **FASTag Import**: exactly one hook per created row; exact-duplicate skipped; "Import Anyway" path creates + hooks the new row only; A-1 wallet/account semantics unchanged.
+- **Multi-row partial success**: created + duplicate rows returned in the same `results[]`; hook fires only on created rows.
+- **Failure queue**: forced projection failure → source Expense committed authoritatively; `fin_hook_failures` row `status=pending`; other rows unaffected; replay via CLI resolves cleanly with exactly 2 legs.
+- **Idempotency**: repeated `/fin/reproject` and duplicate-row resubmissions never produce duplicate FinTxn; `ref_source_key` stable.
+- **Tenant isolation**: same `source_id` / `ref_source_key` co-exists across two `user_id`s under the unique index.
+- **Phase-3A compatibility**: service-imported Expense + subsequent router-hook (fleet-card vehicle correction / toll-trip link) → exactly one final projection set; no double-fire.
+- **Day Book / Accounts**: reflect every import row immediately; no manual `/api/fin/reproject` required.
+
+### P0 performance benchmark (recorded, historical)
+| Batch size | Total | Per-row |
+|-----------|-------|---------|
+| 10 rows | 1.56s | 156 ms |
+| 50 rows | 7.05s | 141 ms |
+| 200 rows | 26.85s | 134 ms |
+| 1000 rows | 138.05s | 138 ms |
+| 2000 rows | 273.65s (stress-only) — controlled UAT observed 283.5s server-side completion | 137 ms |
+
+### 2000-row timeout observability (recorded, historical)
+- 60s client-side timeout → server continued processing after client disconnect and reached 2000 / 2000 Expenses + 4000 / 4000 FinTxn legs + 0 failure rows.
+- Re-submission of the identical file → exact-duplicate block held; NO duplicate Expense; NO duplicate FinTxn.
+- Test-harness cleanup left ~2400 orphan demo-tenant Expenses ONCE when a client-timeout aborted teardown; classified as **TEST-ONLY** (production data is unaffected — duplicate index + hook idempotency preserve authoritative correctness).
+
+### Lock covenants (binding)
+1. Do not modify Phase-3B-i code after lock.
+2. Do not modify Iter150A-1 / Phase-1 / Phase-2 / Phase-3A locked files.
+3. Do not change Quick-Op duplicate semantics.
+4. Do not change Fleet-card / FASTag duplicate / possible-duplicate / Import Anyway semantics.
+5. Do not add batching, chunking or asynchronous import processing in this lock.
+6. Do not add background retry, advisory locking, or in-process dedupe cache.
+7. Do not start Phase-3B-ii (Trip bridge hooks) in this step.
+8. Do not install VendorBill / MechanicWO / Invoice / CN-DN primary hooks (Phase 4+).
+9. Do not start Iter150B (Wallet writes) / Day Closing / Reconciliation / Razorpay.
+
+### Deferred (future hardening, out of Phase-3B-i scope)
+- Large-volume async ingestion / batching (only if operator workflow demands > 2000 rows).
+- Test-harness auto-cleanup after HTTP client abort (TEST-ONLY concern).
+- Phase 3B-ii: `services_expense_bridge.py` (Trip cascade write hooks: sync / delete / unlink).
+- Phase 4+: primary write-path hooks on VendorBill / MechanicWorkOrder / Invoice / CN-DN / Trip customer_receipts.
+
+### Binding product principle
+ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO MANUAL RECONCILIATION.
+
+---
+
 ## 🔒 Iter150A-2 · Phase 3A — Expense Router Hooks — LOCKED (2026-02-11)
 
 **STATUS: 🔒 LOCKED**
