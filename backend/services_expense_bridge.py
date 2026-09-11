@@ -260,12 +260,34 @@ async def sync_trip_expenses_to_canonical(uid: str, cid: str, trip_dict: dict) -
 
 
 async def delete_trip_canonical_expenses(uid: str, cid: str, tid: str, reason: str = "trip_deleted") -> int:
-    """Soft-delete every canonical Expense linked to a trip. Called on Trip DELETE."""
+    """Soft-delete every canonical Expense linked to a trip. Called on Trip DELETE.
+
+    Iter150A-2 Phase 3B-ii-b · B3 — after the authoritative `update_many`,
+    fires `hook_after_source_write` for every affected Expense so the A-1
+    projection layer clears their active FinTxn legs. Filter and mutation
+    semantics are unchanged; only projection dispatch is added.
+
+    Set-safety: this function targets `source_trip_id == tid` (bridge-
+    materialised rows). Set B (operator-linked, `source_trip_id != tid`
+    AND `trip_id == tid`) is disjoint by filter. A local per-call `set()`
+    dedupe on collected IDs guards against any accidental duplicate hook
+    dispatch. No global cache / TTL / scheduler.
+    """
     if not tid:
         return 0
     now_iso = now_utc().isoformat()
+    b3_filter = {"user_id": uid, "company_id": cid,
+                 "source_trip_id": tid, "is_deleted": {"$ne": True}}
+
+    # 1. Pre-collect affected active Expense IDs (LOCAL, per-call dedupe).
+    affected_rows = await db.expenses.find(
+        b3_filter, {"_id": 0, "id": 1}
+    ).to_list(10000)
+    affected_ids: set[str] = {r["id"] for r in affected_rows if r.get("id")}
+
+    # 2. Execute the existing update_many unchanged.
     r = await db.expenses.update_many(
-        {"user_id": uid, "company_id": cid, "source_trip_id": tid, "is_deleted": {"$ne": True}},
+        b3_filter,
         {"$set": {
             "is_deleted": True,
             "deleted_by": uid,
@@ -275,6 +297,13 @@ async def delete_trip_canonical_expenses(uid: str, cid: str, tid: str, reason: s
             "modified_at": now_iso,
         }},
     )
+
+    # 3. Fire hook after each authoritative soft-delete. A-1 short-circuits
+    #    on is_deleted → legs vanish. Non-raising; failures land in
+    #    fin_hook_failures.
+    for eid in affected_ids:
+        await hook_after_source_write(uid, cid, "expense", eid)
+
     return int(r.modified_count or 0)
 
 
@@ -290,14 +319,40 @@ async def unlink_operator_expenses_on_trip_delete(uid: str, cid: str, tid: str) 
     Identified by `trip_id == tid` AND `source_trip_id != tid` (bridge-
     materialised rows have `source_trip_id == tid` and are handled by
     the sibling function). Idempotent, tenant-scoped, active rows only.
+
+    Iter150A-2 Phase 3B-ii-b · B4 — after the authoritative `update_many`,
+    fires `hook_after_source_write` for every affected Expense so the A-1
+    projection layer refreshes the `trip_id` denorm on their FinTxn legs.
+    Accounting movement (amount, account, source identity, vehicle) is
+    unchanged; only `trip_id` denorm rotates to "" — ZERO accounting delta.
+
+    Set-safety: this function targets Set B (`source_trip_id != tid`).
+    Set A (`source_trip_id == tid`, bridge-materialised, handled by B3)
+    is disjoint by filter. A local per-call `set()` dedupe guards against
+    accidental duplicate hook dispatch. No global cache / TTL / scheduler.
     """
     if not tid:
         return 0
     now_iso = now_utc().isoformat()
+    b4_filter = {"user_id": uid, "company_id": cid,
+                 "trip_id": tid, "source_trip_id": {"$ne": tid},
+                 "is_deleted": {"$ne": True}}
+
+    # 1. Pre-collect affected active Expense IDs (LOCAL, per-call dedupe).
+    affected_rows = await db.expenses.find(
+        b4_filter, {"_id": 0, "id": 1}
+    ).to_list(10000)
+    affected_ids: set[str] = {r["id"] for r in affected_rows if r.get("id")}
+
+    # 2. Execute the existing update_many unchanged.
     r = await db.expenses.update_many(
-        {"user_id": uid, "company_id": cid,
-         "trip_id": tid, "source_trip_id": {"$ne": tid},
-         "is_deleted": {"$ne": True}},
+        b4_filter,
         {"$set": {"trip_id": "", "modified_at": now_iso, "modified_by": uid}},
     )
+
+    # 3. Fire hook after each authoritative denorm update; A-1 refreshes
+    #    FinTxn.trip_id to "" — same amount / account / source identity.
+    for eid in affected_ids:
+        await hook_after_source_write(uid, cid, "expense", eid)
+
     return int(r.modified_count or 0)
