@@ -1,6 +1,36 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
 
+## 🔒 Iter150A-1 · TRUKVIA Financial Control Foundation — LOCKED (2026-02-11)
+
+**STATUS: 🔒 LOCKED**
+**UAT: PASS**
+**A-1 TESTS: 33 / 33**
+**LIVE DRY-RUN: PASS · 370 legs · 0 errors · 0 invariant mismatches · ₹641,219.81 expense reconciliation**
+**BLOCKERS: NONE**
+**MAJOR ISSUES: NONE**
+
+### Lock covenants (binding)
+1. Preserve the exact tested A-1 behavior.
+2. Do not modify A-1 implementation after lock.
+3. Do not modify Iter133–149.
+4. Do not silently clean or alter the pre-existing Iter147 fixture failures.
+5. Do not remove or alter the documented A-1 observations below.
+6. No real full-tenant FinTxn write / reprojection performed as part of the lock (owner may run `POST /api/fin/reproject {full:true}` manually if desired).
+7. Do not start Iter150A-2 in this context — fresh session + new plan required.
+
+### Deferred observations (out of A-1 scope · DO NOT FIX NOW)
+- **Iter147 stale IOCL fixture / test-hygiene failures** — `tests/test_iter147_import_flow.py::test_iter147_first_iocl_import_creates_canonical_expenses` and `::test_iter147_reupload_same_file_all_exact_duplicates`. PRE-EXISTING. Root cause: 5 leftover IOCL Expense rows in the demo tenant (`source_txn_ref='1397005766'` matches fixture row-1). Git-verified: 0 diff lines touching Iter147 files. Not an A-1 defect. **Deferred to Iter147 hygiene backlog.**
+- **444 leftover demo-tenant FinTxn test rows** — natural exhaust from Iter150A-1 test suite runs (source docs cleaned up; projected legs orphaned). TEST-HYGIENE + Iter150A-2 source delete-cascade concern. Not user-facing. **Deferred to Iter150A-2 write-hook implementation.**
+
+### Iter150A-1 · Fix trail (post-lock reference)
+- **UAT-fix #1 (RESOLVED)**: Legacy Iter39/40 `Trip.customer_receipts` without `id` are now projected via deterministic positional fallback `idx{n}`. `ref_source_key` becomes `trip_customer_receipt:{trip_id}:idx{n}:{leg}`. Receipts with explicit `id` remain byte-precise. Idempotent. Added 2 focused tests → 33/33 A-1 PASS.
+
+### Binding product principle
+ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO MANUAL RECONCILIATION.
+
+---
+
 ## 🟡 Iter150A-1 · TRUKVIA Financial Control Foundation — READY FOR UAT (2026-02-11)
 
 **Status: 🟡 READY FOR UAT. NOT LOCKED.** Backend-only foundation. No UI, no write-path hooks, no changes to Iter133–149 business logic.
