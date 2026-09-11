@@ -26,6 +26,8 @@ from models import Vendor, VendorPayment, now_utc, new_id
 from auth import get_current_user
 from company import _active_company_id
 from audit import _log_audit, _diff_dict
+# Iter150A-2 Phase 2 · post-write FinTxn projection hook (never raises).
+from services_fin_txn_hooks import hook_after_source_write
 
 router = APIRouter(prefix="/api")
 
@@ -209,6 +211,8 @@ async def create_vendor_payment(vid: str, payload: VendorPayment, request: Reque
                          "vendor_payment", "create", doc["id"], ven.get("name", ""), "", {})
     except Exception:
         pass
+    # Iter150A-2 Phase 2 hook (never raises; failures land in fin_hook_failures).
+    await hook_after_source_write(uid, cid, "vendor_payment", doc["id"])
     doc.pop("_id", None); doc.pop("user_id", None)
     return doc
 
@@ -233,6 +237,8 @@ async def update_vendor_payment(vid: str, pid: str, payload: VendorPayment, requ
                          "vendor_payment", "update", pid, "", "", _diff_dict(before, after))
     except Exception:
         pass
+    # Iter150A-2 Phase 2 hook.
+    await hook_after_source_write(uid, cid, "vendor_payment", pid)
     after.pop("_id", None); after.pop("user_id", None)
     return after
 
@@ -261,4 +267,6 @@ async def delete_vendor_payment(
                          "vendor_payment", "delete", pid, "", reason, {})
     except Exception:
         pass
+    # Iter150A-2 Phase 2 hook — A-1 projection short-circuits on is_deleted → stale legs removed.
+    await hook_after_source_write(uid, cid, "vendor_payment", pid)
     return {"ok": True}

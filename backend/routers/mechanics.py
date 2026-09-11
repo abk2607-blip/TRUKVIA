@@ -11,6 +11,8 @@ from models import Mechanic, MechanicPayment, now_utc, new_id
 from auth import get_current_user
 from company import _active_company_id
 from audit import _log_audit, _diff_dict
+# Iter150A-2 Phase 2 · post-write FinTxn projection hook (never raises).
+from services_fin_txn_hooks import hook_after_source_write
 
 router = APIRouter(prefix="/api")
 
@@ -190,6 +192,8 @@ async def create_mechanic_payment(mid: str, payload: MechanicPayment, request: R
                          "mechanic_payment", "create", doc["id"], mec.get("name", ""), "", {})
     except Exception:
         pass
+    # Iter150A-2 Phase 2 hook (never raises; failures land in fin_hook_failures).
+    await hook_after_source_write(uid, cid, "mechanic_payment", doc["id"])
     doc.pop("_id", None); doc.pop("user_id", None)
     return doc
 
@@ -214,6 +218,8 @@ async def update_mechanic_payment(mid: str, pid: str, payload: MechanicPayment, 
                          "mechanic_payment", "update", pid, "", "", _diff_dict(before, after))
     except Exception:
         pass
+    # Iter150A-2 Phase 2 hook.
+    await hook_after_source_write(uid, cid, "mechanic_payment", pid)
     after.pop("_id", None); after.pop("user_id", None)
     return after
 
@@ -242,4 +248,6 @@ async def delete_mechanic_payment(
                          "mechanic_payment", "delete", pid, "", reason, {})
     except Exception:
         pass
+    # Iter150A-2 Phase 2 hook — A-1 projection short-circuits on is_deleted → stale legs removed.
+    await hook_after_source_write(uid, cid, "mechanic_payment", pid)
     return {"ok": True}
