@@ -1,6 +1,55 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
 
+## 🔒 Iter150A-2 · Phase 3A — Expense Router Hooks — LOCKED (2026-02-11)
+
+**STATUS: 🔒 LOCKED**
+**UAT: PASS**
+**PHASE-3A TESTS: 20 / 20**
+**A-1 TESTS: 33 / 33**
+**PHASE-1 TESTS: 14 / 14**
+**PHASE-2 TESTS: 15 / 15**
+**LIVE E2E: 71 / 71**
+**LOCKED-BAND REGRESSION: 121 pass / 1 skip / 0 fail**
+**BLOCKERS: NONE**
+**MAJOR ISSUES: NONE**
+
+### Locked scope (7 router hook sites + 1 helper)
+- `backend/routers/expenses.py` :: `create_expense` / `update_expense` / `delete_expense` / `update_quick_diesel_expense` / `link_toll_expense_to_trip`
+- `backend/routers/fuel_import.py` :: `create_manual_fuel_expense` / `correct_fleet_card_expense_vehicle`
+- `backend/services_expense_linkage_hooks.py` :: `refresh_linked_paired_sources` (linkage-change-only cross-reprojection helper; imports ONLY `hook_after_source_write` from Phase-1; contains zero projection logic; treats `is_deleted`/`is_reversed` as effective-unlink)
+
+### Verified semantics
+- Every listed mutation calls `hook_after_source_write(uid, cid, "expense", eid)` AFTER the authoritative write + audit log. Hook is non-raising; failures queue in `fin_hook_failures`.
+- `refresh_linked_paired_sources(before, after)` fires ONLY when `vendor_bill_id` OR `mechanic_work_order_id` effectively changes. Unchanged linkage → no cross-fire.
+- Paired VendorBill / MechanicWO transitions (paired → orphan / orphan → paired) refresh correctly. Exactly-one Expense-side accounting movement across every paired case.
+- Iter149 `PATCH /toll-trip` and Iter147 `PATCH /fleet-card-vehicle` refresh denorm fields only (`trip_id`, `vehicle_id`) with zero accounting delta and stable `source_key`/`source_type`/`source_txn_ref`.
+- Day Book (`/api/fin/day-book`) and Account balances reflect every mutation without any manual `/api/fin/reproject`.
+
+### Lock covenants (binding)
+1. Do not modify Phase-3A code after lock.
+2. Do not modify Iter150A-1 locked files.
+3. Do not modify Phase-1 locked files.
+4. Do not modify Phase-2 locked files.
+5. Do not install Phase-3B service hooks (`services_quick_expense.py`, `services_fuel_import.py`, `services_toll_import.py`, `services_expense_bridge.py`) yet.
+6. Do not install VendorBill / MechanicWO primary router hooks yet (Phase 4).
+7. Do not start Invoice / CN-DN hooks.
+8. Do not start Wallet writes / Iter150B.
+9. Do not start Day Closing / Reconciliation Center.
+10. Do not start Razorpay.
+11. Do not add an Expense reversal workflow (no live setter exists).
+12. Do not add background retry, advisory locks, or in-process dedupe.
+
+### Deferred (out of Phase-3A scope · DO NOT FIX NOW)
+- 2 pre-existing Iter147 IOCL fixture failures — PRE-EXISTING / OUT OF SCOPE. Not reproducing in current fork state; classification and fixtures remain untouched.
+- Phase 3B: service-level hooks for `services_quick_expense.bulk_create_operational_expenses`, `services_fuel_import.commit_rows`, `services_toll_import.commit_rows`, `services_expense_bridge.sync_trip_expenses_to_canonical` / `delete_trip_canonical_expenses` / `unlink_operator_expenses_on_trip_delete`.
+- Phase 4+: primary write-path hooks on VendorBill, MechanicWorkOrder, Invoice, CN/DN, Trip customer_receipts.
+
+### Binding product principle
+ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO MANUAL RECONCILIATION.
+
+---
+
 ## 🔒 Iter150A-2 · Phase 2 — Party Payment Write Hooks — LOCKED (2026-02-11)
 
 **STATUS: 🔒 LOCKED**
