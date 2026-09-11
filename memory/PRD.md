@@ -1,6 +1,58 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
 
+## 🔒 Iter150A-2 · Phase 2 — Party Payment Write Hooks — LOCKED (2026-02-11)
+
+**STATUS: 🔒 LOCKED**
+**UAT: PASS**
+**PHASE-2 TESTS: 15 / 15**
+**PHASE-1 TESTS: 14 / 14**
+**A-1 TESTS: 33 / 33**
+**LIVE E2E: 68 / 68**
+**LOCKED-BAND REGRESSION: 121 pass / 1 skip / 0 fail (better than baseline in this fork)**
+**BLOCKERS: NONE**
+**MAJOR ISSUES: NONE**
+
+### Locked scope (9 hook sites)
+- `routers/suppliers.py` :: `create_payment` / `update_payment` / `delete_payment`
+- `routers/vendors.py`   :: `create_vendor_payment` / `update_vendor_payment` / `delete_vendor_payment`
+- `routers/mechanics.py` :: `create_mechanic_payment` / `update_mechanic_payment` / `delete_mechanic_payment`
+
+Each mutation calls `hook_after_source_write(uid, cid, <source_type>, <source_id>)` AFTER the authoritative insert/update and audit log. Hook is non-raising: failures land in `fin_hook_failures` while the source document remains committed.
+
+### Verified semantics
+- CREATE → exactly 2 FinTxn legs (payable + bank/cash), correct account codes, direction=in on payable / out on money side, correct amount, date, party_id, source identity.
+- UPDATE → old projection removed, new projection replaces it (amount/date/mode reflected). Money-side switches when payment mode changes (e.g., Bank → Cash).
+- DELETE (soft) → all projected legs removed; source retains `is_deleted=True` (authoritative).
+- REVERSE → `is_reversed=True` short-circuits A-1 projection → legs removed while source stays authoritative.
+- IDEMPOTENCY → double-hook / repeated update / repeated replay all produce exactly 2 stable legs with stable `ref_source_key`.
+- FAILURE QUEUE → forced failure records a `pending` row without touching source; subsequent replay resolves it and produces exactly 2 legs; second replay is a no-op.
+- TENANT ISOLATION → same `(source_type, source_id)` under two `user_id`s stays strictly separated (verified by pytest `test_8_tenant_isolation_same_source_id`).
+- DAY BOOK / ACCOUNTS → `/api/fin/day-book` and account-code aggregates reflect every mutation immediately, with NO manual `/api/fin/reproject` required.
+
+### Lock covenants (binding)
+1. Do not modify Phase-2 implementation after lock.
+2. Do not modify Iter150A-1 locked files.
+3. Do not modify Phase-1 locked files.
+4. Do not add any new payment hooks in this scope.
+5. Do not modify unrelated Iter133–149 logic.
+6. Do not start Phase 3 in this step.
+7. Do not add Expense hooks yet (Phase 3 scope).
+8. Do not add Wallet writes yet (Iter150B).
+9. Do not add Razorpay yet (parked).
+10. Preserve failure queue, replay, idempotency and tenant-isolation behavior.
+
+### Deferred (out of Phase-2 scope · DO NOT FIX NOW)
+- 2 pre-existing Iter147 IOCL fixture failures — PRE-EXISTING / OUT OF SCOPE. Not touched during Phase-2. (Not reproducing in current fork state; documentation retained.)
+- Expense projection hooks — Phase 3.
+- Invoice / CN-DN / secondary mutation hooks — Phase 4.
+- Bill / WO / Trip customer_receipts hooks — Phase 5.
+
+### Binding product principle
+ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO MANUAL RECONCILIATION.
+
+---
+
 ## 🔒 Iter150A-2 · Phase 1 — Hook Foundation + Failure Queue — LOCKED (2026-02-11)
 
 **STATUS: 🔒 LOCKED**
