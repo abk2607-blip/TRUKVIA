@@ -1,21 +1,24 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
 
-## 🟢 Iter150A-2 · Phase 3B-ii-b — Trip DELETE Bridge Hooks — IMPLEMENTATION COMPLETE (2026-02-11)
+## 🔒 Iter150A-2 · Phase 3B-ii-b — Trip DELETE Bridge Hooks — LOCKED (2026-02-11)
 
-**STATUS: READY FOR PHASE 3B-ii-b UAT (not yet locked)**
+**STATUS: 🔒 LOCKED**
+**UAT: PASS**
+**LOCK-CLEARANCE: PASS**
+**LOCKED COMMIT: `84e5717`**
 **PHASE-3B-ii-b TESTS: 26 / 26**
-**A-1 TESTS: 33 / 33 (baseline preserved)**
-**PHASE-1 TESTS: 14 / 14 (baseline preserved)**
-**PHASE-2 TESTS: 15 / 15 (baseline preserved)**
-**PHASE-3A TESTS: 20 / 20 (baseline preserved)**
-**PHASE-3B-i TESTS: 24 / 24 non-perf + perf_1000 passed (perf_2000 hits 240s pytest timeout — pre-existing baseline behaviour, unrelated to Phase 3B-ii-b)**
-**PHASE-3B-ii-a TESTS: 21 / 21 (baseline preserved)**
-**LOCKED-BAND: Iter147 (70 pass / 1 skip / 0 fail) · Iter148+149 (51 pass / 0 fail) — baseline preserved**
+**A-1 TESTS: 33 / 33**
+**PHASE-1 TESTS: 14 / 14**
+**PHASE-2 TESTS: 15 / 15**
+**PHASE-3A TESTS: 20 / 20**
+**PHASE-3B-i TESTS: 23 / 23 non-perf + perf_1000 PASS · perf_2000 = accepted pre-existing 240s pytest-cap (identical to Phase-3B-ii-a lock baseline; NOT a new regression)**
+**PHASE-3B-ii-a TESTS: 21 / 21**
+**LOCKED-BAND: 121 pass / 1 skip / 0 fail (Iter147 49/0/0 · Iter148+149 72/0/1) — baseline preserved**
 **BLOCKERS: NONE**
 **MAJOR ISSUES: NONE**
 
-### Implemented scope (2 hook sites, single file — `services_expense_bridge.py`)
+### Locked scope (2 hook sites, single file — `services_expense_bridge.py`)
 
 - **B3 · `delete_trip_canonical_expenses(uid, cid, tid, reason)`**
   1. Pre-collect affected active Expense IDs via tenant-scoped `find({user_id, company_id, source_trip_id: tid, is_deleted:{$ne:True}})` → local per-call `set[str]` (defensive dedupe).
@@ -27,7 +30,7 @@
   2. Execute the existing `update_many` (only `trip_id → ""`, plus `modified_by/at`).
   3. Loop affected IDs → `await hook_after_source_write(uid, cid, "expense", eid)`. A-1 refreshes `FinTxn.trip_id` denorm; **ZERO accounting delta** (amount / account / source identity / vehicle unchanged).
 
-### Set-safety proof
+### Set-safety proof (frozen)
 - **Set A** (`source_trip_id == tid`) and **Set B** (`source_trip_id != tid` AND `trip_id == tid`) are structurally disjoint by filter (verified by test #10).
 - Local `set[str]` accumulator inside each function guards against accidental duplicate hook dispatch (verified by test #11 static-check + test #12 post-state).
 - No global cache, no TTL, no scheduler, no advisory lock, no threading/asyncio.Lock (verified by test #26 forbidden-token scan).
@@ -52,15 +55,25 @@
 - Phase 3B-i bulk imports untouched by Trip DELETE (test #23).
 - A-1 immutability: bridge does not re-export `reproject_source` / `SUPPORTED_SOURCE_TYPES` (test #25).
 
-### Test file created
+### Test file (locked)
 - `backend/tests/test_iter150a2_phase3b_ii_b_trip_delete_hooks.py` (26 cases: B3 soft-delete, B3 leg-clear, source audit, hook-per-id, FASTag survive/unlink, Set A/B disjoint, local dedupe, mixed 5+2 trip, failure queue B3/B4 via in-process direct invocation, subprocess replay, idempotency, tenant isolation, Day Book, Accounts, Iter149/Phase-3A/3B-i/3B-ii-a compat, A-1 immutability, locked-band forbidden-token scan.)
 
-### Files changed
+### Files in lock scope
 1. `backend/services_expense_bridge.py` — B3 + B4 functions upgraded with pre-collection + hook dispatch. NO other function in the file touched.
 2. `backend/tests/test_iter150a2_phase3b_ii_b_trip_delete_hooks.py` — NEW.
 
-### Awaiting
-User's explicit UAT-gate command before locking Phase 3B-ii-b in PRD.
+### Git scope at lock time
+```
+backend/services_expense_bridge.py                             |  65 ± (B3 + B4 only)
+backend/tests/test_iter150a2_phase3b_ii_b_trip_delete_hooks.py | 930 + (NEW)
+2 files changed, 990 insertions(+), 5 deletions(-)
+```
+Locked-band files diff (must be 0): `services_fin_txn.py`, `services_fin_txn_hooks.py`, `routers/trips.py`, `models.py`, `routers/expenses.py`, `services.py` — **all 0 diff**.
+
+### Post-lock state
+- No code / test / branding / integration modifications performed during locking.
+- Phase 4 NOT started.
+- No automatic continuation triggered.
 
 
 ## 🔒 Iter150A-2 · Phase 3B-ii-a — Trip Bridge (CREATE / UPDATE) Hooks — LOCKED (2026-02-11)
