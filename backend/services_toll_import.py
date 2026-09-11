@@ -31,6 +31,9 @@ from typing import Any, Optional
 
 from db import db
 
+# Iter150A-2 Phase 3B-i · service-level Expense hook (import path).
+from services_fin_txn_hooks import hook_after_source_write
+
 MAX_ROWS_P0 = 2000
 POSSIBLE_DUP_AMOUNT_TOL = 0.02      # ±2 %
 POSSIBLE_DUP_DATE_WINDOW_DAYS = 1
@@ -472,6 +475,8 @@ async def commit_rows(uid: str, cid: str, vendor: str,
         created += 1
         doc.pop("_id", None); doc.pop("user_id", None)
         results.append({**base, "status": "created", "expense_id": doc["id"]})
+        # Iter150A-2 Phase 3B-i · fire hook only after successful insert.
+        await hook_after_source_write(uid, cid, "expense", doc["id"])
 
     return {
         "batch_id": batch_id, "vendor": vendor,

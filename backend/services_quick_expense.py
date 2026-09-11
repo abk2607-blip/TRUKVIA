@@ -18,6 +18,7 @@ from pymongo.errors import DuplicateKeyError
 
 from db import db
 from models import Expense, now_utc, new_id
+from services_fin_txn_hooks import hook_after_source_write
 
 
 # Server-authoritative whitelist. Frontend hiding is not sufficient.
@@ -249,6 +250,9 @@ async def bulk_create_operational_expenses(uid: str, cid: str, user: dict,
         doc.pop("_id", None); doc.pop("user_id", None)
         results.append({"client_row_id": row_id, "status": "created",
                         "expense": doc}); created += 1
+        # Iter150A-2 Phase 3B-i · fire hook only after successful insert.
+        # Non-raising; failures land in fin_hook_failures.
+        await hook_after_source_write(uid, cid, "expense", doc["id"])
 
     return {"batch_id": batch_id, "date": date, "category": category,
             "created": created, "duplicate": duplicate, "failed": failed,
