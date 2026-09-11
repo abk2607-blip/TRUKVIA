@@ -25,6 +25,8 @@ from models import Expense, now_utc
 from auth import get_current_user
 from company import _active_company_id
 from audit import _log_audit, _diff_dict
+from services_fin_txn_hooks import hook_after_source_write
+from services_expense_linkage_hooks import refresh_linked_paired_sources
 
 router = APIRouter(prefix="/api")
 
@@ -216,6 +218,10 @@ async def create_expense(payload: Expense, request: Request, user=Depends(get_cu
                          "expense", "create", doc["id"], doc.get("category", ""), "", {})
     except Exception:
         pass
+    # Iter150A-2 Phase 3A hook — non-raising; failures land in fin_hook_failures.
+    await hook_after_source_write(uid, cid, "expense", doc["id"])
+    # Cross-reproject linked VendorBill / MechanicWO so paired/orphan state stays consistent.
+    await refresh_linked_paired_sources(uid, cid, None, doc)
     doc.pop("_id", None); doc.pop("user_id", None)
     return doc
 
@@ -257,6 +263,9 @@ async def update_expense(eid: str, payload: Expense, request: Request, user=Depe
                          "expense", "update", eid, before.get("category", ""), "", _diff_dict(before, after))
     except Exception:
         pass
+    # Iter150A-2 Phase 3A hook.
+    await hook_after_source_write(uid, cid, "expense", eid)
+    await refresh_linked_paired_sources(uid, cid, before, after)
     after.pop("_id", None); after.pop("user_id", None)
     return after
 
@@ -302,6 +311,10 @@ async def delete_expense(
                          "expense", "delete", eid, doc.get("category", ""), reason, {})
     except Exception:
         pass
+    # Iter150A-2 Phase 3A hook — A-1 short-circuits on is_deleted; linked
+    # VB / WO transition paired → orphan and must refresh.
+    await hook_after_source_write(uid, cid, "expense", eid)
+    await refresh_linked_paired_sources(uid, cid, doc, {**doc, "is_deleted": True})
     return {"ok": True}
 
 
@@ -393,6 +406,10 @@ async def update_quick_diesel_expense(
                          _diff_dict(before, after))
     except Exception:
         pass
+    # Iter150A-2 Phase 3A hook — amount/party may change; no linkage change
+    # possible on this endpoint, but helper is no-op when linkage unchanged.
+    await hook_after_source_write(uid, cid, "expense", eid)
+    await refresh_linked_paired_sources(uid, cid, before, after)
     after.pop("_id", None); after.pop("user_id", None)
     return after
 
@@ -534,6 +551,11 @@ async def link_toll_expense_to_trip(
         )
     except Exception:
         pass
+
+    # Iter150A-2 Phase 3A hook — only trip_id changes; FinTxn.trip_id denorm
+    # refreshes; amount/account unchanged. No linkage change on this endpoint.
+    await hook_after_source_write(uid, cid, "expense", eid)
+    await refresh_linked_paired_sources(uid, cid, before, after)
 
     after.pop("_id", None); after.pop("user_id", None)
     return {

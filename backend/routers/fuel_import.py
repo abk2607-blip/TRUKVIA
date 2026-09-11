@@ -21,6 +21,8 @@ from auth import get_current_user
 from company import _active_company_id
 from models import FuelVehicleMap, Expense, now_utc, new_id
 from audit import _log_audit, _diff_dict
+from services_fin_txn_hooks import hook_after_source_write
+from services_expense_linkage_hooks import refresh_linked_paired_sources
 from services_fuel_import import (
     parse_fuel_file, build_preview, commit_rows, unified_fuel_log,
     MAX_ROWS_P0, make_source_key, _content_key,
@@ -230,6 +232,9 @@ async def create_manual_fuel_expense(request: Request, body: dict = Body(...),
     doc["created_at"] = now_utc().isoformat()
     doc["is_deleted"] = False
     await db.expenses.insert_one(doc)
+    # Iter150A-2 Phase 3A hook — manual Diesel Expense projects via A-1.
+    await hook_after_source_write(uid, cid, "expense", doc["id"])
+    await refresh_linked_paired_sources(uid, cid, None, doc)
     doc.pop("_id", None); doc.pop("user_id", None)
     return doc
 
@@ -340,6 +345,11 @@ async def correct_fleet_card_expense_vehicle(
         )
     except Exception:
         pass
+
+    # Iter150A-2 Phase 3A hook — vehicle_id denorm refresh only; no
+    # accounting delta; helper is a no-op (no linkage change).
+    await hook_after_source_write(uid, cid, "expense", eid)
+    await refresh_linked_paired_sources(uid, cid, before, after)
 
     # Opt-in only: persist / update the FuelVehicleMap so FUTURE imports
     # auto-resolve this source_vehicle_ref to the corrected vehicle.
