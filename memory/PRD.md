@@ -1,13 +1,16 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
 
-## Iter150F · Reconciliation Center — READY FOR UAT (2026-02-13)
+## 🔒 Iter150F · Reconciliation Center — LOCKED (2026-02-13)
 
-**STATUS: IMPLEMENTATION COMPLETE · PENDING OWNER UAT / LOCK-CLEARANCE**
-**PARENT (Iter150E lock): `54237519de160f06307df8052410d7bc056e0f17`**
+**STATUS: 🔒 LOCKED**
+**LOCK-CLEARANCE UAT: 28 backend PASS · 8 Jest PASS · 11 browser PASS · 0 FAIL · 0 Iter150F-attributable defect**
+**PARENT COMMIT (Iter150E lock): `54237519de160f06307df8052410d7bc056e0f17`**
 **LOCKED BASELINE (Iter150D): `a7a3997ac275c69454b6a4de7e4aa9533a9d32f2`**
 **MODEL: A · READ-ONLY LIVE COMPARATOR · 8 domains (A–H)**
-**PROTECTED 14-FILE BYTE-DIFF SINCE `a7a3997`: 0**
+**PROTECTED 14-FILE BYTE-DIFF SINCE `a7a3997`: 0 across all 14 files**
+**ITER150E-REVERTED 6 PDF FILES BYTE-DIFF SINCE `54237519`: 0**
+**BLOCKERS: NONE · MAJOR ISSUES: NONE · DEVIATIONS: NONE**
 
 ### Scope
 
@@ -22,14 +25,15 @@ Frozen tolerances: `FIN_ABS_EPS = 0.01`, `AR_REL_TOLERANCE = 0.05`, `AR_MIN_ABS 
 
 ### Files
 
-**New (5):**
+**New (6):**
 1. `backend/services_reconciliation.py`
 2. `backend/routers/fin_reconciliation.py`
 3. `frontend/src/pages/FinReconciliation.jsx`
 4. `backend/tests/test_iter150f_reconciliation_reads.py`
 5. `frontend/src/__tests__/iter150f.reconciliation_shell.test.js`
+6. `backend/tests/test_iter150f_uat_matrix.py` (UAT harness · 17 tests)
 
-**Amended additively (5):** `backend/server.py`, `frontend/src/App.js`, `frontend/src/components/Layout.jsx`, `memory/PRD.md`, `design_guidelines.md`.
+**Amended additively (5):** `backend/server.py` (+2 · router mount), `frontend/src/App.js` (+2 · route), `frontend/src/components/Layout.jsx` (+1 · nav item), `memory/PRD.md`, `design_guidelines.md`.
 
 ### Domains
 
@@ -39,9 +43,15 @@ A · Source ↔ FinTxn · B · Expense total · C · AR vs balance_due (5% toler
 
 New sidebar link `nav-fin-reconciliation` → `/fin/reconciliation`. 20 new page-level testids. Ember `#FD7800` only on the Rebuild CTA focus outline. Semantic rose/emerald/amber preserved.
 
+### Test coverage summary
+
+- **Backend** — `test_iter150f_reconciliation_reads.py` (11 tests) + `test_iter150f_uat_matrix.py` (17 tests) = **28 / 28 PASS** on `pytest -n0`. Covers: 3-endpoint contract shape · unknown-domain 400 · pagination 422 boundaries · Domain-A missing/ghost/orphan legs → cleared after `reproject` · Domain-B `EXPENSE_DEFAULT` ε=0.01 boundary · Domain-C 5% amber / >5% rose tolerance bands · Domain-D issued CN total match · Domain-E wallet round-trip · Domain-F unpaired/double-paired vendor_bill invariants · Domain-G pending/permanently-failed statuses · Domain-H late-entry drift is amber + snapshot never mutated · authentication required (unauth → 401) · tenant isolation · business-date filtering (no `created_at`) · 18-pattern forbidden-write source-scan · 45-call no-write invariant · reproject-endpoint compatibility · router `/api` prefix registration · locked-band 0-diff vs Iter150E lock.
+- **Frontend Jest** — `iter150f.reconciliation_shell.test.js` (8 tests) = **8 / 8 PASS**. Covers: nav item + path · 27 prior nav testids preserved verbatim · exactly 28 unique nav testids · `/fin/reconciliation` route → `FinReconciliation` · 20 authorised page testids · BD-5 amber banner copy verbatim · empty-state copy · palette guard (ember-only, no purple/violet/indigo/framer-motion/react-i18next).
+- **Browser / Playwright UAT** — 11 / 11 PASS on live authenticated demo tenant.
+
 ### Awaiting
 
-Owner UAT / Lock-Clearance authorisation. **No commit performed. Iter150G NOT started.**
+Iter150F is 🔒 **LOCKED**. **Iter150G / Iter150F-v2 NOT started.**
 
 ---
 
