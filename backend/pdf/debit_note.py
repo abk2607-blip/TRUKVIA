@@ -208,7 +208,7 @@ def build_debit_note_pdf(company, customer, invoice, note):
         ]))
         story.append(rcm_box)
     story.append(Spacer(1, 3*mm))
-    story.append(Paragraph("TRUKVIA · Computer-generated document · Valid without physical signature.", muted))
+    story.append(Paragraph("Computer-generated document · Valid without physical signature.", muted))
     story.append(Spacer(1, 10*mm))
 
     sig = Table([["", Paragraph(f"<b>For {(company or {}).get('name','')}</b><br/><br/><br/>Authorised Signatory", small)]],

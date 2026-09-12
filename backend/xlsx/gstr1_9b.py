@@ -64,7 +64,7 @@ def _apply_widths(ws, widths):
 def _build_summary(ws, company: dict, payload: dict):
     ws.cell(row=1, column=1, value=company.get("name", "")).font = Font(bold=True, size=14)
     ws.cell(row=2, column=1, value=(
-        f"GSTR-1 §9B · CN/DN Register  ·  {payload['month']}  ·  "
+        f"TRUKVIA · GSTR-1 §9B · CN/DN Register  ·  {payload['month']}  ·  "
         f"GSTIN {payload.get('issuer_gstin') or '—'}  ·  "
         f"generated {datetime.now(timezone.utc).strftime('%d-%b-%Y %H:%M UTC')}"
     )).font = Font(italic=True, color="475569")

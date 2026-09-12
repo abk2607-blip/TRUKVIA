@@ -958,7 +958,7 @@ async def supplier_statement_pdf(
         canvas.setFillColor(PALETTE["muted"])
         canvas.setFont(_UNI_FONT, 7.5)
         canvas.drawString(m_l, m_bot + 1.5 * mm,
-                          f"Generated {now_utc().strftime('%Y-%m-%d %H:%M UTC')}  ·  {company.get('name','')}")
+                          f"TRUKVIA  ·  Supplier Statement  ·  Generated {now_utc().strftime('%Y-%m-%d %H:%M UTC')}  ·  {company.get('name','')}")
         canvas.drawRightString(page_w - m_r, m_bot + 1.5 * mm,
                                f"Page {doc_.page}")
         canvas.restoreState()
@@ -2007,7 +2007,7 @@ async def lr_register_pdf(
         canvas.line(m_l, page_h - m_top - 13*mm, page_w - m_r, page_h - m_top - 13*mm)
         canvas.setFont(_UNI_FONT, 7); canvas.setFillColor(PALETTE["sub"])
         canvas.drawString(m_l, m_bot,
-                          f"Generated {datetime.now(timezone.utc).astimezone().strftime('%d-%b-%Y %H:%M')}"
+                          f"TRUKVIA  ·  Monthly LR Register  ·  Generated {datetime.now(timezone.utc).astimezone().strftime('%d-%b-%Y %H:%M')}"
                           f"  ·  {(co['name'] or '')[:60]}  ·  Confidential")
         canvas.drawRightString(page_w - m_r, m_bot, f"Page {doc_.page}")
         canvas.restoreState()

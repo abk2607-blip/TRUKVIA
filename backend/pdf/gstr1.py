@@ -116,7 +116,7 @@ class NumberedCanvas(Canvas):
         pw, _ = landscape(A4)
         self.drawCentredString(
             pw / 2, 8 * mm,
-            f"TRUKVIA {_DOT} GSTR-1 {_SECTION}9A {_DOT} Invoice Register {_DOT} Computer-generated {_DOT} "
+            f"GSTR-1 {_SECTION}9A {_DOT} Invoice Register {_DOT} Computer-generated {_DOT} "
             f"Page {self._pageNumber} of {total} {_DOT} Printed {stamp} UTC {_DOT} "
             f"NOT a GST portal upload file",
         )
