@@ -898,6 +898,10 @@ class SupplierPayment(BaseModel):
     # snapshot captured at post-time. Empty defaults preserve legacy compat.
     bank_account_id: str = ""
     bank_snapshot: dict = Field(default_factory=dict)
+    # Iter150H · additive — company source-bank linkage + immutable snapshot
+    # captured at post-time. Empty defaults preserve legacy compat.
+    company_bank_account_id: str = ""
+    source_bank_snapshot: dict = Field(default_factory=dict)
     # Audit
     created_by: str = ""
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
@@ -1175,6 +1179,9 @@ class VendorPayment(BaseModel):
     # Iter150G · additive — beneficiary PartyBankAccount linkage + snapshot.
     bank_account_id: str = ""
     bank_snapshot: dict = Field(default_factory=dict)
+    # Iter150H · additive — company source-bank linkage + snapshot.
+    company_bank_account_id: str = ""
+    source_bank_snapshot: dict = Field(default_factory=dict)
     # Iter133 · Turn 2C — correction / reversal support (append-only audit).
     corrected_at: str = ""
     corrected_by: str = ""
@@ -1214,6 +1221,9 @@ class MechanicPayment(BaseModel):
     # Iter150G · additive — beneficiary PartyBankAccount linkage + snapshot.
     bank_account_id: str = ""
     bank_snapshot: dict = Field(default_factory=dict)
+    # Iter150H · additive — company source-bank linkage + snapshot.
+    company_bank_account_id: str = ""
+    source_bank_snapshot: dict = Field(default_factory=dict)
     # Iter133 · Turn 2C — correction / reversal support.
     corrected_at: str = ""
     corrected_by: str = ""

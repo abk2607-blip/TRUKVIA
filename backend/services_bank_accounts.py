@@ -31,6 +31,21 @@ def snapshot_from_party_bank(pba: dict) -> Dict[str, str]:
     }
 
 
+def snapshot_from_company_bank(cba: dict) -> Dict[str, str]:
+    """Iter150H · Build the frozen immutable source-bank snapshot dict — never
+    includes full account number. Keys are exactly the five approved keys:
+    bank_name, masked_number, ifsc, branch, holder_name."""
+    return {
+        "bank_name": cba.get("bank_name", ""),
+        "masked_number": cba.get("masked_display") or mask_account_number(
+            cba.get("account_number", "")
+        ),
+        "ifsc": cba.get("ifsc", ""),
+        "branch": cba.get("branch", ""),
+        "holder_name": cba.get("account_holder_name", ""),
+    }
+
+
 async def find_active_party_bank(
     uid: str, party_type: str, party_id: str, bank_account_id: str
 ) -> Optional[dict]:

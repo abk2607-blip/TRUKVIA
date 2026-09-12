@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Handshake, Plus, Users, Truck, Wallet, FileText, AlertCircle, TrendingUp, Download, Printer, MessageCircle, Trash2, X, Edit3, Search } from "lucide-react";
 import SearchableSelect from "@/components/SearchableSelect";
 import DuplicateMasterModal, { parseDuplicateError } from "@/components/DuplicateMasterModal";
+import CompanySourceBankSelector from "@/components/CompanySourceBankSelector";
 
 const inputCls = "w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none bg-white";
 const labelCls = "text-[10px] uppercase font-bold text-zinc-500 tracking-wider mb-1 block";
@@ -599,6 +600,7 @@ const EMPTY_PAY = {
   date: new Date().toISOString().slice(0, 10),
   amount: "", mode: "NEFT", ref_no: "", against: "outstanding", trip_id: "", lr_number: "", remarks: "",
   type: "payment_out",
+  company_bank_account_id: "",
 };
 
 function SupplierPayments() {
@@ -681,6 +683,13 @@ function SupplierPayments() {
               <div>
                 <label className={labelCls}>LR / Trip No.</label>
                 <input data-testid="sp-lr" value={draft.lr_number} onChange={(e) => setDraft({ ...draft, lr_number: e.target.value })} className={inputCls} placeholder="Optional" />
+              </div>
+              <div className="md:col-span-2">
+                <label className={labelCls}>Company Source Bank (optional)</label>
+                <CompanySourceBankSelector
+                  value={draft.company_bank_account_id}
+                  onChange={(v) => setDraft({ ...draft, company_bank_account_id: v })}
+                />
               </div>
               <div className="md:col-span-2">
                 <label className={labelCls}>Remarks</label>

@@ -3,6 +3,7 @@ import { useMutation, useQueryClient, useQuery } from "@tanstack/react-query";
 import { api, errMsg } from "@/api";
 import { toast } from "sonner";
 import { X } from "lucide-react";
+import CompanySourceBankSelector from "./CompanySourceBankSelector";
 
 /**
  * Iter133 · Turn 3 · Slice A — Reusable Payment Quick-Entry Drawer.
@@ -46,6 +47,7 @@ export default function PaymentDrawer({
     against: prefill.billOrWo ? (isVendor ? "bill" : "work_order") : "outstanding",
     linked_id: prefill.billOrWo?.id || "",
     remarks: "",
+    company_bank_account_id: "",
   });
   const [form, setForm] = useState(initialForm());
   useEffect(() => { if (open) setForm(initialForm()); /* eslint-disable-next-line */ }, [open, partyId]);
@@ -72,6 +74,7 @@ export default function PaymentDrawer({
         if (isVendor) body.vendor_bill_id = form.linked_id;
         else body.mechanic_work_order_id = form.linked_id;
       }
+      if (form.company_bank_account_id) body.company_bank_account_id = form.company_bank_account_id;
       return (await api.post(url, body)).data;
     },
     onSuccess: (data) => {
@@ -158,6 +161,12 @@ export default function PaymentDrawer({
               </select>
             </F>
           </div>
+          <F label="Company Source Bank (optional)">
+            <CompanySourceBankSelector
+              value={form.company_bank_account_id}
+              onChange={(v) => setForm((f) => ({ ...f, company_bank_account_id: v }))}
+            />
+          </F>
           <F label="Remarks">
             <input data-testid="payment-remarks" value={form.remarks}
               onChange={(e) => setForm((f) => ({ ...f, remarks: e.target.value }))} className={ic} />

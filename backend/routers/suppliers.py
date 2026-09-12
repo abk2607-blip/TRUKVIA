@@ -336,6 +336,18 @@ async def create_payment(sid: str, payload: SupplierPayment, request: Request, u
         doc["bank_snapshot"] = snapshot_from_party_bank(pba)
     else:
         doc["bank_snapshot"] = {}
+    # Iter150H · company source-bank snapshot capture (additive).
+    if doc.get("company_bank_account_id"):
+        from services_bank_accounts import (
+            find_active_company_bank, snapshot_from_company_bank,
+        )
+        cba = await find_active_company_bank(uid, cid, doc["company_bank_account_id"])
+        if not cba:
+            raise HTTPException(status_code=400,
+                                detail="Company bank account is not active or is cross-tenant")
+        doc["source_bank_snapshot"] = snapshot_from_company_bank(cba)
+    else:
+        doc["source_bank_snapshot"] = {}
     await db.supplier_payments.insert_one(doc)
     try:
         await _log_audit({"user_id": uid, "company_id": cid}, "supplier_payment", "create", doc["id"], sup.get("name", ""), "", {})

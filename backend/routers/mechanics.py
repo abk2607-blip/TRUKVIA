@@ -199,6 +199,18 @@ async def create_mechanic_payment(mid: str, payload: MechanicPayment, request: R
         doc["bank_snapshot"] = snapshot_from_party_bank(pba)
     else:
         doc["bank_snapshot"] = {}
+    # Iter150H · company source-bank snapshot capture (additive).
+    if doc.get("company_bank_account_id"):
+        from services_bank_accounts import (
+            find_active_company_bank, snapshot_from_company_bank,
+        )
+        cba = await find_active_company_bank(uid, cid, doc["company_bank_account_id"])
+        if not cba:
+            raise HTTPException(status_code=400,
+                                detail="Company bank account is not active or is cross-tenant")
+        doc["source_bank_snapshot"] = snapshot_from_company_bank(cba)
+    else:
+        doc["source_bank_snapshot"] = {}
     await db.mechanic_payments.insert_one(doc)
     try:
         await _log_audit({"user_id": uid, "company_id": cid, "email": user.get("email", ""), "name": user.get("name", "")},
