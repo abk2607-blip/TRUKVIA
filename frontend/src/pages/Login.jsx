@@ -1,7 +1,7 @@
 import React from "react";
 import { useAuth } from "@/context/AuthContext";
 import { Navigate } from "react-router-dom";
-import { Truck, ShieldCheck, FileText, IndianRupee, Loader2, RefreshCw, WifiOff } from "lucide-react";
+import { ShieldCheck, TrendingUp, Landmark, Loader2, RefreshCw, WifiOff } from "lucide-react";
 
 const HERO_IMG = "/images/bitumen-tanker-hero.jpg";
 
@@ -31,35 +31,104 @@ export default function Login() {
 
   return (
     <div className="min-h-screen grid md:grid-cols-2 bg-white" data-testid="login-page">
-      {/* Left hero */}
-      <div className="relative hidden md:block overflow-hidden grain">
-        <img src={HERO_IMG} alt="Bitumen tanker on Indian highway" className="absolute inset-0 w-full h-full object-cover" />
-        <div className="absolute inset-0 bg-gradient-to-br from-black/60 via-black/30 to-black/70" />
-        <div className="relative z-10 h-full flex flex-col justify-between p-10 text-white">
+      {/* Left brand wall — Iter150E · Option A · Clean & Clear.
+          The truck hero remains visible in the lower half of the panel
+          via a masked fade, but never dominates the TRUKVIA lock-up. */}
+      <div
+        className="relative hidden md:flex flex-col overflow-hidden bg-white"
+        data-testid="login-brand-wall"
+      >
+        {/* Subtle ember-tinted top glow to keep the panel warm without
+            invoking a dark-mode surface. */}
+        <div
+          aria-hidden="true"
+          className="absolute inset-x-0 top-0 h-1/2 pointer-events-none"
+          style={{
+            background:
+              "radial-gradient(ellipse at 50% -20%, rgba(253,120,0,0.10), rgba(253,120,0,0) 65%)",
+          }}
+        />
+        {/* Truck hero — mounted at the bottom, height-clamped and
+            softly faded into the panel background at the top so the
+            TRUKVIA logo above is never overpowered. */}
+        <div className="absolute inset-x-0 bottom-0 h-[52%] pointer-events-none">
+          <img
+            src={HERO_IMG}
+            alt="Bitumen tanker on Indian highway"
+            className="w-full h-full object-cover object-center"
+            style={{
+              WebkitMaskImage:
+                "linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.35) 22%, rgba(0,0,0,0.85) 55%, black 100%)",
+              maskImage:
+                "linear-gradient(to bottom, transparent 0%, rgba(0,0,0,0.35) 22%, rgba(0,0,0,0.85) 55%, black 100%)",
+            }}
+          />
+          {/* Warm sunset wash preserved on the darker truck band so
+              the ember token feels earned, not decorative. */}
+          <div
+            aria-hidden="true"
+            className="absolute inset-0"
+            style={{
+              background:
+                "linear-gradient(to top, rgba(253,120,0,0.10) 0%, rgba(253,120,0,0) 55%)",
+            }}
+          />
+        </div>
+
+        {/* Content column */}
+        <div className="relative z-10 flex flex-1 flex-col justify-between px-12 pt-14 pb-10">
           <div>
+            {/* Brand lock-up — the raster derivative is the authoritative
+                trademark artwork; TM + geometry preserved verbatim. */}
             <img
               src="/brand/trukvia-login-mark.png"
-              alt="TRUKVIA"
-              className="h-14 w-auto mb-6 drop-shadow-[0_2px_8px_rgba(0,0,0,0.55)]"
+              alt="TRUKVIA — Trademark"
+              className="h-20 w-auto"
               data-testid="login-brand-mark"
             />
-            <div className="text-[11px] uppercase tracking-[0.3em] font-bold opacity-90"
-                 style={{ textShadow: "0 1px 3px rgba(0,0,0,0.55)" }}>TRUKVIA · Accounting Suite</div>
-            <h1 className="mt-3 text-5xl font-black tracking-tighter leading-[0.95]"
-                style={{ textShadow: "0 2px 8px rgba(0,0,0,0.6), 0 1px 2px rgba(0,0,0,0.7)" }}>
-              <span className="telugu">బిటుమెన్</span><br />ట్రాన్స్‌పోర్ట్<br />
-              <span style={{ color: "#FD7800" }}>అకౌంటింగ్.</span>
+            <div className="mt-3 flex items-center gap-3">
+              <span
+                aria-hidden="true"
+                className="h-[2px] w-10 rounded-full"
+                style={{ backgroundColor: "#FD7800" }}
+              />
+              <span className="text-[11px] uppercase tracking-[0.32em] font-bold text-zinc-500">
+                Accounting Suite
+              </span>
+            </div>
+
+            {/* Brand message — zinc-950 heading with a single ember
+                emphasis mark, matching the "Built for …" direction. */}
+            <h1 className="mt-10 text-[42px] leading-[1.05] font-black tracking-tight text-zinc-950">
+              Built for<br />
+              Bitumen Transporters<span style={{ color: "#FD7800" }}>.</span>
             </h1>
-            <p className="mt-4 text-sm opacity-90 max-w-sm"
-               style={{ textShadow: "0 1px 3px rgba(0,0,0,0.55)" }}>
-              GST invoicing, trip logs, expense tracking &amp; receivables — built for road transporters.
+            <p className="mt-5 max-w-md text-sm text-zinc-600 leading-relaxed">
+              GST Invoicing &nbsp;·&nbsp; Trip Logs &nbsp;·&nbsp; Expense Tracking
+              <br />
+              Receivables &nbsp;·&nbsp; Payables &nbsp;·&nbsp; Financial Control
             </p>
           </div>
-          <div className="grid grid-cols-2 gap-4 text-xs">
-            <Feature icon={Truck} te="ట్రిప్ లాగింగ్" en="Trip logging" />
-            <Feature icon={FileText} te="GST ఇన్వాయిస్" en="GST invoices" />
-            <Feature icon={IndianRupee} te="బాకీ ట్రాకింగ్" en="Receivables" />
-            <Feature icon={ShieldCheck} te="సురక్షితం" en="Secure" />
+
+          {/* Pill row — three restrained capability chips (Option A
+              bottom rail) rendered on translucent white so they sit
+              cleanly over the truck's fade band. */}
+          <div className="relative">
+            <div className="grid grid-cols-3 gap-3 max-w-md">
+              <Pill icon={ShieldCheck} label="Reliable Operations" />
+              <Pill icon={Landmark}    label="Accurate Accounting" />
+              <Pill icon={TrendingUp}  label="Stronger Business" />
+            </div>
+            <div className="mt-6 flex items-center gap-3">
+              <span
+                aria-hidden="true"
+                className="h-[2px] w-10 rounded-full"
+                style={{ backgroundColor: "#FD7800" }}
+              />
+              <span className="text-[10px] uppercase tracking-[0.28em] font-bold text-zinc-500">
+                Keep the wheels of business moving
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -166,14 +235,15 @@ export default function Login() {
   );
 }
 
-function Feature({ icon: Icon, te, en }) {
+function Pill({ icon: Icon, label }) {
   return (
-    <div className="flex items-start gap-2 border border-white/20 p-3 rounded-sm bg-white/5">
-      <Icon size={18} strokeWidth={1.5} />
-      <div>
-        <div className="telugu text-sm font-semibold">{te}</div>
-        <div className="text-[10px] opacity-70">{en}</div>
-      </div>
+    <div
+      className="flex items-center gap-2 px-3 py-2.5 bg-white/85 backdrop-blur border border-zinc-200 rounded-sm shadow-[0_1px_2px_rgba(0,0,0,0.04)]"
+    >
+      <Icon size={16} strokeWidth={1.9} color="#FD7800" />
+      <span className="text-[11px] font-bold text-zinc-800 leading-tight">
+        {label}
+      </span>
     </div>
   );
 }
