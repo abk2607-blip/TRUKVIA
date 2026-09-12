@@ -387,7 +387,7 @@ function SupplierForm() {
         </div>
       </div>
 
-      <BankAccountsSection kind="party" partyType="supplier" partyId={editing?.id || form?.id || ""} />
+      <BankAccountsSection kind="party" partyType="supplier" partyId={sid || form?.id || ""} />
 
       <div className="border border-zinc-200 bg-white rounded-sm p-4">
         <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 mb-3">Terms &amp; Opening Balance</div>
