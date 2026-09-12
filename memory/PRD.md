@@ -1,15 +1,17 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
 
-## 🟡 Iter150D · Day Closing — READY FOR UAT · NOT LOCKED (2026-02-13)
+## 🔒 Iter150D · Day Closing — LOCKED (2026-02-13)
 
-**STATUS: 🟡 READY FOR LOCK-CLEARANCE. NOT LOCKED.** Path A (soft v1 · UI + reason convention · no locked-writer amendment).
+**STATUS: 🔒 LOCKED** · Path A (soft v1 · UI + reason convention · zero locked-writer amendments).
 **PARENT COMMIT (Iter150C lock): `2bb4c2462dcefcdc9a5296e7baf592edb1ae95f5`** (short: `2bb4c24`)
-**ITER150D UAT: 66 / 66 PASS · 0 skip · 0 fail (`pytest -n0`, 78.60s)**
-**ITER150C+B LOCKED-FILE BYTE-DIFF SINCE `2bb4c24`: 0 across all 14 protected files**
+**IMPLEMENTATION HEAD (pre-lock): `70a173c96f15d1d2492093900ca7a1332302f884`** (short: `70a173c`)
+**ITER150D UAT: 66 / 66 PASS · 0 skip · 0 fail (`pytest -n0`, 23.61s)**
+**LOCK-CLEARANCE: PASS** (Final Lock-Clearance Report 2026-02-13 · 8/8 checks green · 12/12 business rules verified · 0 deviations · 0 residual blockers)
+**ITER150C+B LOCKED-BAND BYTE-DIFF SINCE `2bb4c24`: 0 across all 14 protected files**
 **BLOCKERS: NONE · MAJOR ISSUES: NONE**
 
-### Delivered scope
+### Locked scope
 
 Iter150D introduces a **financial-control checkpoint** — Day Closing — that snapshots per-account totals at close time and surfaces any legs that project after close as *Late Entries Since Close*. **NOT a data-entry lock**: every one of the 13 canonical source types remains fully enterable for any past business date, even after that day is closed.
 
@@ -87,13 +89,36 @@ tests/test_iter150d_day_closing_reads.py   36 / 36 PASS
 
 ### Awaiting
 
-Owner Lock-Clearance authorization. No automatic lock. No automatic continuation into Iter150E / Branding / UI/UX / Mobile / Integrations.
+Owner Lock-Clearance authorization — **RECEIVED 2026-02-13**. Locked.
 
-### Binding product principle preserved
+### Lock covenants (binding)
+
+1. Do not modify Iter150D implementation after lock.
+2. Do not modify Iter150A-1 / Phase-1..5 / Iter150B / Iter150C locked files (14 protected files remain byte-preserved).
+3. Do not extend `_COLL_MAP` / `SUPPORTED_SOURCE_TYPES` — Iter150D is strictly checkpoint + late-entry read on top of the frozen canonical set.
+4. Do not add any writer path from `fin_day_closing.py` to `fin_txn`. Zero direct `fin_txn` mutations.
+5. Do not introduce scheduler / cache / lock / background-task constructs in `fin_day_closing.py`.
+6. Do not add PDF / advanced approval workflow / maker-checker / fiscal-period aggregation in v1 — deferred.
+7. Do not tighten delete-after-close to a hard backend guard without a fresh owner authorisation of a Path B locked-writer amendment.
+8. Do not start Iter150E (Reconciliation Center) / Branding / UI-UX / Mobile / Integrations.
+
+### Path A · soft-control limitation (transparent record)
+
+Backend hard enforcement of "owner-only + mandatory reason on delete when source date is in a closed period" is **NOT** implemented in v1. This is a documented soft control. Existing per-source DELETE role gates (owner / admin depending on router) remain unchanged. Hard enforcement is deferred to a future Iter150D-v2 with an explicit locked-writer amendment authorisation (Path B) at the owner's discretion.
+
+### Post-lock state
+
+- Iter150D application/test scope frozen at HEAD `70a173c`.
+- 14 previously locked files: 0 byte-diff since `2bb4c24`.
+- No code / test / branding / integration modifications performed during locking.
+- Iter150E · Branding · UI-UX · Mobile · Integrations — **all NOT STARTED**.
+- No automatic continuation triggered.
+
+### Binding product principle
 
 `ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO MANUAL RECONCILIATION.`
 
-Any past business date remains enterable. Late entries remain traceable. Snapshot preserves the "as-of close" position.
+Day Closing is a checkpoint on top of the canonical projection. Never a second accounting system. Never an entry lock.
 
 ---
 
