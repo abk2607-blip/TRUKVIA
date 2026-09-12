@@ -1,6 +1,51 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
 
+## Iter150F · Reconciliation Center — READY FOR UAT (2026-02-13)
+
+**STATUS: IMPLEMENTATION COMPLETE · PENDING OWNER UAT / LOCK-CLEARANCE**
+**PARENT (Iter150E lock): `54237519de160f06307df8052410d7bc056e0f17`**
+**LOCKED BASELINE (Iter150D): `a7a3997ac275c69454b6a4de7e4aa9533a9d32f2`**
+**MODEL: A · READ-ONLY LIVE COMPARATOR · 8 domains (A–H)**
+**PROTECTED 14-FILE BYTE-DIFF SINCE `a7a3997`: 0**
+
+### Scope
+
+3 new GET endpoints (tenant-scoped, business-date filtered, `Depends(get_current_user)`):
+- `GET /api/fin/reconciliation/summary?from=&to=`
+- `GET /api/fin/reconciliation/domain/{A..H}?from=&to=&page=&size=`
+- `GET /api/fin/reconciliation/mismatch/{domain}/{key}`
+
+Corrective action: existing owner-only `POST /api/fin/reproject` (Iter150C, unchanged). No new write endpoint. No new collection. No `FinTxn.reconciled_at` / `reconciled_ref` writes.
+
+Frozen tolerances: `FIN_ABS_EPS = 0.01`, `AR_REL_TOLERANCE = 0.05`, `AR_MIN_ABS = 1.00`.
+
+### Files
+
+**New (5):**
+1. `backend/services_reconciliation.py`
+2. `backend/routers/fin_reconciliation.py`
+3. `frontend/src/pages/FinReconciliation.jsx`
+4. `backend/tests/test_iter150f_reconciliation_reads.py`
+5. `frontend/src/__tests__/iter150f.reconciliation_shell.test.js`
+
+**Amended additively (5):** `backend/server.py`, `frontend/src/App.js`, `frontend/src/components/Layout.jsx`, `memory/PRD.md`, `design_guidelines.md`.
+
+### Domains
+
+A · Source ↔ FinTxn · B · Expense total · C · AR vs balance_due (5% tolerance) · D · CN/DN by kind · E · Wallet balance vs live · F · Payable paired invariant · G · Projection Health (fin_hook_failures) · H · Day Closing snapshot ↔ live (**AMBER-only** · BD-5).
+
+### Frontend
+
+New sidebar link `nav-fin-reconciliation` → `/fin/reconciliation`. 20 new page-level testids. Ember `#FD7800` only on the Rebuild CTA focus outline. Semantic rose/emerald/amber preserved.
+
+### Awaiting
+
+Owner UAT / Lock-Clearance authorisation. **No commit performed. Iter150G NOT started.**
+
+---
+
+
 ## 🔒 Iter150E · Brand Shell & PDF Parity — LOCKED (2026-02-13)
 
 **STATUS: 🔒 LOCKED**

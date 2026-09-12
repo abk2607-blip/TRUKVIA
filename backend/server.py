@@ -72,6 +72,7 @@ from routers import (
     fin_source_lookup as fin_source_lookup_r,
     # Iter150D · Day Closing (financial-control checkpoint · owner-only writer)
     fin_day_closing as fin_day_closing_r,
+    fin_reconciliation as fin_reconciliation_r,
 )
 
 ROOT_DIR = Path(__file__).parent
@@ -156,6 +157,7 @@ for r in (
     fin_source_lookup_r,
     # Iter150D · Day Closing
     fin_day_closing_r,
+    fin_reconciliation_r,
 ):
     app.include_router(r.router)
 

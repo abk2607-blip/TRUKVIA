@@ -43,6 +43,7 @@ import TripTemplates from "@/pages/TripTemplates";
 import FinDayBook from "@/pages/FinDayBook";
 import FinAccountLedger from "@/pages/FinAccountLedger";
 import FinDayClosing from "@/pages/FinDayClosing";
+import FinReconciliation from "@/pages/FinReconciliation";
 import Layout from "@/components/Layout";
 
 function Protected({ children }) {
@@ -114,6 +115,7 @@ function AppRouter() {
       <Route path="/fin/accounts" element={<Navigate to="/fin/accounts/BANK_DEFAULT" replace />} />
       <Route path="/fin/accounts/:code" element={<Protected><FinAccountLedger /></Protected>} />
       <Route path="/fin/day-closing" element={<Protected><FinDayClosing /></Protected>} />
+      <Route path="/fin/reconciliation" element={<Protected><FinReconciliation /></Protected>} />
       <Route path="/settings" element={<Protected><Settings /></Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

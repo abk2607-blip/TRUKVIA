@@ -212,3 +212,9 @@ untouched.
 Any deviation from the tokens, exclusions, sidebar shape, PDF chrome
 scope, or approved copy in this document requires a fresh Business-
 Design Confirmation gate signed by the owner.  No silent drift.
+
+---
+
+## 13 · Iter150F Addendum · Reconciliation Center
+
+Reconciliation adds one new Financials sidebar link (`nav-fin-reconciliation`, path `/fin/reconciliation`). All 27 existing Iter150E nav testids remain unchanged. The page follows the standard 5-section grammar, uses the semantic rose/emerald/amber palette for status chips, and applies ember `#FD7800` only on the Rebuild CTA focus outline. Domain H (Day Closing snapshot drift) is always AMBER — never rose — per BD-5. Frozen banner copy: *"Day Closing snapshots do not auto-refresh after late entries. Reopen the day to re-close if you want the snapshot updated."* Iter150F is READ-ONLY: no new write endpoint, no persisted review state, no `FinTxn.reconciled_at` writes.
