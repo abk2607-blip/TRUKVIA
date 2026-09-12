@@ -1271,6 +1271,90 @@ class PaymentCorrection(BaseModel):
 
 
 # ============================================================================
+# Iter150B · Wallet Financial Surfaces — Authoritative source documents.
+# ----------------------------------------------------------------------------
+# Additive-only per Iter150B implementation authorisation. Wallet documents
+# are the sole source of truth for Wallet Recharge / Transfer / Adjustment.
+# Canonical projection into FinTxn is driven by hook_after_source_write(...)
+# in the wallet routers — routers MUST NOT touch fin_txn directly.
+# ============================================================================
+
+
+class WalletRecharge(BaseModel):
+    """Iter150B · Wallet Recharge — BANK/CASH → WALLET.
+
+    Canonical projection legs (see services_fin_txn.project_wallet_recharge):
+      wallet_code            debit  amount   (← funding account credit)
+      _mode_account(mode)    credit amount   (Bank → BANK_DEFAULT, Cash → CASH)
+
+    Business date (`date`) is independent of `created_at`; backdated
+    entry is allowed. Soft-delete via `is_deleted=True` clears legs
+    through the hook's delete-then-insert reproject cycle.
+    """
+    id: str = Field(default_factory=lambda: new_id("wr_"))
+    company_id: str = ""
+    wallet_code: Literal["WALLET_FASTAG", "WALLET_FUEL"]
+    funding_mode: Literal["Bank", "Cash"]
+    amount: float
+    date: str
+    reference: str = ""
+    remarks: str = ""
+    is_deleted: bool = False
+    created_by: str = ""
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+
+
+class WalletTransfer(BaseModel):
+    """Iter150B · Wallet-to-Wallet Transfer — 2-leg direct (no contra).
+
+    Canonical projection legs (see services_fin_txn.project_wallet_transfer):
+      source_wallet_code       credit  amount  (money leaves the source)
+      destination_wallet_code  debit   amount  (money lands in the destination)
+
+    Same-wallet transfer is rejected at the router layer AND defensively
+    skipped in projection. No cross-company transfer — every read/write
+    is scoped by (user_id, company_id).
+    """
+    id: str = Field(default_factory=lambda: new_id("wt_"))
+    company_id: str = ""
+    source_wallet_code: Literal["WALLET_FASTAG", "WALLET_FUEL"]
+    destination_wallet_code: Literal["WALLET_FASTAG", "WALLET_FUEL"]
+    amount: float
+    date: str
+    reference: str = ""
+    remarks: str = ""
+    is_deleted: bool = False
+    created_by: str = ""
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+
+
+class WalletAdjustment(BaseModel):
+    """Iter150B · Wallet Adjustment — real financial adjustment.
+
+    Canonical projection legs (see services_fin_txn.project_wallet_adjustment):
+      direction="increase" →  wallet_code   debit   + SUSPENSE credit
+      direction="decrease" →  wallet_code   credit  + SUSPENSE debit
+
+    Reversal is APPEND-ONLY: a NEW WalletAdjustment is created with
+    `reverses_id` set to the original id and opposite direction. The
+    original doc is never mutated; both stay projected → net zero effect
+    while preserving full history + audit trail.
+    """
+    id: str = Field(default_factory=lambda: new_id("wa_"))
+    company_id: str = ""
+    wallet_code: Literal["WALLET_FASTAG", "WALLET_FUEL"]
+    direction: Literal["increase", "decrease"]
+    amount: float
+    date: str
+    reason: str
+    reference: str = ""
+    reverses_id: str = ""
+    is_deleted: bool = False
+    created_by: str = ""
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+
+
+# ============================================================================
 # Iter150A-1 · TRUKVIA Financial Control Foundation — Projection layer
 # ----------------------------------------------------------------------------
 # STRICT ARCHITECTURAL BOUNDARY:

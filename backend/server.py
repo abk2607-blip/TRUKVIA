@@ -64,6 +64,10 @@ from routers import (
     toll_import as toll_import_r,
     # Iter150A-1 · TRUKVIA Financial Control Foundation (read-only + owner reproject)
     fin_day_book as fin_day_book_r,
+    # Iter150B · Wallet Financial Surfaces (recharge / transfer / adjustment)
+    wallet_recharges as wallet_recharges_r,
+    wallet_transfers as wallet_transfers_r,
+    wallet_adjustments as wallet_adjustments_r,
 )
 
 ROOT_DIR = Path(__file__).parent
@@ -142,6 +146,8 @@ for r in (
     toll_import_r,
     # Iter150A-1 · Financial Control Foundation (read-only)
     fin_day_book_r,
+    # Iter150B · Wallet Financial Surfaces
+    wallet_recharges_r, wallet_transfers_r, wallet_adjustments_r,
 ):
     app.include_router(r.router)
 

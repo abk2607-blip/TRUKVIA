@@ -648,6 +648,131 @@ def project_trip_customer_receipts(trip: dict) -> List[dict]:
     return legs
 
 
+# ── Iter150B · Wallet projections ────────────────────────────────────────
+
+def project_wallet_recharge(wr: dict) -> List[dict]:
+    """WalletRecharge — BANK/CASH → WALLET.
+
+    Legs (frozen per Iter150B implementation authorisation):
+      wallet_code            debit  amount   ← funding account credit
+      _mode_account(funding_mode)  credit amount   ← wallet debit
+
+    Skips on `is_deleted` or `amount <= 0`. Idempotent under the frozen
+    UNIQUE (user_id, company_id, ref_source_key) invariant.
+    """
+    if wr.get("is_deleted"):
+        return []
+    amt = _q2(wr.get("amount") or 0)
+    if amt <= 0:
+        return []
+    date = wr.get("date") or ""
+    wallet_code = wr.get("wallet_code") or ""
+    funding_mode = wr.get("funding_mode") or "Bank"
+    funding_code = _mode_account(funding_mode)
+    common = dict(
+        source_type="wallet_recharge",
+        source_id=wr["id"],
+        narration=f"Wallet recharge · {wr.get('reference', '')}".strip(" ·"),
+    )
+    return [
+        _leg(txn_date=date, account_code=wallet_code, direction="in",
+             amount=amt, counter_account_code=funding_code,
+             txn_type="wallet_recharge_in", ref_leg="wallet_debit", **common),
+        _leg(txn_date=date, account_code=funding_code, direction="out",
+             amount=amt, counter_account_code=wallet_code,
+             txn_type="wallet_recharge_in", ref_leg="funding_credit", **common),
+    ]
+
+
+def project_wallet_transfer(wt: dict) -> List[dict]:
+    """WalletTransfer — 2-leg direct wallet-to-wallet (no INTER_ACCOUNT).
+
+    Legs:
+      source_wallet_code       credit  amount   ← destination debit
+      destination_wallet_code  debit   amount   ← source credit
+
+    Defensive skip on same-wallet transfer (router already rejects it
+    with 422 at write time).
+    """
+    if wt.get("is_deleted"):
+        return []
+    amt = _q2(wt.get("amount") or 0)
+    if amt <= 0:
+        return []
+    src = wt.get("source_wallet_code") or ""
+    dst = wt.get("destination_wallet_code") or ""
+    if not src or not dst or src == dst:
+        return []
+    date = wt.get("date") or ""
+    common = dict(
+        source_type="wallet_transfer",
+        source_id=wt["id"],
+        narration=f"Wallet transfer {src} → {dst}",
+    )
+    return [
+        _leg(txn_date=date, account_code=src, direction="out",
+             amount=amt, counter_account_code=dst,
+             txn_type="wallet_transfer", ref_leg="src_credit", **common),
+        _leg(txn_date=date, account_code=dst, direction="in",
+             amount=amt, counter_account_code=src,
+             txn_type="wallet_transfer", ref_leg="dst_debit", **common),
+    ]
+
+
+def project_wallet_adjustment(wa: dict) -> List[dict]:
+    """WalletAdjustment — real financial adjustment against SUSPENSE.
+
+    Positive (direction="increase"):
+      wallet_code  debit   amount   ← SUSPENSE credit
+      SUSPENSE     credit  amount   ← wallet_code debit
+
+    Negative (direction="decrease"):
+      wallet_code  credit  amount   ← SUSPENSE debit
+      SUSPENSE     debit   amount   ← wallet_code credit
+
+    Reversal is expressed at the source-doc level (a separate WA with
+    `reverses_id` set) — this function does not distinguish reversals
+    from originals; both project identically with their own direction.
+    """
+    if wa.get("is_deleted"):
+        return []
+    amt = _q2(wa.get("amount") or 0)
+    if amt <= 0:
+        return []
+    wallet_code = wa.get("wallet_code") or ""
+    direction = wa.get("direction") or ""
+    if not wallet_code or direction not in ("increase", "decrease"):
+        return []
+    date = wa.get("date") or ""
+    sign = "+" if direction == "increase" else "−"
+    common = dict(
+        source_type="wallet_adjustment",
+        source_id=wa["id"],
+        narration=f"Wallet adjustment ({sign}) · {wa.get('reason', '')}".strip(" ·"),
+    )
+    if direction == "increase":
+        return [
+            _leg(txn_date=date, account_code=wallet_code, direction="in",
+                 amount=amt, counter_account_code="SUSPENSE",
+                 txn_type="wallet_adjustment_increase",
+                 ref_leg="wallet_debit", **common),
+            _leg(txn_date=date, account_code="SUSPENSE", direction="out",
+                 amount=amt, counter_account_code=wallet_code,
+                 txn_type="wallet_adjustment_increase",
+                 ref_leg="suspense_credit", **common),
+        ]
+    return [
+        _leg(txn_date=date, account_code=wallet_code, direction="out",
+             amount=amt, counter_account_code="SUSPENSE",
+             txn_type="wallet_adjustment_decrease",
+             ref_leg="wallet_credit", **common),
+        _leg(txn_date=date, account_code="SUSPENSE", direction="in",
+             amount=amt, counter_account_code=wallet_code,
+             txn_type="wallet_adjustment_decrease",
+             ref_leg="suspense_debit", **common),
+    ]
+
+
 # ── Persist / reproject helpers ──────────────────────────────────────────
 
 async def _persist_legs(
@@ -823,6 +948,21 @@ async def reproject_source(
             {"user_id": uid, "company_id": cid, "id": source_id}, {"_id": 0})
         if trip:
             legs = project_trip_customer_receipts(trip)
+    elif source_type == "wallet_recharge":
+        doc = await db.wallet_recharges.find_one(
+            {"user_id": uid, "company_id": cid, "id": source_id}, {"_id": 0})
+        if doc:
+            legs = project_wallet_recharge(doc)
+    elif source_type == "wallet_transfer":
+        doc = await db.wallet_transfers.find_one(
+            {"user_id": uid, "company_id": cid, "id": source_id}, {"_id": 0})
+        if doc:
+            legs = project_wallet_transfer(doc)
+    elif source_type == "wallet_adjustment":
+        doc = await db.wallet_adjustments.find_one(
+            {"user_id": uid, "company_id": cid, "id": source_id}, {"_id": 0})
+        if doc:
+            legs = project_wallet_adjustment(doc)
     else:
         raise ValueError(f"unsupported source_type: {source_type}")
 
@@ -842,6 +982,10 @@ SUPPORTED_SOURCE_TYPES: List[str] = [
     "vendor_bill",
     "mechanic_work_order",
     "trip_customer_receipt",
+    # Iter150B · Wallet write-model (append-only reversal).
+    "wallet_recharge",
+    "wallet_transfer",
+    "wallet_adjustment",
 ]
 
 
@@ -930,6 +1074,13 @@ async def backfill_tenant(
                        needs_paired_check=True)
     await _iter_source("trips", "trip_customer_receipt",
                        project_fn=project_trip_customer_receipts)
+    # Iter150B · Wallet surfaces.
+    await _iter_source("wallet_recharges", "wallet_recharge",
+                       project_fn=project_wallet_recharge)
+    await _iter_source("wallet_transfers", "wallet_transfer",
+                       project_fn=project_wallet_transfer)
+    await _iter_source("wallet_adjustments", "wallet_adjustment",
+                       project_fn=project_wallet_adjustment)
 
     # ── Invariants / reconciliation. Fail loud on mismatch.
     invariants = await _run_invariants(uid, cid, dry_run=dry_run)
