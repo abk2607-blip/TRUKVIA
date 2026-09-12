@@ -1,6 +1,115 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
 
+## 🔒 Iter150A-2 · Phase 5 — Trip.customer_receipts Hooks + A-1 Prefix Cascade — LOCKED (2026-02-12)
+
+**STATUS: 🔒 LOCKED**
+**UAT: PASS**
+**LOCK-CLEARANCE: PASS**
+**PARENT COMMIT (Phase-4 lock): `aa465e044b373acec9984904f23013f9d21ca392`** (short: `aa465e0`)
+**PHASE-5 TESTS: 26 / 26**
+**A-1 TESTS: 33 / 33 · PHASE-1: 14 / 14 · PHASE-2: 15 / 15 · PHASE-3A: 20 / 20 · PHASE-3B-i: 23 non-perf + perf_1000 PASS (perf_2000 = accepted pre-existing 240s pytest-cap, unchanged) · PHASE-3B-ii-a: 21 / 21 · PHASE-3B-ii-b: 26 / 26 · PHASE-4: 82 / 82**
+**LOCKED-BAND: 121 pass / 1 skip / 0 fail (Iter147 49/0/0 · Iter148+149 72/0/1) — baseline preserved**
+**BLOCKERS: NONE · MAJOR ISSUES: NONE**
+
+### Locked scope
+Phase-5 wires `Trip.customer_receipts` into the canonical `FinTxn` projection via 6 write-path hooks in `backend/routers/trips.py` and one authorised A-1 micro-amendment in `backend/services_fin_txn.py` that adds a `{tid}:*` prefix cascade to `reproject_source` for `source_type="trip_customer_receipt"` — mirroring the frozen invoice_payment pattern. Without this cascade, `_delete_by_source` (exact-match on `source_id`) would miss stored legs whose `source_id="{tid}:{rid}"`, leaving stale projections after receipt removal or Trip DELETE.
+
+**6 Trip mutation hook sites in `routers/trips.py`:**
+1. `create_trip` — after `_log_audit(trip.create)`
+2. `update_trip` — after `_log_audit(trip.update)`, before `doc.pop("user_id")`
+3. `bulk_delete_trips` — inside the per-tid loop, after `_log_audit(trip.delete, bulk=True)`
+4. `delete_trip` — after `_log_audit(trip.delete)`
+5. `duplicate_trip` — after `_log_audit(trip.create, "Duplicated from …")`
+6. `quick_repeat_trip` — after `_log_audit(trip.create, "quick-repeat from …")`
+
+**Every hook invokes:** `hook_after_source_write(uid, cid, "trip_customer_receipt", tid)`. Non-raising; failures queue into `fin_hook_failures`.
+
+**No-hook sites (verified by grep):** `update_trip_customer_ref`, `trip_from_template`, `trip_import`, `log_field_override`, `regenerate_trip_lr`, `bulk_regenerate_lr`, `trip_lr_pdf`, `trip_lr_all_copies_zip`, `share_lr_whatsapp`, `eway_bill`, `get_trip`, `list_trips`, `export_trips`, `bulk_invoice_preflight`, `add/edit/delete_supplier_diesel_entry`, `add/edit/delete_supplier_advance_entry`, `trip_lr_preview`, `recurring_suggestions`, `create_share_link`, `public_invoice_pdf`, `trips_bulk_all_copies_zip`.
+
+### A-1 micro-amendment (authorised)
+`backend/services_fin_txn.py::reproject_source` — 8 additive lines only:
+```python
+if source_type == "trip_customer_receipt":
+    deleted += await _delete_by_source(
+        uid, cid, "trip_customer_receipt", f"{source_id}:*")
+```
+Placed immediately before the existing exact-match delete. `project_trip_customer_receipts`, the `{tid}:{rid}` source_id format, `SUPPORTED_SOURCE_TYPES`, and the invoice cascade are byte-identical to Phase-4 baseline.
+
+### Source-type / source-key matrix (frozen)
+| source_type | source_id | dispatch pattern |
+|---|---|---|
+| `trip_customer_receipt` | `{trip_id}` (hook payload) → legs stored with `{trip_id}:{rid}` or `{trip_id}:idx{n}` for legacy | single `hook_after_source_write` at each mutation site; A-1 prefix cascade clears every `{tid}:*` leg before re-projection |
+
+### Verified semantics (26 UAT tests)
+- **CREATE** (3 tests): 0 receipts → 0 legs; 1 receipt → 2 legs (BANK/CASH debit + CUSTOMER_ADVANCE credit); N receipts → 2N legs with disjoint `{tid}:{rid}` identity.
+- **MODE → ACCOUNT** (1 test): Bank→BANK_DEFAULT · Cash→CASH · UPI→BANK_DEFAULT; category denorm = receipt type (advance/diesel).
+- **UPDATE ADD** (1 test): new receipt legs appear alongside existing.
+- **UPDATE REMOVE** (1 test): obsolete `{tid}:{rid}` legs disappear — the case A-1 cascade unblocked. Explicit assertion: `count_documents({source_id: f"{t['id']}:r1"}) == 0`.
+- **UPDATE AMOUNT** (1 test): legs refresh in-place; source_id stable.
+- **UPDATE CHANGE ID** (1 test): old rid legs gone, new rid legs present.
+- **REORDER** (1 test): stable ids → zero duplication, refs identical.
+- **LEGACY IDX FALLBACK** (1 test): receipts without `id` → `{tid}:idx0`, `{tid}:idx1`.
+- **TRIP DELETE** (1 test): every `{tid}:{rid}` leg cleared via cascade.
+- **TRIP DELETE + Phase-3B bridge** (1 test): customer_receipt legs AND canonical Expense legs cleared without cross-interference.
+- **BULK DELETE** (1 test): per-tid hook fires inside the loop; legs cleared for every deleted Trip.
+- **DUPLICATE / QUICK-REPEAT** (2 tests): cloned Trip has its own projection under the NEW trip_id; source Trip legs untouched.
+- **IDEMPOTENCY** (1 test): 3× hook re-fire → identical ref-set.
+- **FAILURE QUEUE** (1 test): forced `reproject_source` failure → `fin_hook_failures` row `status=pending`; source Trip authoritative.
+- **REPLAY** (1 test): `python -m scripts.replay_fin_hook_failures --company-id … --user-id … --ignore-schedule` → `status=resolved`, legs restored.
+- **TENANT ISOLATION** (1 test): foreign-tenant `trip_customer_receipt` leg with same-shaped id is untouched by DELETE of our Trip.
+- **DAY BOOK** (1 test): `{t['id']}:r1` visible in `/api/fin/day-book?source_type=trip_customer_receipt`.
+- **ACCOUNTS** (1 test): CUSTOMER_ADVANCE net delta matches receipt total.
+- **PHASE-3B-ii-a / ii-b COMPAT** (1 test): Trip UPDATE that touches BOTH legacy expenses AND customer_receipts fires the Phase-3B-ii-a expense-bridge hooks AND the Phase-5 customer_receipt hook.
+- **ZERO DIRECT fin_txn WRITES** (test #22): forbidden-token scan in `routers/trips.py` — `db.fin_txn` / `fin_txn.insert` / `.update` / `.delete` all absent.
+- **HOOK COUNT** (test #23): exactly 7 refs to `hook_after_source_write` (6 sites + 1 import).
+- **A-1 IMMUTABILITY** (test #24): `trip_customer_receipt` still in `SUPPORTED_SOURCE_TYPES`; cascade line present; `source_id=f"{trip_id}:{rid}"` still emitted by `project_trip_customer_receipts`.
+- **LOCKED-BAND FORBIDDEN CONSTRUCTS** (test #26): no `asyncio.create_task`, `APScheduler`, `expire_after`, `cachetools`, `lru_cache`, `threading.Lock`, `asyncio.Lock` in `routers/trips.py`.
+
+### Files in lock scope (exactly 3)
+Production:
+1. `backend/services_fin_txn.py` (+8, authorised A-1 cascade)
+2. `backend/routers/trips.py` (+30, 6 hooks + 1 import)
+
+Tests (NEW):
+3. `backend/tests/test_iter150a2_phase5_trip_customer_receipt_hooks.py` (26 tests · 772 lines)
+
+**Locked-band files (0 diff since Phase-4 lock `aa465e0`):** `services_fin_txn_hooks.py`, `models.py`, `routers/expenses.py`, `services.py`, `services_expense_bridge.py`, `routers/invoices.py`, `routers/notes.py`, `routers/vendor_bills.py`, `routers/mechanic_work_orders.py`. All Iter133–149 files intact.
+
+**Direct `fin_txn` mutations in `routers/trips.py`: 0.**
+
+### Hook-wiring integrity (frozen at lock)
+- `routers/trips.py` — 7 refs (6 sites + 1 import)
+- `services_fin_txn.py` — cascade line present at `reproject_source` (line ~770)
+
+### Lock covenants (binding)
+1. Do not modify Phase-5 implementation after lock.
+2. Do not modify Iter150A-1 / Phase-1..4 locked files.
+3. Do not modify `project_trip_customer_receipts`, the `{tid}:{rid}` source_id format, or `SUPPORTED_SOURCE_TYPES`.
+4. Do not modify the invoice_payment cascade.
+5. Do not extend the cascade to other source_types in this lock (Iter150B / C / D / E scope).
+6. Do not add background retry, advisory locking, or in-process dedupe cache.
+7. Do not start Iter150B (Wallet writes) / Day Closing / Reconciliation / Razorpay.
+8. Do not start Branding / UI/UX / Mobile / Integrations.
+
+### Deferred (out of Phase-5 scope · DO NOT FIX NOW)
+- Iter150B: Wallet Recharge + Transfer + Adjustment write endpoints.
+- Iter150C: Source Ledgers UI (Account ledger drill-down).
+- Iter150D: Day Closing (Open/Closed status + backdate guard).
+- Iter150E: Reconciliation Center (6-bucket recon per source).
+- Branding · UI/UX makeover · Mobile · Integrations (Razorpay, Vahan, etc.).
+
+### Post-lock state
+- No code / test / branding / integration modifications performed during locking.
+- Iter150B/C/D/E · Branding · UI/UX · Mobile · Integrations — **all NOT STARTED**.
+- No automatic continuation triggered.
+
+### Binding product principle
+ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO MANUAL RECONCILIATION.
+
+---
+
+
 ## 🔒 Iter150A-2 · Phase 4 — Invoice + CN/DN + VendorBill + MechanicWO Hooks — LOCKED (2026-02-11)
 
 **STATUS: 🔒 LOCKED**
