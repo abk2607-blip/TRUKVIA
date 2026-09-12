@@ -1,6 +1,120 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
 
+## 🔒 Iter150I · DriverPayment · Driver Ledger → FinTxn Integration — LOCKED (2026-02-15)
+
+**STATUS: 🔒 LOCKED**
+**PARENT COMMIT (Iter150H lock): `a722778f71f6f8a6bf26691c97c1cf2e1eb62351`**
+**PROTECTED-BAND FOOTPRINT vs `a722778`:**
+- `backend/models.py` — authorised additive `+70 / -0` (≤ +75 ceiling)
+- `backend/services_fin_txn.py` — authorised additive `+25 / -0` (≤ +25 ceiling · at cap)
+- `backend/services_fin_txn_hooks.py` — `0 / 0` (≤ +3 ceiling)
+- All 28 other protected writer / service / component files — **0 byte diff**
+
+**GATE HISTORY**
+Discovery PASS · Business-Design PASS · Preflight PASS · Implementation PASS · Initial UAT FAIL (3 Class-A writer defects) · Targeted Fix-Up PASS · UAT Re-run PASS · Lock-Clearance PASS.
+
+### Scope
+
+Iter150I ships the canonical Driver Payment writer path: actual cash / bank / UPI disbursements to drivers now flow into the unified `FinTxn` ledger as a new `driver_payment` source type. The existing driver-ledger salary/settlement architecture is untouched and remains advisory-only. Trip.batta continues to route through `Expense(category="batta") → EXPENSE_DEFAULT`.
+
+**Business rules (frozen at lock)**
+- source_type = `driver_payment` · system account = `DRIVER_OUTFLOW` (seeded via idempotent `FIN_SYSTEM_ACCOUNTS.append(...)`).
+- 2-leg projection: Bank family → `DRIVER_OUTFLOW` debit + `BANK_DEFAULT` credit · Cash → `DRIVER_OUTFLOW` debit + `CASH` credit.
+- Modes: `Cash · Bank · UPI · IMPS · NEFT · RTGS · Cheque · Other` (all bank-family modes map to `BANK_DEFAULT` — no per-bank ledger accounts, no `DRIVER_PAYABLE`, no `_MODE_TO_ACCOUNT` redesign).
+- `against ∈ {advance, salary_settlement, reimbursement, other}` (exact enum, no additional values).
+- Beneficiary bank identity: `bank_account_id` + immutable `bank_snapshot` (Iter150G recipe).
+- Company source bank identity: `company_bank_account_id` + immutable `source_bank_snapshot` (Iter150H recipe).
+- Snapshots frozen at post-time; deactivating / renaming the underlying PBA/CBA never mutates historical snapshots.
+- Correction / reversal via `DriverPaymentCorrection` (new document — the existing `PaymentCorrection` literal is not extended).
+- Attribute correction (`/correct`) is cash-neutral: fin legs unchanged, before/after/diff + `correction_count` audit trail preserved.
+- Amount reversal (`/correct-amount`) is failure-safe: 5-step transactional flow with per-step compensating rollback restores the exact pre-operation state on any downstream failure. Original never left in a half-reversed state.
+- Salary-settlement advisory (`GET /drivers/{did}/salary-settlement-hint`) is advisory-only and NEVER blocks posting; existing `driver_ledger_entries` are read-only, never projected into `FinTxn`.
+- Permissions reuse existing `manage_bank_accounts` for owner + accountant. No new permission introduced.
+
+### Files locked (exactly 9)
+
+Production (5):
+1. `backend/models.py` (+70 additive · `DriverPayment`, `DriverPaymentCorrection`, `DRIVER_OUTFLOW` seed)
+2. `backend/services_fin_txn.py` (+25 additive · `project_driver_payment`, `SUPPORTED_SOURCE_TYPES` append, reproject shim)
+3. `backend/routers/driver_payments.py` (**NEW** · 304 lines · writer + correct + correct-amount + hint · Fix-Up applied)
+4. `backend/server.py` (+2 / −1 · additive mount)
+5. `frontend/src/pages/Drivers.jsx` (+8 · Payments button + drawer mount)
+
+Frontend (1):
+6. `frontend/src/components/DriverPaymentDrawer.jsx` (**NEW** · 154 lines)
+
+Tests (3):
+7. `backend/tests/test_iter150i_driver_payment.py` (**NEW** · 16 tests)
+8. `backend/tests/test_iter150i_fixup.py` (**NEW** · 12 tests A–L covering the 3 Class-A defect repairs + atomicity)
+9. `frontend/src/__tests__/iter150i.driver_payment_shell.test.js` (**NEW** · 10 tests)
+
+**Cumulative numstat vs `a722778`: `+1293 / −1`** (the single `−1` is the mount-tuple comma reflow inside `server.py`).
+
+### Fix-Up scope resolved at lock
+
+Three Class-A defects were caught in the Initial UAT and repaired under a strict `driver_payments.py` + new test-file additive gate:
+- **#1 · Company context header** — router now uses the platform-canonical `company._active_company_id(request, user)` (reads `X-Company-Id`, falls back to user's default company). Prior custom `X-Active-Company` shim removed.
+- **#2 · Server-generated id** — `doc["id"] = new_id("dpay_")`. Prior `DriverPayment().id` anti-pattern eliminated.
+- **#3 · Reversal atomicity** — `correct_driver_payment_amount` now runs a 5-step transactional flow with a nested `_compensate(...)` closure that performs repository-native compensating rollback (documented in the router docstring for Motor/MongoDB-standalone deployments that cannot provide cross-collection ACID). Business invariant proven: forced failure at any downstream step restores original `is_reversed`, `reversed_at`, `reversed_by`, `reversal_reason`, `correction_count`, `latest_correction_id`, and reprojected 2 fin legs; no replacement payment or `amount_reversal_new` audit orphan remains.
+
+### Test evidence at lock
+
+- `pytest -n0 tests/test_iter150i_fixup.py tests/test_iter150i_driver_payment.py` → **28 / 28 PASS**.
+- `yarn jest` (Iter150G / H / H2 / I shells) → **40 / 40 PASS**.
+- Full-scope UAT re-run: Cash / Bank / UPI / IMPS / NEFT / RTGS / Cheque / Other projection verified · snapshots immutable · salary advisory non-blocking · attribute correction cash-neutral · amount reversal happy path + forced-failure rollback + retry-after-rollback · idempotency (3× hook = 2 legs) · Day Book totals correct · Day Closing snapshot captures `DRIVER_OUTFLOW` + late-entry drift correct + snapshot immutable · RBAC 401/403 · batta unchanged · driver_ledger salary boundary preserved · Supplier / Vendor / Mechanic writer regression 200.
+- Class-C known stale-baseline (unchanged, DO NOT modify): `test_iter150g_bank_accounts.py::test_10_locked_band_zero_diff / test_11_models_diff_bounded` · `test_iter150h_source_bank.py::test_10_protected_13_zero_diff / test_11_models_bounded_diff` · `test_iter150f_reconciliation_reads.py::test_10_locked_band_zero_diff`. Each is a byte-parity assertion against a pre-Iter150I lock that grows via the ratified additive layer.
+- Class-D isolated flakes on batched-xdist forced-failure-queue / replay tests (Iter150B wallet_transfer / wallet_adjustment, Iter150A2 Phase-4 invoice / cn-dn, Phase-5 trip_customer_receipt): each verified PASS on `-n0` isolated re-run. Iter150B lock covenant applies verbatim.
+
+### Locked-band strict integrity (final verification at lock)
+
+```
+70   0   backend/models.py                (Iter150I authorised additive)
+25   0   backend/services_fin_txn.py      (Iter150I authorised additive · at ceiling)
+ 0   0   backend/services_fin_txn_hooks.py
+
+0-diff across all 28 other protected files:
+  routers/trips.py · routers/invoices.py · routers/notes.py · routers/vendor_bills.py
+  routers/mechanic_work_orders.py · routers/expenses.py · routers/wallet_recharges.py
+  routers/wallet_transfers.py · routers/wallet_adjustments.py · routers/fin_day_book.py
+  routers/fin_source_lookup.py · routers/fin_reconciliation.py · routers/fin_day_closing.py
+  routers/suppliers.py · routers/vendors.py · routers/mechanics.py
+  routers/party_bank_accounts.py · routers/company_bank_accounts.py · routers/driver_ledger.py
+  services.py · services_expense_bridge.py · services_bank_accounts.py
+  services_reconciliation.py · pdf_brand.py · models_bank.py
+  frontend/src/components/{PaymentDrawer,BankAccountsSection,CompanySourceBankSelector}.jsx
+```
+
+### Excluded scope (verified absent at lock)
+
+Razorpay · Bank-API adapter · provider integration · HMAC · UTR · webhook · Bank Statement Import · Maker-Checker · `DRIVER_PAYABLE` · per-bank ledger accounts · `_MODE_TO_ACCOUNT` redesign · profitability read model · FASTag deep-dive · Advanced Fuel · Tyre Management · vehicle-lifecycle · SupplierPayment correction parity · invoice PDF changes · reconciliation semantic redesign · Day Closing semantic redesign · bank-master redesign · driver salary → FinTxn projection · driver outstanding register.
+
+### Documented downstream limitations (Class-C · locked · not part of Iter150I)
+
+- **Iter150C** `routers/fin_source_lookup.py::_COLL_MAP` does not include `driver_payment` → `GET /fin/source/driver_payment/{id}` and `/fin/source-legs/driver_payment/{id}` return 400. Locked Iter150C router; requires a future additive Iter150C-v2 gate.
+- **Iter150F** `services_reconciliation.SOURCE_TO_COLL` + `SOURCE_DATE_FIELD` do not include `driver_payment` → Domain-A silently skips it. Locked Iter150F service; requires a future additive Iter150F-v2 gate.
+
+### Lock covenants (binding)
+
+1. Do not modify any Iter150I file after lock without a fresh authorisation gate.
+2. Do not extend `SUPPORTED_SOURCE_TYPES`, `_MODE_TO_ACCOUNT`, or introduce `DRIVER_PAYABLE` under Iter150I authority.
+3. Do not project existing `driver_ledger_entries` (salary / monthly settlement) into `FinTxn` — the advisory is read-only.
+4. Do not modify `Trip.batta` handling.
+5. Do not amend `PaymentDrawer.jsx` under Iter150I authority.
+6. Do not amend Iter150C `_COLL_MAP` or Iter150F recon maps under Iter150I authority — those are ratified downstream additive extensions requiring their own gates.
+7. Do not start Iter150J (Profitability read model) / Iter150K (Razorpay-Bank API payout adapter) / Bank Statement Import / SupplierPayment correction parity — each requires a fresh Discovery gate.
+
+### Binding product principle
+
+`ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO MANUAL RECONCILIATION.`
+
+### Awaiting
+
+Iter150I is 🔒 **LOCKED**. **Iter150J NOT started.**
+
+---
+
+
 ## 🔒 Iter150H · Payment Source-Bank + Master-Embedded Multi-Bank UX (H + H2) — LOCKED (2026-02-14)
 
 **STATUS: 🔒 LOCKED**
