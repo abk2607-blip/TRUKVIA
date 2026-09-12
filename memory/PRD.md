@@ -1,6 +1,103 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
 
+## 🟡 Iter150D · Day Closing — READY FOR UAT · NOT LOCKED (2026-02-13)
+
+**STATUS: 🟡 READY FOR LOCK-CLEARANCE. NOT LOCKED.** Path A (soft v1 · UI + reason convention · no locked-writer amendment).
+**PARENT COMMIT (Iter150C lock): `2bb4c2462dcefcdc9a5296e7baf592edb1ae95f5`** (short: `2bb4c24`)
+**ITER150D UAT: 66 / 66 PASS · 0 skip · 0 fail (`pytest -n0`, 78.60s)**
+**ITER150C+B LOCKED-FILE BYTE-DIFF SINCE `2bb4c24`: 0 across all 14 protected files**
+**BLOCKERS: NONE · MAJOR ISSUES: NONE**
+
+### Delivered scope
+
+Iter150D introduces a **financial-control checkpoint** — Day Closing — that snapshots per-account totals at close time and surfaces any legs that project after close as *Late Entries Since Close*. **NOT a data-entry lock**: every one of the 13 canonical source types remains fully enterable for any past business date, even after that day is closed.
+
+Path A · soft-v1 delete-after-close: owner-only UI convention + `reason` param (already accepted by every existing DELETE route). No backend writer/deleter modified. Hard backend enforcement deferred to a future explicit amendment.
+
+### New files (5 · 3 prod + 2 tests)
+
+1. `backend/models_iter150d.py` (75 lines) — `FinDayClosure` Pydantic model + `ensure_day_closure_indexes()`. Kept out of `models.py` to preserve locked-band byte integrity.
+2. `backend/routers/fin_day_closing.py` (319 lines) — 6 endpoints:
+   - `POST /api/fin/day-closures` (owner) · close a day
+   - `POST /api/fin/day-closures/{close_date}/reopen` (owner) · reopen
+   - `GET /api/fin/day-closures` · list with date-range + status filters
+   - `GET /api/fin/day-closures/{close_date}` · single closure + snapshot + history
+   - `GET /api/fin/day-closures/{close_date}/late-entries` · legs projected after close (bucketed by `days_late`)
+   - `GET /api/fin/day-status?date=…` · quick probe for UI
+3. `frontend/src/pages/FinDayClosing.jsx` (409 lines) — route `/fin/day-closing`. Owner-only close panel, closures list, per-closure drawer with immutable snapshot table + late-entries drift + reopen/re-close history.
+4. `backend/tests/test_iter150d_day_closing_writer.py` (30 tests, 15.4 KB)
+5. `backend/tests/test_iter150d_day_closing_reads.py` (36 tests, 18.6 KB)
+
+### Additive mount amendments (2)
+
+6. `backend/server.py` — additive import + tuple entry + startup index-ensure call.
+7. `frontend/src/App.js` — additive import + `<Route path="/fin/day-closing">`.
+
+### Frozen business rules
+
+- Day Closing is a **financial-control checkpoint, NOT a data-entry lock**.
+- Close date: today or any past date only. Future close → `422`.
+- Duplicate open close → `409`. Re-close after reopen → allowed; new snapshot captured; prior close events preserved in `history[]`.
+- Reopen: **owner-only**. `reopen_reason` mandatory. Reopening an already-reopened closure → `409`.
+- Snapshot: compact `{account_code: {in, out, net}}` + `snapshot_source_count`. **Immutable** — never mutated by late entries, edits, or replays. Reopen preserves; re-close appends.
+- Late entries: computed from `txn_date <= close_date AND created_at > closed_at`. Bucketed by `days_late` (`0-7 / 8-30 / 31-90 / 90+`).
+- Failed-hook replay after close: **always allowed**. `FinTxn.txn_date` remains the original business date. Replayed leg surfaces in `/late-entries`. Snapshot never mutated.
+- Tenant scope: `(user_id, company_id, close_date)` — UNIQUE. Foreign-tenant closures invisible.
+- Zero direct `fin_txn` writes in `fin_day_closing.py` (verified by `test_19_router_has_no_fin_txn_writes`).
+
+### UAT execution (`pytest -n0` · sequential)
+
+```
+tests/test_iter150d_day_closing_writer.py  30 / 30 PASS
+tests/test_iter150d_day_closing_reads.py   36 / 36 PASS
+                                          ─────────────
+                                          66 / 66 PASS · 0 skip · 0 fail (78.60s)
+```
+
+### Locked-band byte-diff proof (0 across all 14 files since `2bb4c24`)
+
+```
+0  backend/services_fin_txn.py           0  backend/routers/expenses.py
+0  backend/services_fin_txn_hooks.py     0  backend/routers/wallet_recharges.py
+0  backend/models.py                     0  backend/routers/wallet_transfers.py
+0  backend/routers/trips.py              0  backend/routers/wallet_adjustments.py
+0  backend/routers/invoices.py           0  backend/services.py
+0  backend/routers/notes.py              0  backend/services_expense_bridge.py
+0  backend/routers/vendor_bills.py
+0  backend/routers/mechanic_work_orders.py
+```
+
+### Router purity + locked-band forbidden-construct scan
+
+- `fin_day_closing.py`: **0** references to `db.fin_txn.insert/update/delete/replace` · **0** references to `reproject_source(` / `hook_after_source_write(` (asserted by tests 19, 20).
+- Forbidden constructs (`asyncio.create_task`, `APScheduler`, `expire_after`, `cachetools`, `lru_cache`, `threading.Lock`, `asyncio.Lock`) absent.
+- `models.py` unchanged: no `FinDayClosure` / `fin_day_closures` strings (asserted by tests 21, 33).
+- 9 locked writer routers scanned for `fin_day_closures` / `fin_day_closing` references — all clean (asserted by test 34).
+- `services_fin_txn.py` unchanged (asserted by test 35).
+
+### Deferred (out of Iter150D · Path A scope)
+
+- Hard backend enforcement of owner-only + reason on delete-when-in-closed-day (requires locked-writer amendment · Path B or C).
+- PDF close-footer overlay (deferred to Branding / Iter150F).
+- FinDayBook / FinAccountLedger passive `is_closed` chip overlays (not shipped in v1 to keep scope minimal per §13 optionality; can be added under a small follow-up).
+- Iter150E Reconciliation Center — reads closure + snapshot + late-entries when it lands.
+- Approval workflow / maker-checker.
+- Fiscal-period aggregation.
+
+### Awaiting
+
+Owner Lock-Clearance authorization. No automatic lock. No automatic continuation into Iter150E / Branding / UI/UX / Mobile / Integrations.
+
+### Binding product principle preserved
+
+`ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO MANUAL RECONCILIATION.`
+
+Any past business date remains enterable. Late entries remain traceable. Snapshot preserves the "as-of close" position.
+
+---
+
+
 ## 🔒 Iter150C · Source Ledgers / Financial Traceability — LOCKED (2026-02-13)
 
 **STATUS: 🔒 LOCKED**

@@ -42,6 +42,7 @@ import TripImport from "@/pages/TripImport";
 import TripTemplates from "@/pages/TripTemplates";
 import FinDayBook from "@/pages/FinDayBook";
 import FinAccountLedger from "@/pages/FinAccountLedger";
+import FinDayClosing from "@/pages/FinDayClosing";
 import Layout from "@/components/Layout";
 
 function Protected({ children }) {
@@ -109,6 +110,7 @@ function AppRouter() {
       <Route path="/notes" element={<Protected><Notes /></Protected>} />
       <Route path="/fin/day-book" element={<Protected><FinDayBook /></Protected>} />
       <Route path="/fin/accounts/:code" element={<Protected><FinAccountLedger /></Protected>} />
+      <Route path="/fin/day-closing" element={<Protected><FinDayClosing /></Protected>} />
       <Route path="/settings" element={<Protected><Settings /></Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

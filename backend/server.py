@@ -70,6 +70,8 @@ from routers import (
     wallet_adjustments as wallet_adjustments_r,
     # Iter150C · Source Ledgers / Financial Traceability (READ/UI-only)
     fin_source_lookup as fin_source_lookup_r,
+    # Iter150D · Day Closing (financial-control checkpoint · owner-only writer)
+    fin_day_closing as fin_day_closing_r,
 )
 
 ROOT_DIR = Path(__file__).parent
@@ -152,6 +154,8 @@ for r in (
     wallet_recharges_r, wallet_transfers_r, wallet_adjustments_r,
     # Iter150C · Source Ledgers / Financial Traceability
     fin_source_lookup_r,
+    # Iter150D · Day Closing
+    fin_day_closing_r,
 ):
     app.include_router(r.router)
 
@@ -1355,6 +1359,13 @@ async def startup_event():
         logger.info("Iter150A-1 FinTxn/Account indexes ensured")
     except Exception as e:
         logger.warning(f"Iter150A-1 FinTxn index setup failed: {e}")
+    # Iter150D — Day Closing indexes.
+    try:
+        from models_iter150d import ensure_day_closure_indexes
+        await ensure_day_closure_indexes()
+        logger.info("Iter150D fin_day_closures indexes ensured")
+    except Exception as e:
+        logger.warning(f"Iter150D fin_day_closures index setup failed: {e}")
     try:
         from scheduler import start_scheduler
         start_scheduler()
