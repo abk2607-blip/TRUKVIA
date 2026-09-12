@@ -109,6 +109,9 @@ function AppRouter() {
       <Route path="/invoices/:id" element={<Protected><InvoiceView /></Protected>} />
       <Route path="/notes" element={<Protected><Notes /></Protected>} />
       <Route path="/fin/day-book" element={<Protected><FinDayBook /></Protected>} />
+      {/* Iter150E · Bare /fin/accounts redirects to the seeded BANK_DEFAULT
+          account so the sidebar link resolves without a picker page. */}
+      <Route path="/fin/accounts" element={<Navigate to="/fin/accounts/BANK_DEFAULT" replace />} />
       <Route path="/fin/accounts/:code" element={<Protected><FinAccountLedger /></Protected>} />
       <Route path="/fin/day-closing" element={<Protected><FinDayClosing /></Protected>} />
       <Route path="/settings" element={<Protected><Settings /></Protected>} />

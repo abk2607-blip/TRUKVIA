@@ -124,7 +124,7 @@ class NumberedCanvas(Canvas):
         pw, _ = landscape(A4)
         self.drawCentredString(
             pw / 2, 8 * mm,
-            f"GSTR-1 §9B · CN/DN Register · Computer-generated · "
+            f"TRUKVIA · GSTR-1 §9B · CN/DN Register · Computer-generated · "
             f"Page {self._pageNumber} of {total} · Printed {stamp} UTC",
         )
 

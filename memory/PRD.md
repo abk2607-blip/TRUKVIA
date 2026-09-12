@@ -1,6 +1,107 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
 
+## Iter150E · Brand Shell & PDF Parity — READY FOR UAT / LOCK-CLEARANCE (2026-02-13)
+
+**STATUS: IMPLEMENTATION COMPLETE · PENDING OWNER UAT / LOCK-CLEARANCE**
+**PARENT COMMIT (Iter150D lock): `a7a3997ac275c69454b6a4de7e4aa9533a9d32f2`** (short: `a7a3997`)
+**ITER150E BACKEND TESTS: 25 / 25 PASS** (`pytest -n0 backend/tests/test_iter150e_pdf_brand_parity.py`)
+**PROTECTED 14-FILE BYTE-DIFF SINCE `a7a3997`: 0 across all 14 files**
+**BLOCKERS: NONE · MAJOR ISSUES: NONE · DEVIATIONS: NONE**
+
+### Locked scope (frozen at authorisation)
+
+Iter150E is a **visual / app-shell standardisation pass** — zero financial-logic changes, zero locked-band amendments, zero new backend endpoints. Purely additive brand chrome + 5-section sidebar restructure + non-invoice PDF header/footer branding.
+
+**Invoice PDF branding is EXCLUDED (Path P1)** — `backend/services.py` and `backend/routers/invoices.py` and `backend/pdf/invoice.py` are all byte-identical to Iter150D. Test 09 asserts these three files never reference `pdf_brand` or `TRUKVIA`.
+
+### Frozen tokens
+
+- Brand ember: `#FD7800` (HSL 28° 100% 50%).
+- Zinc / near-black foundation preserved.
+- Rose / emerald / amber semantic palette preserved.
+- Dark mode: OUT · Motion library: OUT · i18n framework: OUT.
+- Dashboard redesign · Reports page restructuring · Reconciliation Center · Marketing site · Financial logic changes · New backend endpoints · Locked-band amendments · Invoice PDF branding — all OUT.
+
+### New files (16)
+
+1. `frontend/public/brand/TRUKVIA_master.png` — owner-supplied trademark logo, verbatim (1536×1024 RGBA).
+2. `frontend/public/brand/favicon.ico` (multi-icon 16/32/48).
+3. `frontend/public/brand/favicon-16.png`, `-32.png`, `-48.png`.
+4. `frontend/public/brand/apple-touch-icon-180.png` (opaque white BG for iOS).
+5. `frontend/public/brand/android-chrome-192.png`, `-512.png`.
+6. `frontend/public/brand/trukvia-mark-64.png`, `-128.png` (sidebar 2×).
+7. `frontend/public/brand/trukvia-wordmark-64.png`, `-128.png`.
+8. `frontend/public/brand/trukvia-login-mark.png` (128×640).
+9. `frontend/public/manifest.json` — TRUKVIA PWA manifest.
+10. `backend/assets/brand/TRUKVIA_master.png` (mirror).
+11. `backend/assets/brand/trukvia-pdf-header.png` (~830 px tall).
+12. `backend/pdf_brand.py` — additive shared brand-chrome helper (font-agnostic, non-invoice only, zero-mutation).
+13. `backend/tests/test_iter150e_pdf_brand_parity.py` (25 tests).
+14. `frontend/src/__tests__/iter150e.brand_shell.test.js` (Jest, 8 test blocks).
+15. `design_guidelines.md` (at `/app/design_guidelines.md`).
+16. `scripts/iter150e_generate_brand_rasters.py` (PIL/LANCZOS derivative generator — one-shot build script; not shipped at runtime).
+
+### Modified files (13 · additive only)
+
+Frontend (5):
+1. `frontend/public/index.html` — TRUKVIA title, ember `theme-color`, favicon chain, manifest link, description.
+2. `frontend/src/App.js` — added `<Route path="/fin/accounts" element={<Navigate to="/fin/accounts/BANK_DEFAULT" replace />} />`.
+3. `frontend/src/components/Layout.jsx` — restructured into 5 authorised sections (Masters / Operations / Financials / Reports / System). All 24 existing nav route paths + 24 existing `data-testid` values preserved verbatim. 3 new Financials testids added: `nav-fin-day-book`, `nav-fin-accounts`, `nav-fin-day-closing`. New brand-lockup component with `sidebar-brand-mark`, `sidebar-brand-mark-mobile`, `sidebar-brand-mark-topbar` testids. Ember active-nav indicator (2 px left rail). Mobile bottom-nav unchanged.
+4. `frontend/src/index.css` — additive brand tokens `--brand` / `--brand-foreground` / `--brand-muted` / `--brand-ring` / `--brand-ink` / `--brand-navy`. Existing zinc/near-black tokens untouched.
+5. `frontend/src/pages/Login.jsx` — added `login-brand-mark` (TRUKVIA raster), ember accent on the "అకౌంటింగ్" hero word, "TRUKVIA · Accounting Suite" eyebrow copy. Auth logic (Google Auth, demo login gate, redirects, session handling) UNTOUCHED.
+
+Backend (8 PDF producers · footer prefix only):
+6. `backend/pdf/cndn_register.py` — footer prefixed `TRUKVIA · CN/DN Register · …`.
+7. `backend/pdf/credit_note.py` — auth-signatory line prefixed `TRUKVIA · Computer-generated document …`.
+8. `backend/pdf/debit_note.py` — same pattern.
+9. `backend/pdf/gstr1.py` — footer prefixed `TRUKVIA · GSTR-1 §9A · Invoice Register · …`.
+10. `backend/pdf/gstr1_9b.py` — footer prefixed `TRUKVIA · GSTR-1 §9B · CN/DN Register · …`.
+11. `backend/pdf/ledger.py` — footer prefixed `TRUKVIA · Computer-generated statement · …`.
+12. `backend/pdf/lr.py` — Note line prefixed `TRUKVIA · Computer-generated Goods Consignment Note …`.
+13. `backend/pdf/party_ledger.py` — footer prefixed `TRUKVIA · Computer-generated accounting statement …`.
+
+Every existing "Computer-generated …" substring is preserved verbatim (only prepended), so the two Iter133 L2 ledger-presentation assertions `assert "Computer-generated statement" in text` continue to pass. Zero numeric / row-ordering / GSTIN / total change in any producer.
+
+### Frozen exclusions verified
+
+- `backend/services.py` — 0 byte-diff vs `a7a3997`, 0 references to `pdf_brand` / `TRUKVIA`.
+- `backend/routers/invoices.py` — 0 byte-diff, 0 references.
+- `backend/pdf/invoice.py` — 0 byte-diff, 0 references.
+- All 14 Iter150D-protected files — 0 byte-diff.
+
+### Test coverage summary
+
+- `backend/tests/test_iter150e_pdf_brand_parity.py` — 25 tests, all PASS in 0.20s:
+  - Raster derivative manifest (7 tests).
+  - `pdf_brand.py` exports + ember hex + helpers (3 tests).
+  - Invoice PDF exclusion guard (Path P1) (1 test).
+  - 8 branded producer TRUKVIA-mark presence (8 parametrized tests).
+  - `design_guidelines.md` frozen-content check (1 test).
+  - Protected 14-file zero-diff proof (1 test).
+  - Presentation-only PDF numeric-parity smoke (1 test).
+  - Additional raster derivative parametrized tests (3 tests).
+
+- `frontend/src/__tests__/iter150e.brand_shell.test.js` — Jest static-scan tests: 8 test blocks (sidebar shape, testid preservation, redirect wiring, HTML metadata, manifest, login mark, CSS tokens, copy hygiene).
+
+### Existing PDF regression sweep
+
+- `test_iter133_l2_ledger_statement_presentation.py` — assertion `"Computer-generated statement" in text` still holds (substring preserved).
+- `test_iter132c_c4_cndn_register.py` — 60 / 62 PASS. 2 failures (`test_t20`, `test_t21`) confirmed **pre-existing** by reproducing on Iter150D-stash HEAD — both fail with `ModuleNotFoundError: No module named 'pdf' / 'services'` (sys.path setup issue, unrelated to Iter150E branding). Test file protected — no change made.
+
+### Awaiting
+
+Owner UAT / Lock-Clearance authorisation. **No commit performed. No lock commit performed. Iter150F NOT started.**
+
+### Binding product principle preserved
+
+`ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO MANUAL RECONCILIATION.`
+
+Iter150E is presentation-only. Zero financial writers introduced. Zero canonical logic altered.
+
+---
+
+
 ## 🔒 Iter150D · Day Closing — LOCKED (2026-02-13)
 
 **STATUS: 🔒 LOCKED** · Path A (soft v1 · UI + reason convention · zero locked-writer amendments).

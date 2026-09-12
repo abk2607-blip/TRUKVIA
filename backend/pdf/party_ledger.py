@@ -78,7 +78,7 @@ class _NumberedCanvas(Canvas):
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         self.drawString(
             10 * mm, 6.5 * mm,
-            "Computer-generated accounting statement · This is not a demand notice.",
+            "TRUKVIA · Computer-generated accounting statement · This is not a demand notice.",
         )
         self.drawRightString(
             A4[0] - 10 * mm, 6.5 * mm,

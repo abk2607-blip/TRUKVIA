@@ -25,6 +25,18 @@
   --input: 240 6% 90%;
   --ring: 240 6% 6%;
   --radius: 0.25rem;
+
+  /* Iter150E · TRUKVIA brand tokens (additive, non-overriding).  The
+     zinc / near-black foundation and rose / emerald / amber semantic
+     palette above remain the authoritative UI foundation.  Ember is
+     used sparingly (active-nav indicator, brand mark, focus ring,
+     favicon / theme-color, PDF accent rule). */
+  --brand: 28 100% 50%;              /* #FD7800 */
+  --brand-foreground: 0 0% 100%;     /* #FFFFFF */
+  --brand-muted: 28 100% 94%;        /* #FFE9D6 */
+  --brand-ring: 28 100% 50%;
+  --brand-ink: 20 80% 22%;           /* #66300F */
+  --brand-navy: 216 98% 20%;         /* #012963 — logo asset colour only */
 }
 
 * {

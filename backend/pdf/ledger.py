@@ -59,7 +59,7 @@ class NumberedCanvas(Canvas):
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         self.drawCentredString(
             105 * mm, 8 * mm,
-            f"Computer-generated statement · Page {self._pageNumber} of {total} · Printed {stamp}",
+            f"TRUKVIA · Computer-generated statement · Page {self._pageNumber} of {total} · Printed {stamp}",
         )
 
 

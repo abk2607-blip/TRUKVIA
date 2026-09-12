@@ -441,7 +441,7 @@ def build_lr_pdf(company: dict, customer: dict, trip: dict, copy: str = "origina
 
     # ================== 9. FOOTER (signatory + note) ==================
     foot_left = Paragraph(
-        "<font color='#64748B' size='7'><b>Note</b> — Computer-generated Goods Consignment Note. "
+        "<font color='#64748B' size='7'><b>Note</b> — TRUKVIA · Computer-generated Goods Consignment Note. "
         "Valid without a manual signature or the Company's seal.<br/>"
         "Terms &amp; Conditions of carriage are on page 2 overleaf.</font>",
         styles["Small"],

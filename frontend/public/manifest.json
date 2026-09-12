@@ -1,0 +1,31 @@
+{
+  "short_name": "TRUKVIA",
+  "name": "TRUKVIA · Bitumen Transport ERP",
+  "description": "TRUKVIA — bitumen transport ERP with canonical financial control.",
+  "icons": [
+    {
+      "src": "/brand/favicon-16.png",
+      "sizes": "16x16",
+      "type": "image/png"
+    },
+    {
+      "src": "/brand/favicon-32.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "/brand/android-chrome-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/brand/android-chrome-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ],
+  "start_url": "/",
+  "display": "standalone",
+  "theme_color": "#FD7800",
+  "background_color": "#f4f4f5"
+}
