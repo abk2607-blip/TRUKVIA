@@ -1,6 +1,151 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
 
+## 🔒 Iter150B · Wallet Financial Surfaces (Recharge · Transfer · Adjustment) — LOCKED (2026-02-12)
+
+**STATUS: 🔒 LOCKED**
+**UAT: 74 / 74 PASS**
+**LOCK-CLEARANCE: PASS**
+**PARENT COMMIT (Phase-5 lock): `008b1a0c92c2d96c016903996bc252f0935593a3`** (short: `008b1a0`)
+**IMPLEMENTATION HEAD (pre-lock): `aa084b74a7b80d70acd8eb3a11bb81b45fdad429`** (short: `aa084b74`)
+**ITER150B TESTS: WalletRecharge 24 / 24 · WalletTransfer 22 / 22 · WalletAdjustment 28 / 28 = 74 / 74**
+**FULL LOCKED-BAND REGRESSION: A-1 33/33 · Phase-1 14/14 · Phase-2 15/15 · Phase-3A 20/20 · Phase-3B-i 23/23 (perf accepted 240s cap) · Phase-3B-ii-a 21/21 · Phase-3B-ii-b 26/26 · Phase-4 Invoice 22/22 · CN/DN 24/24 · VendorBill 18/18 · MechanicWO 18/18 · Phase-5 26/26 · Iter147 49/49 · Iter148+149 72/72 (1 baseline skip)**
+**LOCKED-BAND BYTE-DIFF SINCE 008b1a0: 0**
+**BLOCKERS: NONE · MAJOR ISSUES: NONE**
+
+### Locked scope
+
+Iter150B introduces three canonical wallet write-model surfaces — Recharge, Transfer, Adjustment — with full canonical projection into `FinTxn` via the frozen `hook_after_source_write` chain. Additive-only amendments to two previously locked architectural files (`models.py`, `services_fin_txn.py`) per the explicit Iter150B locked-band amendment authorisation. Every other locked file preserved byte-for-byte from Phase-5 baseline `008b1a0`.
+
+### Source-type / source-key matrix (frozen)
+
+| source_type | source_id | Legs | Counter-account |
+|---|---|---|---|
+| `wallet_recharge` | `wr_<hex>` | `wallet_code` DEBIT + `_mode_account(funding_mode)` CREDIT | BANK_DEFAULT / CASH |
+| `wallet_transfer` | `wt_<hex>` | `source_wallet_code` CREDIT + `destination_wallet_code` DEBIT | wallet↔wallet direct (no INTER_ACCOUNT) |
+| `wallet_adjustment` (increase) | `wa_<hex>` | `wallet_code` DEBIT + `SUSPENSE` CREDIT | SUSPENSE |
+| `wallet_adjustment` (decrease) | `wa_<hex>` | `wallet_code` CREDIT + `SUSPENSE` DEBIT | SUSPENSE |
+
+All `ref_source_key` values follow `{source_type}:{source_id}:{ref_leg}` — deterministic, tenant-scoped, retry- and replay-safe under the frozen UNIQUE `(user_id, company_id, ref_source_key)` A-1 index.
+
+### Frozen business rules
+
+- **Ownership**: company-owned / tenant-scoped only. Wallets = `WALLET_FASTAG` + `WALLET_FUEL` (unchanged from A-1 seed).
+- **Recharge**: funding_mode ∈ {Bank, Cash} (Literal enforced). No SUSPENSE default. Provider fees out of scope.
+- **Transfer**: 2-leg direct. Same-wallet ↦ 422. Cross-company structurally impossible via tenant scoping. Bank↔Wallet is not a transfer (recharge only). Wallet→Bank not introduced.
+- **Adjustment**: `reason` required. Positive/Negative direction explicit. Counter always SUSPENSE.
+- **Reversal**: APPEND-ONLY via `POST /api/wallet-adjustments/{wa_id}/reverse`. New WA doc with `reverses_id` set + opposite direction. Original never mutated. Both remain projected → net-zero.
+- **Backdate**: ANY past business date allowed. `date` (business) is independent of `created_at` (system). Day Closing deferred to Iter150D.
+- **Delete**: soft-delete via `is_deleted=True`. Reproject clears canonical legs. Audit trail preserved.
+- **Edit/Delete guards** (adjustment): 409 Conflict if referenced by active reversal; reversal doc itself immutable; reverse-a-reversal blocked; double-reversal blocked.
+
+### Locked-file amendment scope (additive only)
+
+**`backend/models.py`** (+84 lines, 0 deletions):
+- 3 new authoritative document models: `WalletRecharge`, `WalletTransfer`, `WalletAdjustment`.
+- `FinTxn`, `Account`, `FIN_SYSTEM_ACCOUNTS` UNCHANGED.
+- `transfer_group_id` / `adjustment_group_id` placeholders remain reserved & unused.
+
+**`backend/services_fin_txn.py`** (+151 lines, 0 deletions):
+- 3 new source types appended to `SUPPORTED_SOURCE_TYPES` (final list: 12 entries; existing 9 unchanged in order/name).
+- 3 new projection functions: `project_wallet_recharge`, `project_wallet_transfer`, `project_wallet_adjustment`.
+- 3 new dispatch branches in `reproject_source`.
+- 3 new iteration branches in `backfill_tenant`.
+- `_leg`, `_persist_legs`, `_delete_by_source`, `hook_after_source_write`, invariants, invoice cascade, and `trip_customer_receipt` cascade UNCHANGED.
+
+### Router surface (3 new files)
+
+- `backend/routers/wallet_recharges.py` (+145 lines) — 4 endpoints: `POST · PUT · DELETE · GET` `/api/wallet-recharges[/{wr_id}]`
+- `backend/routers/wallet_transfers.py` (+154 lines) — 4 endpoints
+- `backend/routers/wallet_adjustments.py` (+237 lines) — 5 endpoints (incl. append-only `/{wa_id}/reverse`)
+
+Mount-only delta in `backend/server.py` (+6 lines) — three imports + three names in the existing `include_router` loop.
+
+Every mutation site follows the frozen chain: `Pydantic validate → tenant-scope resolve → business guard → db insert/update → _log_audit → hook_after_source_write → return doc`. **Zero direct `fin_txn` writes** in every wallet router (forbidden-token scans in tests #18/#17/#23 assert this).
+
+Hook wiring integrity (frozen at lock):
+- `wallet_recharges.py` — 4 refs (1 import + create + update + delete)
+- `wallet_transfers.py` — 4 refs
+- `wallet_adjustments.py` — 5 refs (1 import + create + update + delete + reverse)
+
+### Verified semantics (74 UAT tests)
+
+- **Recharge (24 tests)**: FASTag/FUEL create · Bank/Cash routing · Literal Enum enforcement · amount>0 · update reprojects · funding_mode change refreshes account codes · soft-delete clears legs · edit-after-delete 409 · idempotency (3× hook) · failure queue · CLI replay resolves · tenant isolation · Day Book · Accounts delta (wallet +, bank/cash −) · backdate · `created_at` distinct from `date` · zero direct fin_txn writes · hook count = 4 · A-1 immutability · locked-band forbidden constructs · list filters + soft-delete visibility · deterministic ref_source_key shape · double-post creates independent hooked WRs.
+- **Transfer (22 tests)**: FASTag→FUEL · FUEL→FASTag · same-wallet 422 · amount>0 · Literal Enum · update amount · update flip direction · soft-delete · idempotency · failure queue · CLI replay · tenant isolation · Day Book · Accounts net-zero pair · NO `INTER_ACCOUNT` leg present · backdate · zero direct fin_txn · hook count · A-1 immutability · forbidden constructs · ref_source_key shape · edit-after-delete 409.
+- **Adjustment (28 tests)**: create positive/negative · reason required · amount>0 · Literal Enum · update refresh · soft-delete · reverse happy-path (original preserved) · reverse-a-reversal 409 · double-reverse 409 · edit-when-referenced 409 · delete-when-referenced 409 · edit-reversal 409 · delete-reversal 409 · reversal backdate · idempotency · failure queue · CLI replay · tenant isolation · Day Book · Accounts (original+reversal net-zero on wallet AND SUSPENSE) · backdate · zero direct fin_txn · hook count = 5 · A-1 immutability · forbidden constructs · ref_source_key shape (both directions) · reverse-nonexistent 404.
+
+### Full locked-band regression (isolated `-n0`, HEAD `aa084b74`)
+
+| Suite | Result | Duration |
+|---|---|---|
+| A-1 | 33 / 33 | 48s |
+| Phase-1 + Phase-2 | 29 / 29 | 20s |
+| Phase-3A | 20 / 20 | 28s |
+| Phase-3B-i (`-k "not perf"`) | 23 / 23 · 3 perf deselected (accepted baseline) | 33s |
+| Phase-3B-ii-a | 21 / 21 | 44s |
+| Phase-3B-ii-b | 26 / 26 | 86s |
+| Phase-4 Invoice | 22 / 22 | 47s |
+| Phase-4 CN/DN | 24 / 24 | 48s |
+| Phase-4 VendorBill | 18 / 18 | 30s |
+| Phase-4 MechanicWO | 18 / 18 | 50s |
+| Phase-5 | 26 / 26 | 36s |
+| Iter147 | 49 / 49 | 36s |
+| Iter148 + Iter149 | 72 / 72 · 1 baseline skip | 91s |
+| **Iter150B (NEW)** | **74 / 74** | **37+33+45s** |
+
+**Loop-flakes observed** in batched runs (party_payment t9, phase3a t14, phase4 cn/dn t10-t11, phase4 vendor_bill t05) — every one confirmed PASS on isolated `-n0` re-run. Documented Motor "attached to a different loop" xdist behaviour. Zero real regressions.
+
+### Files in lock scope (10 total — 6 production + 3 tests + 1 ledger)
+
+Production (already at HEAD `aa084b74`):
+1. `backend/models.py` (+84)
+2. `backend/services_fin_txn.py` (+151)
+3. `backend/server.py` (+6)
+4. `backend/routers/wallet_recharges.py` (NEW, 145)
+5. `backend/routers/wallet_transfers.py` (NEW, 154)
+6. `backend/routers/wallet_adjustments.py` (NEW, 237)
+
+Tests (NEW, already at HEAD):
+7. `backend/tests/test_iter150b_wallet_recharge_hooks.py` (428, 24 tests)
+8. `backend/tests/test_iter150b_wallet_transfer_hooks.py` (351, 22 tests)
+9. `backend/tests/test_iter150b_wallet_adjustment_hooks.py` (437, 28 tests)
+
+Ledger (this lock commit):
+10. `memory/PRD.md` (lock-ledger entry only)
+
+**Locked-band files (0 diff since `008b1a0`)**: `services_fin_txn_hooks.py`, `routers/trips.py`, `routers/invoices.py`, `routers/notes.py`, `routers/vendor_bills.py`, `routers/mechanic_work_orders.py`, `routers/expenses.py`, `services.py`, `services_expense_bridge.py`. All Iter133–149 files, all previous locked tests intact. **Direct `fin_txn` mutations in every wallet router: 0.**
+
+### Lock covenants (binding)
+
+1. Do not modify Iter150B implementation after lock.
+2. Do not modify Iter150A-1 / Phase-1..5 locked files (including the Iter150B-authorised additions to `models.py` and `services_fin_txn.py`).
+3. Do not modify `project_wallet_*`, wallet source_id formats (`wr_/wt_/wa_`), or `SUPPORTED_SOURCE_TYPES`.
+4. Do not extend wallet scope to customer/driver/vehicle/vendor/cross-company wallets in this lock.
+5. Do not introduce Wallet→Bank withdrawal, provider convenience-fee accounting, or a generic `wallet_transaction` source type.
+6. Do not mutate the original `WalletAdjustment` during reversal; append-only is frozen.
+7. Do not add background retry, advisory locking, or in-process dedupe caches.
+8. Do not start Iter150C (Source Ledgers UI) / 150D (Day Closing) / 150E (Reconciliation) / Branding / UI/UX / Mobile / Integrations.
+
+### Deferred (out of Iter150B · DO NOT FIX NOW)
+
+- Iter150C: Source Ledgers UI (Account-level drill-down).
+- Iter150D: Day Closing (Open/Closed status + backdate guard).
+- Iter150E: Reconciliation Center (6-bucket recon per source).
+- Branding · UI/UX makeover · Mobile · Integrations (Razorpay, Vahan, etc.).
+
+### Post-lock state
+
+- No code / test / branding / integration modifications performed during locking.
+- Iter150C / 150D / 150E · Branding · UI/UX · Mobile · Integrations — **all NOT STARTED**.
+- No automatic continuation triggered.
+
+### Binding product principle
+
+ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO MANUAL RECONCILIATION.
+
+---
+
+
 ## 🔒 Iter150A-2 · Phase 5 — Trip.customer_receipts Hooks + A-1 Prefix Cascade — LOCKED (2026-02-12)
 
 **STATUS: 🔒 LOCKED**
