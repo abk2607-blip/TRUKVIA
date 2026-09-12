@@ -144,6 +144,11 @@ async def get_fin_txn(txid: str, request: Request, user=Depends(get_current_user
             "expense": "expenses",
             "vendor_bill": "vendor_bills",
             "mechanic_work_order": "mechanic_work_orders",
+            # Iter150C · additive coll_map extension (READ-only drill-through).
+            "trip_customer_receipt": "trips",
+            "wallet_recharge": "wallet_recharges",
+            "wallet_transfer": "wallet_transfers",
+            "wallet_adjustment": "wallet_adjustments",
         }
         if stype in coll_map:
             src = await db[coll_map[stype]].find_one(

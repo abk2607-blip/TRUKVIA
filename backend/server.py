@@ -68,6 +68,8 @@ from routers import (
     wallet_recharges as wallet_recharges_r,
     wallet_transfers as wallet_transfers_r,
     wallet_adjustments as wallet_adjustments_r,
+    # Iter150C · Source Ledgers / Financial Traceability (READ/UI-only)
+    fin_source_lookup as fin_source_lookup_r,
 )
 
 ROOT_DIR = Path(__file__).parent
@@ -148,6 +150,8 @@ for r in (
     fin_day_book_r,
     # Iter150B · Wallet Financial Surfaces
     wallet_recharges_r, wallet_transfers_r, wallet_adjustments_r,
+    # Iter150C · Source Ledgers / Financial Traceability
+    fin_source_lookup_r,
 ):
     app.include_router(r.router)
 

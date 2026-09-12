@@ -40,6 +40,8 @@ import DeployHistoryPage from "@/pages/DeployHistoryPage";
 import Settings from "@/pages/Settings";
 import TripImport from "@/pages/TripImport";
 import TripTemplates from "@/pages/TripTemplates";
+import FinDayBook from "@/pages/FinDayBook";
+import FinAccountLedger from "@/pages/FinAccountLedger";
 import Layout from "@/components/Layout";
 
 function Protected({ children }) {
@@ -105,6 +107,8 @@ function AppRouter() {
       <Route path="/invoices/new" element={<Protected><InvoiceCreate /></Protected>} />
       <Route path="/invoices/:id" element={<Protected><InvoiceView /></Protected>} />
       <Route path="/notes" element={<Protected><Notes /></Protected>} />
+      <Route path="/fin/day-book" element={<Protected><FinDayBook /></Protected>} />
+      <Route path="/fin/accounts/:code" element={<Protected><FinAccountLedger /></Protected>} />
       <Route path="/settings" element={<Protected><Settings /></Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

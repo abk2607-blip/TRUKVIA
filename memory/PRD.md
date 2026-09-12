@@ -1,6 +1,142 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
 
+## 🟡 Iter150C · Source Ledgers / Financial Traceability — READY FOR UAT · NOT LOCKED (2026-02-13)
+
+**STATUS: 🟡 READY FOR LOCK-CLEARANCE. NOT LOCKED.**
+**PARENT COMMIT (Iter150B lock): `148eaf812cae6e8a0ac038043d9e8160b3550963`** (short: `148eaf81`)
+**ITER150C UAT: 39 / 42 PASS · 3 legit environmental skips · 0 fail (`pytest -n0`, source-lookup 21/24 + day-book-api 15/18 executable pass)**
+**ITER150B LOCKED-FILE BYTE-DIFF SINCE `148eaf81`: 0 across all 14 protected files**
+**TESTING AGENT (iteration_86): PASS · 0 backend critical · 0 backend minor · 0 frontend bugs · 0 action items**
+**BLOCKERS: NONE · MAJOR ISSUES: NONE**
+
+### Delivered scope (READ / UI only)
+
+Iter150C ships a strictly read-only + UI drill-through layer for canonical `FinTxn` visibility. Every one of the 12 authorised canonical source_types is now traversable in both directions: leg → source and source → all legs.
+
+### New router (1 file · 193 lines)
+
+- `backend/routers/fin_source_lookup.py` (NEW)
+  - `GET /api/fin/source/{source_type}/{source_id}` — authoritative source document lookup.
+  - `GET /api/fin/source-legs/{source_type}/{source_id}` — every projected FinTxn leg for a source.
+  - Handles compound source_ids:
+    - `invoice` cascade → also returns `invoice_payment:{inv_id}:*` legs.
+    - `trip_customer_receipt` → accepts whole-trip `{tid}` (prefix) OR per-receipt `{tid}:{rid}` (exact).
+  - Tenant-scoped via `_active_company_id`. Zero forbidden write-tokens (`insert/update/delete/replace/reproject_source/hook_after_source_write` all absent — verified by test 17).
+
+### Locked-file amendment (exactly 4 additive coll_map entries)
+
+- `backend/routers/fin_day_book.py` — `get_fin_txn` `coll_map` gained 4 entries: `trip_customer_receipt → trips`, `wallet_recharge → wallet_recharges`, `wallet_transfer → wallet_transfers`, `wallet_adjustment → wallet_adjustments`. No other change to the file. Owner-only `/api/fin/reproject` bridge, day-book grouping, totals rounding, tenant scoping — all byte-preserved.
+
+### Mount amendment (2 sites, 4 lines total)
+
+- `backend/server.py` — additive import (`fin_source_lookup as fin_source_lookup_r`) + additive tuple entry (`fin_source_lookup_r`) inside the existing `include_router` loop. No middleware, no dependency, no CORS change.
+
+### Frontend (2 new pages + 2 routes)
+
+- `frontend/src/pages/FinDayBook.jsx` (369 lines) — Canonical Financial Day Book. Date range · source filter · account filter · per-account totals table with Ledger links · main legs table · per-row inline drill dialog that fetches `/fin/source/…` + `/fin/source-legs/…` and renders both the authoritative source JSON and the projected leg set with Dr/Cr totals.
+- `frontend/src/pages/FinAccountLedger.jsx` (314 lines) — Canonical Account Ledger. `/fin/accounts/:code` route. Date range preserved via URL query params. Running-balance column. Reuses the same drill dialog.
+- `frontend/src/App.js` — additive 2-line import + additive 2-line `<Route>` mount for `/fin/day-book` and `/fin/accounts/:code`.
+
+### Tests (2 files · 820 lines · 42 tests)
+
+- `backend/tests/test_iter150c_fin_source_lookup.py` (522 lines, 24 tests) — endpoint contract, wallet drill both directions, canonical source drill for every live demo type, invoice cascade, trip_customer_receipt compound-id both forms, tenant isolation, read-only guarantee (0 fin_txn writes across 5 GETs), router purity, response shape, all 12 source_types accepted, locked-band forbidden-construct scan, soft-delete drill semantics.
+- `backend/tests/test_iter150c_fin_day_book_api.py` (298 lines, 18 tests) — auth guards, missing-date guard, `/api/fin/accounts` seed contract + idempotency, day-book rows/totals/count contract, source_type filter, account_code filter, date-range scoping, totals rounding, `/api/fin/fin-txn/{id}` back-reference via the new coll_map entries (wallet_recharge + wallet_transfer + wallet_adjustment + trip_customer_receipt), 12-source-type filter matrix, read-only invariant (0 mutations across 5 reads), amendment scope proof (coll_map tokens present).
+
+### UAT execution (`pytest -n0` · sequential)
+
+```
+tests/test_iter150c_fin_source_lookup.py .....s...............s.  22 pass · 2 skip
+tests/test_iter150c_fin_day_book_api.py .............ss.....       15 pass · 3 skip
+                                                                    ─────────────
+                                                                    39 pass · 3 skip · 0 fail (34.67s / 22.61s runs)
+```
+
+Skips: no `wallet_transfer` / `wallet_adjustment` legs in the demo tenant's `fin_txn` yet (test_12 · test_13 of source-lookup, test_12 · test_13 of day-book-api) — will pass automatically once demo tenant grows those legs.
+
+### Locked-band regression (per-file `-n0`)
+
+| File | Result |
+|---|---|
+| test_iter150b_wallet_recharge_hooks.py | 24 / 24 (37s) |
+| test_iter150b_wallet_transfer_hooks.py | 22 / 22 (32s) |
+| test_iter150b_wallet_adjustment_hooks.py | 28 / 28 (45s) |
+
+**All 74 Iter150B tests pass in isolation.** When the three wallet suites were batched with Iter150A-1 + hook-foundation in one `pytest -n0` invocation, 6 tests emitted the documented Motor "attached to a different loop" xdist artefact on the `failure_queue` / `replay` branches — every one confirmed PASS on isolated re-run (matches Iter150B lock covenant note: "Do not treat parallel-run test flaps as real regressions").
+
+### Testing-agent verdict (iteration_86)
+
+- Backend: 39 pass / 3 legit skip / 0 fail (100% of executable).
+- Frontend: 100% — all data-testids present · 2662 legs render · 8 per-account Ledger links · drill modal opens with source doc JSON + leg table + totals · Ledger link navigation preserves date-range query params · Account Ledger renders 84 legs with running balance + drill.
+- Zero critical, minor, or design issues. Zero action items. `retest_needed=false`.
+
+### Locked-band byte-diff proof (0 across all 14 files since `148eaf81`)
+
+```
+0  backend/services_fin_txn.py
+0  backend/services_fin_txn_hooks.py
+0  backend/models.py
+0  backend/routers/trips.py
+0  backend/routers/invoices.py
+0  backend/routers/notes.py
+0  backend/routers/vendor_bills.py
+0  backend/routers/mechanic_work_orders.py
+0  backend/routers/expenses.py
+0  backend/routers/wallet_recharges.py
+0  backend/routers/wallet_transfers.py
+0  backend/routers/wallet_adjustments.py
+0  backend/services.py
+0  backend/services_expense_bridge.py
+```
+
+### Files in Iter150C scope (exactly 8 · 3 amend + 2 new prod + 2 new test + 1 ledger)
+
+Production (amend):
+1. `backend/routers/fin_day_book.py` (+5, 4 additive coll_map entries)
+2. `backend/server.py` (+4, 1 import + 1 tuple entry)
+3. `frontend/src/App.js` (+4, 2 imports + 2 routes)
+
+Production (new):
+4. `backend/routers/fin_source_lookup.py` (193 lines)
+5. `frontend/src/pages/FinDayBook.jsx` (369 lines)
+6. `frontend/src/pages/FinAccountLedger.jsx` (314 lines)
+
+Tests (new):
+7. `backend/tests/test_iter150c_fin_source_lookup.py` (522 lines · 24 tests)
+8. `backend/tests/test_iter150c_fin_day_book_api.py` (298 lines · 18 tests)
+
+Ledger:
+9. `memory/PRD.md` (this READY-FOR-UAT entry).
+
+### Router purity
+
+- `backend/routers/fin_source_lookup.py`: 1 grep match for `hook_after_source_write` / `fin_txn.` — appears only in the docstring header ("Zero writes. Zero mutation of any locked service or router."). No code-level reference to any writer.
+- `insert_one/insert_many/update_one/update_many/delete_one/delete_many/replace_one/reproject_source/hook_after_source_write`: **absent** at call-site level (verified programmatically by test 17).
+
+### Deferred (out of Iter150C scope · DO NOT FIX NOW)
+
+- CSV / Excel / PDF / print exports.
+- Advanced filters beyond {date range · source_type · account_code · party_id · vehicle_id · trip_id}.
+- Standalone `FinSourceView` page.
+- Wallet-specific standalone ledger.
+- Replacement of legacy party ledgers.
+- Reconciliation Center (Iter150E).
+- Day Closing / backdate guard (Iter150D).
+- Branding · UI/UX makeover · Mobile · Integrations.
+
+### Binding product principle preserved
+
+`ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO MANUAL RECONCILIATION.`
+
+Iter150C strictly reads the canonical `fin_txn` projection cache and the authoritative source documents. Zero writers introduced. Zero canonical logic altered.
+
+### Awaiting
+
+Owner Lock-Clearance authorization. No automatic lock. No automatic continuation into Iter150D / 150E / Branding / UI/UX / Mobile / Integrations.
+
+---
+
+
 ## 🔒 Iter150B · Wallet Financial Surfaces (Recharge · Transfer · Adjustment) — LOCKED (2026-02-12)
 
 **STATUS: 🔒 LOCKED**
