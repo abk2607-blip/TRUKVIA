@@ -1,16 +1,18 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
 
-## 🟡 Iter150C · Source Ledgers / Financial Traceability — READY FOR UAT · NOT LOCKED (2026-02-13)
+## 🔒 Iter150C · Source Ledgers / Financial Traceability — LOCKED (2026-02-13)
 
-**STATUS: 🟡 READY FOR LOCK-CLEARANCE. NOT LOCKED.**
+**STATUS: 🔒 LOCKED**
 **PARENT COMMIT (Iter150B lock): `148eaf812cae6e8a0ac038043d9e8160b3550963`** (short: `148eaf81`)
-**ITER150C UAT: 39 / 42 PASS · 3 legit environmental skips · 0 fail (`pytest -n0`, source-lookup 21/24 + day-book-api 15/18 executable pass)**
+**IMPLEMENTATION HEAD (pre-lock): `f3855c46f4b091aba41b91d84b233d00abe01397`** (short: `f3855c46`)
+**ITER150C UAT: 39 / 42 PASS · 3 formally-proven ENVIRONMENT-ONLY skips · 0 fail (`pytest -n0`, 20.02s)**
+**LOCK-CLEARANCE: PASS** (full evidence in Iter150C Final Lock-Clearance Validation Report, 2026-02-13)
 **ITER150B LOCKED-FILE BYTE-DIFF SINCE `148eaf81`: 0 across all 14 protected files**
 **TESTING AGENT (iteration_86): PASS · 0 backend critical · 0 backend minor · 0 frontend bugs · 0 action items**
 **BLOCKERS: NONE · MAJOR ISSUES: NONE**
 
-### Delivered scope (READ / UI only)
+### Locked scope
 
 Iter150C ships a strictly read-only + UI drill-through layer for canonical `FinTxn` visibility. Every one of the 12 authorised canonical source_types is now traversable in both directions: leg → source and source → all legs.
 
@@ -132,7 +134,31 @@ Iter150C strictly reads the canonical `fin_txn` projection cache and the authori
 
 ### Awaiting
 
-Owner Lock-Clearance authorization. No automatic lock. No automatic continuation into Iter150D / 150E / Branding / UI/UX / Mobile / Integrations.
+Owner Lock-Clearance authorization — **RECEIVED 2026-02-13**. Locked.
+
+### Lock covenants (binding)
+
+1. Do not modify Iter150C implementation after lock.
+2. Do not modify Iter150A-1 / Phase-1..5 / Iter150B locked files (14 protected files remain byte-preserved).
+3. Do not extend `_COLL_MAP` in `fin_source_lookup.py` beyond the 12 canonical source_types.
+4. Do not extend the `coll_map` amendment in `fin_day_book.py` beyond the 4 additive entries.
+5. Do not add any writer, mutation, or projection re-computation to `fin_source_lookup.py`.
+6. Do not add CSV / Excel / PDF / print export in the Iter150C pages.
+7. Do not add filters beyond the ratified frozen set (`date range · source_type · account_code · party_id · vehicle_id · trip_id`).
+8. Do not introduce a separate `FinSourceView` page or wallet-specific standalone ledger.
+9. Do not start Iter150D (Day Closing) / 150E (Reconciliation) / Branding / UI/UX / Mobile / Integrations.
+
+### Post-lock state
+
+- Iter150C application/test scope frozen at HEAD `f3855c46`.
+- 14 previously locked files: 0 byte-diff.
+- No code / test / branding / integration modifications performed during locking.
+- Iter150D · Iter150E · Branding · UI/UX · Mobile · Integrations — **all NOT STARTED**.
+- No automatic continuation triggered.
+
+### Binding product principle
+
+`ENTER ONCE → CALCULATE ONCE → REFLECT EVERYWHERE → REPORT READY → NO MANUAL RECONCILIATION.`
 
 ---
 
