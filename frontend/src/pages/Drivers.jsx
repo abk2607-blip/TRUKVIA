@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Plus, Pencil, Trash2, X, Truck, Wallet, Search } from "lucide-react";
 import { Link } from "react-router-dom";
 import BankAccountsSection from "@/components/BankAccountsSection";
+import DriverPaymentDrawer from "@/components/DriverPaymentDrawer";
 
 const EMPTY = { name: "", phone: "", license_number: "", notes: "" };
 
@@ -13,6 +14,7 @@ export default function Drivers() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState(EMPTY);
+  const [payFor, setPayFor] = useState(null);
   const [q, setQ] = useState(""); // Iter80 — restore master search
 
   const { data: drivers = [] } = useQuery({
@@ -135,6 +137,9 @@ export default function Drivers() {
                   <Link to={`/drivers/${d.id}/ledger`} data-testid={`ledger-driver-${d.id}`} className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-emerald-200 text-emerald-700 rounded-sm mr-2 hover:bg-emerald-50">
                     <Wallet size={12} /> Ledger
                   </Link>
+                  <button data-testid={`payments-driver-${d.id}`} onClick={() => setPayFor(d)} className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-amber-200 text-amber-700 rounded-sm mr-2 hover:bg-amber-50">
+                    <Wallet size={12} /> Payments
+                  </button>
                   <button data-testid={`edit-driver-${d.id}`} onClick={() => openEdit(d)} className="inline-flex items-center gap-1 text-xs px-2 py-1 border border-zinc-200 rounded-sm mr-2 hover:bg-zinc-950 hover:text-white">
                     <Pencil size={12} /> Edit
                   </button>
@@ -150,6 +155,9 @@ export default function Drivers() {
           </tbody>
         </table>
       </div>
+
+      <DriverPaymentDrawer driverId={payFor?.id || ""} driverName={payFor?.name || ""}
+        open={!!payFor} onClose={() => setPayFor(null)} />
 
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-zinc-900/40 backdrop-blur-sm p-4" data-testid="driver-modal">

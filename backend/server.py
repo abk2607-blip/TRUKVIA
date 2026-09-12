@@ -43,6 +43,7 @@ from routers import (
     saved_filters as saved_filters_r,
     driver_shortage_policies as driver_shortage_policies_r,
     driver_ledger as driver_ledger_r,
+    driver_payments as driver_payments_r,
     policy_changes as policy_changes_r,
     # Iter133 · Expense / Vehicle Cost — Turn 1 foundation
     vendors as vendors_r,
@@ -138,7 +139,7 @@ for r in (
     reports_r, gst_r, files_r, team_r, audit_r,
     templates_r, ai_r, expenditure_types_r, suppliers_r,
     saved_filters_r, driver_shortage_policies_r,
-    driver_ledger_r, policy_changes_r,
+    driver_ledger_r, driver_payments_r, policy_changes_r,
     # Iter133 · Expense / Vehicle Cost — Turn 1 + Turn 2B + Turn 2C
     vendors_r, mechanics_r, repair_events_r,
     vendor_bills_r, mechanic_work_orders_r, expenses_r,

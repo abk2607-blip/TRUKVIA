@@ -1520,3 +1520,73 @@ FIN_SYSTEM_ACCOUNTS: List[dict] = [
     {"code": "INTER_ACCOUNT",     "name": "Inter-Account Transit","type": "contra"},
 ]
 
+
+
+# ============================================================================
+# Iter150I · DriverPayment — authoritative document for actual driver
+# cash/bank/UPI disbursements. Additive-only. Mirrors VendorPayment/MechanicPayment
+# shape + Iter150G bank beneficiary + Iter150H company source-bank snapshot
+# recipe. Does NOT touch existing PaymentCorrection (see DriverPaymentCorrection
+# below). Does NOT alter batta / salary / driver_ledger semantics.
+# ============================================================================
+class DriverPayment(BaseModel):
+    id: str = Field(default_factory=lambda: new_id("dpay_"))
+    driver_id: str
+    date: str
+    amount: float
+    type: Literal["payment_out"] = "payment_out"
+    mode: Literal["Cash", "Bank", "UPI", "IMPS", "NEFT", "RTGS", "Cheque", "Other"] = "Bank"
+    ref_no: str = ""
+    against: Literal["advance", "salary_settlement", "reimbursement", "other"] = "other"
+    remarks: str = ""
+    file_ids: List[str] = Field(default_factory=list)
+    # Iter150G-style beneficiary PartyBankAccount linkage + immutable snapshot.
+    bank_account_id: str = ""
+    bank_snapshot: dict = Field(default_factory=dict)
+    # Iter150H-style company source-bank linkage + immutable snapshot.
+    company_bank_account_id: str = ""
+    source_bank_snapshot: dict = Field(default_factory=dict)
+    # Iter133-style correction / reversal audit (audit rows live in
+    # DriverPaymentCorrection to preserve strict +X/-0 on PaymentCorrection).
+    corrected_at: str = ""
+    corrected_by: str = ""
+    correction_count: int = 0
+    latest_correction_id: str = ""
+    is_reversed: bool = False
+    reversed_by: str = ""
+    reversed_at: str = ""
+    reversal_reason: str = ""
+    reversal_of: str = ""
+    created_by: str = ""
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+    modified_by: str = ""
+    modified_at: str = ""
+    is_deleted: bool = False
+    deleted_by: str = ""
+    deleted_at: str = ""
+    deletion_reason: str = ""
+
+
+class DriverPaymentCorrection(BaseModel):
+    """Iter150I · Immutable audit row for DriverPayment correction/reversal.
+    Fully additive — does NOT extend the existing PaymentCorrection Literal."""
+    id: str = Field(default_factory=lambda: new_id("dpcr_"))
+    payment_id: str
+    correction_index: int
+    kind: Literal["attribute", "amount_reversal_new"] = "attribute"
+    correction_reason: str = ""
+    before: dict = Field(default_factory=dict)
+    after: dict = Field(default_factory=dict)
+    diff: dict = Field(default_factory=dict)
+    linked_reversal_id: str = ""
+    linked_new_id: str = ""
+    corrected_by: str = ""
+    corrected_at: str = Field(default_factory=lambda: now_utc().isoformat())
+
+
+# Iter150I · Idempotent seed entry for the DRIVER_OUTFLOW system account.
+# Appended after FIN_SYSTEM_ACCOUNTS so ensure_system_accounts picks it up.
+FIN_SYSTEM_ACCOUNTS.append(
+    {"code": "DRIVER_OUTFLOW", "name": "Driver Payments Outflow", "type": "expense"}
+)
+

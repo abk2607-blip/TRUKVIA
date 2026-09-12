@@ -1170,3 +1170,28 @@ async def _run_invariants(uid: str, cid: str, *, dry_run: bool) -> Dict[str, Any
         })
 
     return report
+
+
+
+# Iter150I · DriverPayment canonical projection — strictly additive.
+def project_driver_payment(dp: dict) -> List[dict]:
+    return _party_payment_legs(
+        dp, ap_code="DRIVER_OUTFLOW", party_type="driver",
+        party_id_key="driver_id", src_type="driver_payment",
+        txn_type_prefix="driver",
+    )
+if "driver_payment" not in SUPPORTED_SOURCE_TYPES:
+    SUPPORTED_SOURCE_TYPES.append("driver_payment")
+_iter150i_orig_reproject_source = reproject_source
+async def _iter150i_reproject_source(uid, cid, source_type, source_id, *,
+                                      code_to_id=None, delete_existing=True):
+    if source_type != "driver_payment":
+        return await _iter150i_orig_reproject_source(
+            uid, cid, source_type, source_id,
+            code_to_id=code_to_id, delete_existing=delete_existing)
+    code_to_id = code_to_id or await ensure_system_accounts(uid, cid)
+    d = await _delete_by_source(uid, cid, "driver_payment", source_id) if delete_existing else 0
+    doc = await db.driver_payments.find_one(
+        {"user_id": uid, "company_id": cid, "id": source_id}, {"_id": 0})
+    return d, await _persist_legs(uid, cid, project_driver_payment(doc) if doc else [], code_to_id)
+reproject_source = _iter150i_reproject_source
