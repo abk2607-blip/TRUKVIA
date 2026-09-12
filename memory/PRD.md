@@ -1,6 +1,78 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
 
+## 🔒 Iter150H · Payment Source-Bank + Master-Embedded Multi-Bank UX (H + H2) — LOCKED (2026-02-14)
+
+**STATUS: 🔒 LOCKED**
+**PARENT COMMIT (Iter150G lock): `e655839bfcf0ae4659e4707ded6ad872f6d27c35`**
+**ITER150H IMPLEMENTATION COMMIT: `411fe3e57aa4b97a63ccce935cc25f58bb08d0b6`**
+**ITER150H2 IMPLEMENTATION COMMIT: `f55e4fe…` · P0 FIX AUTO-COMMIT: `07c4a8e…`**
+**PROTECTED 14-FILE STATE vs `e655839`: 13 non-model 0-diff · `backend/models.py` = authorised additive `+10 / -0` (Iter150H fields only)**
+**ITER150H2 BACKEND DELTA: 0 files · 0 additions · 0 removals**
+**REGRESSION: Iter150H+G backend `27/27 PASS` · Iter150H2 Jest `30/30 PASS` · Six-master Playwright UAT PASS · Master → Payment integration PASS**
+**BLOCKERS: NONE · UAT-attributable DEFECTS: 0 (P0 Supplier crash resolved and re-verified)**
+
+### Scope
+
+**Iter150H — Company Source Bank / Payment Source Bank foundation**
+- Adds `company_bank_account_id: str = ""` + `source_bank_snapshot: dict` (immutable post-time snapshot) to `SupplierPayment`, `VendorPayment`, `MechanicPayment` on `backend/models.py` (authorised additive-only unfreeze · `+10/-0`).
+- Snapshot writer + payload acceptance wired into `backend/routers/suppliers.py`, `backend/routers/vendors.py`, `backend/routers/mechanics.py`.
+- Shared helper: `backend/services_bank_accounts.py::snapshot_company_bank(uid, cid, cba_id)`.
+- Frontend selector: `frontend/src/components/CompanySourceBankSelector.jsx`; mounted in `frontend/src/components/PaymentDrawer.jsx` (Vendor/Mechanic) and `frontend/src/pages/Suppliers.jsx` payment draft.
+- Accounting boundary preserved: no new `source_type`; `BANK_DEFAULT` is still the ledger truth; provider/bank identity is a snapshot dimension only.
+
+**Iter150H2 — Master-Embedded Multi-Bank Account UX (owner-corrected scope)**
+- Adds `<BankAccountsSection kind="company" | kind="party" partyType partyId />` — reuses existing Iter150G CBA/PBA endpoints only.
+- Embedded once inside each of the 6 masters: Company (`Settings.jsx`), Customer (`Customers.jsx`), Supplier (`Suppliers.jsx`), Vendor (`Vendors.jsx`), Mechanic (`Mechanics.jsx`), Driver (`Drivers.jsx`).
+- Actions supported natively in the master form: Add / Multiple accounts / Set Primary / Edit metadata / Replace (creates new identity, historical row → INACTIVE) / Deactivate (soft) / Reveal (owner+accountant) / masked display / Active·Inactive·Primary badges.
+- Standalone registers `/fin/company-bank-accounts` and `/party-bank-accounts/:partyType/:partyId` remain untouched as administrative surfaces.
+- **Zero backend delta** — Iter150H2 is frontend-only and uses only the pre-existing Iter150G endpoints.
+
+**P0 Supplier fix (folded into `Suppliers.jsx`, not a ninth file)**
+- `Suppliers.jsx:390` corrected from `partyId={editing?.id || form?.id || ""}` → `partyId={sid || form?.id || ""}` (SupplierForm is a router-page component; `editing` was undeclared).
+
+### Files
+
+**Iter150H — implementation + regression (5):**
+1. `backend/models.py` (authorised additive unfreeze · `+10/-0`)
+2. `backend/services_bank_accounts.py` (shared source-bank snapshot helper)
+3. `backend/routers/suppliers.py` · `backend/routers/vendors.py` · `backend/routers/mechanics.py` (source-bank payload + snapshot capture)
+4. `backend/tests/test_iter150h_source_bank.py` (14 tests)
+5. `frontend/src/components/CompanySourceBankSelector.jsx` + `frontend/src/__tests__/iter150h.source_bank_shell.test.js`
+
+**Iter150H2 — implementation + regression (8):**
+1. `frontend/src/components/BankAccountsSection.jsx` (NEW)
+2. `frontend/src/__tests__/iter150h2.master_bank_section.test.js` (NEW)
+3. `frontend/src/pages/Settings.jsx` (embed only)
+4. `frontend/src/pages/Customers.jsx` (embed only)
+5. `frontend/src/pages/Suppliers.jsx` (embed + P0 fix)
+6. `frontend/src/pages/Vendors.jsx` (embed only)
+7. `frontend/src/pages/Mechanics.jsx` (embed only)
+8. `frontend/src/pages/Drivers.jsx` (embed only)
+
+### Test coverage summary
+
+- **Backend** — `test_iter150h_source_bank.py` (14) + `test_iter150g_bank_accounts.py` (13) = **27 / 27 PASS** on `pytest -n0`. Covers: additive-only model diff assertion · protected 13 non-model 0-diff vs `e655839` · payment snapshot immutability · redaction / reveal RBAC · Iter150F regression `26/28` (2 pre-existing stale byte-parity baselines · unchanged).
+- **Frontend Jest** — `iter150h2.master_bank_section.test.js` + `iter150h.source_bank_shell.test.js` + `iter150g.bank_shell.test.js` = **30 / 30 PASS**. Covers: 6-master embed presence · testid patterns · endpoint reuse guard · nav preservation.
+- **Live Playwright six-master UAT** — Company / Customer / Supplier / Vendor / Mechanic / Driver — all PASS post-fix; multi-account create / set-primary / edit / replace / deactivate / reveal / masking · standalone registers render · Master → Payment integration (`CompanySourceBankSelector`) preserved on Supplier `/payments` panel · 0 console errors captured.
+
+### Known stale baseline (pre-existing · non-attributable · not modified)
+
+- backend `test_iter150e_pdf_brand_parity.py::test_13_locked_band_zero_diff_vs_iter150d`
+- backend `test_iter150f_uat_matrix.py::test_uat_16_locked_band_zero_diff_vs_iter150e`
+- backend `test_iter150f_reconciliation_reads.py::test_10_locked_band_zero_diff`
+- frontend `iter150e.brand_shell.test.js` nav-testids count
+- frontend `iter150f.reconciliation_shell.test.js` nav-testids count
+
+All 5 are byte-parity / nav-count assertions against earlier locks that grew via authorised additive layers · none re-written.
+
+### Awaiting
+
+Iter150H (including H2 + P0 fix) is 🔒 **LOCKED**. **Iter150I NOT started.**
+
+---
+
+
 ## 🔒 Iter150F · Reconciliation Center — LOCKED (2026-02-13)
 
 **STATUS: 🔒 LOCKED**
