@@ -7,6 +7,7 @@ import { Handshake, Plus, Users, Truck, Wallet, FileText, AlertCircle, TrendingU
 import SearchableSelect from "@/components/SearchableSelect";
 import DuplicateMasterModal, { parseDuplicateError } from "@/components/DuplicateMasterModal";
 import CompanySourceBankSelector from "@/components/CompanySourceBankSelector";
+import BankAccountsSection from "@/components/BankAccountsSection";
 
 const inputCls = "w-full border border-zinc-300 px-3 py-2 rounded-sm text-sm focus:border-zinc-950 focus:ring-1 focus:ring-zinc-950 outline-none bg-white";
 const labelCls = "text-[10px] uppercase font-bold text-zinc-500 tracking-wider mb-1 block";
@@ -385,6 +386,8 @@ function SupplierForm() {
           {F("branch", "Branch")}
         </div>
       </div>
+
+      <BankAccountsSection kind="party" partyType="supplier" partyId={editing?.id || form?.id || ""} />
 
       <div className="border border-zinc-200 bg-white rounded-sm p-4">
         <div className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 mb-3">Terms &amp; Opening Balance</div>

@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Save, Upload, Trash2 } from "lucide-react";
 import { StateSelect } from "@/lib/states";
 import SignatureUpload from "@/components/SignatureUpload";
+import BankAccountsSection from "@/components/BankAccountsSection";
 
 const EMPTY = {
   name: "", address: "", phone: "", email: "",
@@ -193,6 +194,9 @@ export default function Settings() {
           <F label="Account No"><input data-testid="setting-account" value={form.account_number} onChange={set("account_number")} className={inputCls} /></F>
           <F label="IFSC"><input data-testid="setting-ifsc" value={form.ifsc} onChange={set("ifsc")} className={inputCls} /></F>
           <F label="Branch"><input data-testid="setting-branch" value={form.branch} onChange={set("branch")} className={inputCls} /></F>
+        </div>
+        <div className="px-5 pb-5">
+          <BankAccountsSection kind="company" />
         </div>
       </section>
 

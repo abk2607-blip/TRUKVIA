@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Plus, Pencil, X, Search, HardHat, BookOpen } from "lucide-react";
 import { StateSelect } from "@/lib/states";
 import { useAuth } from "@/context/AuthContext";
+import BankAccountsSection from "@/components/BankAccountsSection";
 
 /**
  * Iter133 · Turn 3 · Slice A — Mechanics Master.
@@ -227,6 +228,9 @@ export default function Mechanics() {
                     <input data-testid="mechanic-address" value={form.address}
                       onChange={(e) => setForm({ ...form, address: e.target.value })} className={ic} />
                   </F>
+                </div>
+                <div className="md:col-span-2">
+                  <BankAccountsSection kind="party" partyType="mechanic" partyId={editing?.id || ""} />
                 </div>
                 <F label="Payment Terms">
                   <input data-testid="mechanic-payment-terms" value={form.payment_terms}

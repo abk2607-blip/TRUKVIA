@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { Plus, Pencil, X, Search, Wrench, BookOpen } from "lucide-react";
 import { StateSelect } from "@/lib/states";
 import { useAuth } from "@/context/AuthContext";
+import BankAccountsSection from "@/components/BankAccountsSection";
 
 /**
  * Iter133 · Turn 3 · Slice A — Vendors Master.
@@ -274,6 +275,9 @@ export default function Vendors() {
                   <input data-testid="vendor-branch" value={form.branch}
                     onChange={(e) => setForm({ ...form, branch: e.target.value })} className={ic} />
                 </F>
+                <div className="md:col-span-2">
+                  <BankAccountsSection kind="party" partyType="vendor" partyId={editing?.id || ""} />
+                </div>
                 <div className="md:col-span-2">
                   <F label="Remarks">
                     <input data-testid="vendor-remarks" value={form.remarks}

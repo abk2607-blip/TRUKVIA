@@ -4,6 +4,7 @@ import { api, fmtCurrency } from "@/api";
 import { toast } from "sonner";
 import { Plus, Pencil, Trash2, X, Truck, Wallet, Search } from "lucide-react";
 import { Link } from "react-router-dom";
+import BankAccountsSection from "@/components/BankAccountsSection";
 
 const EMPTY = { name: "", phone: "", license_number: "", notes: "" };
 
@@ -162,6 +163,7 @@ export default function Drivers() {
               <F label="Phone · ఫోన్"><input data-testid="driver-phone" value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} className={ic} /></F>
               <F label="License No · లైసెన్స్"><input data-testid="driver-license" value={form.license_number} onChange={(e) => setForm({ ...form, license_number: e.target.value })} className={ic} /></F>
               <F label="Notes"><textarea rows={2} data-testid="driver-notes" value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} className={ic} /></F>
+              <BankAccountsSection kind="party" partyType="driver" partyId={editing?.id || ""} />
               <div className="flex justify-end gap-2 pt-2">
                 <button type="button" onClick={() => setOpen(false)} className="px-4 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm">Cancel</button>
                 <button data-testid="save-driver-btn" type="submit" disabled={save.isPending} className="px-4 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 disabled:opacity-50">

@@ -8,6 +8,7 @@ import { StateSelect } from "@/lib/states";
 import ShipSitesModal from "@/components/ShipSitesModal";
 import PolicyChangeDialog from "@/components/PolicyChangeDialog";
 import DuplicateMasterModal, { parseDuplicateError } from "@/components/DuplicateMasterModal";
+import BankAccountsSection from "@/components/BankAccountsSection";
 
 const EMPTY = {
   name: "", address: "", phone: "", gstin: "", pan: "", state: "",
@@ -521,6 +522,7 @@ export default function Customers() {
                 </div>
                 <div className="text-[10px] text-zinc-500 mt-2">Historical protection: existing Trips retain their original snapshot. This rule applies only to future Trips.</div>
               </div>
+              <BankAccountsSection kind="party" partyType="customer" partyId={editing?.id || ""} />
               <div className="flex gap-2 justify-end pt-2">
                 <button type="button" onClick={() => setOpen(false)} className="px-4 py-2 text-xs uppercase tracking-wider border border-zinc-300 rounded-sm">Cancel</button>
                 <button data-testid="save-customer-btn" type="submit" disabled={save.isPending} className="px-4 py-2 text-xs uppercase tracking-wider bg-zinc-950 text-white rounded-sm hover:bg-zinc-800 disabled:opacity-50">
