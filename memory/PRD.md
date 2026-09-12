@@ -1,13 +1,14 @@
 # QORVENA · Bitumen Transport ERP — PRD
 
 
-## Iter150E · Brand Shell & PDF Parity — READY FOR UAT / LOCK-CLEARANCE (2026-02-13 · SCOPE-CORRECTED)
+## 🔒 Iter150E · Brand Shell & PDF Parity — LOCKED (2026-02-13)
 
-**STATUS: IMPLEMENTATION COMPLETE · SCOPE RECONCILED · PENDING OWNER UAT / LOCK-CLEARANCE**
+**STATUS: 🔒 LOCKED**
+**LOCK-CLEARANCE UAT: 168 PASS · 3 pre-existing environment-only SKIP · 0 FAIL**
 **PARENT COMMIT (Iter150D lock): `a7a3997ac275c69454b6a4de7e4aa9533a9d32f2`** (short: `a7a3997`)
-**ITER150E BACKEND TESTS: 28 / 28 PASS** (`pytest -n0 backend/tests/test_iter150e_pdf_brand_parity.py`)
-**PROTECTED 14-FILE BYTE-DIFF SINCE `a7a3997`: 0**
+**PROTECTED 14-FILE BYTE-DIFF SINCE `a7a3997`: 0 across all 14 files**
 **5 REVERTED UNAUTHORISED FILES BYTE-DIFF SINCE `a7a3997`: 0**
+**INVOICE PDF MODULE BYTE-DIFF SINCE `a7a3997`: 0**
 **BLOCKERS: NONE · MAJOR ISSUES: NONE · DEVIATIONS: NONE**
 
 ### Corrected authorised non-invoice surfaces (8 · exact scope)
