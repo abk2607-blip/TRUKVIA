@@ -220,6 +220,39 @@ function _isTransient(err) {
   return s === 502 || s === 503 || s === 504;
 }
 
+// Iter150J — Maker-Checker approval reroute.
+// Derive the entity_kind + party_id from a blocked writer POST URL so the
+// interceptor never has to reconstruct the payload.
+const _APPROVAL_ROUTE_MATCHERS = [
+  { rx: /^\/trips\/?$/, kind: "trip", partyIdx: null },
+  { rx: /^\/invoices\/?$/, kind: "invoice", partyIdx: null },
+  { rx: /^\/suppliers\/([^/]+)\/payments\/?$/, kind: "supplier_payment", partyIdx: 1 },
+  { rx: /^\/vendors\/([^/]+)\/payments\/?$/, kind: "vendor_payment", partyIdx: 1 },
+  { rx: /^\/mechanics\/([^/]+)\/payments\/?$/, kind: "mechanic_payment", partyIdx: 1 },
+  { rx: /^\/drivers\/([^/]+)\/payments\/?$/, kind: "driver_payment", partyIdx: 1 },
+];
+
+function _deriveApprovalContext(url, serverHint) {
+  // Prefer server-supplied hint from the 409 body when present.
+  if (serverHint && serverHint.entity_kind) {
+    return {
+      entity_kind: serverHint.entity_kind,
+      party_id: serverHint.party_id || "",
+    };
+  }
+  const bare = String(url || "").replace(/^\/api/, "");
+  for (const m of _APPROVAL_ROUTE_MATCHERS) {
+    const g = bare.match(m.rx);
+    if (g) {
+      return {
+        entity_kind: m.kind,
+        party_id: m.partyIdx != null ? (g[m.partyIdx] || "") : "",
+      };
+    }
+  }
+  return null;
+}
+
 api.interceptors.response.use(
   (r) => r,
   async (err) => {
@@ -228,6 +261,51 @@ api.interceptors.response.use(
       const url = (err?.config?.url || "");
       const detail = err?.response?.data?.detail || err?.response?.data?.detail_raw;
       const detailStr = typeof detail === "string" ? detail.toLowerCase() : "";
+
+      // Iter150J — Approval-required reroute.
+      // A blocked writer POST returns 409 with detail == "approval_required".
+      // We forward the ORIGINAL payload untouched to POST /api/approvals so
+      // no drawer needs to know about approvals. Guarded against recursion
+      // and single-shot to prevent infinite loops.
+      const approvalRequired = (
+        status === 409 &&
+        (detailStr === "approval_required" ||
+          err?.response?.data?.approval_required === true)
+      );
+      const isApprovalUrl = url.includes("/approvals");
+      if (
+        approvalRequired &&
+        !isApprovalUrl &&
+        err?.config &&
+        !err.config._approvalRerouted &&
+        (err.config.method || "").toLowerCase() === "post"
+      ) {
+        err.config._approvalRerouted = true;
+        const ctx = _deriveApprovalContext(url, err.response?.data);
+        if (ctx) {
+          let originalPayload = {};
+          try {
+            originalPayload =
+              typeof err.config.data === "string"
+                ? JSON.parse(err.config.data)
+                : (err.config.data || {});
+          } catch { originalPayload = {}; }
+          const origKey =
+            err.config?.headers?.["Idempotency-Key"] ||
+            err.config?.headers?.["idempotency-key"] || "";
+          const derivedKey = origKey ? `apr:${origKey}` : `apr:${_newUuid()}`;
+          return await api.post("/approvals", {
+            entity_kind: ctx.entity_kind,
+            party_id: ctx.party_id,
+            method: (err.config.method || "post").toUpperCase(),
+            writer_url: url.startsWith("/api") ? url : `/api${url.startsWith("/") ? "" : "/"}${url}`,
+            payload: originalPayload,
+            idempotency_key: derivedKey,
+          }, {
+            headers: { "Idempotency-Key": derivedKey },
+          });
+        }
+      }
 
       // Iter126a — Transient retry for Bucket A endpoints.
       if (err?.config && _isBucketA(err.config) && _isTransient(err)) {

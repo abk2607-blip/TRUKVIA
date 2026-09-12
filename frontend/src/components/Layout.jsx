@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import AIChatBubble from "@/components/AIChatBubble";
 import DeployReadinessBadge from "@/components/DeployReadinessBadge";
+import PendingApprovalBadge from "@/components/PendingApprovalBadge";
 import { useCdnEnabled } from "@/hooks/useCdnEnabled";
 
 // Iter150E · 5-section sidebar (Masters / Operations / Financials /
@@ -58,6 +59,7 @@ const NAV_SECTIONS = [
       { to: "/fin/day-closing", te: "డే క్లోజింగ్", en: "Day Closing", icon: CalendarCheck2, testid: "nav-fin-day-closing" },
       { to: "/fin/reconciliation", te: "అకౌంట్ మ్యాచింగ్", en: "Reconciliation", icon: BookMarked, testid: "nav-fin-reconciliation" },
       { to: "/fin/company-bank-accounts", te: "కంపెనీ బ్యాంక్ ఖాతాలు", en: "Company Bank Accounts", icon: BookMarked, testid: "nav-fin-company-bank-accounts" },
+      { to: "/approvals", te: "అప్రూవల్స్", en: "Approvals", icon: ShieldCheck, testid: "nav-approvals", badge: "pending-approval" },
     ],
   },
   {
@@ -165,6 +167,7 @@ function NavItem({ item, onNavigate }) {
             <span className="telugu">{item.te}</span>{" "}
             <span className="text-[11px] opacity-70">({item.en})</span>
           </span>
+          {item.badge === "pending-approval" && <PendingApprovalBadge />}
         </>
       )}
     </NavLink>

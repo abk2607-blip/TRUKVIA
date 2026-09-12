@@ -46,6 +46,7 @@ import FinDayClosing from "@/pages/FinDayClosing";
 import FinReconciliation from "@/pages/FinReconciliation";
 import CompanyBankAccounts from "@/pages/CompanyBankAccounts";
 import PartyBankAccounts from "@/pages/PartyBankAccounts";
+import ApprovalQueue from "@/pages/ApprovalQueue";
 import Layout from "@/components/Layout";
 
 function Protected({ children }) {
@@ -120,6 +121,7 @@ function AppRouter() {
       <Route path="/fin/reconciliation" element={<Protected><FinReconciliation /></Protected>} />
       <Route path="/fin/company-bank-accounts" element={<Protected><CompanyBankAccounts /></Protected>} />
       <Route path="/party-bank-accounts/:partyType/:partyId" element={<Protected><PartyBankAccounts /></Protected>} />
+      <Route path="/approvals" element={<Protected><ApprovalQueue /></Protected>} />
       <Route path="/settings" element={<Protected><Settings /></Protected>} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

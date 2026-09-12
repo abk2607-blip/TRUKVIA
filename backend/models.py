@@ -104,6 +104,12 @@ class Company(BaseModel):
     debit_note_prefix: str = "DN"       # reserved for Iter132b
     next_debit_note_number: int = 1     # reserved for Iter132b
     require_cdn_approval: bool = False  # draft→issued gate when true
+    # Iter150J · Maker-Checker Approval Framework toggles (additive).
+    # New tenants default ON; legacy tenants default OFF to preserve current
+    # posting behaviour until owner opts in.
+    require_approval_trip: bool = False
+    require_approval_invoice: bool = False
+    require_approval_payment: bool = False
 
 class ShipSite(BaseModel):
     """Iter66 · Phase A — a customer's Ship-To / consignee site location.
@@ -1589,4 +1595,146 @@ class DriverPaymentCorrection(BaseModel):
 FIN_SYSTEM_ACCOUNTS.append(
     {"code": "DRIVER_OUTFLOW", "name": "Driver Payments Outflow", "type": "expense"}
 )
+
+
+# Iter150J · Additive ROLE_PERMISSIONS extension (pure append — never
+# touches the frozen `{...}` literal above). Owner gains the checker
+# permission; Accountant gains the submitter permission.
+ROLE_PERMISSIONS["owner"].add("approve_transactions")
+ROLE_PERMISSIONS["accountant"].add("submit_approval")
+
+
+# ============================================================================
+# Iter150J · Maker-Checker Approval Framework — additive models.
+# ============================================================================
+# Business contract (frozen at Iter150J authorisation):
+#   External writer POST -> ApprovalGate middleware -> 409 approval_required
+#   -> axios interceptor -> POST /api/approvals -> PENDING_APPROVAL
+#   Approval Router -> services_approvals -> direct Python delegation ->
+#   existing frozen writer -> existing FinTxn hooks -> POSTED.
+# ============================================================================
+
+APPROVAL_ENTITY_KINDS = (
+    "trip", "invoice",
+    "supplier_payment", "vendor_payment",
+    "mechanic_payment", "driver_payment",
+)
+
+APPROVAL_STATUSES = (
+    "DRAFT", "PENDING_APPROVAL", "APPROVED", "REJECTED",
+    "WITHDRAWN", "POSTED", "EXECUTION_FAILED",
+)
+
+
+class Approval(BaseModel):
+    """Iter150J · Maker-Checker approval envelope.
+
+    Stores the ORIGINAL untouched writer payload while the transaction is
+    pending. Never carries bank account numbers or bank snapshots — only
+    references (bank_account_id / company_bank_account_id) which the
+    frozen writer resolves at POSTED time via the existing Iter150G/H
+    snapshot capture.
+    """
+    id: str = Field(default_factory=lambda: new_id("apr_"))
+    user_id: str = ""
+    company_id: str = ""
+    entity_kind: Literal[
+        "trip", "invoice",
+        "supplier_payment", "vendor_payment",
+        "mechanic_payment", "driver_payment",
+    ]
+    # Populated after successful writer execution — mirrors the writer's
+    # returned document id (trip_id, invoice_id, sp_*, vp_*, mp_*, dpay_*).
+    entity_id: str = ""
+    # For payment kinds: /suppliers/{sid}, /vendors/{vid}, /mechanics/{mid},
+    # /drivers/{did}. Empty for trip / invoice.
+    party_id: str = ""
+    status: Literal[
+        "DRAFT", "PENDING_APPROVAL", "APPROVED", "REJECTED",
+        "WITHDRAWN", "POSTED", "EXECUTION_FAILED",
+    ] = "PENDING_APPROVAL"
+    # Untouched original request body — Pydantic model_dump on the writer
+    # payload before any server-side derivation.
+    payload: dict = Field(default_factory=dict)
+    method: str = "POST"
+    writer_url: str = ""
+    # Iter126b Idempotency-Key from the ORIGINAL blocked writer POST (or a
+    # derived key when the client did not send one).
+    idempotency_key: str = ""
+    maker_user_id: str = ""
+    maker_role: str = ""
+    maker_at: str = Field(default_factory=lambda: now_utc().isoformat())
+    checker_user_id: str = ""
+    checker_role: str = ""
+    checker_at: str = ""
+    auto_approved: bool = False
+    revision_index: int = 0
+    latest_revision_id: str = ""
+    reject_reason: str = ""
+    withdraw_reason: str = ""
+    execution_error: str = ""
+    created_at: str = Field(default_factory=lambda: now_utc().isoformat())
+    modified_at: str = ""
+
+
+class ApprovalRevision(BaseModel):
+    """Iter150J · Append-only revision entry.
+
+    Every edit-and-resubmit on a REJECTED / WITHDRAWN approval creates a
+    new revision. Previous revisions remain immutable.
+    """
+    id: str = Field(default_factory=lambda: new_id("aprv_"))
+    approval_id: str
+    user_id: str = ""
+    company_id: str = ""
+    revision_index: int
+    payload_before: dict = Field(default_factory=dict)
+    payload_after: dict = Field(default_factory=dict)
+    diff: dict = Field(default_factory=dict)
+    edited_by: str = ""
+    edited_at: str = Field(default_factory=lambda: now_utc().isoformat())
+    note: str = ""
+
+
+class ApprovalAudit(BaseModel):
+    """Iter150J · Immutable audit trail. One row per lifecycle action."""
+    id: str = Field(default_factory=lambda: new_id("apra_"))
+    approval_id: str
+    user_id: str = ""
+    company_id: str = ""
+    action: Literal[
+        "submit", "edit", "approve", "reject",
+        "withdraw", "auto_approve", "execute", "execute_fail",
+    ]
+    actor_user_id: str = ""
+    actor_role: str = ""
+    at: str = Field(default_factory=lambda: now_utc().isoformat())
+    note: str = ""
+    metadata: dict = Field(default_factory=dict)
+
+
+# Iter150J · Writer endpoint whitelist for the ApprovalGate middleware.
+# Kept as module-level data so both the middleware and services_approvals
+# share the same source of truth. Path-regex + entity_kind mapping.
+import re as _re_iter150j
+
+APPROVAL_GATED_ROUTES = [
+    # (compiled_regex, method, entity_kind, party_key_in_path)
+    (_re_iter150j.compile(r"^/api/trips/?$"), "POST", "trip", None),
+    (_re_iter150j.compile(r"^/api/invoices/?$"), "POST", "invoice", None),
+    (_re_iter150j.compile(r"^/api/suppliers/([^/]+)/payments/?$"), "POST", "supplier_payment", "supplier_id"),
+    (_re_iter150j.compile(r"^/api/vendors/([^/]+)/payments/?$"), "POST", "vendor_payment", "vendor_id"),
+    (_re_iter150j.compile(r"^/api/mechanics/([^/]+)/payments/?$"), "POST", "mechanic_payment", "mechanic_id"),
+    (_re_iter150j.compile(r"^/api/drivers/([^/]+)/payments/?$"), "POST", "driver_payment", "driver_id"),
+]
+
+
+def approval_toggle_key(entity_kind: str) -> str:
+    """Map an entity_kind to its `Company` toggle field name."""
+    if entity_kind == "trip":
+        return "require_approval_trip"
+    if entity_kind == "invoice":
+        return "require_approval_invoice"
+    return "require_approval_payment"
+
 

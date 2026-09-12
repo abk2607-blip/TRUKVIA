@@ -74,7 +74,11 @@ from routers import (
     # Iter150D · Day Closing (financial-control checkpoint · owner-only writer)
     fin_day_closing as fin_day_closing_r,
     fin_reconciliation as fin_reconciliation_r,
+    # Iter150J · Maker-Checker Approval Framework
+    approvals as approvals_r,
 )
+from approval_gate import ApprovalGateMiddleware
+from services_approvals import ensure_approval_indexes
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / ".env")
@@ -159,8 +163,14 @@ for r in (
     # Iter150D · Day Closing
     fin_day_closing_r,
     fin_reconciliation_r,
+    # Iter150J · Maker-Checker Approval Framework
+    approvals_r,
 ):
     app.include_router(r.router)
+
+# Iter150J · Attach the ApprovalGate middleware LAST so it becomes the
+# outermost layer (runs BEFORE idempotency capture).
+app.add_middleware(ApprovalGateMiddleware)
 
 # Iter150G · Bank Account masters — non-locked, additive.
 try:
@@ -1223,6 +1233,14 @@ async def _run_background_migrations():
 
         _background_migrations_ran = True
         logger.info("Iter127b-UAT-fix v3 · Background migrations complete.")
+
+
+@app.on_event("startup")
+async def _iter150j_ensure_approval_indexes():
+    try:
+        await ensure_approval_indexes()
+    except Exception as e:
+        logger.warning(f"Iter150J approval index ensure failed: {e}")
 
 
 @app.on_event("startup")
