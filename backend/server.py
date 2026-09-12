@@ -161,6 +161,16 @@ for r in (
 ):
     app.include_router(r.router)
 
+# Iter150G · Bank Account masters — non-locked, additive.
+try:
+    from routers.company_bank_accounts import router as _cba_r
+    from routers.party_bank_accounts import router as _pba_r
+    app.include_router(_cba_r)
+    app.include_router(_pba_r)
+except Exception as _e:
+    import logging as _log
+    _log.getLogger(__name__).warning(f"Iter150G bank routers not mounted: {_e}")
+
 # Iter132a · Credit Note router (feature-flagged internally by ENABLE_CDN).
 try:
     from routers.notes import router as notes_r

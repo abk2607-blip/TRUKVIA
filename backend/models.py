@@ -590,9 +590,13 @@ class Invoice(BaseModel):
 ROLE_PERMISSIONS = {
     "owner": {"edit_trip", "delete_trip", "edit_invoice", "delete_invoice", "edit_master", "delete_master", "manage_users",
               # Iter132a additive — CN/DN permissions. Existing keys untouched.
-              "create_note", "issue_note", "cancel_note", "edit_note_settings"},
+              "create_note", "issue_note", "cancel_note", "edit_note_settings",
+              # Iter150G additive — Bank Account master management + full number reveal.
+              "manage_bank_accounts", "view_bank_account_full"},
     "accountant": {"edit_trip", "edit_invoice", "edit_master",
-                   "create_note", "issue_note"},
+                   "create_note", "issue_note",
+                   # Iter150G additive.
+                   "manage_bank_accounts", "view_bank_account_full"},
     "viewer": set(),
 }
 
@@ -890,6 +894,10 @@ class SupplierPayment(BaseModel):
     trip_id: str = ""                      # optional link
     lr_number: str = ""                    # optional link
     remarks: str = ""
+    # Iter150G · additive — beneficiary PartyBankAccount linkage + immutable
+    # snapshot captured at post-time. Empty defaults preserve legacy compat.
+    bank_account_id: str = ""
+    bank_snapshot: dict = Field(default_factory=dict)
     # Audit
     created_by: str = ""
     created_at: str = Field(default_factory=lambda: now_utc().isoformat())
@@ -1164,6 +1172,9 @@ class VendorPayment(BaseModel):
     vendor_bill_id: str = ""
     remarks: str = ""
     file_ids: List[str] = Field(default_factory=list)
+    # Iter150G · additive — beneficiary PartyBankAccount linkage + snapshot.
+    bank_account_id: str = ""
+    bank_snapshot: dict = Field(default_factory=dict)
     # Iter133 · Turn 2C — correction / reversal support (append-only audit).
     corrected_at: str = ""
     corrected_by: str = ""
@@ -1200,6 +1211,9 @@ class MechanicPayment(BaseModel):
     mechanic_work_order_id: str = ""
     remarks: str = ""
     file_ids: List[str] = Field(default_factory=list)
+    # Iter150G · additive — beneficiary PartyBankAccount linkage + snapshot.
+    bank_account_id: str = ""
+    bank_snapshot: dict = Field(default_factory=dict)
     # Iter133 · Turn 2C — correction / reversal support.
     corrected_at: str = ""
     corrected_by: str = ""

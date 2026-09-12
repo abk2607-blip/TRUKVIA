@@ -323,6 +323,19 @@ async def create_payment(sid: str, payload: SupplierPayment, request: Request, u
     doc["created_by"] = uid
     doc["created_at"] = now_utc().isoformat()
     doc["is_deleted"] = False
+    # Iter150G · beneficiary bank-account snapshot capture (additive).
+    if doc.get("bank_account_id"):
+        from services_bank_accounts import (
+            find_active_party_bank, snapshot_from_party_bank,
+        )
+        pba = await find_active_party_bank(uid, "supplier", sid,
+                                            doc["bank_account_id"])
+        if not pba:
+            raise HTTPException(status_code=400,
+                                detail="Bank account is not active, belongs to another party, or is cross-tenant")
+        doc["bank_snapshot"] = snapshot_from_party_bank(pba)
+    else:
+        doc["bank_snapshot"] = {}
     await db.supplier_payments.insert_one(doc)
     try:
         await _log_audit({"user_id": uid, "company_id": cid}, "supplier_payment", "create", doc["id"], sup.get("name", ""), "", {})

@@ -205,6 +205,19 @@ async def create_vendor_payment(vid: str, payload: VendorPayment, request: Reque
     doc["created_by"] = uid
     doc["created_at"] = now_utc().isoformat()
     doc["is_deleted"] = False
+    # Iter150G · beneficiary bank-account snapshot capture (additive).
+    if doc.get("bank_account_id"):
+        from services_bank_accounts import (
+            find_active_party_bank, snapshot_from_party_bank,
+        )
+        pba = await find_active_party_bank(uid, "vendor", vid,
+                                            doc["bank_account_id"])
+        if not pba:
+            raise HTTPException(status_code=400,
+                                detail="Bank account is not active, belongs to another party, or is cross-tenant")
+        doc["bank_snapshot"] = snapshot_from_party_bank(pba)
+    else:
+        doc["bank_snapshot"] = {}
     await db.vendor_payments.insert_one(doc)
     try:
         await _log_audit({"user_id": uid, "company_id": cid, "email": user.get("email", ""), "name": user.get("name", "")},
