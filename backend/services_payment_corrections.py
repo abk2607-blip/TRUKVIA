@@ -22,11 +22,14 @@ from fastapi import HTTPException
 
 from db import db
 from models import now_utc, new_id
+from services_fin_txn_hooks import hook_after_source_write
 
 _CORRECTABLE_ATTR_FIELDS = {
     "vendor": {"vendor_id", "vendor_bill_id", "date", "mode", "ref_no",
                "against", "remarks", "account_id"},
     "mechanic": {"mechanic_id", "mechanic_work_order_id", "date", "mode",
+                 "ref_no", "against", "remarks", "account_id"},
+    "supplier": {"supplier_id", "trip_id", "lr_number", "date", "mode",
                  "ref_no", "against", "remarks", "account_id"},
 }
 
@@ -49,6 +52,8 @@ async def _ensure_admin(user: dict) -> None:
 
 async def _load_payment(payment_type: str, uid: str, cid: str, pid: str) -> dict:
     coll = "vendor_payments" if payment_type == "vendor" else "mechanic_payments"
+    if payment_type == "supplier":
+        coll = "supplier_payments"
     doc = await db[coll].find_one({"id": pid, "user_id": uid, "company_id": cid}, {"_id": 0})
     if not doc:
         raise HTTPException(status_code=404, detail="Payment not found")
@@ -97,8 +102,19 @@ async def _validate_targets_mechanic(uid: str, cid: str, patch: dict) -> None:
             raise HTTPException(status_code=400, detail="New work order does not belong to target mechanic")
 
 
+async def _validate_targets_supplier(uid: str, cid: str, patch: dict) -> None:
+    if patch.get("supplier_id"):
+        s = await db.suppliers.find_one({"id": patch["supplier_id"], "user_id": uid, "company_id": cid}, {"_id": 0, "id": 1})
+        if not s:
+            raise HTTPException(status_code=400, detail="New supplier not found in tenant")
+    if patch.get("trip_id"):
+        t = await db.trips.find_one({"id": patch["trip_id"], "user_id": uid, "company_id": cid, "is_deleted": {"$ne": True}}, {"_id": 0, "id": 1})
+        if not t:
+            raise HTTPException(status_code=400, detail="New trip not found in tenant")
+
+
 async def apply_attribute_correction(
-    payment_type: Literal["vendor", "mechanic"],
+    payment_type: Literal["vendor", "mechanic", "supplier"],
     uid: str, cid: str, pid: str, user: dict,
     changes: dict, correction_reason: str,
     force_reconciled_override: bool,
@@ -137,6 +153,8 @@ async def apply_attribute_correction(
 
     if payment_type == "vendor":
         await _validate_targets_vendor(uid, cid, patch)
+    elif payment_type == "supplier":
+        await _validate_targets_supplier(uid, cid, patch)
     else:
         await _validate_targets_mechanic(uid, cid, patch)
 
@@ -151,6 +169,8 @@ async def apply_attribute_correction(
     new_count = int(doc.get("correction_count") or 0) + 1
 
     coll = "vendor_payments" if payment_type == "vendor" else "mechanic_payments"
+    if payment_type == "supplier":
+        coll = "supplier_payments"
     update = {
         **patch,
         "modified_by": uid,
@@ -184,11 +204,12 @@ async def apply_attribute_correction(
 
     updated = await db[coll].find_one({"id": pid}, {"_id": 0, "user_id": 0})
     correction_doc.pop("_id", None); correction_doc.pop("user_id", None)
+    await hook_after_source_write(uid, cid, f"{payment_type}_payment", pid)
     return {"payment": updated, "correction": correction_doc}
 
 
 async def apply_amount_reversal_new(
-    payment_type: Literal["vendor", "mechanic"],
+    payment_type: Literal["vendor", "mechanic", "supplier"],
     uid: str, cid: str, pid: str, user: dict,
     new_amount: float, correction_reason: str,
     force_reconciled_override: bool,
@@ -222,6 +243,8 @@ async def apply_amount_reversal_new(
     correction_id = new_id("pcr_")
 
     coll = "vendor_payments" if payment_type == "vendor" else "mechanic_payments"
+    if payment_type == "supplier":
+        coll = "supplier_payments"
 
     # Step 1: mark original reversed.
     await db[coll].update_one(
@@ -241,6 +264,8 @@ async def apply_amount_reversal_new(
 
     # Step 2: create the fresh corrected row.
     new_row_id = new_id("vpay_" if payment_type == "vendor" else "mpay_")
+    if payment_type == "supplier":
+        new_row_id = new_id("sp_")
     fresh = {
         **{k: v for k, v in doc.items() if k not in {
             "id", "amount", "is_reversed", "reversed_by", "reversed_at",
@@ -295,6 +320,8 @@ async def apply_amount_reversal_new(
     correction_doc.pop("_id", None); correction_doc.pop("user_id", None)
     reloaded_orig.pop("_id", None)
     fresh.pop("_id", None); fresh.pop("user_id", None)
+    await hook_after_source_write(uid, cid, f"{payment_type}_payment", pid)
+    await hook_after_source_write(uid, cid, f"{payment_type}_payment", new_row_id)
     return {"original": reloaded_orig, "fresh": fresh, "correction": correction_doc}
 
 

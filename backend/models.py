@@ -922,6 +922,18 @@ class SupplierPayment(BaseModel):
     imported_ref: str = ""
     imported_batch: str = ""
     is_historical: bool = False
+    # Iter150K · Turn 1 · SupplierPayment correction parity (defaults preserve legacy docs).
+    corrected_at: str = ""
+    corrected_by: str = ""
+    correction_count: int = 0
+    latest_correction_id: str = ""
+    is_reversed: bool = False
+    reversed_by: str = ""
+    reversed_at: str = ""
+    reversal_reason: str = ""
+    reversal_of: str = ""
+    reconciled_at: str = ""
+    reconciled_ref: str = ""
 
 
 class ChatMessage(BaseModel):
@@ -1284,7 +1296,7 @@ class PaymentCorrection(BaseModel):
     """Iter133 · Turn 2C · Immutable audit row for a Vendor/Mechanic Payment
     correction. Append-only. Never edited or deleted."""
     id: str = Field(default_factory=lambda: new_id("pcr_"))
-    payment_type: Literal["vendor", "mechanic"]
+    payment_type: Literal["vendor", "mechanic", "supplier"]
     payment_id: str
     correction_index: int
     kind: Literal["attribute", "amount_reversal_new"] = "attribute"

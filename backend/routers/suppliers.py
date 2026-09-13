@@ -300,7 +300,7 @@ async def list_payments(sid: str, request: Request, user=Depends(get_current_use
     uid = user["user_id"]
     cid = await _active_company_id(request, user)
     rows = await db.supplier_payments.find(
-        {"user_id": uid, "company_id": cid, "supplier_id": sid, "is_deleted": {"$ne": True}},
+        {"user_id": uid, "company_id": cid, "supplier_id": sid, "is_deleted": {"$ne": True}, "is_reversed": {"$ne": True}},
         {"_id": 0, "user_id": 0},
     ).sort("date", -1).to_list(5000)
     return rows
@@ -367,6 +367,8 @@ async def update_payment(sid: str, pid: str, payload: SupplierPayment, request: 
     if not before:
         raise HTTPException(status_code=404, detail="Payment not found")
     patch = payload.model_dump(exclude={"id", "supplier_id", "created_at", "created_by", "is_deleted", "deleted_by", "deleted_at", "deletion_reason"})
+    for _f in ("is_reversed", "reversed_by", "reversed_at", "reversal_reason", "reversal_of", "corrected_at", "corrected_by", "correction_count", "latest_correction_id", "reconciled_at", "reconciled_ref"):
+        patch.pop(_f, None)
     patch["modified_by"] = uid
     patch["modified_at"] = now_utc().isoformat()
     await db.supplier_payments.update_one({"id": pid}, {"$set": patch})
@@ -620,7 +622,7 @@ async def _build_ledger(uid: str, cid: str, sid: str, start: Optional[str], end:
 
     # 3) Explicit payments — Iter86: exclude historical
     pays = await db.supplier_payments.find(
-        {"user_id": uid, "company_id": cid, "supplier_id": sid, "is_deleted": {"$ne": True}, **LIVE_ONLY_FILTER},
+        {"user_id": uid, "company_id": cid, "supplier_id": sid, "is_deleted": {"$ne": True}, "is_reversed": {"$ne": True}, **LIVE_ONLY_FILTER},
         {"_id": 0, "user_id": 0},
     ).to_list(10000)
     for p in pays:
@@ -801,7 +803,7 @@ async def suppliers_dashboard(request: Request, user=Depends(get_current_user)):
 
     # 4) All supplier payments (single query, projected fields only) — Iter86: exclude historical
     pay_docs = await db.supplier_payments.find(
-        {"user_id": uid, "company_id": cid, "is_deleted": {"$ne": True}, **LIVE_ONLY_FILTER},
+        {"user_id": uid, "company_id": cid, "is_deleted": {"$ne": True}, "is_reversed": {"$ne": True}, **LIVE_ONLY_FILTER},
         {"_id": 0, "supplier_id": 1, "amount": 1, "type": 1},
     ).to_list(200000)
 

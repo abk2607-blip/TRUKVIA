@@ -186,6 +186,9 @@ except Exception as _e:
 try:
     from routers.notes import router as notes_r
     app.include_router(notes_r)
+    # Iter150K · Turn 1 · Supplier correction router.
+    from routers.supplier_ledger import router as supplier_ledger_r
+    app.include_router(supplier_ledger_r)
 except Exception as _e:
     import logging as _log
     _log.getLogger(__name__).warning(f"Iter132a notes router not mounted: {_e}")
@@ -1360,6 +1363,9 @@ async def startup_event():
         await db.vendor_payments.create_index([("reversal_of", 1)], name="vp_reversal_of")
         await db.mechanic_payments.create_index([("is_reversed", 1)], name="mp_reversed")
         await db.mechanic_payments.create_index([("reversal_of", 1)], name="mp_reversal_of")
+        # Iter150K · SupplierPayment correction parity — reversal-aware indexes
+        await db.supplier_payments.create_index([("is_reversed", 1)], name="sp_reversed")
+        await db.supplier_payments.create_index([("reversal_of", 1)], name="sp_reversal_of")
         logger.info("Iter133 · Expense/Vehicle-Cost indexes ensured")
     except Exception as e:
         logger.warning(f"Iter133 index setup failed: {e}")
