@@ -1,0 +1,13 @@
+# TRUKVIA Node migration allowlist — Phase 3.
+#
+# One `/api/...` route path per line, EXACTLY as registered inside
+# `backend-node/src/**` (Fastify path syntax, e.g. `:pid` not `{pid}`).
+# Lines starting with `#` and blank lines are ignored.
+#
+# Adding a route here without an accompanying implementation + tests +
+# gate authorisation is NOT permitted. Removing a route requires an
+# explicit rollback gate.
+#
+# Format: <fastify-path>  (no trailing slash)
+
+/api/supplier-payments/:pid/corrections

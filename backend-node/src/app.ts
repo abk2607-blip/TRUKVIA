@@ -8,16 +8,21 @@ import type { AppConfig } from './config.js';
 import type { MongoConn } from './db.js';
 import { registerRequestId } from './request-id.js';
 import { registerHealth } from './health.js';
+import { registerApiRoutes } from './routes/index.js';
 
 /**
- * Fastify skeleton for the TRUKVIA Node foundation.
+ * Fastify skeleton for the TRUKVIA Node foundation + Phase-3 migration surface.
  *
- * Phase 2 scope:
- *   - Health endpoints only
+ * Phase 2 (foundation) scope:
+ *   - Health endpoints
  *   - Structured request logging with request_id
- *   - No /api/* routes
- *   - No auth
  *   - No writers
+ *
+ * Phase 3 (migration, gate-2 onwards) scope:
+ *   - Read-only shadow routes under /api/* — mounted only when a real Mongo
+ *     connection is provided (see `mongo` option). Each route MUST be on the
+ *     `backend-node/.migration-allowlist` and MUST be a faithful shadow of an
+ *     existing Python route. Python remains authoritative.
  */
 
 export interface BuildAppOptions {
@@ -77,6 +82,13 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   });
 
   await registerHealth(app, { mongo });
+
+  // Phase-3 read-only routes require a live Mongo connection. When `mongo`
+  // is null (foundation smoke tests, /health-only harnesses) the /api surface
+  // is intentionally not mounted — parity with the Phase-2 skeleton.
+  if (mongo) {
+    await registerApiRoutes(app, { db: mongo.db });
+  }
 
   return app;
 }

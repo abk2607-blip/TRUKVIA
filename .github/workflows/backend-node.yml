@@ -53,16 +53,53 @@ jobs:
           cache: 'yarn'
           cache-dependency-path: backend-node/yarn.lock
 
-      - name: Confirm no /api business routes are registered in backend-node
+      - name: Phase-3 migration allowlist guard
         run: |
-          # Scan src/ ONLY (tests may legitimately reference the string /api/
-          # when introspecting the frozen OpenAPI contract).
-          # Match Fastify route-registration patterns and prefix mounts.
-          if grep -RE "(\.(get|post|put|patch|delete|route|all|head|options)\s*\(\s*['\"])/api/|prefix\s*:\s*['\"]/api" --include='*.ts' src 2>/dev/null; then
-            echo "::error::/api/* route registration found in backend-node/src — Phase 2B forbids business routes."
+          set -euo pipefail
+          # Every /api/... route registration in backend-node/src/** MUST be
+          # on the migration allowlist. Foundation stayed at zero registrations
+          # (Phase 2B). Phase 3 opens this surface one route at a time; each
+          # new route requires its Fastify path to appear verbatim in the
+          # allowlist file.
+          ALLOWLIST=".migration-allowlist"
+          # Match any /api/... string literal ('...' or "...") in src/**.
+          # This intentionally catches split-line route registrations too
+          # (e.g. `.get<T>(<newline>  '/api/foo'`) which a single-line regex
+          # would miss. False positives (e.g. string constants) are still
+          # required to be on the allowlist.
+          matches=$(grep -RnoE "['\"]/api/[^'\"]+['\"]" --include='*.ts' src 2>/dev/null || true)
+          if [ -z "$matches" ]; then
+            echo "OK: no /api/* route registration in backend-node/src."
+            exit 0
+          fi
+          if [ ! -f "$ALLOWLIST" ]; then
+            echo "::error::/api/* registration present in src/ but $ALLOWLIST is missing."
             exit 1
           fi
-          echo "OK: no /api/* route registration in backend-node/src."
+          # Load allowlist (strip comments + blanks).
+          allow=$(grep -vE '^\s*(#|$)' "$ALLOWLIST" || true)
+          if [ -z "$allow" ]; then
+            echo "::error::$ALLOWLIST contains no entries but /api registrations exist in src/."
+            exit 1
+          fi
+          fail=0
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            route=$(printf '%s' "$line" | grep -oE "['\"]/api/[^'\"]+['\"]" | head -1 | sed -e "s/^['\"]//" -e "s/['\"]$//")
+            if [ -z "$route" ]; then
+              echo "::warning::could not extract route path from: $line"
+              continue
+            fi
+            if ! printf '%s\n' "$allow" | grep -Fxq "$route"; then
+              echo "::error::$line"
+              echo "::error::route \"$route\" is NOT on the migration allowlist ($ALLOWLIST)."
+              fail=1
+            fi
+          done <<< "$matches"
+          if [ "$fail" -ne 0 ]; then
+            exit 1
+          fi
+          echo "OK: all /api/* registrations in backend-node/src are on the migration allowlist."
 
       - name: Install dependencies
         run: yarn install --frozen-lockfile
