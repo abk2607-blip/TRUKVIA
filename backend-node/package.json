@@ -1,0 +1,32 @@
+{
+  "name": "trukvia-backend-node",
+  "version": "0.0.1",
+  "private": true,
+  "description": "TRUKVIA Node.js + TypeScript backend foundation (Phase 2 skeleton). Python remains authoritative.",
+  "engines": {
+    "node": ">=20.0.0 <21.0.0"
+  },
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "node dist/server.js",
+    "dev": "tsx watch src/server.ts",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "clean": "rm -rf dist coverage .vitest-cache"
+  },
+  "dependencies": {
+    "fastify": "4.28.1",
+    "mongodb": "6.9.0",
+    "pino": "9.4.0",
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "@types/node": "20.14.10",
+    "tsx": "4.19.1",
+    "typescript": "5.5.4",
+    "vitest": "2.1.1"
+  }
+}

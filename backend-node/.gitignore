@@ -1,0 +1,10 @@
+node_modules/
+dist/
+coverage/
+.vitest-cache/
+.env
+.env.local
+.env.*.local
+*.log
+npm-debug.log*
+.DS_Store

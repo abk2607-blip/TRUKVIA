@@ -1,0 +1,82 @@
+import Fastify, {
+  type FastifyInstance,
+  type FastifyServerOptions,
+  type FastifyBaseLogger,
+} from 'fastify';
+import type { Logger } from 'pino';
+import type { AppConfig } from './config.js';
+import type { MongoConn } from './db.js';
+import { registerRequestId } from './request-id.js';
+import { registerHealth } from './health.js';
+
+/**
+ * Fastify skeleton for the TRUKVIA Node foundation.
+ *
+ * Phase 2 scope:
+ *   - Health endpoints only
+ *   - Structured request logging with request_id
+ *   - No /api/* routes
+ *   - No auth
+ *   - No writers
+ */
+
+export interface BuildAppOptions {
+  config: AppConfig;
+  logger: Logger;
+  mongo: MongoConn | null;
+}
+
+export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> {
+  const { config, logger, mongo } = opts;
+
+  // Fastify 4's FastifyBaseLogger declares `msgPrefix` as required. Pino's
+  // Logger doesn't include that field at compile time (it's runtime-safe).
+  // We narrow the type at the boundary here — no runtime effect.
+  const fastifyOptions: FastifyServerOptions = {
+    logger: logger as unknown as FastifyBaseLogger,
+    disableRequestLogging: false,
+    bodyLimit: 1_048_576, // 1 MiB — foundation only
+    trustProxy: false,
+    genReqId: () => {
+      // Actual request_id is decided in the onRequest hook (request-id.ts).
+      // Fastify still needs a genReqId to avoid its default incremental numbers.
+      return '_pending_';
+    },
+  };
+  const app: FastifyInstance = Fastify(fastifyOptions);
+
+  await registerRequestId(app, config);
+
+  // Structured completion log with the required fields.
+  app.addHook('onResponse', async (req, reply) => {
+    const tenantHeader = req.headers['x-tenant-id'];
+    const actorHeader = req.headers['x-actor-user-id'];
+    const tenantId =
+      typeof tenantHeader === 'string'
+        ? tenantHeader
+        : Array.isArray(tenantHeader)
+        ? (tenantHeader[0] ?? null)
+        : null;
+    const actorUserId =
+      typeof actorHeader === 'string'
+        ? actorHeader
+        : Array.isArray(actorHeader)
+        ? (actorHeader[0] ?? null)
+        : null;
+
+    const fields = {
+      request_id: req.requestId,
+      tenant_id: tenantId,
+      actor_user_id: actorUserId,
+      route: req.routeOptions?.url ?? req.url,
+      method: req.method,
+      status: reply.statusCode,
+      latency_ms: Math.round(reply.elapsedTime),
+    };
+    req.log.info(fields, 'request_completed');
+  });
+
+  await registerHealth(app, { mongo });
+
+  return app;
+}
