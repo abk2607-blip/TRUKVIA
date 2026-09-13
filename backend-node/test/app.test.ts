@@ -40,7 +40,7 @@ describe('buildApp / health endpoints', () => {
 
     const res = await app.inject({ method: 'GET', url: '/health/live' });
     expect(res.statusCode).toBe(200);
-    const body = res.json() as { status: string; service: string; uptime_s: number };
+    const body = res.json();
     expect(body.status).toBe('ok');
     expect(body.service).toBe('trukvia-backend-node');
     expect(typeof body.uptime_s).toBe('number');
@@ -54,7 +54,7 @@ describe('buildApp / health endpoints', () => {
 
     const res = await app.inject({ method: 'GET', url: '/health/ready' });
     expect(res.statusCode).toBe(200);
-    const body = res.json() as { status: string; checks: { mongo: string } };
+    const body = res.json();
     expect(body.status).toBe('ok');
     expect(body.checks.mongo).toBe('ok');
     await app.close();
@@ -67,7 +67,7 @@ describe('buildApp / health endpoints', () => {
 
     const res = await app.inject({ method: 'GET', url: '/health/ready' });
     expect(res.statusCode).toBe(503);
-    const body = res.json() as { status: string; checks: { mongo: string } };
+    const body = res.json();
     expect(body.status).toBe('degraded');
     expect(body.checks.mongo).toBe('unavailable');
     await app.close();
@@ -79,7 +79,7 @@ describe('buildApp / health endpoints', () => {
 
     const res = await app.inject({ method: 'GET', url: '/health/ready' });
     expect(res.statusCode).toBe(503);
-    const body = res.json() as { status: string; checks: { mongo: string } };
+    const body = res.json();
     expect(body.status).toBe('degraded');
     expect(body.checks.mongo).toBe('not_configured');
     await app.close();

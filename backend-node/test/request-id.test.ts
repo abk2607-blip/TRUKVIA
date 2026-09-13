@@ -42,7 +42,7 @@ describe('registerRequestId (Fastify hook)', () => {
     expect(res.statusCode).toBe(200);
     const echoed = res.headers['x-request-id'];
     expect(typeof echoed).toBe('string');
-    const body = res.json() as { id: string };
+    const body = res.json();
     expect(body.id).toBe(echoed);
     await app.close();
   });
@@ -62,7 +62,7 @@ describe('registerRequestId (Fastify hook)', () => {
     });
     expect(res.statusCode).toBe(200);
     expect(res.headers['x-request-id']).toBe('trusted-id-123456');
-    const body = res.json() as { id: string };
+    const body = res.json();
     expect(body.id).toBe('trusted-id-123456');
     await app.close();
   });

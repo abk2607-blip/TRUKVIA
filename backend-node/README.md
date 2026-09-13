@@ -33,13 +33,15 @@ shadow-parity gates.
 
 | Layer      | Choice                     |
 | ---------- | -------------------------- |
-| Runtime    | Node.js 20 LTS             |
+| Runtime    | Node.js 24 LTS             |
 | Language   | TypeScript 5.5 (strict)    |
 | HTTP       | Fastify 4                  |
 | Validation | Zod                        |
 | Database   | native `mongodb` driver 6  |
 | Logging    | Pino 9                     |
-| Testing    | Vitest 2                   |
+| Testing    | Vitest 2 + v8 coverage     |
+| Lint       | ESLint 9 + typescript-eslint 8 |
+| Contract   | Ajv 2020 (OpenAPI 3.1)     |
 
 ## Migration authority
 
@@ -59,12 +61,28 @@ Any deviation from these contracts requires a formal gated approval.
 ```bash
 cd backend-node
 cp .env.example .env         # edit as needed (dev DB only)
-npm install
-npm run typecheck
-npm test
-npm run build
-npm start                    # dev only; NOT wired to ingress
+yarn install
+yarn lint
+yarn typecheck
+yarn test
+yarn test:coverage
+yarn build
+yarn start                   # dev only; NOT wired to ingress
 ```
+
+## Coverage
+
+Foundation thresholds are deliberately modest (lines/functions/statements
+70%, branches 60%). They will be **ratcheted up** as domain code lands
+during route migration.
+
+## Contract testing
+
+`src/contract/loader.ts` exposes an Ajv 2020 validator bound to the
+frozen `docs/contracts/openapi.v1.json`. Once route migration begins,
+every Node response body will be validated against its declared schema
+and any drift will fail CI. This module **does not** define or serve
+any business route.
 
 ## Configuration
 

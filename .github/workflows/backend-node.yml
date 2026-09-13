@@ -1,0 +1,96 @@
+name: backend-node
+
+# Phase 2B foundation-only workflow. Scoped strictly to backend-node/.
+# Does NOT touch the Python backend, the React frontend, MongoDB, or any
+# locked file. Does NOT deploy.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend-node/**'
+      - '.github/workflows/backend-node.yml'
+      - 'docs/contracts/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend-node/**'
+      - '.github/workflows/backend-node.yml'
+      - 'docs/contracts/**'
+  workflow_dispatch:
+
+concurrency:
+  group: backend-node-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: backend-node
+
+jobs:
+  build-and-test:
+    name: install / lint / typecheck / build / test / coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: true
+      matrix:
+        node-version: ['24.x']
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Setup Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: 'yarn'
+          cache-dependency-path: backend-node/yarn.lock
+
+      - name: Confirm no /api business routes are registered in backend-node
+        run: |
+          # Scan src/ ONLY (tests may legitimately reference the string /api/
+          # when introspecting the frozen OpenAPI contract).
+          # Match Fastify route-registration patterns and prefix mounts.
+          if grep -RE "(\.(get|post|put|patch|delete|route|all|head|options)\s*\(\s*['\"])/api/|prefix\s*:\s*['\"]/api" --include='*.ts' src 2>/dev/null; then
+            echo "::error::/api/* route registration found in backend-node/src — Phase 2B forbids business routes."
+            exit 1
+          fi
+          echo "OK: no /api/* route registration in backend-node/src."
+
+      - name: Install dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: ESLint
+        run: yarn lint
+
+      - name: TypeScript strict typecheck
+        run: yarn typecheck
+
+      - name: Build
+        run: yarn build
+
+      - name: Vitest with coverage
+        run: yarn test:coverage
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-node-coverage
+          path: backend-node/coverage
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Foundation smoke — confirm dist/ produced
+        run: |
+          test -f dist/app.js
+          test -f dist/health.js
+          test -f dist/server.js
+          echo "OK: build artifacts present."
