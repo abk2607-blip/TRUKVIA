@@ -28,3 +28,5 @@
 /api/customers/:cid/ship-sites
 /api/company
 /api/suppliers/:sid
+/api/expenses
+/api/expenses/:eid
