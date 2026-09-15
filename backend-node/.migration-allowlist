@@ -33,3 +33,5 @@
 /api/vendors
 /api/vendors/:vid
 /api/suppliers
+/api/mechanics
+/api/mechanics/:mid
