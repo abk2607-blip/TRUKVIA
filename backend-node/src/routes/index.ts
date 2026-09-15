@@ -7,6 +7,7 @@ import { registerTripsReadRoute } from './trips.js';
 import { registerTripsListRoute } from './trips-list.js';
 import { registerInvoicesRoutes } from './invoices.js';
 import { registerInvoicesListRoutes } from './invoices-list.js';
+import { registerInvoiceShipToRoute } from './invoice-ship-to.js';
 
 /**
  * TRUKVIA Node · Phase-3 API-route registrar.
@@ -33,4 +34,5 @@ export async function registerApiRoutes(
   await registerTripsListRoute(app, deps);
   await registerInvoicesRoutes(app, deps);
   await registerInvoicesListRoutes(app, deps);
+  await registerInvoiceShipToRoute(app, deps);
 }

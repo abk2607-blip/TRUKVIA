@@ -20,3 +20,4 @@
 /api/invoices/:iid/notes
 /api/invoices
 /api/invoices/overdue
+/api/invoices/:iid/ship-to
