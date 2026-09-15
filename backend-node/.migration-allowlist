@@ -35,3 +35,4 @@
 /api/suppliers
 /api/mechanics
 /api/mechanics/:mid
+/api/company-bank-accounts
