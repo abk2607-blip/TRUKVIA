@@ -11,3 +11,4 @@
 # Format: <fastify-path>  (no trailing slash)
 
 /api/supplier-payments/:pid/corrections
+/api/saved-trip-filters

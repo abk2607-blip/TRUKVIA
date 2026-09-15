@@ -9,6 +9,7 @@ import type { MongoConn } from './db.js';
 import { registerRequestId } from './request-id.js';
 import { registerHealth } from './health.js';
 import { registerApiRoutes } from './routes/index.js';
+import { registerIdempotency, ensureIdempotencyIndex } from './idempotency.js';
 
 /**
  * Fastify skeleton for the TRUKVIA Node foundation + Phase-3 migration surface.
@@ -87,6 +88,8 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   // is null (foundation smoke tests, /health-only harnesses) the /api surface
   // is intentionally not mounted — parity with the Phase-2 skeleton.
   if (mongo) {
+    registerIdempotency(app, { db: mongo.db });
+    await ensureIdempotencyIndex(mongo.db);
     await registerApiRoutes(app, { db: mongo.db });
   }
 

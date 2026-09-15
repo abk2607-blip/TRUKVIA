@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { Db } from 'mongodb';
 import { registerSupplierCorrectionsRoute } from './supplier-payments-corrections.js';
+import { registerSavedTripFiltersRoute } from './saved-trip-filters.js';
 
 /**
  * TRUKVIA Node · Phase-3 API-route registrar.
@@ -21,4 +22,5 @@ export async function registerApiRoutes(
   deps: ApiRouteDeps,
 ): Promise<void> {
   await registerSupplierCorrectionsRoute(app, deps);
+  await registerSavedTripFiltersRoute(app, deps);
 }
