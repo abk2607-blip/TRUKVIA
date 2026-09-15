@@ -12,6 +12,7 @@ import { registerCreditDebitNoteRoutes } from './credit-debit-notes.js';
 import { registerCustomerShipSitesRoute } from './customer-ship-sites.js';
 import { registerCompanySupplierReadRoutes } from './company-supplier-reads.js';
 import { registerExpensesReadRoutes } from './expenses.js';
+import { registerVendorsReadRoutes } from './vendors.js';
 
 /**
  * TRUKVIA Node · Phase-3 API-route registrar.
@@ -43,4 +44,5 @@ export async function registerApiRoutes(
   await registerCustomerShipSitesRoute(app, deps);
   await registerCompanySupplierReadRoutes(app, deps);
   await registerExpensesReadRoutes(app, deps);
+  await registerVendorsReadRoutes(app, deps);
 }
