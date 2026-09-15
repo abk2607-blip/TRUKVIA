@@ -25,3 +25,4 @@
 /api/credit-notes/:nid
 /api/debit-notes
 /api/debit-notes/:nid
+/api/customers/:cid/ship-sites
