@@ -16,6 +16,7 @@ import { registerVendorsReadRoutes } from './vendors.js';
 import { registerSuppliersListReadRoutes } from './suppliers-list.js';
 import { registerMechanicsReadRoutes } from './mechanics.js';
 import { registerCompanyBankAccountsReadRoutes } from './company-bank-accounts.js';
+import { registerMechanicPaymentsCorrectionsReadRoutes } from './mechanic-payments-corrections.js';
 
 /**
  * TRUKVIA Node · Phase-3 API-route registrar.
@@ -51,4 +52,5 @@ export async function registerApiRoutes(
   await registerSuppliersListReadRoutes(app, deps);
   await registerMechanicsReadRoutes(app, deps);
   await registerCompanyBankAccountsReadRoutes(app, deps);
+  await registerMechanicPaymentsCorrectionsReadRoutes(app, deps);
 }
