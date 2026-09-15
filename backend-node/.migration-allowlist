@@ -18,3 +18,5 @@
 /api/invoices/next-preview
 /api/invoices/:iid
 /api/invoices/:iid/notes
+/api/invoices
+/api/invoices/overdue
