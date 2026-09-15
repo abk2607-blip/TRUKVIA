@@ -32,3 +32,4 @@
 /api/expenses/:eid
 /api/vendors
 /api/vendors/:vid
+/api/suppliers
