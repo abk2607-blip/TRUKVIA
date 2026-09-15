@@ -12,3 +12,4 @@
 
 /api/supplier-payments/:pid/corrections
 /api/saved-trip-filters
+/api/expenditure-types
