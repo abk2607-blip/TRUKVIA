@@ -15,3 +15,6 @@
 /api/expenditure-types
 /api/trips/:tid
 /api/trips
+/api/invoices/next-preview
+/api/invoices/:iid
+/api/invoices/:iid/notes
