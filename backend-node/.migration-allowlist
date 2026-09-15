@@ -26,3 +26,5 @@
 /api/debit-notes
 /api/debit-notes/:nid
 /api/customers/:cid/ship-sites
+/api/company
+/api/suppliers/:sid
