@@ -21,3 +21,7 @@
 /api/invoices
 /api/invoices/overdue
 /api/invoices/:iid/ship-to
+/api/credit-notes
+/api/credit-notes/:nid
+/api/debit-notes
+/api/debit-notes/:nid
