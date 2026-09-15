@@ -3,6 +3,7 @@ import type { Db } from 'mongodb';
 import { registerSupplierCorrectionsRoute } from './supplier-payments-corrections.js';
 import { registerSavedTripFiltersRoute } from './saved-trip-filters.js';
 import { registerExpenditureTypesRoute } from './expenditure-types.js';
+import { registerTripsReadRoute } from './trips.js';
 
 /**
  * TRUKVIA Node · Phase-3 API-route registrar.
@@ -25,4 +26,5 @@ export async function registerApiRoutes(
   await registerSupplierCorrectionsRoute(app, deps);
   await registerSavedTripFiltersRoute(app, deps);
   await registerExpenditureTypesRoute(app, deps);
+  await registerTripsReadRoute(app, deps);
 }
