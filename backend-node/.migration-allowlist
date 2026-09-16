@@ -38,3 +38,4 @@
 /api/company-bank-accounts
 /api/mechanic-payments/:pid/corrections
 /api/vendor-payments/:pid/corrections
+/api/driver-payments/:pid/corrections
