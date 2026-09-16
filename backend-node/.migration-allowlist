@@ -39,3 +39,5 @@
 /api/mechanic-payments/:pid/corrections
 /api/vendor-payments/:pid/corrections
 /api/driver-payments/:pid/corrections
+/api/templates
+/api/templates/:tid
