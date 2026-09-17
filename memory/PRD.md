@@ -5171,3 +5171,52 @@ Owner: TBD. Estimated effort: DG-1a ~1 h, DG-1b ~15 min, DG-1c ~2 h. Blocks: onl
 - Fresh deploy-readiness run: `POST /api/admin/deploy-readiness/run-now` (~10-11 min); poll `GET /api/admin/deploy-readiness` for status.
 - Deploy Readiness Badge component: `/app/frontend/src/components/DeployReadinessBadge.jsx`
 - Security headers + CORS + upload allow-list are locked in `server.py` and `routers/files.py`; touching them requires explicit approval.
+
+
+## 🔒 TRUKVIA — PHASE 3 / GATE 7d — FINAL LOCK (2026-02-15)
+
+**STATUS: 🔒 LOCKED**
+**BRANCH:** `migration/node-typescript-v2`
+**LOCK SHA:** `e1218d3e22287f4e94c8213b267b1455a00f3b57`
+**PARENT (Gate 7d Implementation packaging):** `671de6d6c5fd5f3639975d78b9d84862641dc3fa`
+**PRIOR LOCK (Gate 7c FINAL LOCK):** `5e53e351458d1826d063b9fdf443d0639e5bded9` — remains ancestor
+**main SHA:** `82a8fb32dbb6333ac92c4f557c763863b48e8501` — UNCHANGED
+
+### Scope
+Node.js/TypeScript Class-C read-only shadow of `GET /api/policy-changes`
+(Python source-of-truth: `backend/routers/policy_changes.py::list_policy_change_events` L484-494).
+Wrapped `{items, total}` envelope. Route-local Pydantic v2.13 `int_parsing` 422 mimic.
+Server-side clamp `max(1, min(200, int(limit)))` applied AFTER Pydantic accepts.
+Projection strips `_id` only (preserves `user_id`). Sort `created_at` DESC.
+No 404 branch. Zero writer / audit / backfill / recompute / FinTxn / approvals / counters / idempotency / cross-collection reads.
+
+### Six-file scope (exactly)
+1. `backend-node/.migration-allowlist` (+1: `/api/policy-changes`)
+2. `backend-node/src/routes/index.ts` (+2: import + registrar after Gate 7c)
+3. `backend-node/src/routes/policy-changes-list.ts` (NEW · 157 lines)
+4. `backend-node/test/route-policy-changes-list.test.ts` (NEW · 424 lines · 31 vitest cases)
+5. `backend-node/test/gate7d_parity/harness.py` (NEW · 340 lines)
+6. `backend-node/test/gate7d_parity/README.md` (NEW · 113 lines)
+
+### Verification
+- `npx tsc --noEmit` → PASS
+- `npx vitest run test/route-policy-changes-list.test.ts` → 31/31 PASS
+- `python test/gate7d_parity/harness.py` → 25/25 PASS, 0 Node writes, disposable DB `trukvia_gate7d_parity_1789662011` dropped in finally
+- Full Python↔Node body-exact comparison every case (auth 401 x3, auth precedence, default 50, `+1` / whitespace, clamp 0/-5→1 & 201/999→200, `int_parsing` 422 envelope on `abc/blank/1.5/null/None`, customer_id omitted/blank/exact/unknown, owned/unowned/no-header X-Company-Id, cross-user isolation, projection `_id` off & `user_id` preserved, sort `created_at` DESC, empty → `{items:[],total:0}`)
+- No protected-file drift · no shared helper / auth.ts / tenant.ts / config.ts drift · no `package.json` / `tsconfig.json` / dep change · no Python backend or frontend change
+- Lock commit is pure empty (0-byte tree diff vs parent 671de6d), linear (2 commits since Gate 7c lock), no amend/merge/rebase
+
+### Gate 7 progress
+- 6z (`GET /api/vendors/:vid/payments`) 🔒
+- 7a (`GET /api/wallet-adjustments`) 🔒
+- 7b (`GET /api/wallet-transfers`) 🔒
+- 7c (`GET /api/wallet-recharges`) 🔒
+- **7d (`GET /api/policy-changes`) 🔒 (this entry)**
+- 7e — pending explicit authorization (likely `GET /api/suppliers/{sid}/vehicles`; cross-collection 404, `$or`, case-insensitive `$regex`)
+
+### Deferred (unchanged)
+- Class-C reads with backfill-on-GET side-effects (`/api/drivers`, `/api/parties`, `/api/customers`, `/api/vehicles`, `/api/products`) — deferred to Writer migration phase.
+- Auth-band impedance on `viewer→owner` masking — deferred to Gate 7 Maker-Checker port; DO NOT touch locked `auth.ts` / `tenant.ts`.
+- Writer / Maker-Checker migration — deferred per user Option 1 (finish Class-C reads, then pause).
+
+STOPPING. Gate 7e NOT started. Awaiting explicit user authorization for the next micro-gate.
