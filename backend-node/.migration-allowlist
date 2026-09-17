@@ -51,3 +51,4 @@
 /api/vendor-bills/:bid
 /api/suppliers/:sid/payments
 /api/mechanics/:mid/payments
+/api/drivers/:did/payments
