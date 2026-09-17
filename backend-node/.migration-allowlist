@@ -52,3 +52,4 @@
 /api/suppliers/:sid/payments
 /api/mechanics/:mid/payments
 /api/drivers/:did/payments
+/api/vendors/:vid/payments
