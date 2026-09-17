@@ -56,3 +56,4 @@
 /api/wallet-adjustments
 /api/wallet-transfers
 /api/wallet-recharges
+/api/policy-changes
