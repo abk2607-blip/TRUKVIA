@@ -54,3 +54,4 @@
 /api/drivers/:did/payments
 /api/vendors/:vid/payments
 /api/wallet-adjustments
+/api/wallet-transfers
