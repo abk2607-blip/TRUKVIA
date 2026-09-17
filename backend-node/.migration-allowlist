@@ -49,3 +49,4 @@
 /api/mechanic-work-orders/:wid
 /api/vendor-bills
 /api/vendor-bills/:bid
+/api/suppliers/:sid/payments
