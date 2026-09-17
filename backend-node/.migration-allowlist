@@ -47,3 +47,5 @@
 /api/repair-events/:rid
 /api/mechanic-work-orders
 /api/mechanic-work-orders/:wid
+/api/vendor-bills
+/api/vendor-bills/:bid
