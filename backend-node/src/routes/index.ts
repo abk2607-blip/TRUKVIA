@@ -21,6 +21,7 @@ import { registerVendorPaymentsCorrectionsReadRoutes } from './vendor-payments-c
 import { registerDriverPaymentsCorrectionsReadRoutes } from './driver-payments-corrections.js';
 import { registerTemplatesReadRoutes } from './templates.js';
 import { registerPartyBankAccountsReadRoutes } from './party-bank-accounts.js';
+import { registerAuditLogsReadRoutes } from './audit-logs.js';
 
 /**
  * TRUKVIA Node · Phase-3 API-route registrar.
@@ -61,4 +62,5 @@ export async function registerApiRoutes(
   await registerDriverPaymentsCorrectionsReadRoutes(app, deps);
   await registerTemplatesReadRoutes(app, deps);
   await registerPartyBankAccountsReadRoutes(app, deps);
+  await registerAuditLogsReadRoutes(app, deps);
 }

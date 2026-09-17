@@ -42,3 +42,4 @@
 /api/templates
 /api/templates/:tid
 /api/party-bank-accounts
+/api/audit-logs
