@@ -5329,3 +5329,87 @@ After Gate 7f lock: **~7 viable Class-C candidates remain**. Milestone still **B
 - Writer / Maker-Checker migration — deferred per user Option 1 (finish Class-C reads, then pause).
 
 STOPPING. Gate 7g NOT started. Awaiting explicit user authorization for the next micro-gate.
+
+
+## 🔒 TRUKVIA — PHASE 3 / GATE 7g — FINAL LOCK (2026-02-15)
+
+**STATUS: 🔒 LOCKED**
+**BRANCH:** `migration/node-typescript-v2`
+**LOCK SHA:** `ef659a704928e3e332c8e60a83cb061a4485581a`
+**PARENT (Gate 7g Corrective Repair):** `2c6b97f6983913a145a9b4ef9bd4a95b027e75b8`
+**IMPLEMENTATION PACKAGING:** `86318ae4d7dc00941f6cfb70ec80a12c8c5f8ef7` (initial impl)
+**PRIOR LOCK (Gate 7f FINAL LOCK):** `87223acc8022a2cc4e75d98d5d8e94c7a92d3f33` — remains ancestor
+**main SHA:** `82a8fb32dbb6333ac92c4f557c763863b48e8501` — UNCHANGED
+
+### Scope
+Node.js/TypeScript Class-C read-only shadow of `GET /api/approvals`
+(Python source-of-truth: `backend/routers/approvals.py::api_list_approvals` L33-46
+→ `services_approvals.list_approvals` L527-541). First Class-C read that
+**preserves `user_id` in the projection** (only `_id` stripped). First read
+that exercises Pydantic 2.13.4 `bool_parsing`, `int_parsing`,
+`greater_than_equal` (ctx `{ge:1}`), and `less_than_equal` (ctx `{le:500}`)
+envelope parity. Conditional filter 3-way branching on `status` truthy /
+`include_all=false` default-`$in` / `include_all=true` no-status. Bare-array
+response, `created_at` DESC, `Math.min(500, limit)` cap.
+
+### Corrective Repair (during UAT · this lock cycle)
+Initial impl encoded `query-BEFORE-auth` precedence based on a mis-scoped
+Pre-flight Pydantic probe. Live parity Case 6 (`no auth + include_all=xyz`)
+revealed Python returns 401 while Node returned 422. Root cause verified
+against `fastapi/dependencies/utils.py::solve_dependencies` (fastapi 0.110.1):
+L549 iterates `dependant.dependencies` — `Depends(get_current_user)` short-
+circuits with `HTTPException(401)` BEFORE L610 `request_params_to_args`
+reaches query validation. Authoritative behavior: **AUTH PRECEDES QUERY
+VALIDATION** (identical ordering to Gates 7a/7d/7f). Corrective commit
+`2c6b97f` reordered the Node handler (authenticate → validate → cid → filter
+→ find) and updated exactly the same six Gate 7g files. No seventh file.
+STOP RULE was honoured on initial mismatch; only the user-authorized
+corrective phase repaired it.
+
+### Six-file scope (exactly — same six files across impl + repair)
+1. `backend-node/.migration-allowlist` (+1: `/api/approvals`)
+2. `backend-node/src/routes/index.ts` (+2: import + registrar after Gate 7f)
+3. `backend-node/src/routes/approvals-list.ts` (NEW · ~210 lines · reordered in repair)
+4. `backend-node/test/route-approvals-list.test.ts` (NEW · ~470 lines · 48 vitest cases)
+5. `backend-node/test/gate7g_parity/harness.py` (NEW · ~335 lines · 32 route cases + zero-write aggregate)
+6. `backend-node/test/gate7g_parity/README.md` (NEW · ~120 lines)
+
+### Verification
+- `npx tsc --noEmit` → PASS (exit 0)
+- `npx vitest run test/route-approvals-list.test.ts` → **48 / 48 PASS** (705 ms)
+- `python test/gate7g_parity/harness.py` → **33 / 33 PASS**, 0 Node business writes, disposable DB `trukvia_gate7g_parity_1789711286` dropped in `finally`
+- Full Python↔Node body-exact comparison every case:
+  - 422 envelopes: `bool_parsing`, `int_parsing`, `greater_than_equal` (ctx `{ge:1}`), `less_than_equal` (ctx `{le:500}`), no float coercion (`1.5` rejected), leading `+1` and blank-input handled per Pydantic 2.13.4
+  - Auth 401 literals (`Not authenticated` / `Invalid session` / `Session expired`)
+  - Auth-precedence pair: unauthenticated + invalid include_all → 401 · unauthenticated + invalid limit → 401
+  - Bool spellings (`true/True/TRUE/false/False/FALSE/1/0/yes/no/on/off`)
+  - Default `$in ["PENDING_APPROVAL","REJECTED","WITHDRAWN"]`, `include_all=true`/`false` semantics, `status` truthy override, case-sensitive `status`, blank `status` falsy, `entity_kind` filter + blank falsy, limit boundaries (ge=1 / le=500 / `%2B1`)
+  - X-Company-Id owned override / unowned fallback / no-header default, cross-user isolation (u2 default vs `include_all=true`), projection strips `_id` only + `user_id` PRESERVED, `created_at` DESC, bare array
+  - Zero-write aggregate across 32 requests: 0 write events
+- No protected-file drift · no shared helper / `auth.ts` / `tenant.ts` / `errors.ts` / `config.ts` / `app.ts` / `server.ts` / `db.ts` drift · no `package.json`/`tsconfig.json`/dep change · no Python backend or frontend change
+- Lock commit is pure empty (tree SHA `b4ca340ed5a96f27c92f3c2294bc22809a74d245` == parent `2c6b97f` tree SHA), single parent, linear history (5 commits since Gate 7f lock: Gate 7f finish summary · Gate 7g accelerated impl · Gate 7g corrective repair · this empty-tree lock — 0 merges), no amend/rebase/merge
+- All 5 approvals writers (`POST /approvals`, `POST /approvals/{aid}/approve|reject|withdraw|resubmit`) remain **PYTHON-AUTHORITATIVE / OUT OF SCOPE**
+
+### Gate 7 progress
+- 6z (`GET /api/vendors/:vid/payments`) 🔒
+- 7a (`GET /api/wallet-adjustments`) 🔒
+- 7b (`GET /api/wallet-transfers`) 🔒
+- 7c (`GET /api/wallet-recharges`) 🔒
+- 7d (`GET /api/policy-changes`) 🔒
+- 7e (`GET /api/suppliers/:sid/vehicles`) 🔒
+- 7f (`GET /api/approvals/summary/pending`) 🔒
+- **7g (`GET /api/approvals`) 🔒 (this entry)**
+- 7h — pending explicit authorization
+
+### Class-C milestone status
+After Gate 7g lock: **~6 viable Class-C candidates remain** (one popped by 7g). Milestone still **BLOCKED** per Class-C audit finding. Do NOT declare completion.
+
+### Deferred (unchanged)
+- Class-C reads with backfill-on-GET side-effects (`/api/drivers`, `/api/parties`, `/api/customers`, `/api/vehicles`, `/api/products`, `/api/companies`, `/api/fuel`) — deferred to Writer migration phase.
+- Auth-band impedance on `viewer→owner` masking — deferred to Gate 8 Maker-Checker port; DO NOT touch locked `auth.ts` / `tenant.ts`.
+- Writer / Maker-Checker migration — deferred per user Option 1 (finish Class-C reads, then pause).
+
+### Lesson captured (for future gates)
+Pydantic `Depends()` precedence is NOT `query-before-auth` for `Depends(get_current_user)` under FastAPI 0.110.1. Any future gate that assumes otherwise must probe **both** cases (no-auth + invalid-query, valid-auth + invalid-query) in Pre-flight — not just the auth-succeeds path.
+
+STOPPING. Gate 7h NOT started. Awaiting explicit user authorization for the next micro-gate.
