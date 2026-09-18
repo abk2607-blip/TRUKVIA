@@ -70,3 +70,4 @@
 /api/fin/day-status
 /api/drivers/:did/salary-masters
 /api/fin/fin-txn/:txid
+/api/fin/day-closures/:close_date/late-entries

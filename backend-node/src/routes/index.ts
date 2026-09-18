@@ -46,6 +46,7 @@ import { registerFinDayClosureDetailRoutes } from './fin-day-closure-detail.js';
 import { registerFinDayStatusRoutes } from './fin-day-status.js';
 import { registerDriverSalaryMastersListRoutes } from './driver-salary-masters-list.js';
 import { registerFinTxnDetailRoutes } from './fin-txn-detail.js';
+import { registerFinDayClosureLateEntriesRoutes } from './fin-day-closure-late-entries.js';
 
 /**
  * TRUKVIA Node · Phase-3 API-route registrar.
@@ -111,4 +112,5 @@ export async function registerApiRoutes(
   await registerFinDayStatusRoutes(app, deps);
   await registerDriverSalaryMastersListRoutes(app, deps);
   await registerFinTxnDetailRoutes(app, deps);
+  await registerFinDayClosureLateEntriesRoutes(app, deps);
 }
