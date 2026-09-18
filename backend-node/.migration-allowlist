@@ -80,3 +80,4 @@
 /api/gstin/lookup
 /api/ai/sessions
 /api/reminders/digest
+/api/drivers/:did/salary-settlement-hint
