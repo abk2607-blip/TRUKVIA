@@ -1,0 +1,34 @@
+# TRUKVIA Node migration — DEFERRED / NOT CUTOVER-ELIGIBLE registrations.
+#
+# Paths below ARE registered in `backend-node/src/**` but MUST NOT be part
+# of any Class-C read cutover. Python stays authoritative for them.
+# Created by Gate 7t (Class-C integrity remediation). Implementations and
+# their historical gate locks are preserved for the future Writer /
+# Maker-Checker phase.
+#
+# Same format as `.migration-allowlist`: one Fastify path per line, `#`
+# comment lines and blank lines ignored. A path must never appear in both
+# files (CI guard enforces disjointness).
+
+# ── P1 · Python GET performs a GET-time business write (not Class-C) ──
+# 6b · trips.py::list_trips → _backfill_to_default (update_many ×10 collections)
+/api/trips
+# 6a · trips.py::get_trip → _lazy_migrate_supplier_entries + trips.update_one
+/api/trips/:tid
+# 6d · invoices.py::list_invoices → _backfill_to_default (update_many ×10 collections)
+/api/invoices
+# 6c · invoices.py::get_invoice → _recompute_invoice → invoices.update_one
+/api/invoices/:iid
+
+# ── P2 · Node business WRITERS (parked; writer authority stays Python) ──
+# Gate 4 · POST → saved_trip_filters.insertOne (+ idempotency_keys claim rows)
+/api/saved-trip-filters
+# Gate 5 · POST → expenditure_types.insertOne
+/api/expenditure-types
+
+# ── P3 · Route-precedence guards (not migrations) ──
+# Python serves these static GET routes BEFORE /trips/{tid}; in Node they
+# are registered only so Fastify's static-over-parametric matching keeps
+# /api/trips/:tid from capturing them. They hand off to the 404 handler.
+/api/trips/export
+/api/trips/recurring-suggestions

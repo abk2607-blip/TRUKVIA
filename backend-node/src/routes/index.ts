@@ -48,13 +48,16 @@ import { registerDriverSalaryMastersListRoutes } from './driver-salary-masters-l
 import { registerFinTxnDetailRoutes } from './fin-txn-detail.js';
 import { registerFinDayClosureLateEntriesRoutes } from './fin-day-closure-late-entries.js';
 import { registerFinDayBookRoutes } from './fin-day-book.js';
+import { registerTripsStaticPrecedenceGuards } from './trips-static-precedence.js';
 
 /**
  * TRUKVIA Node · Phase-3 API-route registrar.
  *
  * Every route mounted here MUST be:
  *   - read-only in this gate,
- *   - present in `backend-node/.migration-allowlist`,
+ *   - present in `backend-node/.migration-allowlist` (Class-C cutover-
+ *     eligible) or `backend-node/.migration-deferred` (registered but never
+ *     cutover-eligible — Gate 7t),
  *   - a faithful shadow of an existing Python route (Python remains
  *     authoritative until the parity harness + traffic-split cutover).
  */
@@ -115,4 +118,5 @@ export async function registerApiRoutes(
   await registerFinTxnDetailRoutes(app, deps);
   await registerFinDayClosureLateEntriesRoutes(app, deps);
   await registerFinDayBookRoutes(app, deps);
+  await registerTripsStaticPrecedenceGuards(app);
 }

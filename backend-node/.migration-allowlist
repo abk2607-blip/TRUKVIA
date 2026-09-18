@@ -1,24 +1,27 @@
 # TRUKVIA Node migration allowlist — Phase 3.
 #
+# CLASS-C CUTOVER-ELIGIBLE READ ROUTES ONLY.
+# Every path here is a read-only Node shadow that passed live Python↔Node
+# parity and whose Python GET handler performs no GET-time business write.
+# A future traffic cutover may route ONLY these paths to Node.
+#
 # One `/api/...` route path per line, EXACTLY as registered inside
 # `backend-node/src/**` (Fastify path syntax, e.g. `:pid` not `{pid}`).
 # Lines starting with `#` and blank lines are ignored.
 #
+# Routes that are registered in src/ but are NOT cutover-eligible (deferred
+# write-on-GET shadows, parked writers, precedence guards) live in
+# `.migration-deferred`. A path must never appear in both files.
+#
 # Adding a route here without an accompanying implementation + tests +
 # gate authorisation is NOT permitted. Removing a route requires an
-# explicit rollback gate.
+# explicit rollback gate (Gate 7t removed 6a–6d and the Gate-4/5 writers).
 #
 # Format: <fastify-path>  (no trailing slash)
 
 /api/supplier-payments/:pid/corrections
-/api/saved-trip-filters
-/api/expenditure-types
-/api/trips/:tid
-/api/trips
 /api/invoices/next-preview
-/api/invoices/:iid
 /api/invoices/:iid/notes
-/api/invoices
 /api/invoices/overdue
 /api/invoices/:iid/ship-to
 /api/credit-notes

@@ -82,6 +82,22 @@ jobs:
             echo "::error::$ALLOWLIST contains no entries but /api registrations exist in src/."
             exit 1
           fi
+          # Gate 7t: registrations that are NOT Class-C cutover-eligible
+          # (deferred write-on-GET shadows, parked writers, precedence guards)
+          # are listed in .migration-deferred. A path may appear in exactly
+          # one of the two files.
+          DEFERRED=".migration-deferred"
+          deferred=""
+          if [ -f "$DEFERRED" ]; then
+            deferred=$(grep -vE '^\s*(#|$)' "$DEFERRED" || true)
+          fi
+          both=$(printf '%s\n' "$allow" | grep -Fx -f <(printf '%s\n' "$deferred") || true)
+          if [ -n "$deferred" ] && [ -n "$both" ]; then
+            echo "::error::paths listed in BOTH $ALLOWLIST and $DEFERRED:"
+            printf '%s\n' "$both"
+            exit 1
+          fi
+          allow=$(printf '%s\n%s\n' "$allow" "$deferred")
           fail=0
           while IFS= read -r line; do
             [ -z "$line" ] && continue
@@ -92,7 +108,7 @@ jobs:
             fi
             if ! printf '%s\n' "$allow" | grep -Fxq "$route"; then
               echo "::error::$line"
-              echo "::error::route \"$route\" is NOT on the migration allowlist ($ALLOWLIST)."
+              echo "::error::route \"$route\" is NOT on the migration allowlist ($ALLOWLIST) or $DEFERRED."
               fail=1
             fi
           done <<< "$matches"
