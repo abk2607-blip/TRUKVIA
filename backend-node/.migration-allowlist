@@ -17,7 +17,8 @@
 # gate authorisation is NOT permitted. Removing a route requires an
 # explicit rollback gate (Gate 7t removed 6a–6d and the Gate-4/5 writers).
 #
-# Format: <fastify-path>  (no trailing slash)
+# Format: <fastify-path>  (no trailing slash — except the API root `/api/`,
+# which Python declares with one; `/api` and `/api/` are different routes)
 
 /api/supplier-payments/:pid/corrections
 /api/invoices/next-preview
@@ -75,3 +76,4 @@
 /api/fin/fin-txn/:txid
 /api/fin/day-closures/:close_date/late-entries
 /api/fin/day-book
+/api/

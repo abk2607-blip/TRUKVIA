@@ -66,8 +66,9 @@ jobs:
           # This intentionally catches split-line route registrations too
           # (e.g. `.get<T>(<newline>  '/api/foo'`) which a single-line regex
           # would miss. False positives (e.g. string constants) are still
-          # required to be on the allowlist.
-          matches=$(grep -RnoE "['\"]/api/[^'\"]+['\"]" --include='*.ts' src 2>/dev/null || true)
+          # required to be on the allowlist. `[^'"]*` (not `+`) so the bare
+          # API root literal '/api/' (Gate 7u) is guarded too.
+          matches=$(grep -RnoE "['\"]/api/[^'\"]*['\"]" --include='*.ts' src 2>/dev/null || true)
           if [ -z "$matches" ]; then
             echo "OK: no /api/* route registration in backend-node/src."
             exit 0
@@ -101,7 +102,7 @@ jobs:
           fail=0
           while IFS= read -r line; do
             [ -z "$line" ] && continue
-            route=$(printf '%s' "$line" | grep -oE "['\"]/api/[^'\"]+['\"]" | head -1 | sed -e "s/^['\"]//" -e "s/['\"]$//")
+            route=$(printf '%s' "$line" | grep -oE "['\"]/api/[^'\"]*['\"]" | head -1 | sed -e "s/^['\"]//" -e "s/['\"]$//")
             if [ -z "$route" ]; then
               echo "::warning::could not extract route path from: $line"
               continue

@@ -49,6 +49,7 @@ import { registerFinTxnDetailRoutes } from './fin-txn-detail.js';
 import { registerFinDayClosureLateEntriesRoutes } from './fin-day-closure-late-entries.js';
 import { registerFinDayBookRoutes } from './fin-day-book.js';
 import { registerTripsStaticPrecedenceGuards } from './trips-static-precedence.js';
+import { registerApiRootRoute } from './api-root.js';
 
 /**
  * TRUKVIA Node · Phase-3 API-route registrar.
@@ -119,4 +120,5 @@ export async function registerApiRoutes(
   await registerFinDayClosureLateEntriesRoutes(app, deps);
   await registerFinDayBookRoutes(app, deps);
   await registerTripsStaticPrecedenceGuards(app);
+  await registerApiRootRoute(app);
 }
