@@ -58,6 +58,7 @@ import { registerDriverSalarySettlementHintRoute } from './driver-salary-settlem
 import { registerAiSessionMessagesRoute } from './ai-session-messages.js';
 import { registerVehicleStatusAuditRoute } from './vehicle-status-audit.js';
 import { registerDriverShortagePolicyResolveRoute } from './driver-shortage-policy-resolve.js';
+import { registerDriverShortagePoliciesListRoute } from './driver-shortage-policies-list.js';
 
 /**
  * TRUKVIA Node · Phase-3 API-route registrar.
@@ -137,4 +138,5 @@ export async function registerApiRoutes(
   await registerAiSessionMessagesRoute(app, deps);
   await registerVehicleStatusAuditRoute(app, deps);
   await registerDriverShortagePolicyResolveRoute(app, deps);
+  await registerDriverShortagePoliciesListRoute(app, deps);
 }
