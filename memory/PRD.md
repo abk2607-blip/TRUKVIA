@@ -5413,3 +5413,75 @@ After Gate 7g lock: **~6 viable Class-C candidates remain** (one popped by 7g). 
 Pydantic `Depends()` precedence is NOT `query-before-auth` for `Depends(get_current_user)` under FastAPI 0.110.1. Any future gate that assumes otherwise must probe **both** cases (no-auth + invalid-query, valid-auth + invalid-query) in Pre-flight — not just the auth-succeeds path.
 
 STOPPING. Gate 7h NOT started. Awaiting explicit user authorization for the next micro-gate.
+
+
+## 🔒 TRUKVIA — PHASE 3 / GATE 7h — FINAL LOCK (2026-02-15)
+
+**STATUS: 🔒 LOCKED**
+**BRANCH:** `migration/node-typescript-v2`
+**LOCK SHA:** `583f6f5a67d2c12b9f52863c32f2b9c8f4fb72ff`
+**PARENT (Gate 7h Implementation):** `98b4e9204d6617821ade755f458b7898d40f7b20`
+**PRIOR LOCK (Gate 7g FINAL LOCK):** `ef659a704928e3e332c8e60a83cb061a4485581a` — remains ancestor
+**main SHA:** `82a8fb32dbb6333ac92c4f557c763863b48e8501` — UNCHANGED
+
+### Scope
+Node.js/TypeScript Class-C read-only shadow of `GET /api/fuel/vehicle-maps`
+(Python source-of-truth: `backend/routers/fuel_import.py::list_fuel_vehicle_maps`
+L37-47). First Class-C shadow against the `fuel_vehicle_maps` collection.
+First Class-C route where the query filter has a **silent-drop** semantic
+for invalid values (`source` is `Optional[str] = None` — every value
+outside the case-sensitive `{"iocl","bpcl"}` set is silently dropped from
+the predicate; **no 422, no 400**). Projection strips `_id` AND `user_id`.
+Sort `source_vehicle_ref` ASC. `.to_list(5000)` cap. Bare-array response.
+
+### Six-file scope (exactly)
+1. `backend-node/src/routes/fuel-vehicle-maps-list.ts` (NEW · ~100 lines)
+2. `backend-node/test/route-fuel-vehicle-maps-list.test.ts` (NEW · ~320 lines · 24 vitest cases)
+3. `backend-node/test/gate7h_parity/harness.py` (NEW · ~285 lines · 17 route cases + zero-write aggregate)
+4. `backend-node/test/gate7h_parity/README.md` (NEW · ~85 lines)
+5. `backend-node/src/routes/index.ts` (+2: import + registrar after Gate 7g)
+6. `backend-node/.migration-allowlist` (+1: `/api/fuel/vehicle-maps`)
+
+### Verification
+- `npx tsc --noEmit` → PASS (exit 0)
+- `npx vitest run test/route-fuel-vehicle-maps-list.test.ts` → **24 / 24 PASS** (340 ms)
+- `npm run build` → PASS · `dist/routes/fuel-vehicle-maps-list.js` (1 943 B)
+- `python test/gate7h_parity/harness.py` → **18 / 18 PASS**, 0 Node business writes, disposable DB `trukvia_gate7h_parity_1789712201` dropped in `finally`
+- Full Python↔Node body-exact comparison every case:
+  - 401 literals × 3 (`Not authenticated` / `Invalid session` / `Session expired`)
+  - Tenant: owned override, unowned fallback, no-header default
+  - Source filter accepted (`iocl`/`bpcl`) with predicate active
+  - Silent-drop verified for `""`, `"other"`, `"IOCL"`, `"iOcl"`, `"bp"`, `"zzz !@#"` — all return 200 base-only, NO 422
+  - Cross-user isolation (u2 default + u2 source=iocl)
+  - Owned empty tenant → 200 `[]`
+  - Projection strips `_id` AND `user_id`, every other field preserved
+  - Sort `source_vehicle_ref` ASC across mixed-source rows
+  - Zero-write aggregate across 17 requests: 0 write events
+- No protected-file drift · no shared helper / `auth.ts` / `tenant.ts` / `errors.ts` / `config.ts` / `app.ts` / `server.ts` / `db.ts` drift · no `package.json`/`tsconfig.json`/dep change · no Python backend or frontend change
+- Lock commit is pure empty (tree SHA equals parent `98b4e92` tree SHA), single parent, linear history (2 commits since Gate 7g lock: Gate 7h implementation · this empty-tree lock — 0 merges), no amend/rebase/merge
+- All fuel writers (`POST /fuel-import/preview`, `POST /fuel-import/commit`, `POST /fuel/vehicle-maps`, `DELETE /fuel/vehicle-maps/{fvm_id}`, `POST /fuel-manual`) remain **PYTHON-AUTHORITATIVE / OUT OF SCOPE**
+
+### Gate 7 progress
+- 6z (`GET /api/vendors/:vid/payments`) 🔒
+- 7a (`GET /api/wallet-adjustments`) 🔒
+- 7b (`GET /api/wallet-transfers`) 🔒
+- 7c (`GET /api/wallet-recharges`) 🔒
+- 7d (`GET /api/policy-changes`) 🔒
+- 7e (`GET /api/suppliers/:sid/vehicles`) 🔒
+- 7f (`GET /api/approvals/summary/pending`) 🔒
+- 7g (`GET /api/approvals`) 🔒
+- **7h (`GET /api/fuel/vehicle-maps`) 🔒 (this entry)**
+- 7i — pending explicit authorization (likely `GET /api/files` per the batched Discovery order)
+
+### Class-C milestone status
+After Gate 7h lock: **~5 viable Class-C candidates remain** (`/api/files`, `/api/files/usage`, `/api/toll-import/lookup`, `/api/approvals/{aid}`, `/api/driver-shortage-policies`). Milestone still **BLOCKED**.
+
+### Deferred (unchanged)
+- Class-C reads with backfill-on-GET side-effects (`/api/drivers`, `/api/parties`, `/api/customers`, `/api/vehicles`, `/api/products`, `/api/companies`) — deferred to Writer migration phase.
+- Auth-band impedance on `viewer→owner` masking — deferred to Gate 8 Maker-Checker port; DO NOT touch locked `auth.ts` / `tenant.ts`.
+- Writer / Maker-Checker migration — deferred per user Option 1 (finish Class-C reads, then pause).
+
+### New parity axis captured
+First Class-C shadow with **silent-drop** semantics (`Optional[str]` that filters a fixed literal set case-sensitively without raising 422/400 on non-matching values). Future gates where the Python contract uses `if val in (LITERALS): q[...] = val` must reproduce this exact case-sensitive silent-drop behavior — no case folding, no whitespace stripping, no error envelope.
+
+STOPPING. Gate 7i NOT started. Awaiting explicit user authorization for the next micro-gate.
