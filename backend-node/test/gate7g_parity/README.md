@@ -36,7 +36,7 @@ Approval writers remain Python-authoritative and OUT OF SCOPE:
 
 | Axis | Detail |
 |---|---|
-| Validation precedence | FastAPI validates query BEFORE `Depends(get_current_user)` — invalid query + no bearer → 422, not 401 |
+| Validation precedence | **AUTH PRECEDES QUERY VALIDATION.** FastAPI 0.110.1 `solve_dependencies` (fastapi/dependencies/utils.py L549) runs `Depends(get_current_user)` BEFORE query params reach `request_params_to_args` (L610). A raised `HTTPException(401)` short-circuits the coroutine, so query validation never runs. Therefore: unauthenticated + invalid query → 401; authenticated + invalid query → 422; valid query + no bearer → 401 |
 | `bool_parsing` 422 (include_all) | Pydantic 2.13.4 envelope; accepted spellings true/True/TRUE, false/False/FALSE, 1, 0, yes, no, on, off (case-insensitive) |
 | `int_parsing` 422 (limit) | Rejects blank, non-int, floats; accepts leading `+` and surrounding whitespace |
 | `greater_than_equal` 422 | ctx: {ge: 1}; msg "Input should be greater than or equal to 1" |
@@ -69,7 +69,7 @@ Results file: `/tmp/gate7g_parity_results.json`.
 Exit code: `0` on all-pass zero-write; `1` on parity/zero-write violation;
 `2` on process bring-up failure.
 
-## Case matrix (31 cases + zero-write aggregate)
+## Case matrix (32 cases + zero-write aggregate)
 
 | # | Description | Expected |
 |---|---|---|
@@ -78,7 +78,8 @@ Exit code: `0` on all-pass zero-write; `1` on parity/zero-write violation;
 | 3  | limit=0 → 422 greater_than_equal (ge=1) | 422 body |
 | 4  | limit=501 → 422 less_than_equal (le=500) | 422 body |
 | 5  | limit=1.5 → 422 int_parsing (no float coercion) | 422 body |
-| 6  | no auth + invalid include_all → 422 (not 401) | 422 body |
+| 6  | no auth + invalid include_all → 401 (auth precedes query) | 401 body |
+| 6.5| no auth + invalid limit → 401 (auth precedes query) | 401 body |
 | 7  | no auth · valid query → 401 Not authenticated | 401 body |
 | 8  | invalid bearer → 401 Invalid session | 401 body |
 | 9  | expired bearer → 401 Session expired | 401 body |

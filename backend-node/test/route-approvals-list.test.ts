@@ -267,10 +267,20 @@ describe('Gate-7g · Approvals list read-only shadow', () => {
     expect((r.json() as { detail: Array<{ input: string }> }).detail[0].input).toBe('');
   });
 
-  // ── Validation precedence: 422 before 401 ──────────────────────────
-  it('8 unauthenticated + invalid include_all → 422 (not 401)', async () => {
+  // ── Validation precedence: AUTH BEFORE QUERY VALIDATION ────────────
+  // FastAPI 0.110.1 `solve_dependencies` runs `Depends(get_current_user)`
+  // BEFORE query params reach `request_params_to_args`. A 401 short-
+  // circuits, so an unauthenticated invalid query returns 401 — not 422.
+  it('8 unauthenticated + invalid include_all → 401 (auth precedes query)', async () => {
     const r = await get('/api/approvals?include_all=xyz');
-    expect(r.statusCode).toBe(422);
+    expect(r.statusCode).toBe(401);
+    expect(r.json()).toEqual({ detail: 'Not authenticated' });
+  });
+
+  it('8b unauthenticated + invalid limit → 401 (auth precedes query)', async () => {
+    const r = await get('/api/approvals?limit=abc');
+    expect(r.statusCode).toBe(401);
+    expect(r.json()).toEqual({ detail: 'Not authenticated' });
   });
 
   it('9 unauthenticated + valid query → 401 Not authenticated', async () => {

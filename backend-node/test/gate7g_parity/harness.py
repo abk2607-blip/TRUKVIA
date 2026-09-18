@@ -16,8 +16,12 @@ Class-C stance:
 NEW parity axes for Gate 7g:
   * include_all bool_parsing 422 (Pydantic v2.13.4)
   * limit int_parsing / greater_than_equal / less_than_equal 422
-  * FastAPI validates query BEFORE Depends(get_current_user):
-    invalid query + no bearer → 422, valid query + no bearer → 401.
+  * AUTH precedes QUERY VALIDATION (FastAPI 0.110.1
+    `solve_dependencies` runs `Depends(get_current_user)` BEFORE query
+    params reach `request_params_to_args`). Therefore:
+      unauthenticated + invalid query → 401 (auth wins)
+      authenticated  + invalid query → 422 (Pydantic envelope)
+      valid query    + no bearer     → 401
   * Projection strips ONLY `_id` — user_id PRESERVED (contrast with
     prior gates that stripped both).
   * Conditional filter object (status truthy → exact; status falsy +
@@ -198,9 +202,13 @@ CASES: list[dict[str, Any]] = [
     {"n":  5, "d": "limit=1.5 → 422 int_parsing (no float coercion)",
      "url": "/api/approvals?limit=1.5", "hk": "u1", "expect": 422, "compare": "full"},
 
-    # Validation precedence: 422 before 401
-    {"n":  6, "d": "no auth + invalid include_all → 422 (not 401)",
-     "url": "/api/approvals?include_all=xyz", "hk": "none", "expect": 422, "compare": "full"},
+    # Validation precedence: AUTH PRECEDES QUERY VALIDATION
+    # (FastAPI 0.110.1 `solve_dependencies` runs `Depends(get_current_user)`
+    # before query params reach `request_params_to_args`.)
+    {"n":  6, "d": "no auth + invalid include_all → 401 (auth precedes query)",
+     "url": "/api/approvals?include_all=xyz", "hk": "none", "expect": 401, "compare": "full"},
+    {"n":  6.5, "d": "no auth + invalid limit → 401 (auth precedes query)",
+     "url": "/api/approvals?limit=abc", "hk": "none", "expect": 401, "compare": "full"},
 
     # Auth 401 literals on valid query
     {"n":  7, "d": "no auth · valid query → 401 Not authenticated",

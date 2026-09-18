@@ -21,9 +21,15 @@ import { HttpError } from '../errors.js';
  *
  * ── GATE-7g BINDINGS ────────────────────────────────────────────────
  *
- *   1. FastAPI validates query parameters BEFORE Depends(get_current_user).
- *      Therefore invalid include_all / limit → 422 BEFORE 401.
- *      Valid query + missing auth → 401.
+ *   1. FastAPI 0.110.1 executes `Depends(get_current_user)` INSIDE
+ *      `solve_dependencies` (fastapi/dependencies/utils.py L549) BEFORE
+ *      `request_params_to_args` reaches query validation (L610).
+ *      A raised `HTTPException(401)` in `get_current_user` short-circuits
+ *      the coroutine, so query validation never runs. Therefore:
+ *        · unauthenticated + invalid query  → 401 (auth wins)
+ *        · authenticated  + invalid query  → 422 (Pydantic envelope)
+ *        · authenticated  + valid   query  → 200
+ *      AUTH PRECEDES QUERY VALIDATION.
  *
  *   2. Pydantic v2 (2.13.4) 422 envelopes reproduced verbatim for:
  *      * bool_parsing        (include_all)
@@ -132,9 +138,23 @@ export async function registerApprovalsListRoutes(
   app.get('/api/approvals', async (req: FastifyRequest, reply: FastifyReply) => {
     const q = (req.query ?? {}) as Record<string, unknown>;
 
-    // 1. Validate query parameters FIRST — Pydantic v2 semantics.
-    //    Collect errors in declaration order (include_all before limit)
-    //    to match FastAPI's error-array ordering.
+    // 1. Auth FIRST — reproduces FastAPI 0.110.1 `solve_dependencies`
+    //    ordering: `Depends(get_current_user)` runs before Pydantic
+    //    query validation. A 401 short-circuits the coroutine so query
+    //    validation never runs.
+    let userId: string;
+    try {
+      userId = (await authenticate(req, db)).user_id;
+    } catch (err) {
+      if (err instanceof HttpError) {
+        reply.code(err.status);
+        return { detail: err.detail };
+      }
+      throw err;
+    }
+
+    // 2. Query validation — Pydantic v2 semantics, declaration-order
+    //    errors (include_all before limit) to match FastAPI's error array.
     const errors: Record<string, unknown>[] = [];
 
     let includeAll = false;
@@ -163,18 +183,6 @@ export async function registerApprovalsListRoutes(
     if (errors.length > 0) {
       reply.code(422);
       return { detail: errors };
-    }
-
-    // 2. Auth (401 AFTER validation, matching FastAPI's ordering).
-    let userId: string;
-    try {
-      userId = (await authenticate(req, db)).user_id;
-    } catch (err) {
-      if (err instanceof HttpError) {
-        reply.code(err.status);
-        return { detail: err.detail };
-      }
-      throw err;
     }
 
     // 3. Active-company resolution (locked helper).
