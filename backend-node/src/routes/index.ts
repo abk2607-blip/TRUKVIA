@@ -41,6 +41,7 @@ import { registerFilesListRoutes } from './files-list.js';
 import { registerFilesUsageListRoutes } from './files-usage-list.js';
 import { registerTollImportLookupRoutes } from './toll-import-lookup.js';
 import { registerApprovalDetailRoutes } from './approval-detail.js';
+import { registerFinDayClosuresListRoutes } from './fin-day-closures-list.js';
 
 /**
  * TRUKVIA Node · Phase-3 API-route registrar.
@@ -101,4 +102,5 @@ export async function registerApiRoutes(
   await registerFilesUsageListRoutes(app, deps);
   await registerTollImportLookupRoutes(app, deps);
   await registerApprovalDetailRoutes(app, deps);
+  await registerFinDayClosuresListRoutes(app, deps);
 }
