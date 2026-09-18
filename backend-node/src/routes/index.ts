@@ -34,6 +34,7 @@ import { registerWalletTransfersListReadRoutes } from './wallet-transfers-list.j
 import { registerWalletRechargesListReadRoutes } from './wallet-recharges-list.js';
 import { registerPolicyChangesListReadRoutes } from './policy-changes-list.js';
 import { registerSupplierVehiclesListReadRoutes } from './supplier-vehicles-list.js';
+import { registerApprovalsPendingCountRoutes } from './approvals-pending-count.js';
 
 /**
  * TRUKVIA Node · Phase-3 API-route registrar.
@@ -87,4 +88,5 @@ export async function registerApiRoutes(
   await registerWalletRechargesListReadRoutes(app, deps);
   await registerPolicyChangesListReadRoutes(app, deps);
   await registerSupplierVehiclesListReadRoutes(app, deps);
+  await registerApprovalsPendingCountRoutes(app, deps);
 }

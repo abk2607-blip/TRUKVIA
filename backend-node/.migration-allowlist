@@ -58,3 +58,4 @@
 /api/wallet-recharges
 /api/policy-changes
 /api/suppliers/:sid/vehicles
+/api/approvals/summary/pending
