@@ -68,3 +68,4 @@
 /api/fin/day-closures
 /api/fin/day-closures/:close_date
 /api/fin/day-status
+/api/drivers/:did/salary-masters
