@@ -61,3 +61,4 @@
 /api/approvals/summary/pending
 /api/approvals
 /api/fuel/vehicle-maps
+/api/files
