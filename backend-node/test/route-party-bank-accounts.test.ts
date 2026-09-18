@@ -33,6 +33,7 @@ const IN_PAST = (): string => new Date(Date.now() - 60_000).toISOString();
 interface State {
   sessions: Record<string, unknown>[];
   users: Record<string, unknown>[];
+  team_members: Record<string, unknown>[];
   companies: Record<string, unknown>[];
   party_bank_accounts: Record<string, unknown>[];
   writes: string[];
@@ -81,6 +82,7 @@ function fakeDb(state: State): Db {
   const rowsOf = (name: string): Record<string, unknown>[] =>
     name === 'user_sessions' ? state.sessions
     : name === 'users' ? state.users
+    : name === 'team_members' ? state.team_members
     : name === 'companies' ? state.companies
     : name === 'party_bank_accounts' ? state.party_bank_accounts
     : [];
@@ -213,22 +215,43 @@ const PBA_U2 = {
 
 function makeState(): State {
   return {
+    // Gate 9b: production-shaped sessions (login stores no role). Roles come from
+    // Python get_current_user: owner → "owner"; staff → team_members.role under
+    // the owner's scope; the masking chain is `effective_role or users.role`.
     sessions: [
-      { session_token: 'tok-owner',       user_id: 'u-owner', effective_role: 'owner',      expires_at: IN_FUTURE() },
-      { session_token: 'tok-accountant',  user_id: 'u-owner', effective_role: 'accountant', expires_at: IN_FUTURE() },
-      { session_token: 'tok-admin',       user_id: 'u-owner', effective_role: 'admin',      expires_at: IN_FUTURE() },
-      { session_token: 'tok-admin-mix',   user_id: 'u-owner', effective_role: 'Admin',      expires_at: IN_FUTURE() },
-      { session_token: 'tok-viewer',      user_id: 'u-owner', effective_role: 'viewer',     expires_at: IN_FUTURE() },
-      { session_token: 'tok-manager',     user_id: 'u-owner', effective_role: 'manager',    expires_at: IN_FUTURE() },
-      { session_token: 'tok-norole',      user_id: 'u-owner',                                expires_at: IN_FUTURE() },
-      { session_token: 'tok-role-only',   user_id: 'u-owner', role: 'admin',                expires_at: IN_FUTURE() },
-      { session_token: 'tok-effpriority', user_id: 'u-owner', effective_role: 'admin', role: 'viewer', expires_at: IN_FUTURE() },
-      { session_token: 'tok-expired',     user_id: 'u-owner', effective_role: 'owner',      expires_at: IN_PAST() },
-      { session_token: 'tok-u2',          user_id: 'u2',      effective_role: 'owner',      expires_at: IN_FUTURE() },
+      { session_token: 'tok-owner',       user_id: 'u-owner',    expires_at: IN_FUTURE() },
+      { session_token: 'tok-accountant',  user_id: 's-acc',      expires_at: IN_FUTURE() },
+      { session_token: 'tok-admin',       user_id: 's-admin',    expires_at: IN_FUTURE() },
+      { session_token: 'tok-admin-mix',   user_id: 's-adminmix', expires_at: IN_FUTURE() },
+      { session_token: 'tok-viewer',      user_id: 's-viewer',   expires_at: IN_FUTURE() },
+      { session_token: 'tok-manager',     user_id: 's-manager',  expires_at: IN_FUTURE() },
+      { session_token: 'tok-norole',      user_id: 's-norole',   expires_at: IN_FUTURE() },
+      { session_token: 'tok-role-only',   user_id: 's-roleonly', expires_at: IN_FUTURE() },
+      { session_token: 'tok-effpriority', user_id: 's-effprio',  expires_at: IN_FUTURE() },
+      { session_token: 'tok-expired',     user_id: 'u-owner',    expires_at: IN_PAST() },
+      { session_token: 'tok-u2',          user_id: 'u2',         expires_at: IN_FUTURE() },
     ],
     users: [
       { user_id: 'u-owner', email: 'owner@x' },
       { user_id: 'u2',      email: 'u2@x' },
+      { user_id: 's-acc',      email: 'acc@x' },
+      { user_id: 's-admin',    email: 'admin@x' },
+      { user_id: 's-adminmix', email: 'adminmix@x' },
+      { user_id: 's-viewer',   email: 'viewer@x' },
+      { user_id: 's-manager',  email: 'manager@x' },
+      { user_id: 's-norole',   email: 'norole@x' },
+      { user_id: 's-roleonly', email: 'roleonly@x', role: 'admin' },
+      { user_id: 's-effprio',  email: 'effprio@x', role: 'viewer' },
+    ],
+    team_members: [
+      { owner_user_id: 'u-owner', email: 'acc@x',      role: 'accountant', active: true },
+      { owner_user_id: 'u-owner', email: 'admin@x',    role: 'admin',      active: true },
+      { owner_user_id: 'u-owner', email: 'adminmix@x', role: 'Admin',      active: true },
+      { owner_user_id: 'u-owner', email: 'viewer@x',   role: 'viewer',     active: true },
+      { owner_user_id: 'u-owner', email: 'manager@x',  role: 'manager',    active: true },
+      { owner_user_id: 'u-owner', email: 'norole@x',   role: '',           active: true },
+      { owner_user_id: 'u-owner', email: 'roleonly@x', role: '',           active: true },
+      { owner_user_id: 'u-owner', email: 'effprio@x',  role: 'admin',      active: true },
     ],
     companies: [
       { id: 'co-a',     user_id: 'u-owner', is_default: true },

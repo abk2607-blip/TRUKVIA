@@ -62,9 +62,13 @@ interface Correction {
 
 interface DbState {
   sessions: Session[];
+  users?: Record<string, unknown>[]; // Gate 9b: Python get_current_user reads users (401 "User not found")
   companies: Company[];
   corrections: Correction[];
 }
+
+// Gate 9b: users documents for the session owners (production login creates them).
+const USERS = [{ user_id: 'u1', email: 'u1@x' }, { user_id: 'u2', email: 'u2@x' }];
 
 interface DbSpies {
   writeCalls: number;
@@ -110,6 +114,8 @@ function buildFakeDb(state: DbState, spies: DbSpies): Db {
     const rows: Record<string, unknown>[] =
       name === 'user_sessions'
         ? (state.sessions as unknown as Record<string, unknown>[])
+        : name === 'users'
+        ? (state.users ?? USERS)
         : name === 'companies'
         ? (state.companies as unknown as Record<string, unknown>[])
         : name === 'payment_corrections'

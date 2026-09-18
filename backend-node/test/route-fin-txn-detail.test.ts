@@ -62,7 +62,7 @@ function fakeDb(state: State): Db {
     return {
       find: vi.fn(() => { throw new Error(`unexpected find on ${name}`); }),
       findOne: vi.fn(async (f: Row, opts?: { projection?: Record<string, 0 | 1> }) => {
-        if (!['user_sessions', 'users', 'companies'].includes(name)) {
+        if (!['user_sessions', 'users', 'team_members', 'companies'].includes(name)) { // Gate 9b: auth reads
           state.lookups.push({ coll: name, filter: f, projection: opts?.projection });
         }
         if (state.failing.has(name)) throw new Error(`boom on ${name}`);

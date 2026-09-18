@@ -33,7 +33,7 @@ const forbid = (state: State, name: string) => (): never => {
 
 function fakeDb(state: State): Db {
   const collection = (name: string) => {
-    const auth = name === 'user_sessions' || name === 'users';
+    const auth = name === 'user_sessions' || name === 'users' || name === 'team_members'; // Gate 9b: auth reads
     const rows = name === 'user_sessions' ? state.sessions : name === 'users' ? state.users : [];
     return {
       find: vi.fn(() => { state.touched.push(`${name}.find`); throw new Error(`unexpected find on ${name}`); }),
