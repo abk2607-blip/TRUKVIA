@@ -78,3 +78,4 @@
 /api/fin/day-book
 /api/
 /api/gstin/lookup
+/api/ai/sessions
