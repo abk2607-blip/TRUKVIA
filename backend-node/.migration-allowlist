@@ -57,3 +57,4 @@
 /api/wallet-transfers
 /api/wallet-recharges
 /api/policy-changes
+/api/suppliers/:sid/vehicles
