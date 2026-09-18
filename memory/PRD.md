@@ -5558,3 +5558,75 @@ After Gate 7i lock: **~4 viable Class-C candidates remain** (`/api/files/usage`,
 First USER-SCOPED-ONLY Class-C shadow. Future gates whose Python contract does NOT invoke `_active_company_id` (`/api/files/usage` will be the next such case) MUST omit the `activeCompanyId` call and MUST NOT add a `company_id` predicate — a mistaken call would silently narrow results and diverge from Python.
 
 STOPPING. Gate 7j NOT started. Awaiting explicit user authorization for the next micro-gate.
+
+
+## 🔒 TRUKVIA — PHASE 3 / GATE 7j — FINAL LOCK (2026-02-15)
+
+**STATUS: 🔒 LOCKED**
+**BRANCH:** `migration/node-typescript-v2`
+**LOCK SHA:** _(assigned at commit)_
+**PARENT (Gate 7j Implementation):** _(implementation commit above)_
+**PRIOR LOCK (Gate 7i FINAL LOCK):** `9453f6b02b4a89795d94f98d0f3551610bbab492` — remains ancestor
+**main SHA:** `82a8fb32dbb6333ac92c4f557c763863b48e8501` — UNCHANGED
+
+### Scope
+Node.js/TypeScript Class-C read-only shadow of `GET /api/files/usage`
+(Python source-of-truth: `backend/routers/files.py::file_usage` L94-109).
+**First Class-C shadow with application-side aggregation** — 5-key
+fixed-shape summary `{total_bytes, limit_bytes, pct, file_count, by_category}`.
+Preserves verbatim Python semantics: `int(d.get("size", 0) or 0)` size
+normalization, `d.get("category", "general")` key-based default,
+insertion-order `by_cat`, constant `limit_bytes = 524288000`, and
+`pct = round(min(100, total/limit*100), 2)`. USER-ONLY scope carried
+forward from Gate 7i.
+
+### Six-file scope (exactly)
+1. `backend-node/src/routes/files-usage-list.ts` (NEW · ~140 lines)
+2. `backend-node/test/route-files-usage-list.test.ts` (NEW · ~360 lines · 22 vitest cases)
+3. `backend-node/test/gate7j_parity/harness.py` (NEW · ~380 lines · 11 route cases + zero-write aggregate)
+4. `backend-node/test/gate7j_parity/README.md` (NEW · ~85 lines)
+5. `backend-node/src/routes/index.ts` (+2: import + registrar after Gate 7i)
+6. `backend-node/.migration-allowlist` (+1: `/api/files/usage`)
+
+### Verification
+- `npx tsc --noEmit` → PASS (exit 0)
+- `npx vitest run test/route-files-usage-list.test.ts` → **22 / 22 PASS** (303 ms)
+- `npm run build` → PASS · `dist/routes/files-usage-list.js` (2 844 B)
+- `python test/gate7j_parity/harness.py` → **12 / 12 PASS**, 0 Node business writes, disposable DB `trukvia_gate7j_parity_1789713752` dropped in `finally`
+- Full Python↔Node body-exact (deep-equal) comparison every case:
+  - 401 literals × 3 (`Not authenticated` / `Invalid session` / `Session expired`)
+  - Mixed-fixture aggregate over 12 files: 4 counted with mixed categories, 1 empty-string category (`""` preserved as literal key), 1 missing category (default `"general"`), 1 size=0 (counted, contributes 0), 1 missing size (counted, contributes 0), 2 excluded (`is_deleted=true` + missing `is_deleted` field), 2 cross-user excluded
+  - USER-ONLY scope proof: no-header default / owned `X-Company-Id: co-a-alt` / unowned `X-Company-Id: co-b` all return identical u1 aggregate (cases 4/5/6)
+  - Cross-user u2 → own files only (case 7)
+  - Empty user u3 → `{0, 524288000, 0, 0, {}}` (case 8)
+  - `pct` cap at 100 with oversize file (case 9)
+  - `pct` exact 50 with half-limit file (case 10)
+  - 5000 read cap: 5001 tiny files → `file_count 5000, total_bytes 5000` (case 11)
+  - Zero-write aggregate across all case 12 requests: 0 write events
+- No protected-file drift · no shared helper / `auth.ts` / `tenant.ts` / `errors.ts` / `config.ts` / `app.ts` / `server.ts` / `db.ts` drift · no `package.json`/`tsconfig.json`/dep change · no Python backend or frontend change
+- Lock commit is pure empty (tree SHA equals parent tree SHA), single parent, linear history (0 merges since Gate 7i lock), no amend/rebase/merge
+- Files writers (`POST /files/upload`, `POST /files/bulk-upload`, `DELETE /files/{fid}`) and object-store egress (`GET /files/{fid}/download`, `GET /files/public/{obj_path:path}`) remain **PYTHON-AUTHORITATIVE / OUT OF SCOPE**
+
+### Gate 7 progress
+- 6z (`GET /api/vendors/:vid/payments`) 🔒
+- 7a–7d wallet + policy 🔒
+- 7e (`GET /api/suppliers/:sid/vehicles`) 🔒
+- 7f (`GET /api/approvals/summary/pending`) 🔒
+- 7g (`GET /api/approvals`) 🔒
+- 7h (`GET /api/fuel/vehicle-maps`) 🔒
+- 7i (`GET /api/files`) 🔒
+- **7j (`GET /api/files/usage`) 🔒 (this entry)**
+- 7k — pending explicit authorization (likely `GET /api/toll-import/lookup` per the batched Discovery order)
+
+### Class-C milestone status
+After Gate 7j lock: **~3 viable Class-C candidates remain** (`/api/toll-import/lookup`, `/api/approvals/{aid}`, `/api/driver-shortage-policies`). Milestone still **BLOCKED**.
+
+### Deferred (unchanged)
+- Class-C reads with backfill-on-GET side-effects (`/api/drivers`, `/api/parties`, `/api/customers`, `/api/vehicles`, `/api/products`, `/api/companies`) — deferred to Writer migration phase.
+- Auth-band impedance on `viewer→owner` masking — deferred to Gate 8 Maker-Checker port; DO NOT touch locked `auth.ts` / `tenant.ts`.
+- Writer / Maker-Checker migration — deferred per user Option 1.
+
+### New parity axis captured
+First application-side aggregation Class-C shadow. Future gates whose Python contract computes totals / counts / groupings from a raw find (e.g., dashboards, ledger summaries — mostly out-of-scope but pattern is now proven) must reproduce Python's exact size-normalization (`int(v or 0)`), key-based-default (`d.get(k, default)`), and rounding semantics verbatim — never a "cleaner" implementation.
+
+STOPPING. Gate 7k NOT started. Awaiting explicit user authorization for the next micro-gate.
