@@ -64,3 +64,4 @@
 /api/files
 /api/files/usage
 /api/toll-import/lookup
+/api/approvals/:aid
