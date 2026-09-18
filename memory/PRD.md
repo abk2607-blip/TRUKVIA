@@ -5485,3 +5485,76 @@ After Gate 7h lock: **~5 viable Class-C candidates remain** (`/api/files`, `/api
 First Class-C shadow with **silent-drop** semantics (`Optional[str]` that filters a fixed literal set case-sensitively without raising 422/400 on non-matching values). Future gates where the Python contract uses `if val in (LITERALS): q[...] = val` must reproduce this exact case-sensitive silent-drop behavior — no case folding, no whitespace stripping, no error envelope.
 
 STOPPING. Gate 7i NOT started. Awaiting explicit user authorization for the next micro-gate.
+
+
+## 🔒 TRUKVIA — PHASE 3 / GATE 7i — FINAL LOCK (2026-02-15)
+
+**STATUS: 🔒 LOCKED**
+**BRANCH:** `migration/node-typescript-v2`
+**LOCK SHA:** _(assigned at commit)_
+**PARENT (Gate 7i Implementation):** _(implementation commit above)_
+**PRIOR LOCK (Gate 7h FINAL LOCK):** `583f6f5a67d2c12b9f52863c32f2b9c8f4fb72ff` — remains ancestor
+**main SHA:** `82a8fb32dbb6333ac92c4f557c763863b48e8501` — UNCHANGED
+
+### Scope
+Node.js/TypeScript Class-C read-only shadow of `GET /api/files`
+(Python source-of-truth: `backend/routers/files.py::list_files` L174-186).
+**First USER-SCOPED-ONLY Class-C shadow** — no `activeCompanyId` call,
+no `company_id` predicate. Same-user files across arbitrary `company_id`
+values remain visible; cross-user excluded. Three plain-`Optional[str]`
+filters (`category`, `linked_type`, `linked_id`) with exact-equality on
+truthy values and predicate-drop on blank/omitted. Exact Mongo
+`{is_deleted: False}` equality — docs missing the field, or with
+`null`/`true`, are all excluded (no `$ne` guard).
+
+### Six-file scope (exactly)
+1. `backend-node/src/routes/files-list.ts` (NEW · ~110 lines)
+2. `backend-node/test/route-files-list.test.ts` (NEW · ~370 lines · 26 vitest cases)
+3. `backend-node/test/gate7i_parity/harness.py` (NEW · ~330 lines · 22 route cases + zero-write aggregate)
+4. `backend-node/test/gate7i_parity/README.md` (NEW · ~90 lines)
+5. `backend-node/src/routes/index.ts` (+2: import + registrar after Gate 7h)
+6. `backend-node/.migration-allowlist` (+1: `/api/files`)
+
+### Verification
+- `npx tsc --noEmit` → PASS (exit 0)
+- `npx vitest run test/route-files-list.test.ts` → **26 / 26 PASS** (360 ms)
+- `npm run build` → PASS · `dist/routes/files-list.js` (1 933 B)
+- `python test/gate7i_parity/harness.py` → **23 / 23 PASS**, 0 Node business writes, disposable DB `trukvia_gate7i_parity_1789712807` dropped in `finally`
+- Full Python↔Node body-exact comparison every case:
+  - 401 literals × 3 (`Not authenticated` / `Invalid session` / `Session expired`)
+  - USER-ONLY scope proof: no-header default / owned `X-Company-Id: co-a-alt` / unowned `X-Company-Id: co-b` all return the **identical** u1 result set (cases 4/5/6)
+  - Cross-user u2 → only u2 rows (case 7)
+  - Deleted exclusion: `is_deleted=true` (f-del) and missing `is_deleted` (f-nodel) both excluded (case 8 + captured in case 4)
+  - `category` filter: `general`/`invoice`/uppercase (case-sensitive)/nonexistent/blank
+  - `linked_type` / `linked_id` filters: exact / blank / unknown
+  - Combined + conflicting filters
+  - Empty user (u3) → `200 []`
+  - Projection strips `_id` AND `user_id`, every other field preserved
+  - Sort `created_at` DESC
+  - Zero-write aggregate across 22 requests: 0 write events
+- No protected-file drift · no shared helper / `auth.ts` / `tenant.ts` / `errors.ts` / `config.ts` / `app.ts` / `server.ts` / `db.ts` drift · no `package.json`/`tsconfig.json`/dep change · no Python backend or frontend change
+- Lock commit is pure empty (tree SHA equals parent tree SHA), single parent, linear history (post-7h: PRD bookkeeping + Gate 7i implementation + this empty-tree lock — 0 merges), no amend/rebase/merge
+- All files writers (`POST /files/upload`, `POST /files/bulk-upload`, `DELETE /files/{fid}`) and object-store egress (`GET /files/{fid}/download`, `GET /files/public/{obj_path:path}`) remain **PYTHON-AUTHORITATIVE / OUT OF SCOPE**
+
+### Gate 7 progress
+- 6z (`GET /api/vendors/:vid/payments`) 🔒
+- 7a–7d wallet + policy 🔒
+- 7e (`GET /api/suppliers/:sid/vehicles`) 🔒
+- 7f (`GET /api/approvals/summary/pending`) 🔒
+- 7g (`GET /api/approvals`) 🔒
+- 7h (`GET /api/fuel/vehicle-maps`) 🔒
+- **7i (`GET /api/files`) 🔒 (this entry)**
+- 7j — pending explicit authorization (likely `GET /api/files/usage` per the batched Discovery order)
+
+### Class-C milestone status
+After Gate 7i lock: **~4 viable Class-C candidates remain** (`/api/files/usage`, `/api/toll-import/lookup`, `/api/approvals/{aid}`, `/api/driver-shortage-policies`). Milestone still **BLOCKED**.
+
+### Deferred (unchanged)
+- Class-C reads with backfill-on-GET side-effects (`/api/drivers`, `/api/parties`, `/api/customers`, `/api/vehicles`, `/api/products`, `/api/companies`) — deferred to Writer migration phase.
+- Auth-band impedance on `viewer→owner` masking — deferred to Gate 8 Maker-Checker port; DO NOT touch locked `auth.ts` / `tenant.ts`.
+- Writer / Maker-Checker migration — deferred per user Option 1.
+
+### New parity axis captured
+First USER-SCOPED-ONLY Class-C shadow. Future gates whose Python contract does NOT invoke `_active_company_id` (`/api/files/usage` will be the next such case) MUST omit the `activeCompanyId` call and MUST NOT add a `company_id` predicate — a mistaken call would silently narrow results and diverge from Python.
+
+STOPPING. Gate 7j NOT started. Awaiting explicit user authorization for the next micro-gate.
