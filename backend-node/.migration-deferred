@@ -22,6 +22,8 @@
 
 # ── P2 · Node business WRITERS (parked; writer authority stays Python) ──
 # Gate 4 · POST → saved_trip_filters.insertOne (+ idempotency_keys claim rows)
+# Gate 7w · GET list shadow on the same path — read-only and parity-locked,
+#           but it stays deferred with the writer (a path cannot be split)
 /api/saved-trip-filters
 # Gate 5 · POST → expenditure_types.insertOne
 /api/expenditure-types

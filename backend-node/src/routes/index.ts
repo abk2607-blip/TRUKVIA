@@ -51,6 +51,7 @@ import { registerFinDayBookRoutes } from './fin-day-book.js';
 import { registerTripsStaticPrecedenceGuards } from './trips-static-precedence.js';
 import { registerApiRootRoute } from './api-root.js';
 import { registerGstinLookupRoutes } from './gstin-lookup.js';
+import { registerSavedTripFiltersListRoute } from './saved-trip-filters-list.js';
 
 /**
  * TRUKVIA Node · Phase-3 API-route registrar.
@@ -123,4 +124,5 @@ export async function registerApiRoutes(
   await registerTripsStaticPrecedenceGuards(app);
   await registerApiRootRoute(app);
   await registerGstinLookupRoutes(app, deps);
+  await registerSavedTripFiltersListRoute(app, deps);
 }
