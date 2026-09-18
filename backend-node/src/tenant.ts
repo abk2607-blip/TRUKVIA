@@ -6,8 +6,9 @@ import type { FastifyRequest } from 'fastify';
  *
  * Faithful shadow of `backend/routers/supplier_ledger.py::_active_company_id`.
  *
- *   1. If the request carries `X-Company-Id` (case-insensitive) and that
- *      company is owned by the authenticated user, use it.
+ *   1. If the request carries `X-Company-Id` (case-insensitive; first raw
+ *      occurrence wins, Gate 9c) and that company is owned by the
+ *      authenticated user, use it.
  *   2. Otherwise, use the user's default company (`is_default: true`).
  *   3. Otherwise, use any company owned by the user.
  *   4. Otherwise, empty string.
@@ -22,11 +23,17 @@ interface CompanyDoc {
 }
 
 function readCompanyHeader(req: FastifyRequest): string {
-  // Fastify normalises header names to lower-case; both `x-company-id` and
-  // `X-Company-Id` end up on the same key. We accept the array form too.
-  const raw = req.headers['x-company-id'];
-  const first = Array.isArray(raw) ? raw[0] : raw;
-  return typeof first === 'string' ? first.trim() : '';
+  // Gate 9c: Starlette `request.headers.get("x-company-id")` returns the FIRST
+  // raw occurrence (name matched case-insensitively). Node joins duplicates in
+  // `req.headers` as "a, b", so read `rawHeaders` instead. A single header that
+  // itself contains a comma stays one literal value. No extra trim: llhttp
+  // already strips SP/HTAB exactly like h11; JS trim would also drop NBSP,
+  // which Python keeps.
+  const raw = req.raw.rawHeaders;
+  for (let i = 0; i + 1 < raw.length; i += 2) {
+    if ((raw[i] as string).toLowerCase() === 'x-company-id') return raw[i + 1] as string;
+  }
+  return '';
 }
 
 export async function activeCompanyId(
