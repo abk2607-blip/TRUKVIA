@@ -5680,3 +5680,46 @@ After Gate 7k lock: **~2 viable Class-C candidates remain** (`/api/approvals/{ai
 Python `repr()` on `str` values in error messages. Future gates whose Python contract uses `f"...{value!r}..."` in error details must reproduce it verbatim via the same quote-selection + escape logic; a plain `String()` or `JSON.stringify()` will diverge.
 
 STOPPING. Gate 7l NOT started. Awaiting explicit user authorization for the next micro-gate.
+
+
+## 🔒 TRUKVIA — PHASE 3 / GATE 7l — FINAL LOCK (2026-02-15)
+
+**STATUS: 🔒 LOCKED**
+**BRANCH:** `migration/node-typescript-v2`
+**LOCK SHA:** _(assigned at commit — see final report)_
+**PRIOR LOCK (Gate 7k FINAL LOCK):** `b663ba44ee687f8606e238e56f4d8bb29282e61d` — remains ancestor
+**main SHA:** `82a8fb32dbb6333ac92c4f557c763863b48e8501` — UNCHANGED
+
+### Scope
+Node.js/TypeScript Class-C read-only shadow of `GET /api/approvals/{aid}`
+(Python source-of-truth: `backend/routers/approvals.py::api_get_approval`
+L59-63 + `backend/services_approvals.py::get_approval_detail` L544-560).
+Three sequential reads: approval → 404 gate → revisions (sort
+`revision_index` ASC, cap 200) → audits (sort `at` ASC, cap 500).
+Wrapper response `{approval, revisions, audits}`. Projections strip
+ONLY `_id` — `user_id` PRESERVED across all three collections.
+
+### Six-file scope (exactly)
+1. `backend-node/src/routes/approval-detail.ts` (NEW · ~145 lines)
+2. `backend-node/test/route-approval-detail.test.ts` (NEW · ~275 lines · 15 vitest cases)
+3. `backend-node/test/gate7l_parity/harness.py` (NEW · ~290 lines · 12 route cases + zero-write aggregate)
+4. `backend-node/test/gate7l_parity/README.md` (NEW · ~85 lines)
+5. `backend-node/src/routes/index.ts` (+2: import + registrar after Gate 7k)
+6. `backend-node/.migration-allowlist` (+1: `/api/approvals/:aid`)
+
+### Verification
+- `npx tsc --noEmit` → PASS (exit 0)
+- `npx vitest run test/route-approval-detail.test.ts` → **15 / 15 PASS** (247 ms)
+- `npm run build` → PASS
+- `python test/gate7l_parity/harness.py` → live-parity all-pass, disposable DB dropped
+- Full Python↔Node body deep-equal comparison for every case: 401 literals ×3; wrapper deep-equal on apr-1 (3-revision + 3-audit sorted) and apr-2 (1-revision + 0-audits); 404 `{"detail":"Approval not found"}` verbatim; cross-user isolation; cross-company isolation; owned/unowned X-Company-Id; static-route precedence verified (aid='summary' reaches Gate 7l 404, /summary/pending still reaches Gate 7f)
+- Zero Node business writes across all requests
+- Approval writers remain **PYTHON-AUTHORITATIVE / OUT OF SCOPE**
+
+### Class-C milestone status
+After Gate 7l lock: **~1 viable Class-C candidate remains** (`/api/driver-shortage-policies` — flagged as Class-C BUT COMPLEX during the batch audit). Milestone still **BLOCKED**.
+
+### New parity axis captured
+Three-collection sequential wrapper response with `user_id`-preserving projections. Future Class-C gates that assemble multi-collection detail responses (e.g., dashboards, ledger detail — mostly out-of-scope but pattern is now proven) can follow this template exactly.
+
+STOPPING. Gate 7m NOT started. Awaiting explicit user authorization for the next micro-gate.
