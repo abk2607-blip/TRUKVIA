@@ -371,9 +371,11 @@ describe('Gate-7m · Fin day-closures list read-only shadow', () => {
   });
 
   // ── ROUTE BOUNDARY ─────────────────────────────────────────────────
-  it('21 only GET list is mounted · detail path + POST not shadowed', async () => {
+  it('21 list handler does not answer detail path · POST not shadowed', async () => {
+    // Gate 7n mounts the detail route; the list handler must not serve it.
     const detail = await get('/api/fin/day-closures/2026-05-01', U1);
-    expect(detail.statusCode).toBe(404);
+    expect(detail.json()).not.toHaveProperty('rows');
+    expect(state.finds).toEqual([]);
     const post = await app.inject({ method: 'POST', url: '/api/fin/day-closures', headers: U1, payload: {} });
     expect(post.statusCode).toBe(404);
   });
