@@ -63,3 +63,4 @@
 /api/fuel/vehicle-maps
 /api/files
 /api/files/usage
+/api/toll-import/lookup
