@@ -5630,3 +5630,53 @@ After Gate 7j lock: **~3 viable Class-C candidates remain** (`/api/toll-import/l
 First application-side aggregation Class-C shadow. Future gates whose Python contract computes totals / counts / groupings from a raw find (e.g., dashboards, ledger summaries — mostly out-of-scope but pattern is now proven) must reproduce Python's exact size-normalization (`int(v or 0)`), key-based-default (`d.get(k, default)`), and rounding semantics verbatim — never a "cleaner" implementation.
 
 STOPPING. Gate 7k NOT started. Awaiting explicit user authorization for the next micro-gate.
+
+
+## 🔒 TRUKVIA — PHASE 3 / GATE 7k — FINAL LOCK (2026-02-15)
+
+**STATUS: 🔒 LOCKED**
+**BRANCH:** `migration/node-typescript-v2`
+**LOCK SHA:** _(assigned at commit)_
+**PRIOR LOCK (Gate 7j FINAL LOCK):** `119118d4c289c96a40ca321cdf393ed595e3909e` — remains ancestor
+**main SHA:** `82a8fb32dbb6333ac92c4f557c763863b48e8501` — UNCHANGED
+
+### Scope
+Node.js/TypeScript Class-C read-only shadow of `GET /api/toll-import/lookup`
+(Python source-of-truth: `backend/routers/toll_import.py::toll_import_lookup` L59-85).
+Two sequential `expenses.find_one` reads: primary by `source_txn_ref`
+(with optional `source: vendor.lower()`), fallback by `source_key`.
+400 when `txn_ref` blank (after auth). **First Class-C shadow reproducing
+Python `repr()`-formatted error detail** — new parity axis codified via
+`pyRepr()` helper (single-quote wrap by default, double-quote wrap when
+the string contains `'` and no `"`, escapes for `\\`, quote, `\n`, `\r`,
+`\t`, and control chars `\xNN`).
+
+### Six-file scope (exactly)
+1. `backend-node/src/routes/toll-import-lookup.ts` (NEW · ~165 lines)
+2. `backend-node/test/route-toll-import-lookup.test.ts` (NEW · ~285 lines · 22 vitest cases)
+3. `backend-node/test/gate7k_parity/harness.py` (NEW · ~325 lines · 22 route cases + zero-write aggregate)
+4. `backend-node/test/gate7k_parity/README.md` (NEW · ~90 lines)
+5. `backend-node/src/routes/index.ts` (+2: import + registrar after Gate 7j)
+6. `backend-node/.migration-allowlist` (+1: `/api/toll-import/lookup`)
+
+### Verification
+- `npx tsc --noEmit` → PASS (exit 0)
+- `npx vitest run test/route-toll-import-lookup.test.ts` → **22 / 22 PASS** (314 ms)
+- `npm run build` → PASS
+- `python test/gate7k_parity/harness.py` → live-parity all-pass, disposable DB dropped
+- Full Python↔Node body-exact comparison: 401 literals × 3, 400 required-msg, auth-precedes-400, primary hit + vendor lower-case + wrong-vendor → 404, fallback via `source_key`, 404 repr formatting for single-quote / double-quote / backslash / newline / space / tab txn_ref, cross-user/cross-company isolation, owned/unowned X-Company-Id
+- Zero Node business writes across all requests
+- All toll-import writers (`POST /toll-import/preview`, `POST /toll-import/commit`, `POST /toll-import/reconcile`) remain **PYTHON-AUTHORITATIVE / OUT OF SCOPE**
+
+### Gate 7 progress
+- 7a–7d, 7e, 7f, 7g, 7h, 7i, 7j 🔒
+- **7k (`GET /api/toll-import/lookup`) 🔒 (this entry)**
+- 7l — pending (likely `GET /api/approvals/{aid}`)
+
+### Class-C milestone status
+After Gate 7k lock: **~2 viable Class-C candidates remain** (`/api/approvals/{aid}`, `/api/driver-shortage-policies`). Milestone still **BLOCKED**.
+
+### New parity axis captured
+Python `repr()` on `str` values in error messages. Future gates whose Python contract uses `f"...{value!r}..."` in error details must reproduce it verbatim via the same quote-selection + escape logic; a plain `String()` or `JSON.stringify()` will diverge.
+
+STOPPING. Gate 7l NOT started. Awaiting explicit user authorization for the next micro-gate.
