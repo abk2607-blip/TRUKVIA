@@ -5273,3 +5273,59 @@ preserved. Sort `vehicle_number` ASC; hard cap 500. No 422 branch. No
 - Writer / Maker-Checker migration — deferred per user Option 1 (finish Class-C reads, then pause).
 
 STOPPING. Gate 7f NOT started. Awaiting explicit user authorization for the next micro-gate.
+
+
+## 🔒 TRUKVIA — PHASE 3 / GATE 7f — FINAL LOCK (2026-02-15)
+
+**STATUS: 🔒 LOCKED**
+**BRANCH:** `migration/node-typescript-v2`
+**LOCK SHA:** `87223acc8022a2cc4e75d98d5d8e94c7a92d3f33`
+**PARENT (Gate 7f Implementation packaging):** `b6e87f6bb9b1980851bcc0dc75c8a4592aa66f19`
+**PRIOR LOCK (Gate 7e FINAL LOCK):** `7d524940cd17903f4b284ddc81ab672858ef910a` — remains ancestor
+**main SHA:** `82a8fb32dbb6333ac92c4f557c763863b48e8501` — UNCHANGED
+
+### Scope
+Node.js/TypeScript Class-C read-only shadow of `GET /api/approvals/summary/pending`
+(Python source-of-truth: `backend/routers/approvals.py::api_pending_count` L49-56).
+First read against the `approvals` collection. First use of `countDocuments`
+in the Node shadow. Fixed filter `{ user_id, company_id, status: "PENDING_APPROVAL" }`
+— no `is_deleted`, no `is_active`, no additional predicates, no `distinct`, no
+aggregation, no application-side filtering. Fixed-shape response `{ count: <int> }`.
+No query parameters, no 400/404/422 branch.
+
+### Six-file scope (exactly)
+1. `backend-node/.migration-allowlist` (+1: `/api/approvals/summary/pending`)
+2. `backend-node/src/routes/index.ts` (+2: import + registrar after Gate 7e)
+3. `backend-node/src/routes/approvals-pending-count.ts` (NEW · ~85 lines)
+4. `backend-node/test/route-approvals-pending-count.test.ts` (NEW · ~240 lines · 15 vitest cases)
+5. `backend-node/test/gate7f_parity/harness.py` (NEW · ~250 lines)
+6. `backend-node/test/gate7f_parity/README.md` (NEW · ~90 lines)
+
+### Verification
+- `npx tsc --noEmit` → PASS
+- `npx vitest run test/route-approvals-pending-count.test.ts` → 15/15 PASS
+- `python test/gate7f_parity/harness.py` → 8/8 PASS, 0 Node writes, disposable DB `trukvia_gate7f_parity_1789709648` dropped in `finally`
+- Full Python↔Node body-exact comparison every case (auth 401 x3, u1 default co-a → 3, owned X-Company-Id co-a-alt → 1, unowned X-Company-Id co-b → fallback co-a → 3, cross-user u2 co-b → 2)
+- No protected-file drift · no shared helper / `auth.ts` / `tenant.ts` / `config.ts` drift · no `package.json`/`tsconfig.json`/dep change · no Python backend or frontend change
+- Lock commit is pure empty (0-byte tree diff vs parent `b6e87f6`), linear (4 commits since Gate 7e lock — Gate 7e finish summary + platform bookkeeping + Gate 7f implementation packaging + this lock), no amend/merge/rebase
+- All 5 approvals writers (`POST /approvals`, `POST /approvals/{aid}/approve|reject|withdraw|resubmit`) remain **PYTHON-AUTHORITATIVE / OUT OF SCOPE**
+
+### Gate 7 progress
+- 6z (`GET /api/vendors/:vid/payments`) 🔒
+- 7a (`GET /api/wallet-adjustments`) 🔒
+- 7b (`GET /api/wallet-transfers`) 🔒
+- 7c (`GET /api/wallet-recharges`) 🔒
+- 7d (`GET /api/policy-changes`) 🔒
+- 7e (`GET /api/suppliers/:sid/vehicles`) 🔒
+- **7f (`GET /api/approvals/summary/pending`) 🔒 (this entry)**
+- 7g — pending explicit authorization (likely `GET /api/approvals` or `GET /api/approvals/:aid` per the audit's ordered candidate list)
+
+### Class-C milestone status
+After Gate 7f lock: **~7 viable Class-C candidates remain**. Milestone still **BLOCKED** per Class-C audit finding. Do NOT declare completion.
+
+### Deferred (unchanged)
+- Class-C reads with backfill-on-GET side-effects (`/api/drivers`, `/api/parties`, `/api/customers`, `/api/vehicles`, `/api/products`, `/api/companies`, `/api/fuel`) — deferred to Writer migration phase.
+- Auth-band impedance on `viewer→owner` masking — deferred to Gate 8 Maker-Checker port; DO NOT touch locked `auth.ts` / `tenant.ts`.
+- Writer / Maker-Checker migration — deferred per user Option 1 (finish Class-C reads, then pause).
+
+STOPPING. Gate 7g NOT started. Awaiting explicit user authorization for the next micro-gate.
