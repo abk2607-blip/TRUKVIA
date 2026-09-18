@@ -83,3 +83,4 @@
 /api/drivers/:did/salary-settlement-hint
 /api/ai/sessions/:sid/messages
 /api/vehicles/:vid/status-audit
+/api/driver-shortage-policies/resolve
