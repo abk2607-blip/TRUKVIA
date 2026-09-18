@@ -62,3 +62,4 @@
 /api/approvals
 /api/fuel/vehicle-maps
 /api/files
+/api/files/usage
