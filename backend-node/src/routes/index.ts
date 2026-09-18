@@ -53,6 +53,7 @@ import { registerApiRootRoute } from './api-root.js';
 import { registerGstinLookupRoutes } from './gstin-lookup.js';
 import { registerSavedTripFiltersListRoute } from './saved-trip-filters-list.js';
 import { registerAiSessionsListRoute } from './ai-sessions-list.js';
+import { registerRemindersDigestRoute } from './reminders-digest.js';
 
 /**
  * TRUKVIA Node · Phase-3 API-route registrar.
@@ -127,4 +128,5 @@ export async function registerApiRoutes(
   await registerGstinLookupRoutes(app, deps);
   await registerSavedTripFiltersListRoute(app, deps);
   await registerAiSessionsListRoute(app, deps);
+  await registerRemindersDigestRoute(app, deps);
 }

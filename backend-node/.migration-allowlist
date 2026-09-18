@@ -79,3 +79,4 @@
 /api/
 /api/gstin/lookup
 /api/ai/sessions
+/api/reminders/digest
