@@ -194,7 +194,7 @@ describe('Gate-7t · Class-C integrity remediation', () => {
     for (const p of DEFERRED) {
       expect(METHODS.some((m) => app.hasRoute({ method: m, url: p })), p).toBe(true);
     }
-    expect(ALLOW).toHaveLength(57); // Gate 7u added the API root `/api/`
+    expect(ALLOW).toHaveLength(58); // Gate 7u added `/api/`, Gate 7v `/api/gstin/lookup`
     expect(DEFERRED).toEqual([...P1.slice(0, 1), P1[1], P1[2], P1[3], ...P2, ...P3]);
   });
 });

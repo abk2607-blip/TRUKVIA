@@ -77,3 +77,4 @@
 /api/fin/day-closures/:close_date/late-entries
 /api/fin/day-book
 /api/
+/api/gstin/lookup
