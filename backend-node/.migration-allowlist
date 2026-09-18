@@ -85,3 +85,4 @@
 /api/vehicles/:vid/status-audit
 /api/driver-shortage-policies/resolve
 /api/driver-shortage-policies
+/api/reports/suppliers
