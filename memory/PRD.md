@@ -5220,3 +5220,56 @@ No 404 branch. Zero writer / audit / backfill / recompute / FinTxn / approvals /
 - Writer / Maker-Checker migration — deferred per user Option 1 (finish Class-C reads, then pause).
 
 STOPPING. Gate 7e NOT started. Awaiting explicit user authorization for the next micro-gate.
+
+
+## 🔒 TRUKVIA — PHASE 3 / GATE 7e — FINAL LOCK (2026-02-15)
+
+**STATUS: 🔒 LOCKED**
+**BRANCH:** `migration/node-typescript-v2`
+**LOCK SHA:** `7d52494` (verified below)
+**PARENT (Gate 7e Implementation packaging):** `81a98824f7ef89e99da73d244895402b13fee859`
+**PRIOR LOCK (Gate 7d FINAL LOCK):** `e1218d3e22287f4e94c8213b267b1455a00f3b57` — remains ancestor
+**main SHA:** `82a8fb32dbb6333ac92c4f557c763863b48e8501` — UNCHANGED
+
+### Scope
+Node.js/TypeScript Class-C read-only shadow of `GET /api/suppliers/:sid/vehicles`
+(Python source-of-truth: `backend/routers/suppliers.py::supplier_vehicles` L275-291).
+Bare-array response. Path parameter `{sid}`. Cross-collection precheck
+(`suppliers.findOne` → `vehicles.find`) with 404 `"Supplier not found"` after
+successful auth. `$or` between exact `supplier_id` equality and an anchored
+case-insensitive `$regex` built VERBATIM from stored `supplier.name` — no
+route-side escaping. Projection strips `_id` and `user_id`; all other fields
+preserved. Sort `vehicle_number` ASC; hard cap 500. No 422 branch. No
+`is_active` predicate on the supplier precheck.
+
+### Six-file scope (exactly)
+1. `backend-node/.migration-allowlist` (+1: `/api/suppliers/:sid/vehicles`)
+2. `backend-node/src/routes/index.ts` (+2: import + registrar after Gate 7d)
+3. `backend-node/src/routes/supplier-vehicles-list.ts` (NEW · 150 lines)
+4. `backend-node/test/route-supplier-vehicles-list.test.ts` (NEW · 400 lines · 29 vitest cases)
+5. `backend-node/test/gate7e_parity/harness.py` (NEW · 280 lines)
+6. `backend-node/test/gate7e_parity/README.md` (NEW · 115 lines)
+
+### Verification
+- `npx tsc --noEmit` → PASS
+- `npx vitest run test/route-supplier-vehicles-list.test.ts` → 29/29 PASS
+- `python test/gate7e_parity/harness.py` → 16/16 PASS, 0 Node writes, disposable DB `trukvia_gate7e_parity_1789708032` dropped in `finally`
+- Full Python↔Node body-exact comparison every case (auth 401 x3, auth precedence, id-branch + case-insensitive name-regex, regex-metachar `"Gamma [X]"` matches `"Gamma X"`, empty supplier → `200 []`, 404 missing/wrong-user/wrong-company/URL-encoded-whitespace sid, X-Company-Id owned/unowned/no-header, cross-user same-name isolation, projection `_id`/`user_id` stripped, sort `vehicle_number` ASC, 500 cap)
+- No protected-file drift · no shared helper / `auth.ts` / `tenant.ts` / `config.ts` drift · no `package.json`/`tsconfig.json`/dep change · no Python backend or frontend change
+- Lock commit is pure empty (0-byte tree diff vs parent `81a9882`), linear (3 commits since Gate 7d lock — PRD summary + platform bookkeeping + implementation packaging + this lock), no amend/merge/rebase
+
+### Gate 7 progress
+- 6z (`GET /api/vendors/:vid/payments`) 🔒
+- 7a (`GET /api/wallet-adjustments`) 🔒
+- 7b (`GET /api/wallet-transfers`) 🔒
+- 7c (`GET /api/wallet-recharges`) 🔒
+- 7d (`GET /api/policy-changes`) 🔒
+- **7e (`GET /api/suppliers/:sid/vehicles`) 🔒 (this entry)**
+- 7f — pending explicit authorization
+
+### Deferred (unchanged)
+- Class-C reads with backfill-on-GET side-effects (`/api/drivers`, `/api/parties`, `/api/customers`, `/api/vehicles`, `/api/products`) — deferred to Writer migration phase.
+- Auth-band impedance on `viewer→owner` masking — deferred to Gate 7 Maker-Checker port; DO NOT touch locked `auth.ts` / `tenant.ts`.
+- Writer / Maker-Checker migration — deferred per user Option 1 (finish Class-C reads, then pause).
+
+STOPPING. Gate 7f NOT started. Awaiting explicit user authorization for the next micro-gate.
