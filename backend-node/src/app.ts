@@ -1,8 +1,9 @@
 import Fastify, {
   type FastifyInstance,
-  type FastifyServerOptions,
+  type FastifyHttpOptions,
   type FastifyBaseLogger,
 } from 'fastify';
+import type { Server } from 'node:http';
 import type { Logger } from 'pino';
 import type { AppConfig } from './config.js';
 import type { MongoConn } from './db.js';
@@ -10,6 +11,7 @@ import { registerRequestId } from './request-id.js';
 import { registerHealth } from './health.js';
 import { registerApiRoutes } from './routes/index.js';
 import { registerIdempotency, ensureIdempotencyIndex } from './idempotency.js';
+import { createHttpEdge } from './http-edge.js';
 
 /**
  * Fastify skeleton for the TRUKVIA Node foundation + Phase-3 migration surface.
@@ -34,15 +36,26 @@ export interface BuildAppOptions {
 
 export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> {
   const { config, logger, mongo } = opts;
+  // Gate 9d: Python (uvicorn/h11 + Starlette) HTTP-edge parity — see http-edge.ts.
+  const edge = createHttpEdge({ corsOrigins: config.corsOrigins });
 
   // Fastify 4's FastifyBaseLogger declares `msgPrefix` as required. Pino's
   // Logger doesn't include that field at compile time (it's runtime-safe).
   // We narrow the type at the boundary here — no runtime effect.
-  const fastifyOptions: FastifyServerOptions = {
+  const fastifyOptions: FastifyHttpOptions<Server> = {
     logger: logger as unknown as FastifyBaseLogger,
     disableRequestLogging: false,
     bodyLimit: 1_048_576, // 1 MiB — foundation only
     trustProxy: false,
+    // Gate 9d: FastAPI never adds HEAD; Starlette has no param-length cap; `;` is a
+    // literal path character; routing decisions are taken by the Python-edge rewrite.
+    exposeHeadRoutes: false,
+    maxParamLength: 65_535,
+    useSemicolonDelimiter: false,
+    rewriteUrl: edge.rewriteUrl,
+    clientErrorHandler: edge.clientErrorHandler,
+    // h11 enforces the Host rules itself (http-edge.ts answers with its exact 400).
+    http: { requireHostHeader: false },
     genReqId: () => {
       // Actual request_id is decided in the onRequest hook (request-id.ts).
       // Fastify still needs a genReqId to avoid its default incremental numbers.
@@ -52,6 +65,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   const app: FastifyInstance = Fastify(fastifyOptions);
 
   await registerRequestId(app, config);
+  edge.register(app);
 
   // Structured completion log with the required fields.
   app.addHook('onResponse', async (req, reply) => {

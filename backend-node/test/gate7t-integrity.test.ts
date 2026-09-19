@@ -139,7 +139,7 @@ describe('Gate-7t · Class-C integrity remediation', () => {
       state.collections = [];
       const r = await app.inject({ method: 'GET', url: path, headers });
       expect(r.statusCode).toBe(404);
-      expect(r.json()).toEqual({ message: `Route GET:${path} not found`, error: 'Not Found', statusCode: 404 });
+      expect(r.json()).toEqual({ detail: 'Not Found' }); // Gate 9d: Starlette 404 body
       expect(r.json()).not.toEqual({ detail: 'Trip not found' });
       expect(state.collections).toEqual([]);
     }

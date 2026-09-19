@@ -268,7 +268,10 @@ describe('Gate-8a · AI chat session messages read-only shadow', () => {
       expect(r.headers['allow']).toBe('GET');
       expect(r.headers['content-length']).toBe('31');
     }
-    expect((await get(`${url('s1')}/`)).statusCode).toBe(404);
+    // Gate 9d: Starlette redirect_slashes → 307 to the slash-less path (verified live).
+    const slash = await get(`${url('s1')}/`);
+    expect(slash.statusCode).toBe(307);
+    expect(slash.headers['location']).toBe(`http://localhost:80${url('s1')}`);
     expect(state.ops).toEqual([]);
   });
 

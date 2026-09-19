@@ -244,6 +244,6 @@ describe('Gate-7n · Fin day-closure detail read-only shadow', () => {
     // Gate 7r mounts the late-entries route; the detail handler must not serve it.
     const late = await get(url('2026-05-01/late-entries'), U1);
     expect(state.lookups.every((l) => l.projection?.['closed_at'] === 1)).toBe(true);
-    expect(late.json()).not.toEqual({ detail: 'No closure exists for 2026-05-01' });
+    expect(late.body).not.toBe('{"detail":"No closure exists for 2026-05-01"}');
   });
 });

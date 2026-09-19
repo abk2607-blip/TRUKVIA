@@ -223,7 +223,10 @@ describe('Gate-7y · Reminder digest read-only shadow (user-only scope)', () => 
       expect(r.headers['allow']).toBe('GET');
       expect(r.headers['content-length']).toBe('31');
     }
-    expect((await app.inject({ method: 'GET', url: `${P}/`, headers: as('u1') })).statusCode).toBe(404);
+    // Gate 9d: Starlette redirect_slashes → 307 to the slash-less path (verified live).
+    const slash = await app.inject({ method: 'GET', url: `${P}/`, headers: as('u1') });
+    expect(slash.statusCode).toBe(307);
+    expect(slash.headers['location']).toBe(`http://localhost:80${P}`);
     expect(state.lookups).toEqual([]);
   });
 

@@ -280,6 +280,9 @@ describe('Gate-8b · Vehicle status-audit read-only shadow', () => {
     expect(app.hasRoute({ method: 'GET', url: p })).toBe(true);
     for (const m of ['POST', 'PUT', 'PATCH', 'DELETE'] as const) expect(app.hasRoute({ method: m, url: p })).toBe(false);
     expect(app.hasRoute({ method: 'PATCH', url: '/api/vehicles/:vid/status' })).toBe(false);
-    expect((await get(`${url('v1')}/`)).statusCode).toBe(404);
+    // Gate 9d: Starlette redirect_slashes → 307 to the slash-less path (verified live).
+    const slash = await get(`${url('v1')}/`);
+    expect(slash.statusCode).toBe(307);
+    expect(slash.headers['location']).toBe(`http://localhost:80${url('v1')}`);
   });
 });

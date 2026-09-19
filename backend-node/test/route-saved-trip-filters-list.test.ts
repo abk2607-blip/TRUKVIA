@@ -242,7 +242,10 @@ describe('Gate-7w · Saved trip filters list read-only shadow', () => {
       expect(r.headers['allow']).toBe('GET');
       expect(r.headers['content-length']).toBe('31');
     }
-    expect((await app.inject({ method: 'GET', url: `${P}/`, headers: U1 })).statusCode).toBe(404);
+    // Gate 9d: Starlette redirect_slashes → 307 to the slash-less path (verified live).
+    const slash = await app.inject({ method: 'GET', url: `${P}/`, headers: U1 });
+    expect(slash.statusCode).toBe(307);
+    expect(slash.headers['location']).toBe(`http://localhost:80${P}`);
     expect(state.finds).toEqual([]);
   });
 

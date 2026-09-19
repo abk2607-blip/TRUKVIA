@@ -115,9 +115,10 @@ describe('Gate-7u · GET /api/', () => {
     }
   });
 
-  it('8 trailing-slash-less /api is a different path (Python 307 → framework gate); Node does not answer it with the root body', async () => {
+  it('8 trailing-slash-less /api → Starlette 307 to /api/ (Gate 9d, verified live); not the root body', async () => {
     const r = await app.inject({ method: 'GET', url: '/api' });
-    expect(r.statusCode).toBe(404);
+    expect(r.statusCode).toBe(307);
+    expect(r.headers['location']).toBe('http://localhost:80/api/');
     expect(r.body).not.toBe(BODY);
   });
 
