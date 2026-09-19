@@ -1426,3 +1426,15 @@ async def shutdown_db_client():
         stop_scheduler()
     except Exception:
         pass
+
+
+# ---------------------------------------------------------------------------
+# Phase 4 · Gate 9f · Node migration router — INFRASTRUCTURE ONLY, DEFAULT OFF.
+# With NODE_ROUTING_MODE unset nothing is ever forwarded and the app behaves
+# exactly as before. Must remain the LAST middleware added (outermost layer)
+# so a routed GET/HEAD bypasses no Python behaviour it would otherwise need.
+# See node_router.py and docs/migration/PHASE4-GATE9F-CUTOVER-INFRA.md.
+# ---------------------------------------------------------------------------
+from node_router import install_node_router  # noqa: E402
+
+install_node_router(app)

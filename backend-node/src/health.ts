@@ -13,6 +13,17 @@ import type { MongoConn } from './db.js';
 
 export interface HealthDeps {
   mongo: Pick<MongoConn, 'ping'> | null;
+  /**
+   * Gate 9f: migrated-route readiness (frozen allowlist ⇒ registered GET routes).
+   * Absent when the /api surface is not mounted.
+   */
+  routes?: () => RoutesCheck;
+}
+
+export interface RoutesCheck {
+  status: 'ok' | 'missing' | 'unknown';
+  allowlisted: number;
+  registered: number;
 }
 
 export interface LiveResponse {
@@ -26,6 +37,9 @@ export interface ReadyResponse {
   service: 'trukvia-backend-node';
   checks: {
     mongo: 'ok' | 'unavailable' | 'not_configured';
+    routes: RoutesCheck['status'] | 'not_mounted';
+    allowlisted_routes?: number;
+    registered_routes?: number;
   };
 }
 
@@ -46,14 +60,21 @@ export async function registerHealth(app: FastifyInstance, deps: HealthDeps): Pr
       const ok = await deps.mongo.ping();
       mongoStatus = ok ? 'ok' : 'unavailable';
     }
-    const overall: ReadyResponse['status'] = mongoStatus === 'ok' ? 'ok' : 'degraded';
+    // Gate 9f: ready only when Mongo answers AND every frozen-allowlist route is
+    // registered (fail closed when the allowlist cannot be read). Ping only — no
+    // business read or write.
+    const routes = deps.routes ? deps.routes() : null;
+    const overall: ReadyResponse['status'] =
+      mongoStatus === 'ok' && routes?.status === 'ok' ? 'ok' : 'degraded';
     if (overall !== 'ok') {
       reply.code(503);
     }
     return {
       status: overall,
       service: 'trukvia-backend-node',
-      checks: { mongo: mongoStatus },
+      checks: routes
+        ? { mongo: mongoStatus, routes: routes.status, allowlisted_routes: routes.allowlisted, registered_routes: routes.registered }
+        : { mongo: mongoStatus, routes: 'not_mounted' },
     };
   });
 }

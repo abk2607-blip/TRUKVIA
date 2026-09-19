@@ -112,3 +112,6 @@ credentials.json
 *.key
 .credentials
 frontend/node_modules/.cache/default-development/12.pack
+
+# Phase 4 · Gate 9f · Node routing kill switch (runtime flag, never committed)
+backend/.node-routing-kill

@@ -12,6 +12,8 @@ import { registerHealth } from './health.js';
 import { registerApiRoutes } from './routes/index.js';
 import { registerIdempotency, ensureIdempotencyIndex } from './idempotency.js';
 import { createHttpEdge } from './http-edge.js';
+import { readFileSync } from 'node:fs';
+import type { RoutesCheck } from './health.js';
 
 /**
  * Fastify skeleton for the TRUKVIA Node foundation + Phase-3 migration surface.
@@ -96,7 +98,19 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
     req.log.info(fields, 'request_completed');
   });
 
-  await registerHealth(app, { mongo });
+  // Gate 9f: readiness also proves every frozen-allowlist route is registered.
+  let allowlist: string[] | null = null;
+  const routesCheck = (): RoutesCheck => {
+    try {
+      allowlist ??= readFileSync(new URL('../.migration-allowlist', import.meta.url), 'utf8')
+        .split('\n').map((l) => l.trim()).filter((l) => l !== '' && !l.startsWith('#'));
+    } catch {
+      return { status: 'unknown', allowlisted: 0, registered: 0 };
+    }
+    const registered = allowlist.filter((url) => app.hasRoute({ method: 'GET', url })).length;
+    return { status: registered === allowlist.length && registered > 0 ? 'ok' : 'missing', allowlisted: allowlist.length, registered };
+  };
+  await registerHealth(app, mongo ? { mongo, routes: routesCheck } : { mongo });
 
   // Phase-3 read-only routes require a live Mongo connection. When `mongo`
   // is null (foundation smoke tests, /health-only harnesses) the /api surface
