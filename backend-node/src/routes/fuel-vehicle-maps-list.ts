@@ -1,8 +1,29 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { Db, Filter } from 'mongodb';
+import type { Db, Filter, FindCursor } from 'mongodb';
 import { authenticate } from '../auth.js';
 import { activeCompanyId } from '../tenant.js';
 import { HttpError } from '../errors.js';
+
+// ── Gate 9e · Motor `to_list(n)` (route-local) ────────────────────────
+// Motor sends NO server-side limit for `to_list(n)`; a `.limit(n)` turns the
+// sort into a top-k whose tie order at the cap differs (verified live). Read
+// the sorted cursor and stop after n documents, exactly like Motor.
+async function motorToList<T>(cursor: FindCursor<T>, n: number): Promise<T[]> {
+  const out: T[] = [];
+  try {
+    if (n <= 0) {
+      await cursor.hasNext(); // to_list(0) still issues the find, returns []
+      return out;
+    }
+    for await (const doc of cursor) {
+      out.push(doc);
+      if (out.length >= n) break;
+    }
+  } finally {
+    await cursor.close();
+  }
+  return out;
+}
 
 /**
  * TRUKVIA · Phase-3 · Gate-7h · Fuel vehicle maps list read-only shadow.
@@ -87,12 +108,13 @@ export async function registerFuelVehicleMapsListRoutes(
     }
 
     // 4. Read — projection strips _id AND user_id, sort ASC, cap 5000.
-    const rows = await db
+    const rows = await motorToList(
+      db
       .collection<FuelVehicleMapDoc>('fuel_vehicle_maps')
       .find(filter as Filter<FuelVehicleMapDoc>, { projection: { _id: 0, user_id: 0 } })
-      .sort([['source_vehicle_ref', 1]])
-      .limit(5000)
-      .toArray();
+      .sort([['source_vehicle_ref', 1]]),
+      5000,
+    );
 
     // Bare-array response — matches Python exactly.
     return rows;

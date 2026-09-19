@@ -1,8 +1,29 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { Db, Filter } from 'mongodb';
+import type { Db, Filter, FindCursor } from 'mongodb';
 import { authenticate, type AuthUser } from '../auth.js';
 import { activeCompanyId } from '../tenant.js';
 import { HttpError } from '../errors.js';
+
+// ── Gate 9e · Motor `to_list(n)` (route-local) ────────────────────────
+// Motor sends NO server-side limit for `to_list(n)`; a `.limit(n)` turns the
+// sort into a top-k whose tie order at the cap differs (verified live). Read
+// the sorted cursor and stop after n documents, exactly like Motor.
+async function motorToList<T>(cursor: FindCursor<T>, n: number): Promise<T[]> {
+  const out: T[] = [];
+  try {
+    if (n <= 0) {
+      await cursor.hasNext(); // to_list(0) still issues the find, returns []
+      return out;
+    }
+    for await (const doc of cursor) {
+      out.push(doc);
+      if (out.length >= n) break;
+    }
+  } finally {
+    await cursor.close();
+  }
+  return out;
+}
 
 /**
  * TRUKVIA · Phase-3 · Gate-6m · Company bank account read-only shadow.
@@ -139,15 +160,16 @@ export async function registerCompanyBankAccountsReadRoutes(
       const allowFull = partyRoleCanViewFull(user);
 
       // 4. Read with exact filter/projection/sort/cap.
-      const rows = await db
+      const rows = await motorToList(
+        db
         .collection('company_bank_accounts')
         .find(
           { user_id: uid, company_id: cid } as Filter<Record<string, unknown>>,
           { projection: { _id: 0, user_id: 0 } },
         )
-        .sort([['created_at', -1]])
-        .limit(500)
-        .toArray();
+        .sort([['created_at', -1]]),
+        500,
+      );
 
       // 5. Apply masking to each row.
       return rows.map((r) => stripFullNumber(r, allowFull));

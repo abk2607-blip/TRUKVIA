@@ -98,6 +98,10 @@ function fakeDb(state: State): Db {
           return cursor;
         },
         skip(n: number) { hits = hits.slice(n); return cursor; },
+        // Gate 9e: routes read Motor-style (async iteration, no server-side limit).
+        async *[Symbol.asyncIterator]() { yield* await cursor.toArray(); },
+        hasNext: (): Promise<boolean> => cursor.toArray().then((a) => a.length > 0),
+        close: (): Promise<void> => Promise.resolve(),
         limit(n: number) { hits = hits.slice(0, Math.max(0, n)); return cursor; },
         async toArray(): Promise<Record<string, unknown>[]> {
           return hits.map((d) => project(d, opts?.projection));

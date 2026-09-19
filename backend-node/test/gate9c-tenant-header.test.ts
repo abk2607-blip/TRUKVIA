@@ -54,6 +54,10 @@ function fakeDb(state: State): Db {
         let hits = rows.filter((r) => matches(r, f)).map((r) => project(r, o?.projection));
         const cur = {
           sort: () => cur,
+          // Gate 9e: routes read Motor-style (async iteration, no server-side limit).
+          [Symbol.asyncIterator]: async function* () { yield* await cur.toArray(); },
+          hasNext: (): Promise<boolean> => cur.toArray().then((a) => a.length > 0),
+          close: (): Promise<void> => Promise.resolve(),
           limit: (n: number) => { hits = hits.slice(0, n); return cur; },
           toArray: async () => hits,
         };

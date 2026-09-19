@@ -513,10 +513,15 @@ describe('Gate-6c · Invoice read-only shadow', () => {
     expect(r.json()).toEqual({ detail: 'invoice_date must be ISO YYYY-MM-DD' });
   });
 
-  it('27 missing invoice_date → 422 (before auth)', async () => {
-    // No Authorization header — but 422 still fires first.
-    const r = await get('/api/invoices/next-preview');
+  it('27 missing invoice_date: auth first (401), then Pydantic `missing` 422 (Gate 9e, verified live)', async () => {
+    // FastAPI solves Depends(get_current_user) before query validation.
+    const anon = await get('/api/invoices/next-preview');
+    expect(anon.statusCode).toBe(401);
+    expect(anon.body).toBe('{"detail":"Not authenticated"}');
+    const r = await get('/api/invoices/next-preview', { authorization: 'Bearer tok-owner' });
     expect(r.statusCode).toBe(422);
+    expect(r.body).toBe('{"detail":[{"type":"missing","loc":["query","invoice_date"],"msg":"Field required",' +
+      '"input":null,"url":"https://errors.pydantic.dev/2.13/v/missing"}]}');
   });
 
   it('28 owned X-Company-Id override honoured', async () => {

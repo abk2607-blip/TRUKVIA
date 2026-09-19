@@ -86,6 +86,10 @@ function fakeDb(state: State): Db {
             });
             return cursor;
           },
+          // Gate 9e: routes read Motor-style (async iteration, no server-side limit).
+          async *[Symbol.asyncIterator]() { yield* await cursor.toArray(); },
+          hasNext: (): Promise<boolean> => cursor.toArray().then((a) => a.length > 0),
+          close: (): Promise<void> => Promise.resolve(),
           limit(n: number) { rec.limit = n; hits = hits.slice(0, n); return cursor; },
           async toArray(): Promise<Row[]> { return hits.map((h) => project(h, opts?.projection)); },
         };
@@ -213,7 +217,8 @@ describe('Gate-7p · Driver salary-masters list read-only shadow', () => {
         filter: { id: 'd1', user_id: 'u1', company_id: 'co-a' }, projection: { _id: 0, user_id: 0 } },
       { coll: 'driver_salary_masters', kind: 'find',
         filter: { user_id: 'u1', company_id: 'co-a', driver_id: 'd1' }, projection: { _id: 0 },
-        sort: [['effective_from', -1], ['version', -1]], limit: 500 },
+        // Gate 9e: Motor `to_list(500)` sends NO server-side limit (reads stop at 500).
+        sort: [['effective_from', -1], ['version', -1]] },
     ]);
   });
 

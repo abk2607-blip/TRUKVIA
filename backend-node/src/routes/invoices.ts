@@ -1,6 +1,5 @@
 import type { FastifyInstance } from 'fastify';
 import type { Db } from 'mongodb';
-import { z } from 'zod';
 import { authenticate } from '../auth.js';
 import { activeCompanyId } from '../tenant.js';
 import { HttpError } from '../errors.js';
@@ -131,9 +130,69 @@ async function applyEffectiveBalance(
 // ── Query schemas ─────────────────────────────────────────────────────
 // invoice_date is required — missing yields 422 to mirror FastAPI query
 // validation, which fires before the auth dependency resolves.
-const PreviewQuerySchema = z.object({
-  invoice_date: z.string(),
-});
+// ── Gate 9e · next-preview query (route-local) ─────────────────────────
+// FastAPI `invoice_date: str`: the only possible validation error is Pydantic
+// v2 `missing` (any string is valid). Value = Starlette QueryParams.get →
+// LAST occurrence, CPython 3.11 parse_qsl / unquote_plus (Gate-7v copy).
+const PREVIEW_MISSING_422 = {
+  detail: [
+    {
+      type: 'missing',
+      loc: ['query', 'invoice_date'],
+      msg: 'Field required',
+      input: null,
+      url: 'https://errors.pydantic.dev/2.13/v/missing',
+    },
+  ],
+};
+
+const QS_HEX = /^[0-9A-Fa-f]{2}$/;
+const UTF8_REPLACE = new TextDecoder('utf-8', { fatal: false, ignoreBOM: true });
+
+// urllib.parse.unquote_to_bytes(<ASCII run>).decode('utf-8', 'replace')
+function unquoteAsciiRun(run: string): string {
+  const bits = run.split('%');
+  if (bits.length === 1) return run;
+  const bytes: number[] = [];
+  const pushAscii = (t: string): void => {
+    for (let i = 0; i < t.length; i++) bytes.push(t.charCodeAt(i));
+  };
+  pushAscii(bits[0] as string);
+  for (let i = 1; i < bits.length; i++) {
+    const item = bits[i] as string;
+    const h = item.slice(0, 2);
+    if (QS_HEX.test(h)) {
+      bytes.push(parseInt(h, 16));
+      pushAscii(item.slice(2));
+    } else {
+      bytes.push(0x25);
+      pushAscii(item);
+    }
+  }
+  return UTF8_REPLACE.decode(Uint8Array.from(bytes));
+}
+
+// urllib.parse.unquote_plus(s) on a latin-1-decoded str
+function pyUnquotePlus(input: string): string {
+  const s = input.replace(/\+/g, ' ');
+  if (!s.includes('%')) return s;
+  return s.replace(/[\x00-\x7f]+/g, (run) => unquoteAsciiRun(run));
+}
+
+// Last occurrence of `key` (ImmutableMultiDict.get), undefined when absent.
+function pyQueryLast(rawUrl: string, key: string): string | undefined {
+  const qi = rawUrl.indexOf('?');
+  if (qi < 0) return undefined;
+  let found: string | undefined;
+  for (const field of rawUrl.slice(qi + 1).split('&')) {
+    if (!field) continue;
+    const eq = field.indexOf('=');
+    const name = eq < 0 ? field : field.slice(0, eq);
+    const value = eq < 0 ? '' : field.slice(eq + 1);
+    if (pyUnquotePlus(name) === key) found = pyUnquotePlus(value);
+  }
+  return found;
+}
 
 // ── Handlers registrar ────────────────────────────────────────────────
 export async function registerInvoicesRoutes(
@@ -148,20 +207,8 @@ export async function registerInvoicesRoutes(
   //
   // migration-allowlisted: phase-3-gate-6c (read-only)
   app.get('/api/invoices/next-preview', async (req, reply) => {
-    // 1. Missing/invalid query shape → 422 BEFORE auth (FastAPI parity).
-    const parsed = PreviewQuerySchema.safeParse(req.query);
-    if (!parsed.success) {
-      reply.code(422);
-      return {
-        detail: parsed.error.issues.map((i) => ({
-          loc: ['query', ...i.path.map(String)],
-          msg: i.message,
-          type: i.code,
-        })),
-      };
-    }
-
-    // 2. Auth (401).
+    // 1. Auth (401) FIRST — FastAPI solves `Depends(get_current_user)` before
+    //    validating query params (Gate 9e, verified live).
     let userId: string;
     try {
       userId = (await authenticate(req, db)).user_id;
@@ -173,7 +220,12 @@ export async function registerInvoicesRoutes(
       throw err;
     }
 
-    const invoiceDate = parsed.data.invoice_date;
+    // 2. Missing `invoice_date` → Pydantic v2 `missing` 422 (exact body).
+    const invoiceDate = pyQueryLast(req.raw.url ?? '', 'invoice_date');
+    if (invoiceDate === undefined) {
+      reply.code(422);
+      return PREVIEW_MISSING_422;
+    }
 
     // 3. Invalid ISO date → 400.
     if (!isValidIsoDate(invoiceDate)) {

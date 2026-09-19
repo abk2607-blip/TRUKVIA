@@ -1,8 +1,29 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { Db, Filter } from 'mongodb';
+import type { Db, Filter, FindCursor } from 'mongodb';
 import { authenticate } from '../auth.js';
 import { activeCompanyId } from '../tenant.js';
 import { HttpError } from '../errors.js';
+
+// ── Gate 9e · Motor `to_list(n)` (route-local) ────────────────────────
+// Motor sends NO server-side limit for `to_list(n)`; a `.limit(n)` turns the
+// sort into a top-k whose tie order at the cap differs (verified live). Read
+// the sorted cursor and stop after n documents, exactly like Motor.
+async function motorToList<T>(cursor: FindCursor<T>, n: number): Promise<T[]> {
+  const out: T[] = [];
+  try {
+    if (n <= 0) {
+      await cursor.hasNext(); // to_list(0) still issues the find, returns []
+      return out;
+    }
+    for await (const doc of cursor) {
+      out.push(doc);
+      if (out.length >= n) break;
+    }
+  } finally {
+    await cursor.close();
+  }
+  return out;
+}
 
 /**
  * TRUKVIA · Phase-3 · Gate-7a · WalletAdjustments list read-only shadow.
@@ -182,14 +203,15 @@ export async function registerWalletAdjustmentsListReadRoutes(
       }
 
       // 6. Read with EXACT projection / sort / cap.
-      const rows = await db
+      const rows = await motorToList(
+        db
         .collection<WalletAdjustmentDoc>('wallet_adjustments')
         .find(filter as Filter<WalletAdjustmentDoc>, {
           projection: { _id: 0, user_id: 0 },
         })
-        .sort([['date', -1]])
-        .limit(5000)
-        .toArray();
+        .sort([['date', -1]]),
+        5000,
+      );
 
       // Empty / no-match / unknown wallet_code → naturally returns [].
       // NO cross-collection lookup. NO 404 branch.

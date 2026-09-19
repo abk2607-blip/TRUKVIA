@@ -1,8 +1,29 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { Db, Filter } from 'mongodb';
+import type { Db, Filter, FindCursor } from 'mongodb';
 import { authenticate } from '../auth.js';
 import { activeCompanyId } from '../tenant.js';
 import { HttpError } from '../errors.js';
+
+// ── Gate 9e · Motor `to_list(n)` (route-local) ────────────────────────
+// Motor sends NO server-side limit for `to_list(n)`; a `.limit(n)` turns the
+// sort into a top-k whose tie order at the cap differs (verified live). Read
+// the sorted cursor and stop after n documents, exactly like Motor.
+async function motorToList<T>(cursor: FindCursor<T>, n: number): Promise<T[]> {
+  const out: T[] = [];
+  try {
+    if (n <= 0) {
+      await cursor.hasNext(); // to_list(0) still issues the find, returns []
+      return out;
+    }
+    for await (const doc of cursor) {
+      out.push(doc);
+      if (out.length >= n) break;
+    }
+  } finally {
+    await cursor.close();
+  }
+  return out;
+}
 
 /**
  * TRUKVIA · Phase-3 · Gate-7l · Approval detail read-only shadow.
@@ -120,26 +141,28 @@ export async function registerApprovalDetailRoutes(
     }
 
     // 6. Revisions read (sort revision_index ASC, cap 200).
-    const revisions = await db
+    const revisions = await motorToList(
+      db
       .collection<ApprovalRevisionDoc>('approval_revisions')
       .find(
         { approval_id: aid, user_id: userId, company_id: cid } as Filter<ApprovalRevisionDoc>,
         { projection: { _id: 0 } },
       )
-      .sort([['revision_index', 1]])
-      .limit(200)
-      .toArray();
+      .sort([['revision_index', 1]]),
+      200,
+    );
 
     // 7. Audits read (sort at ASC, cap 500).
-    const audits = await db
+    const audits = await motorToList(
+      db
       .collection<ApprovalAuditDoc>('approval_audits')
       .find(
         { approval_id: aid, user_id: userId, company_id: cid } as Filter<ApprovalAuditDoc>,
         { projection: { _id: 0 } },
       )
-      .sort([['at', 1]])
-      .limit(500)
-      .toArray();
+      .sort([['at', 1]]),
+      500,
+    );
 
     // 8. Wrapper response.
     return { approval, revisions, audits };

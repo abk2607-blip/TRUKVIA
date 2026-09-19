@@ -48,7 +48,11 @@ function fakeDb(state: State): Db {
       find: vi.fn((f: Row, o?: { projection?: Row }) => {
         state.reads++;
         let hits = rows.filter((r) => matches(r, f)).map((r) => project(r, o?.projection));
-        const cur = { sort: () => cur, limit: (n: number) => { hits = hits.slice(0, n); return cur; }, toArray: async () => hits };
+        const cur = { sort: () => cur, limit: (n: number) => { hits = hits.slice(0, n); return cur; }, toArray: async () => hits,
+          // Gate 9e: Motor-style reads (async iteration, no server-side limit).
+          [Symbol.asyncIterator]: async function* () { yield* await Promise.resolve(hits); },
+          hasNext: (): Promise<boolean> => Promise.resolve(hits.length > 0),
+          close: (): Promise<void> => Promise.resolve() };
         return cur;
       }),
       insertOne: vi.fn(forbid('insertOne')), insertMany: vi.fn(forbid('insertMany')),
