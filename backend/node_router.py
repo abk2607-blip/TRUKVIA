@@ -56,6 +56,32 @@ from starlette.routing import Match
 
 logger = logging.getLogger("node_router")
 
+
+class _UpstreamRequestLogFilter(logging.Filter):
+    """Gate 9g F3: httpx logs 'HTTP Request: <METHOD> <full URL incl. query> ...' at INFO.
+    Drop ONLY those records for the Node upstream (other httpx users keep their logging);
+    the router's own `node_router` line already records request id / route / target /
+    status / latency / reason without the query string."""
+
+    def __init__(self, upstream: str) -> None:
+        super().__init__()
+        self.prefix = upstream.rstrip("/") + "/"
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if not str(record.msg).startswith("HTTP Request:"):
+            return True
+        args = record.args if isinstance(record.args, tuple) else ()
+        return not (len(args) >= 2 and str(args[1]).startswith(self.prefix))
+
+
+_filtered_upstreams: set[str] = set()
+
+
+def _suppress_upstream_request_logs(upstream: str) -> None:
+    if upstream not in _filtered_upstreams:
+        logging.getLogger("httpx").addFilter(_UpstreamRequestLogFilter(upstream))
+        _filtered_upstreams.add(upstream)
+
 HOP_BY_HOP = {b"connection", b"keep-alive", b"proxy-authenticate", b"proxy-authorization", b"te", b"trailer",
               b"transfer-encoding", b"upgrade", b"proxy-connection"}
 DROP_FROM_NODE = HOP_BY_HOP | {b"date", b"server", b"x-request-id"}
@@ -255,6 +281,7 @@ class NodeRouter:
             logger.warning(json.dumps({"event": "node_router_circuit_open", "cooldown_s": self.cfg.circuit_cooldown_s}))
 
     async def _forward(self, scope: dict, rid: str) -> tuple[int, list[tuple[bytes, bytes]], bytes]:
+        _suppress_upstream_request_logs(self.cfg.upstream)
         if self._client is None:
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(self.cfg.read_timeout, connect=self.cfg.connect_timeout),

@@ -46,7 +46,10 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
   // We narrow the type at the boundary here — no runtime effect.
   const fastifyOptions: FastifyHttpOptions<Server> = {
     logger: logger as unknown as FastifyBaseLogger,
-    disableRequestLogging: false,
+    // Gate 9g F2: Fastify's built-in per-request logs serialise `req.url` (query string
+    // included). They are disabled; the structured `request_completed` line below is the
+    // request log (request_id, method, route template, status, latency — never a query).
+    disableRequestLogging: true,
     bodyLimit: 1_048_576, // 1 MiB — foundation only
     trustProxy: false,
     // Gate 9d: FastAPI never adds HEAD; Starlette has no param-length cap; `;` is a
@@ -90,7 +93,7 @@ export async function buildApp(opts: BuildAppOptions): Promise<FastifyInstance> 
       request_id: req.requestId,
       tenant_id: tenantId,
       actor_user_id: actorUserId,
-      route: req.routeOptions?.url ?? req.url,
+      route: req.routeOptions?.url ?? (req.url.split('?')[0] ?? ''), // Gate 9g F2: never the query string
       method: req.method,
       status: reply.statusCode,
       latency_ms: Math.round(reply.elapsedTime),
