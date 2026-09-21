@@ -173,10 +173,33 @@ write path would be a behavioural regression, not a stricter one.
 characters of each id. Any change to id generation would silently orphan ledger rows from their
 accounts.
 
-**7. `fin_accounts` carries a real data anomaly.** 15,663 rows across roughly 1,100 tenants, with
-no duplicates, but **two generations**: tenants seeded before `DRIVER_OUTFLOW` was appended have
-13 accounts, later ones have 14. `ensure_system_accounts` back-fills only when a tenant next
-projects. Worth deciding deliberately before migrating the table, rather than freezing the split.
+**7. `fin_accounts` two generations — RESOLVED 2026-09-21, no action needed.**
+15,663 rows across **1,180 `(user_id, company_id)` scopes**: **857 have 13 accounts, 323 have 14**.
+The only difference is `DRIVER_OUTFLOW` ("Driver Payments Outflow", type `expense`), appended to
+`FIN_SYSTEM_ACCOUNTS` at `models.py:1607` for Iter150I. The split is purely chronological: every
+other code first appears 2026-09-10T17:24:23, `DRIVER_OUTFLOW` from 2026-09-12T14:34:11.
+
+**13 is a valid lazy state, not an incomplete one.** `ensure_system_accounts` is a per-code
+find-or-insert that runs on every projection (`reproject_source`, `backfill_tenant`) and on
+`GET /api/fin/accounts`, so a 13-account scope becomes 14 the moment it next projects or its
+accounts are read. A missing account can never cause a projection failure, because the seeding
+happens before `_persist_legs` resolves any code.
+
+**No ledger row depends on a missing account.** Exactly 26 legs use `DRIVER_OUTFLOW` as
+`account_code` and the same 26 as `counter_account_code` (driver_payment legs: 52 total, paired
+with CASH/BANK_DEFAULT). All resolve to existing account rows, and both tenants that hold any
+ledger data have the full 14.
+
+**Migration treatment: option A — preserve each scope's set exactly.** Normalising to 14 would
+invent 857 rows the application never created, with positionally derived ids and a fabricated
+`created_at`: a business-data mutation, not a migration transformation. It would also change what
+`GET /api/fin/accounts` returns for those scopes. Preserving is also self-correcting, since the
+sync picks up rows as Python creates them.
+
+**Related finding, for whoever migrates it later:** `GET /api/fin/accounts` **writes** — it calls
+`ensure_system_accounts` on every request (`routers/fin_day_book.py:46`). It is a GET-time writer
+in the Phase 3 sense and is on neither the allowlist nor the deferred list. None of the six
+slice 2a routes seeds accounts, so slice 2a is unaffected.
 
 **8. Day-closure has no enforcement teeth.** Nothing outside `fin_day_closing.py` and
 `services_reconciliation.py` reads `fin_day_closures`: closing a day does **not** block later
@@ -223,8 +246,8 @@ Concretely, in order:
    and empty results.
 5. Then the remaining five migrated reads, one at a time.
 
-**Prerequisite before any of it:** decide item 7 above — whether the 13-account tenants are
-back-filled to 14 before or after the table moves.
+**Prerequisite: resolved.** Item 7 is settled — each scope's account set is preserved exactly,
+and no code or data change is required before slice 2a.
 
 **Explicitly not in this step:** any write, the projection, reconciliation, and
 `POST /api/fin/reproject`.
