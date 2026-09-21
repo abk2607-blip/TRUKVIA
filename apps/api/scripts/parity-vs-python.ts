@@ -30,10 +30,20 @@ interface Case {
   note?: string;
 }
 
-async function firstVendorId(): Promise<string> {
-  const r = await fetch(`${PY}/api/vendors`, { headers: auth() });
+async function firstId(path: string): Promise<string> {
+  const r = await fetch(`${PY}${path}`, { headers: auth() });
   const rows = (await r.json()) as Array<{ id: string }>;
   return rows[0]?.id ?? 'none';
+}
+
+/** A vendor that actually has payments, so the shape logic is exercised. */
+async function vendorWithPayments(vendorIds: string[]): Promise<string> {
+  for (const id of vendorIds.slice(0, 40)) {
+    const r = await fetch(`${PY}/api/vendors/${id}/payments`, { headers: auth() });
+    const rows = (await r.json()) as unknown[];
+    if (rows.length) return id;
+  }
+  return vendorIds[0] ?? 'none';
 }
 
 function auth(extra: Record<string, string> = {}): Record<string, string> {
@@ -41,7 +51,16 @@ function auth(extra: Record<string, string> = {}): Record<string, string> {
 }
 
 async function main(): Promise<void> {
-  const vid = await firstVendorId();
+  const vid = await firstId('/api/vendors');
+  const bid = await firstId('/api/vendor-bills');
+  const allVendors = (await (await fetch(`${PY}/api/vendors`, { headers: auth() })).json()) as Array<{
+    id: string;
+  }>;
+  const payVid = await vendorWithPayments(allVendors.map((v) => v.id));
+  const payments = (await (
+    await fetch(`${PY}/api/vendors/${payVid}/payments`, { headers: auth() })
+  ).json()) as Array<{ id: string }>;
+  const pid = payments[0]?.id ?? 'none';
   const cases: Case[] = [
     { path: '/api/vendors' },
     { path: '/api/vendors?active_only=true' },
@@ -58,6 +77,21 @@ async function main(): Promise<void> {
     { path: '/api/vendors/does-not-exist', note: '404 envelope' },
     { path: '/api/vendors', headers: {}, note: 'no auth -> 401' },
     { path: '/api/vendors', headers: { authorization: 'Bearer nope' }, note: 'bad token -> 401' },
+    // vendor bills
+    { path: '/api/vendor-bills' },
+    { path: `/api/vendor-bills?vendor_id=${vid}` },
+    { path: '/api/vendor-bills?vendor_id=does-not-exist' },
+    { path: '/api/vendor-bills?trip_id=does-not-exist' },
+    { path: '/api/vendor-bills?vehicle_id=&repair_event_id=', note: 'empty filters ignored' },
+    { path: `/api/vendor-bills/${bid}` },
+    { path: '/api/vendor-bills/does-not-exist', note: '404 envelope' },
+    { path: '/api/vendor-bills', headers: {}, note: 'no auth -> 401' },
+    // vendor payments and corrections
+    { path: `/api/vendors/${payVid}/payments`, note: 'covers the six document shapes' },
+    { path: '/api/vendors/does-not-exist/payments', note: 'unknown vendor -> [] not 404' },
+    { path: `/api/vendor-payments/${pid}/corrections` },
+    { path: '/api/vendor-payments/does-not-exist/corrections', note: 'unknown payment -> []' },
+    { path: `/api/vendor-payments/${pid}/corrections`, headers: {}, note: 'no auth -> 401' },
   ];
 
   let pass = 0;

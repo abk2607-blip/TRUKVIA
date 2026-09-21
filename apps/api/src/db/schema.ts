@@ -16,6 +16,7 @@ import {
   boolean,
   date,
   integer,
+  json,
   jsonb,
   numeric,
   pgSchema,
@@ -31,6 +32,12 @@ export const vendor = trukvia.table(
   'vendor',
   {
     id: text('id').primaryKey(),
+    /**
+     * The source document's _id. MongoDB resolves sort ties in _id order
+     * (verified stable on real data, 2026-09-21), so list endpoints order by
+     * their sort key and then by this to reproduce Python's row order exactly.
+     */
+    sourceId: text('source_id'),
     userId: text('user_id').notNull(),
     companyId: text('company_id').notNull(),
     name: text('name').notNull(),
@@ -73,6 +80,12 @@ export const vendorBill = trukvia.table(
   'vendor_bill',
   {
     id: text('id').primaryKey(),
+    /**
+     * The source document's _id. MongoDB resolves sort ties in _id order
+     * (verified stable on real data, 2026-09-21), so list endpoints order by
+     * their sort key and then by this to reproduce Python's row order exactly.
+     */
+    sourceId: text('source_id'),
     userId: text('user_id').notNull(),
     companyId: text('company_id').notNull(),
     vendorId: text('vendor_id').notNull(),
@@ -108,6 +121,12 @@ export const vendorPayment = trukvia.table(
   'vendor_payment',
   {
     id: text('id').primaryKey(),
+    /**
+     * The source document's _id. MongoDB resolves sort ties in _id order
+     * (verified stable on real data, 2026-09-21), so list endpoints order by
+     * their sort key and then by this to reproduce Python's row order exactly.
+     */
+    sourceId: text('source_id'),
     userId: text('user_id').notNull(),
     companyId: text('company_id').notNull(),
     vendorId: text('vendor_id').notNull(),
@@ -134,9 +153,15 @@ export const vendorPayment = trukvia.table(
     reconciledAt: date('reconciled_at'),
     reconciledRef: text('reconciled_ref'),
     bankAccountId: text('bank_account_id'),
-    bankSnapshot: jsonb('bank_snapshot'),
+    /**
+     * `json`, not `jsonb`: jsonb normalises object key order and re-renders
+     * numbers, so a snapshot would come back reordered and with 7500.0 as
+     * 7500. These payloads are opaque audit records that are never queried by
+     * key, so preserving the exact source text matters more than indexing.
+     */
+    bankSnapshot: json('bank_snapshot'),
     companyBankAccountId: text('company_bank_account_id'),
-    sourceBankSnapshot: jsonb('source_bank_snapshot'),
+    sourceBankSnapshot: json('source_bank_snapshot'),
     isDeleted: boolean('is_deleted').notNull().default(false),
     deletedBy: text('deleted_by').notNull().default(''),
     deletedAt: timestamp('deleted_at', { withTimezone: true, mode: 'string' }),
@@ -145,6 +170,15 @@ export const vendorPayment = trukvia.table(
     createdAt: timestamp('created_at', { withTimezone: true, mode: 'string' }),
     modifiedBy: text('modified_by').notNull().default(''),
     modifiedAt: timestamp('modified_at', { withTimezone: true, mode: 'string' }),
+    /**
+     * Ordered list of the keys the source document actually had (minus _id and
+     * user_id). vendor_payments has SIX distinct shapes in production: 23 rows
+     * carry no correction block at all, 148 carry bank fields, and the key
+     * order differs between them. Python returns each document's own shape, so
+     * reproducing it byte-for-byte needs the shape recorded per row.
+     * Vestigial once writes move to Postgres and rows gain a canonical shape.
+     */
+    sourceShape: jsonb('source_shape').$type<string[]>(),
   },
   (t) => ({
     scopeDate: index('vendor_payment_scope_date').on(t.userId, t.companyId, t.paymentDate),
@@ -158,6 +192,12 @@ export const paymentCorrection = trukvia.table(
   'payment_correction',
   {
     id: text('id').primaryKey(),
+    /**
+     * The source document's _id. MongoDB resolves sort ties in _id order
+     * (verified stable on real data, 2026-09-21), so list endpoints order by
+     * their sort key and then by this to reproduce Python's row order exactly.
+     */
+    sourceId: text('source_id'),
     userId: text('user_id').notNull(),
     companyId: text('company_id').notNull(),
     paymentType: text('payment_type').notNull(),
@@ -165,9 +205,9 @@ export const paymentCorrection = trukvia.table(
     correctionIndex: integer('correction_index').notNull(),
     kind: text('kind').notNull().default(''),
     correctionReason: text('correction_reason').notNull().default(''),
-    before: jsonb('before'),
-    after: jsonb('after'),
-    diff: jsonb('diff'),
+    before: json('before'),
+    after: json('after'),
+    diff: json('diff'),
     linkedReversalId: text('linked_reversal_id'),
     linkedNewId: text('linked_new_id'),
     forceReconciledOverride: boolean('force_reconciled_override'),

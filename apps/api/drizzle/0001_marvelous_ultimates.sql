@@ -1,0 +1,1 @@
+ALTER TABLE "trukvia"."vendor_payment" ADD COLUMN "source_shape" jsonb;

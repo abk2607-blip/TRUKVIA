@@ -129,7 +129,9 @@ export class VendorsService {
       .select()
       .from(vendor)
       .where(and(...clauses))
-      .orderBy(asc(vendor.name))
+      // Mongo breaks sort ties in _id order (verified on real data), so the
+      // recorded source _id is the tiebreaker that reproduces Python's rows.
+      .orderBy(asc(vendor.name), asc(vendor.sourceId))
       .limit(20000);
 
     return rows.map(toJson);

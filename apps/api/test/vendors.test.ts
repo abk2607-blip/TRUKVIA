@@ -17,6 +17,8 @@ import { coerceFastapiBool } from '../src/vendors/vendors.controller';
 import { pyDumps, pyFloat, pyIsoTimestamp } from '../src/common/py-json';
 import { readCompanyHeader } from '../src/common/identity';
 import { toJson } from '../src/vendors/vendors.service';
+import { billToJson } from '../src/vendors/vendor-bills.service';
+import { correctionToJson, paymentToJson } from '../src/vendors/vendor-payments.service';
 
 describe('Pydantic boolean-string coercion', () => {
   it.each(['1', 't', 'true', 'on', 'yes', 'TRUE', ' Yes '])('accepts %j as true', (v) => {
@@ -89,6 +91,7 @@ describe('py-json serialization', () => {
 describe('vendor row -> JSON contract', () => {
   const row = {
     id: 'ven_1',
+    sourceId: '6aa568d7453166811caadd33',
     userId: 'user_1',
     companyId: 'co_1',
     name: 'Acme',
@@ -165,5 +168,180 @@ describe('X-Company-Id header (Gate 9c)', () => {
   });
   it('returns "" when absent', () => {
     expect(readCompanyHeader(req(['Host', 'x']))).toBe('');
+  });
+});
+
+describe('vendor bill -> JSON contract', () => {
+  const bill = {
+    id: 'vbl_1',
+    sourceId: '6a1',
+    userId: 'user_1',
+    companyId: 'co_1',
+    vendorId: 'ven_1',
+    vendorName: 'Acme',
+    billNumber: 'B-1',
+    billDate: '2026-08-05',
+    billAmount: '18000.00',
+    vehicleId: '',
+    vehicleNumber: '',
+    tripId: '',
+    repairEventId: '',
+    narration: '',
+    remarks: '',
+    fileIds: [],
+    isDeleted: false,
+    deletedBy: '',
+    deletedAt: null,
+    deletionReason: '',
+    createdBy: 'user_1',
+    createdAt: '2026-08-05 10:00:00.123456+00',
+    modifiedBy: '',
+    modifiedAt: null,
+  };
+
+  it('keeps the source key order and strips user_id', () => {
+    const keys = Object.keys(billToJson(bill));
+    expect(keys.slice(0, 6)).toEqual([
+      'id',
+      'vendor_id',
+      'vendor_name',
+      'bill_number',
+      'bill_date',
+      'bill_amount',
+    ]);
+    expect(keys).not.toContain('user_id');
+    expect(keys.at(-1)).toBe('company_id');
+  });
+
+  it('renders money Python-style and absent timestamps as ""', () => {
+    const json = billToJson(bill);
+    expect(pyDumps(json.bill_amount)).toBe('18000.0');
+    expect(json.modified_at).toBe('');
+    expect(json.created_at).toBe('2026-08-05T10:00:00.123456+00:00');
+  });
+});
+
+describe('vendor payment shapes', () => {
+  const base = {
+    id: 'vpay_1',
+    sourceId: '6b1',
+    userId: 'u',
+    companyId: 'co_1',
+    vendorId: 'ven_1',
+    vendorBillId: '',
+    paymentDate: '2026-08-05',
+    amount: '7500.00',
+    type: '',
+    mode: 'Bank',
+    accountId: '',
+    refNo: '',
+    against: '',
+    remarks: '',
+    fileIds: [],
+    correctedBy: null,
+    correctedAt: null,
+    correctionCount: null,
+    latestCorrectionId: null,
+    isReversed: null,
+    reversedBy: null,
+    reversedAt: null,
+    reversalReason: null,
+    reversalOf: null,
+    reconciledAt: null,
+    reconciledRef: null,
+    bankAccountId: null,
+    bankSnapshot: null,
+    companyBankAccountId: null,
+    sourceBankSnapshot: null,
+    isDeleted: false,
+    deletedBy: '',
+    deletedAt: null,
+    deletionReason: '',
+    createdBy: 'u',
+    createdAt: '2026-08-05 10:00:00+00',
+    modifiedBy: '',
+    modifiedAt: null,
+    sourceShape: null,
+    bankSnapshotText: null,
+    sourceBankSnapshotText: null,
+  };
+
+  it('omits fields the source document did not have', () => {
+    // 23 of 2,040 production payments carry no correction block at all.
+    const json = paymentToJson({ ...base, sourceShape: ['id', 'vendor_id', 'amount'] });
+    expect(Object.keys(json)).toEqual(['id', 'vendor_id', 'amount']);
+    expect('correction_count' in json).toBe(false);
+  });
+
+  it('reproduces the source key order, not a canonical one', () => {
+    const json = paymentToJson({
+      ...base,
+      sourceShape: ['id', 'bank_account_id', 'vendor_id', 'date'],
+      bankAccountId: '',
+      bankSnapshotText: '{}',
+    });
+    expect(Object.keys(json)).toEqual(['id', 'bank_account_id', 'vendor_id', 'date']);
+  });
+
+  it('drops _id and user_id even when the recorded shape lists them', () => {
+    const json = paymentToJson({ ...base, sourceShape: ['_id', 'user_id', 'id'] });
+    expect(Object.keys(json)).toEqual(['id']);
+  });
+
+  it('falls back to the canonical shape when none was recorded', () => {
+    const json = paymentToJson(base);
+    expect(Object.keys(json)[0]).toBe('id');
+    expect(Object.keys(json).at(-1)).toBe('company_id');
+    expect('bank_account_id' in json).toBe(false);
+  });
+
+  it('emits a stored snapshot verbatim, preserving key order and 7500.0', () => {
+    const text = '{"date":"2029-09-07","amount":7500.0,"mode":"Bank"}';
+    const json = paymentToJson({
+      ...base,
+      sourceShape: ['id', 'bank_snapshot'],
+      bankSnapshotText: text,
+    });
+    expect(pyDumps(json)).toBe(`{"id":"vpay_1","bank_snapshot":${text}}`);
+  });
+
+  it('renders money Python-style', () => {
+    expect(pyDumps(paymentToJson(base).amount)).toBe('7500.0');
+  });
+});
+
+describe('payment correction -> JSON contract', () => {
+  it('emits before/after/diff verbatim in source key order', () => {
+    const json = correctionToJson({
+      id: 'pcr_1',
+      sourceId: '6c1',
+      userId: 'u',
+      companyId: 'co_1',
+      paymentType: 'vendor',
+      paymentId: 'vpay_1',
+      correctionIndex: 1,
+      kind: 'attribute',
+      correctionReason: 'typed wrong vendor by mistake',
+      before: null,
+      after: null,
+      diff: null,
+      linkedReversalId: null,
+      linkedNewId: null,
+      forceReconciledOverride: false,
+      correctedBy: 'u',
+      correctedAt: '2026-09-11 10:00:00+00',
+      beforeText: '{"account_id":"","amount":7500.0}',
+      afterText: '{"account_id":"x","amount":7500.0}',
+      diffText: '{"account_id":["","x"]}',
+    });
+    expect(pyDumps(json.before)).toBe('{"account_id":"","amount":7500.0}');
+    expect(Object.keys(json).slice(0, 5)).toEqual([
+      'id',
+      'company_id',
+      'payment_type',
+      'payment_id',
+      'correction_index',
+    ]);
+    expect(json.linked_reversal_id).toBe('');
   });
 });
