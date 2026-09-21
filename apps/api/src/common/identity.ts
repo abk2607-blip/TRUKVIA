@@ -30,6 +30,8 @@ export interface AuthUser {
   effective_role: string;
   is_staff: boolean;
   email?: string;
+  /** Display name, used by audit rows (Python: user.get("name", "")). */
+  name?: string;
 }
 
 type Doc = Record<string, unknown>;
@@ -123,6 +125,7 @@ export async function authenticate(req: IncomingMessage, mongo: Db): Promise<Aut
     effective_role: (pyTruthy(roleChain) ? roleChain : '') as string,
     is_staff: isStaff,
     ...(typeof user['email'] === 'string' ? { email: user['email'] } : {}),
+    ...(typeof user['name'] === 'string' ? { name: user['name'] } : {}),
   };
 }
 

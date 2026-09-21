@@ -19,6 +19,7 @@ import { readCompanyHeader } from '../src/common/identity';
 import { toJson } from '../src/vendors/vendors.service';
 import { billToJson } from '../src/vendors/vendor-bills.service';
 import { correctionToJson, paymentToJson } from '../src/vendors/vendor-payments.service';
+import { diffDict, ValidationError, vendorModelDump } from '../src/vendors/vendor-writes.service';
 
 describe('Pydantic boolean-string coercion', () => {
   it.each(['1', 't', 'true', 'on', 'yes', 'TRUE', ' Yes '])('accepts %j as true', (v) => {
@@ -343,5 +344,84 @@ describe('payment correction -> JSON contract', () => {
       'correction_index',
     ]);
     expect(json.linked_reversal_id).toBe('');
+  });
+});
+
+describe('Pydantic Vendor model_dump (slice 1b writes)', () => {
+  it('fills every default and generates id + created_at', () => {
+    const doc = vendorModelDump({ name: 'Acme' });
+    expect(doc.name).toBe('Acme');
+    expect(doc.contact_person).toBe('');
+    expect(doc.opening_balance).toBe(0);
+    expect(doc.opening_balance_type).toBe('payable');
+    expect(doc.is_active).toBe(true);
+    expect(doc.is_historical).toBe(false);
+    expect(String(doc.id)).toMatch(/^ven_[0-9a-f]{16}$/);
+    expect(String(doc.created_at)).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}\+00:00$/);
+  });
+
+  it('keeps the model field order, which becomes the JSON key order', () => {
+    expect(Object.keys(vendorModelDump({ name: 'Acme' })).slice(0, 4)).toEqual([
+      'id',
+      'name',
+      'contact_person',
+      'mobile',
+    ]);
+  });
+
+  it('ignores unknown keys, as BaseModel does by default', () => {
+    const doc = vendorModelDump({ name: 'Acme', not_a_field: 'x' });
+    expect('not_a_field' in doc).toBe(false);
+  });
+
+  it('rejects a missing name with the Pydantic "missing" issue', () => {
+    expect(() => vendorModelDump({})).toThrowError(ValidationError);
+    try {
+      vendorModelDump({});
+    } catch (e) {
+      const issue = (e as ValidationError).issues[0]!;
+      expect(issue.type).toBe('missing');
+      expect(issue.loc).toEqual(['body', 'name']);
+      expect(issue.msg).toBe('Field required');
+    }
+  });
+
+  it('rejects a bad literal with ctx, as Pydantic 2.13 emits it', () => {
+    try {
+      vendorModelDump({ name: 'x', opening_balance_type: 'nope' });
+      throw new Error('should have thrown');
+    } catch (e) {
+      const issue = (e as ValidationError).issues[0]!;
+      expect(issue.type).toBe('literal_error');
+      expect(issue.ctx).toEqual({ expected: "'payable' or 'advance'" });
+    }
+  });
+
+  it('rejects a non-numeric opening_balance', () => {
+    try {
+      vendorModelDump({ name: 'x', opening_balance: 'abc' });
+      throw new Error('should have thrown');
+    } catch (e) {
+      expect((e as ValidationError).issues[0]!.type).toBe('float_parsing');
+    }
+  });
+
+  it('accepts a numeric string for a float field, as Pydantic coerces', () => {
+    expect(vendorModelDump({ name: 'x', opening_balance: '12.5' }).opening_balance).toBe(12.5);
+  });
+});
+
+describe('_diff_dict port', () => {
+  it('reports only changed keys, with old and new', () => {
+    expect(diffDict({ a: 1, b: 'x' }, { a: 2, b: 'x' })).toEqual({ a: { old: 1, new: 2 } });
+  });
+  it('treats an added key as a change from null', () => {
+    expect(diffDict({}, { a: 1 })).toEqual({ a: { old: null, new: 1 } });
+  });
+  it('compares nested values structurally', () => {
+    expect(diffDict({ a: { x: 1 } }, { a: { x: 1 } })).toEqual({});
+    expect(diffDict({ a: { x: 1 } }, { a: { x: 2 } })).toEqual({
+      a: { old: { x: 1 }, new: { x: 2 } },
+    });
   });
 });

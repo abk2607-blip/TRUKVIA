@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { MongoClient } from 'mongodb';
 import { VendorsController } from './vendors/vendors.controller';
 import { VendorReadsController } from './vendors/vendor-reads.controller';
+import { VendorWritesController } from './vendors/vendor-writes.controller';
+import { VendorWritesService } from './vendors/vendor-writes.service';
 import { MONGO, VendorsService } from './vendors/vendors.service';
 import { VendorBillsService } from './vendors/vendor-bills.service';
 import { VendorPaymentsService } from './vendors/vendor-payments.service';
@@ -15,11 +17,12 @@ export const MONGO_URL = process.env.NEST_MONGO_URL ?? 'mongodb://127.0.0.1:2701
 export const MONGO_DB_NAME = process.env.NEST_MONGO_DB ?? 'trukvia_local_20260921';
 
 @Module({
-  controllers: [VendorsController, VendorReadsController],
+  controllers: [VendorsController, VendorReadsController, VendorWritesController],
   providers: [
     VendorsService,
     VendorBillsService,
     VendorPaymentsService,
+    VendorWritesService,
     {
       provide: MONGO,
       useFactory: async () => {
