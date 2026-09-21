@@ -17,7 +17,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MongoClient, type Db } from 'mongodb';
-import { reprojectVendorSource } from '../src/fin/projection';
+import { hookAfterSourceWrite } from '../src/fin/fin-hook';
 
 const MONGO = 'mongodb://127.0.0.1:27017';
 const SRC_DB = process.env.NEST_MONGO_DB ?? 'trukvia_local_20260921';
@@ -127,11 +127,11 @@ async function main(): Promise<void> {
     });
 
     for (const [sid, uid, cid] of spec.vendor_payment) {
-      const r = await reprojectVendorSource(tsDb, uid!, cid!, 'vendor_payment', sid!);
+      const r = await hookAfterSourceWrite(tsDb, uid!, cid!, 'vendor_payment', sid!);
       if (!r.ok) throw new Error(`ts projection failed for ${sid}: ${r.error}`);
     }
     for (const [sid, uid, cid] of spec.vendor_bill) {
-      const r = await reprojectVendorSource(tsDb, uid!, cid!, 'vendor_bill', sid!);
+      const r = await hookAfterSourceWrite(tsDb, uid!, cid!, 'vendor_bill', sid!);
       if (!r.ok) throw new Error(`ts projection failed for ${sid}: ${r.error}`);
     }
 

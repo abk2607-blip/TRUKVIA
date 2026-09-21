@@ -397,58 +397,36 @@ export const VENDOR_SOURCE_TYPES = ['vendor_payment', 'vendor_bill'] as const;
 export type VendorSourceType = (typeof VENDOR_SOURCE_TYPES)[number];
 
 /**
- * services_fin_txn.reproject_source, vendor branches only. Delete-then-insert,
- * idempotent, and — like the Python hook — never raises into the caller's write
- * path: a projection failure is recorded in fin_hook_failures for the retry
- * driver to drain, exactly as services_fin_txn_hooks does.
+ * services_fin_txn.reproject_source, vendor branches only — the THROWING form.
+ *
+ * Failure handling deliberately does not live here. It belongs to the canonical
+ * hook in ./fin-hook.ts, which owns the fin_hook_failures contract the Python
+ * retry driver depends on. Having both record failures would double-write the
+ * row, and this file previously recorded one in a shape nothing could drain.
  */
-export async function reprojectVendorSource(
+export async function reprojectVendorSourceOrThrow(
   mongo: Db,
   uid: string,
   cid: string,
   sourceType: VendorSourceType,
   sourceId: string,
-): Promise<{ ok: boolean; deleted: number; written: number; error?: string }> {
-  try {
-    const codeToId = await ensureSystemAccounts(mongo, uid, cid);
-    const deleted = await deleteBySource(mongo, uid, cid, sourceType, sourceId);
+): Promise<{ deleted: number; written: number }> {
+  const codeToId = await ensureSystemAccounts(mongo, uid, cid);
+  const deleted = await deleteBySource(mongo, uid, cid, sourceType, sourceId);
 
-    let legs: Leg[] = [];
-    if (sourceType === 'vendor_payment') {
-      const doc = await mongo
-        .collection<Doc>('vendor_payments')
-        .findOne({ user_id: uid, company_id: cid, id: sourceId }, { projection: { _id: 0 } });
-      if (doc) legs = projectVendorPayment(doc);
-    } else {
-      const doc = await mongo
-        .collection<Doc>('vendor_bills')
-        .findOne({ user_id: uid, company_id: cid, id: sourceId }, { projection: { _id: 0 } });
-      if (doc) legs = projectVendorBill(doc, await hasPairedExpense(mongo, uid, cid, sourceId));
-    }
-
-    const written = await persistLegs(mongo, uid, cid, legs, codeToId);
-    return { ok: true, deleted, written };
-  } catch (err) {
-    const error = err instanceof Error ? err.message : String(err);
-    try {
-      await mongo.collection('fin_hook_failures').updateOne(
-        { user_id: uid, company_id: cid, source_type: sourceType, source_id: sourceId },
-        {
-          $set: {
-            user_id: uid,
-            company_id: cid,
-            source_type: sourceType,
-            source_id: sourceId,
-            error,
-            failed_at: nowIso(),
-            origin: 'nestjs',
-          },
-        },
-        { upsert: true },
-      );
-    } catch {
-      /* the failure log is best-effort, as in Python */
-    }
-    return { ok: false, deleted: 0, written: 0, error };
+  let legs: Leg[] = [];
+  if (sourceType === 'vendor_payment') {
+    const doc = await mongo
+      .collection<Doc>('vendor_payments')
+      .findOne({ user_id: uid, company_id: cid, id: sourceId }, { projection: { _id: 0 } });
+    if (doc) legs = projectVendorPayment(doc);
+  } else {
+    const doc = await mongo
+      .collection<Doc>('vendor_bills')
+      .findOne({ user_id: uid, company_id: cid, id: sourceId }, { projection: { _id: 0 } });
+    if (doc) legs = projectVendorBill(doc, await hasPairedExpense(mongo, uid, cid, sourceId));
   }
+
+  const written = await persistLegs(mongo, uid, cid, legs, codeToId);
+  return { deleted, written };
 }

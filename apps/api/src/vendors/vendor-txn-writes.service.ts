@@ -4,7 +4,7 @@ import type { Db as MongoDb } from 'mongodb';
 import { randomUUID } from 'node:crypto';
 import { activeCompanyId, authenticate, HttpError, type AuthUser } from '../common/identity';
 import { MONGO } from './vendors.service';
-import { reprojectVendorSource } from '../fin/projection';
+import { hookAfterSourceWrite } from '../fin/fin-hook';
 import { callPythonHook, hookConfigured } from '../fin/hook-client';
 import { diffDict, ValidationError, type PydanticIssue } from './vendor-writes.service';
 
@@ -314,10 +314,11 @@ export class VendorTxnWritesService {
    * Fire the fin_txn projection for a vendor source.
    *
    * Prefers the INTERNAL Python hook when it is configured, so the ledger has a
-   * single implementation; falls back to the verified TypeScript port when it is
+   * single implementation; falls back to the canonical NestJS hook when it is
    * not (local development, or the hook being unreachable). Either way a
-   * projection failure never fails the write — Python records it in
-   * fin_hook_failures, and the port does the same.
+   * projection failure never fails the write, and either way the failure row
+   * has the shape Python's retry driver selects on — which is what slice 2c
+   * unit 1 fixed here.
    */
   private async project(uid: string, cid: string, type: 'vendor_bill' | 'vendor_payment', id: string): Promise<void> {
     if (hookConfigured()) {
@@ -326,7 +327,7 @@ export class VendorTxnWritesService {
       // The hook was configured but did not complete: fall back so the ledger is
       // not left stale, and let the port record its own failure if it also fails.
     }
-    await reprojectVendorSource(this.mongo, uid, cid, type, id);
+    await hookAfterSourceWrite(this.mongo, uid, cid, type, id);
   }
 
   // ── vendor bills ────────────────────────────────────────────────────────
