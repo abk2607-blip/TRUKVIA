@@ -7,6 +7,7 @@ import { db as pg } from '../db/pg';
 import { activeCompanyId, authenticate, HttpError, type AuthUser } from '../common/identity';
 import { pyDumps, pyFloat } from '../common/py-json';
 import { pyRound2 } from '../common/py-round';
+import { pyIsoDateOrdinal, pyIsoDateValid } from '../common/py-date';
 import { MONGO } from '../vendors/vendors.service';
 
 /**
@@ -45,22 +46,6 @@ const newId = (prefix: string): string => `${prefix}${randomUUID().replace(/-/g,
 /** Python: `(value or "").strip()` — non-strings become "". */
 function strStrip(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
-}
-
-/**
- * Python `date.fromisoformat`. CPython 3.11 also accepts the basic form
- * YYYYMMDD and ISO week/ordinal dates; that wider acceptance is a known,
- * already-tracked divergence (see the next-preview finding), so this keeps to
- * the extended calendar form the frontend actually sends and rejects the rest,
- * which is what the current Node stack does too.
- */
-function isIsoDate(value: string): boolean {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (!m) return false;
-  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
-  if (mo < 1 || mo > 12 || d < 1) return false;
-  const daysInMonth = new Date(Date.UTC(y, mo, 0)).getUTCDate();
-  return d <= daysInMonth;
 }
 
 export interface Snapshot {
@@ -231,10 +216,16 @@ export class FinWritesService {
 
     const closeDate = strStrip(body['close_date']);
     if (!closeDate) throw new HttpError(400, 'close_date is required');
-    if (!isIsoDate(closeDate)) throw new HttpError(400, 'close_date must be ISO YYYY-MM-DD');
-    // now_utc().date() — compared as strings, both being YYYY-MM-DD.
-    const today = new Date().toISOString().slice(0, 10);
-    if (closeDate > today) {
+    const closeOrd = pyIsoDateOrdinal(closeDate);
+    if (closeOrd === null) throw new HttpError(400, 'close_date must be ISO YYYY-MM-DD');
+    /**
+     * Python compares `d > today` as DATE objects, not strings. Comparing the
+     * raw text works only while every input is YYYY-MM-DD: the basic form
+     * "20260903" sorts ABOVE "2026-09-21" because '0' (0x30) beats '-' (0x2d),
+     * so a past date read as a future one and 422'd. Compare ordinals.
+     */
+    const todayOrd = pyIsoDateOrdinal(new Date().toISOString().slice(0, 10));
+    if (todayOrd !== null && closeOrd > todayOrd) {
       throw new HttpError(422, 'close_date cannot be in the future (v1 accepts today or past)');
     }
     const closeNotes = strStrip(body['close_notes']);
@@ -344,7 +335,7 @@ export class FinWritesService {
     const user = await authenticate(req, this.mongo);
     // Python order: owner, then the path date, then the company.
     this.requireOwner(user);
-    if (!isIsoDate(closeDate)) throw new HttpError(400, 'close_date must be ISO YYYY-MM-DD');
+    if (!pyIsoDateValid(closeDate)) throw new HttpError(400, 'close_date must be ISO YYYY-MM-DD');
     const uid = user.user_id;
     const cid = await activeCompanyId(req, uid, this.mongo);
 

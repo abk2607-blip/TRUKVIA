@@ -791,6 +791,40 @@ const CASES: Case[] = [
     inspect: ['fin_day_closures', 'audit_logs'],
   },
   {
+    /**
+     * CPython 3.11 date.fromisoformat also accepts the BASIC form and ISO week
+     * dates. A `/^\d{4}-\d{2}-\d{2}$/` guard rejects both, which is a 400
+     * against Python's 200 — found on 2026-09-21 while porting day-status,
+     * and fixed by routing the guard through src/common/py-date.ts.
+     * close_date is stored as the RAW string, so these are distinct closures.
+     */
+    name: 'close: basic-form date 20260903 is accepted by CPython',
+    method: 'POST',
+    path: '/api/fin/day-closures',
+    body: { close_date: '20260903' },
+    inspect: ['fin_day_closures'],
+  },
+  {
+    name: 'close: ISO week date 2026-W36-4 is accepted by CPython',
+    method: 'POST',
+    path: '/api/fin/day-closures',
+    body: { close_date: '2026-W36-4' },
+    inspect: ['fin_day_closures'],
+  },
+  {
+    name: 'close: impossible week 2026-W99-1 -> 400',
+    method: 'POST',
+    path: '/api/fin/day-closures',
+    body: { close_date: '2026-W99-1' },
+  },
+  {
+    name: 'reopen: basic-form path date',
+    method: 'POST',
+    path: '/api/fin/day-closures/20260903/reopen',
+    body: { reopen_reason: 'basic form' },
+    inspect: ['fin_day_closures'],
+  },
+  {
     name: 'close: an empty ledger day still closes',
     method: 'POST',
     path: '/api/fin/day-closures',

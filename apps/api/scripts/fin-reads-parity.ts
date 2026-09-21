@@ -12,10 +12,12 @@
  *   reproduced from another engine. PostgreSQL uses mongo_id as a deterministic
  *   tie-break so OUR output is stable.
  *
- *   So: everything outside `rows` (envelope, totals, count) must be BYTE
- *   identical, and `rows` must match exactly once tied groups are compared as
- *   multisets. A row appearing in the wrong tie group, a missing row, or any
- *   field difference is still a failure.
+ *   So: everything outside `rows` and `totals` must be BYTE identical; `rows`
+ *   must match once tied groups are compared as multisets; and `totals` must
+ *   match as a MAPPING, because its key order is Python's first-appearance
+ *   order over those same rows and so inherits the same undefined-ness. A row
+ *   in the wrong tie group, a missing row, a missing total, or any differing
+ *   value is still a failure.
  *
  * Read-only: GETs only, against the local data copy.
  */
@@ -144,11 +146,26 @@ async function main(): Promise<void> {
       // tie-aware comparison for day-book
       const ja = JSON.parse(ta) as DayBook;
       const jb = JSON.parse(tb) as DayBook;
-      const envelopeA = JSON.stringify({ ...ja, rows: null });
-      const envelopeB = JSON.stringify({ ...jb, rows: null });
-      if (envelopeA !== envelopeB) {
+      /**
+       * `totals` is compared as a MAPPING, not as text, because its key order
+       * is derived from the row order and therefore inherits the same
+       * undefined-ness: Python inserts each account_code on its FIRST
+       * appearance while walking the rows, so two tied rows in a different
+       * order produce a different key order. Observed on the real copy
+       * 2026-09-21 — CASH and DRIVER_OUTFLOW swap, with identical values.
+       * The key SET and every value are still required to match exactly.
+       */
+      const sortedTotals = (j: DayBook): string =>
+        JSON.stringify(
+          Object.fromEntries(Object.entries(j.totals ?? {}).sort(([x], [y]) => (x < y ? -1 : 1))),
+        );
+      const envelopeA = JSON.stringify({ ...ja, rows: null, totals: null });
+      const envelopeB = JSON.stringify({ ...jb, rows: null, totals: null });
+      if (envelopeA !== envelopeB || sortedTotals(ja) !== sortedTotals(jb)) {
         fail += 1;
         console.log(`  FAIL  ${label}\n        envelope/totals differ`);
+        console.log(`        py  : ${sortedTotals(ja).slice(0, 200)}`);
+        console.log(`        nest: ${sortedTotals(jb).slice(0, 200)}`);
         continue;
       }
       if (rowsMatchModuloTies(ja.rows, jb.rows)) {
@@ -163,7 +180,7 @@ async function main(): Promise<void> {
 
   const total = pass + tieOnly + fail;
   console.log(`\ncases ${total}   BYTE-IDENTICAL ${pass}   TIE-EQUIVALENT ${tieOnly}   FAIL ${fail}`);
-  console.log('criterion: status + envelope + totals byte-identical; rows equal modulo undefined Mongo sort ties');
+  console.log('criterion: status + envelope byte-identical; totals equal as a mapping; rows equal modulo undefined Mongo sort ties');
   process.exit(fail ? 1 : 0);
 }
 
