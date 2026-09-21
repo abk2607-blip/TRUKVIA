@@ -20,7 +20,15 @@ import { MongoClient, type Db } from 'mongodb';
 import { Pool } from 'pg';
 
 const MONGO = 'mongodb://127.0.0.1:27017';
-const PG_URL = process.env.PG_URL ?? 'postgres://postgres@127.0.0.1:5433/trukvia';
+const PG_ADMIN = process.env.PG_URL ?? 'postgres://postgres@127.0.0.1:5433/trukvia';
+/**
+ * The harness needs its OWN Postgres database as well as its own Mongo ones.
+ * NestJS writes refresh a Postgres read copy, so pointing it at the shared
+ * database let harness fixtures leak into real data — caught on 2026-09-21,
+ * 16 stray vendor rows.
+ */
+const PG_DB = `trukvia_wparity_${Date.now()}`;
+const PG_URL = PG_ADMIN.replace(/\/[^/]+$/, `/${PG_DB}`);
 const REPO = 'D:/Projects/TRUKVIA-clone';
 const PY_PORT = 8401;
 const NEST_PORT = 8402;
@@ -295,7 +303,49 @@ const CASES: Case[] = [
   },
 ];
 
+async function createPgDatabase(): Promise<void> {
+  const admin = new Pool({ connectionString: PG_ADMIN, max: 1 });
+  await admin.query(`CREATE DATABASE "${PG_DB}"`);
+  await admin.end();
+  const fresh = new Pool({ connectionString: PG_URL, max: 1 });
+  await fresh.query('CREATE SCHEMA IF NOT EXISTS trukvia');
+  // Mirror the live schema so the write path exercises the real DDL.
+  const src = new Pool({ connectionString: PG_ADMIN, max: 1 });
+  const cols = await src.query(
+    `SELECT table_name, column_name, data_type, character_maximum_length,
+            numeric_precision, numeric_scale, is_nullable, column_default
+       FROM information_schema.columns WHERE table_schema='trukvia'
+      ORDER BY table_name, ordinal_position`,
+  );
+  const byTable = new Map<string, string[]>();
+  for (const c of cols.rows) {
+    const t = c.table_name as string;
+    let type = c.data_type as string;
+    if (type === 'numeric' && c.numeric_precision) {
+      type = `numeric(${c.numeric_precision},${c.numeric_scale})`;
+    }
+    if (type === 'character varying' && c.character_maximum_length) {
+      type = `varchar(${c.character_maximum_length})`;
+    }
+    const def = c.column_default ? ` DEFAULT ${c.column_default}` : '';
+    const nn = c.is_nullable === 'NO' ? ' NOT NULL' : '';
+    byTable.set(t, [...(byTable.get(t) ?? []), `"${c.column_name}" ${type}${def}${nn}`]);
+  }
+  for (const [table, defs] of byTable) {
+    await fresh.query(`CREATE TABLE trukvia."${table}" (${defs.join(', ')}, PRIMARY KEY (id))`);
+  }
+  await fresh.end();
+  await src.end();
+}
+
+async function dropPgDatabase(): Promise<void> {
+  const admin = new Pool({ connectionString: PG_ADMIN, max: 1 });
+  await admin.query(`DROP DATABASE IF EXISTS "${PG_DB}" WITH (FORCE)`);
+  await admin.end();
+}
+
 async function main(): Promise<void> {
+  await createPgDatabase();
   const client = new MongoClient(MONGO);
   await client.connect();
   const pyDb = client.db(PY_DB);
@@ -397,6 +447,7 @@ async function main(): Promise<void> {
     await pyDb.dropDatabase();
     await nestDb.dropDatabase();
     await client.close();
+    await dropPgDatabase();
   }
 
   console.log(`\ncases ${pass + fail}   PASS ${pass}   FAIL ${fail}`);
