@@ -267,6 +267,31 @@ export function projectMechanicPayment(p: Doc): Leg[] {
 }
 
 /**
+ * services_fin_txn.project_driver_payment — slice 2c unit 4.
+ *
+ * Verified against the source: it IS a plain `_party_payment_legs` call, with
+ * no is_historical guard and no trip_id — the mechanic shape with a different
+ * payable account. The interesting part of this source type is not the ledger
+ * maths but how it is REACHED: the bottom of services_fin_txn.py replaces
+ * `reproject_source` with a wrapper that handles driver_payment itself, so the
+ * dispatcher's if/elif chain never sees it on the Python side.
+ *
+ * DRIVER_OUTFLOW is the account behind the 13-vs-14 fin_accounts split that
+ * slice 2a documented. It is in the seed catalog on both sides, so projecting
+ * a driver payment into a 13-account scope seeds it — the same lazy
+ * self-healing Python performs, not a normalisation.
+ */
+export function projectDriverPayment(p: Doc): Leg[] {
+  return partyPaymentLegs(p, {
+    apCode: 'DRIVER_OUTFLOW',
+    partyType: 'driver',
+    partyIdKey: 'driver_id',
+    srcType: 'driver_payment',
+    txnTypePrefix: 'driver',
+  });
+}
+
+/**
  * services_fin_txn.project_supplier_payment — slice 2c unit 3.
  *
  * Python keeps this as a STANDALONE function rather than a `_party_payment_legs`
@@ -479,6 +504,7 @@ export const PORTED_SOURCE_TYPES = [
   'vendor_bill',
   'mechanic_payment',
   'supplier_payment',
+  'driver_payment',
 ] as const;
 export type PortedSourceType = (typeof PORTED_SOURCE_TYPES)[number];
 
@@ -521,6 +547,9 @@ export async function reprojectVendorSourceOrThrow(
   } else if (sourceType === 'supplier_payment') {
     const doc = await findSource('supplier_payments');
     if (doc) legs = projectSupplierPayment(doc);
+  } else if (sourceType === 'driver_payment') {
+    const doc = await findSource('driver_payments');
+    if (doc) legs = projectDriverPayment(doc);
   } else {
     const doc = await findSource('vendor_bills');
     if (doc) legs = projectVendorBill(doc, await hasPairedExpense(mongo, uid, cid, sourceId));

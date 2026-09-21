@@ -49,6 +49,13 @@ export interface ParityConfig {
   sharedId: string;
   /** Extra assertions over the TypeScript ledger rows. */
   extraChecks?: (rows: Doc[], report: Report) => void;
+  /**
+   * Count the bridge calls made by EACH entry point separately. Used where the
+   * routing itself is the risk — driver_payment is reached through the Iter150I
+   * monkey-patched reproject_source, so "exactly once, from both paths" has to
+   * be measured rather than reasoned about.
+   */
+  verifyRouting?: boolean;
 }
 
 /**
@@ -62,11 +69,12 @@ function runPythonDriver(
   sourceType: string,
   specPath: string,
   extraEnv: Record<string, string> = {},
+  mode: 'hook' | 'reproject' = 'hook',
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     const child = spawn(
       PY,
-      [`${REPO}/apps/api/scripts/fin_party_payment_driver.py`, dbName, sourceType, specPath],
+      [`${REPO}/apps/api/scripts/fin_party_payment_driver.py`, dbName, sourceType, specPath, mode],
       {
         cwd: `${REPO}/backend`,
         env: {
@@ -361,6 +369,117 @@ export async function runPartyPaymentParity(cfg: ParityConfig): Promise<void> {
     } finally {
       await new Promise<void>((r) => stub.close(() => r()));
       killPort(stubPort);
+    }
+
+    // ── Routing: exactly one bridge call from EACH entry point ───────────
+    if (cfg.verifyRouting) {
+      const proxyPort = cfg.nestPort + 2;
+      killPort(proxyPort);
+      const seen: string[] = [];
+      const proxy: Server = createServer((req, res) => {
+        let body = '';
+        req.on('data', (c) => (body += c));
+        req.on('end', () => {
+          void (async () => {
+            try {
+              const parsed = JSON.parse(body) as Record<string, string>;
+              seen.push(`${parsed['source_type']}:${parsed['source_id']}`);
+            } catch {
+              seen.push('<unparsable>');
+            }
+            // Forward to the real NestJS so rows are actually written.
+            const upstream = await fetch(`http://127.0.0.1:${cfg.nestPort + 3}/internal/fin/reproject`, {
+              method: 'POST',
+              headers: {
+                'content-type': 'application/json',
+                'x-internal-token': String(req.headers['x-internal-token'] ?? ''),
+              },
+              body,
+            });
+            const text = await upstream.text();
+            res.writeHead(upstream.status, { 'content-type': 'application/json' });
+            res.end(text);
+          })();
+        });
+      });
+      await new Promise<void>((r) => proxy.listen(proxyPort, '127.0.0.1', r));
+      /**
+       * A SEPARATE port from the bridge phase. `child.kill()` on Windows kills
+       * the shell, not the node process underneath, so killPort does the real
+       * work — and there is a window in which the old listener is still
+       * serving. Reusing the port let a late write from the previous phase
+       * land in BRIDGE_DB after this phase had cleared it, which showed up
+       * once as a phantom row-set mismatch. A fresh port removes the race
+       * instead of papering over it with a sleep.
+       */
+      const routingPort = cfg.nestPort + 3;
+      killPort(routingPort);
+      const nest2 = startNest(BRIDGE_DB, routingPort, INTERNAL_TOKEN);
+      const proxyEnv = {
+        ...bridgeEnv,
+        TRUKVIA_FIN_NODE_URL: `http://127.0.0.1:${proxyPort}/internal/fin/reproject`,
+      };
+      try {
+        if (!(await waitFor(`http://127.0.0.1:${routingPort}/api/vendors`))) {
+          throw new Error('NestJS did not start');
+        }
+        const first = spec[0];
+        if (!first) throw new Error('routing verification needs at least one document');
+        const onePath = join(dir, 'one.json');
+        writeFileSync(onePath, JSON.stringify([first]), 'utf8');
+        const expected = `${cfg.sourceType}:${first[0]}`;
+
+        // A — the hook entry point.
+        await brDb.collection('fin_txn').deleteMany({});
+        seen.length = 0;
+        await runPythonDriver(BRIDGE_DB, cfg.sourceType, onePath, proxyEnv, 'hook');
+        const hookCalls = seen.filter((x) => x === expected).length;
+        const hookRows = await ledger(brDb);
+        report(
+          hookCalls === 2 && seen.length === 2,
+          'routing A: the hook delegates exactly once per call',
+          `${seen.length} bridge calls: ${seen.join(', ')}`,
+        );
+        report(hookRows.length === 2, 'routing A: two legs, no duplicates', `${hookRows.length} rows`);
+
+        // B — reproject_source directly, which for driver_payment is the
+        // Iter150I monkey-patched wrapper.
+        await brDb.collection('fin_txn').deleteMany({});
+        seen.length = 0;
+        await runPythonDriver(BRIDGE_DB, cfg.sourceType, onePath, proxyEnv, 'reproject');
+        const reCalls = seen.filter((x) => x === expected).length;
+        const reRows = await ledger(brDb);
+        report(
+          reCalls === 2 && seen.length === 2,
+          'routing B: the monkey-patched reproject_source delegates exactly once per call',
+          `${seen.length} bridge calls: ${seen.join(', ')}`,
+        );
+        report(reRows.length === 2, 'routing B: two legs, no duplicates', `${reRows.length} rows`);
+
+        // Both entry points must land on the SAME rows.
+        report(
+          JSON.stringify(hookRows) === JSON.stringify(reRows),
+          'routing: both entry points produce identical rows',
+          JSON.stringify(hookRows) === JSON.stringify(reRows)
+            ? undefined
+            : diffAt(JSON.stringify(hookRows), JSON.stringify(reRows)),
+        );
+
+        // With no env, neither entry point may touch the bridge at all.
+        await brDb.collection('fin_txn').deleteMany({});
+        seen.length = 0;
+        await runPythonDriver(BRIDGE_DB, cfg.sourceType, onePath, {}, 'reproject');
+        report(
+          seen.length === 0,
+          'routing: reproject_source does NOT delegate with no env set',
+          `${seen.length} unexpected bridge calls`,
+        );
+      } finally {
+        nest2.kill();
+        killPort(routingPort);
+        await new Promise<void>((r) => proxy.close(() => r()));
+        killPort(proxyPort);
+      }
     }
 
     // ── Fallback: configured, but NestJS is gone ─────────────────────────

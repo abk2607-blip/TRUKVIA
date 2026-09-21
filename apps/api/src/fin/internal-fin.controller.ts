@@ -41,7 +41,13 @@ import { MONGO } from '../vendors/vendors.service';
  * asymmetry is deliberate and is what lets Python delegate mechanic_payment
  * and supplier_payment here without NestJS being able to bounce them back.
  */
-const ALLOWED_SOURCE_TYPES = ['vendor_bill', 'vendor_payment', 'mechanic_payment', 'supplier_payment'];
+const ALLOWED_SOURCE_TYPES = [
+  'vendor_bill',
+  'vendor_payment',
+  'mechanic_payment',
+  'supplier_payment',
+  'driver_payment',
+];
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const MIN_TOKEN_LEN = 32;
 

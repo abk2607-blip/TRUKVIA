@@ -40,6 +40,10 @@ from datetime import datetime, timezone
 
 from db import db
 from models import FinTxn, FIN_SYSTEM_ACCOUNTS, now_utc
+from services_fin_node_bridge import (
+    delegate_to_node as _delegate_to_node,
+    node_bridge_ready as _node_bridge_ready,
+)
 
 
 # ── Payment-mode → Account code resolver (for money-side of every txn) ──
@@ -1195,3 +1199,44 @@ async def _iter150i_reproject_source(uid, cid, source_type, source_id, *,
         {"user_id": uid, "company_id": cid, "id": source_id}, {"_id": 0})
     return d, await _persist_legs(uid, cid, project_driver_payment(doc) if doc else [], code_to_id)
 reproject_source = _iter150i_reproject_source
+
+
+# ── Phase 6 · slice 2c — reverse bridge layer over reproject_source ──────
+# The hook gates delegation before it ever calls reproject_source, so the two
+# never both fire for one request. This layer exists because reproject_source
+# has callers that DO NOT go through the hook — the admin
+# POST /api/fin/reproject bridge and the retry driver — and a source type
+# owned by NestJS should be owned by it from every entry point, not just one.
+#
+# DEFAULT OFF: with the env unset, node_bridge_ready() is False and this is a
+# straight pass-through.
+#
+# Delegation is refused for any non-default call shape. Nothing calls
+# reproject_source with delete_existing=False or a pre-built code_to_id today,
+# and the NestJS endpoint cannot express either, so a future caller that does
+# keeps the local semantics rather than silently losing them.
+_iter_bridge_inner_reproject_source = reproject_source
+
+
+async def _bridged_reproject_source(uid, cid, source_type, source_id, *,
+                                    code_to_id=None, delete_existing=True):
+    if (delete_existing and code_to_id is None
+            and _node_bridge_ready(source_type)):
+        report = await _delegate_to_node(uid, cid, source_type, source_id)
+        if report is not None:
+            if not report.get("ok"):
+                # reproject_source signals failure by raising, exactly as a
+                # local projection error would, so every existing caller's
+                # error handling still applies.
+                raise RuntimeError(
+                    f"node projection reported failure for {source_type}/{source_id}: "
+                    f"{report.get('error') or 'unknown error'}"
+                )
+            return int(report.get("deleted") or 0), int(report.get("written") or 0)
+        # None means a transport failure: fall through to the local projection.
+    return await _iter_bridge_inner_reproject_source(
+        uid, cid, source_type, source_id,
+        code_to_id=code_to_id, delete_existing=delete_existing)
+
+
+reproject_source = _bridged_reproject_source
