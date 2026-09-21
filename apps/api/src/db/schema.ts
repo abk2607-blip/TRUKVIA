@@ -224,3 +224,123 @@ export const paymentCorrection = trukvia.table(
     ),
   }),
 );
+
+// ── Phase 6 · slice 2a — Finance read models ────────────────────────────────
+//
+// READ-ONLY copies of the three Finance-owned collections. Python remains the
+// only writer; these tables are a derived read model, rebuilt by the migration
+// script. Nothing here writes back to MongoDB.
+//
+// Two deliberate choices:
+//   • Timestamps and dates are TEXT, not timestamptz/date. fin_txn stores
+//     txn_date as "YYYY-MM-DD" and created_at as an ISO string, the day-book
+//     sorts on those strings, and the response returns them verbatim. Keeping
+//     TEXT preserves both the exact bytes and Mongo's lexicographic ordering,
+//     and sidesteps the session-timezone rendering trap entirely.
+//   • Money is numeric(14,2), as everywhere else.
+
+export const finTxn = trukvia.table(
+  'fin_txn',
+  {
+    id: text('id').primaryKey(),
+    /**
+     * The source document's _id. Named mongo_id here (not source_id) because
+     * fin_txn already has a business field called source_id. Used only as the
+     * sort tie-breaker, matching Mongo's tie order.
+     */
+    mongoId: text('mongo_id'),
+    userId: text('user_id').notNull(),
+    companyId: text('company_id').notNull(),
+    refSourceKey: text('ref_source_key'),
+    accountCode: text('account_code'),
+    accountId: text('account_id'),
+    adjustmentGroupId: text('adjustment_group_id'),
+    amount: numeric('amount', { precision: 14, scale: 2 }),
+    category: text('category'),
+    counterAccountCode: text('counter_account_code'),
+    counterAccountId: text('counter_account_id'),
+    createdAt: text('created_at'),
+    direction: text('direction'),
+    isReversal: boolean('is_reversal'),
+    isSupplierSettlementRecovery: boolean('is_supplier_settlement_recovery'),
+    narration: text('narration'),
+    partyId: text('party_id'),
+    partyName: text('party_name'),
+    partyType: text('party_type'),
+    projectedAt: text('projected_at'),
+    reconciledAt: text('reconciled_at'),
+    reconciledRef: text('reconciled_ref'),
+    reversalOf: text('reversal_of'),
+    sourceId: text('source_id'),
+    sourceKey: text('source_key'),
+    sourceType: text('source_type'),
+    status: text('status'),
+    transferGroupId: text('transfer_group_id'),
+    tripId: text('trip_id'),
+    txnDate: text('txn_date'),
+    txnType: text('txn_type'),
+    vehicleId: text('vehicle_id'),
+    /**
+     * fin_txn has TWO key orders in production (18,980 / 9,184): the upsert
+     * filter is serialised differently by the two drivers, so company_id and
+     * ref_source_key swap positions. The response returns documents in their
+     * own order, so the shape is recorded per row.
+     */
+    sourceShape: jsonb('source_shape').$type<string[]>(),
+  },
+  (t) => ({
+    scopeDate: index('fin_txn_scope_date').on(t.userId, t.companyId, t.txnDate),
+    byAccountCode: index('fin_txn_account_code').on(t.accountCode),
+    bySource: index('fin_txn_source').on(t.sourceType, t.sourceId),
+    byRefSourceKey: index('fin_txn_ref_source_key').on(t.refSourceKey),
+  }),
+);
+
+export const finAccount = trukvia.table(
+  'fin_account',
+  {
+    id: text('id').primaryKey(),
+    mongoId: text('mongo_id'),
+    userId: text('user_id').notNull(),
+    companyId: text('company_id').notNull(),
+    code: text('code').notNull(),
+    name: text('name'),
+    type: text('type'),
+    isSystem: boolean('is_system'),
+    isActive: boolean('is_active'),
+    remarks: text('remarks'),
+    createdAt: text('created_at'),
+  },
+  (t) => ({
+    // A scope legitimately has 13 or 14 accounts (the DRIVER_OUTFLOW
+    // generation split). Uniqueness is per (scope, code) — never a fixed count.
+    uniqScopeCode: uniqueIndex('fin_account_scope_code').on(t.userId, t.companyId, t.code),
+  }),
+);
+
+export const finDayClosure = trukvia.table(
+  'fin_day_closure',
+  {
+    id: text('id').primaryKey(),
+    mongoId: text('mongo_id'),
+    userId: text('user_id').notNull(),
+    companyId: text('company_id').notNull(),
+    closeDate: text('close_date').notNull(),
+    status: text('status'),
+    closedAt: text('closed_at'),
+    closedBy: text('closed_by'),
+    closeNotes: text('close_notes'),
+    /** Point-in-time balances; `json` preserves key order and number text. */
+    snapshot: json('snapshot'),
+    snapshotSourceCount: integer('snapshot_source_count'),
+    reopenedAt: text('reopened_at'),
+    reopenedBy: text('reopened_by'),
+    reopenReason: text('reopen_reason'),
+    history: json('history'),
+    createdAt: text('created_at'),
+    modifiedAt: text('modified_at'),
+  },
+  (t) => ({
+    scopeDate: index('fin_day_closure_scope_date').on(t.userId, t.companyId, t.closeDate),
+  }),
+);

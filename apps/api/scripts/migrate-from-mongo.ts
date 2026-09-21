@@ -291,6 +291,116 @@ async function copyCorrections(mongo: Db, pool: Pool): Promise<number> {
   return docs.length;
 }
 
+
+// ── Phase 6 · slice 2a — Finance read models ────────────────────────────────
+// Read-only copies. Each scope's fin_account set is preserved EXACTLY as
+// MongoDB holds it: the 13-vs-14 DRIVER_OUTFLOW split is a valid lazy state
+// (ensure_system_accounts back-fills on demand), so normalising here would
+// invent rows the application never created.
+
+async function copyFinTxn(mongo: Db, pool: Pool): Promise<number> {
+  // promoteValues:false keeps Double distinct so `amount` never passes through
+  // a JS float on its way to numeric.
+  const docs = await mongo.collection<Doc>('fin_txn').find({}, { promoteValues: false }).toArray();
+  for (const d of docs) {
+    await pool.query(
+      `INSERT INTO trukvia.fin_txn (
+         id, mongo_id, user_id, company_id, ref_source_key, account_code, account_id,
+         adjustment_group_id, amount, category, counter_account_code, counter_account_id,
+         created_at, direction, is_reversal, is_supplier_settlement_recovery, narration,
+         party_id, party_name, party_type, projected_at, reconciled_at, reconciled_ref,
+         reversal_of, source_id, source_key, source_type, status, transfer_group_id,
+         trip_id, txn_date, txn_type, vehicle_id, source_shape)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
+               $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34)
+       ON CONFLICT (id) DO UPDATE SET
+         mongo_id=EXCLUDED.mongo_id, ref_source_key=EXCLUDED.ref_source_key,
+         account_code=EXCLUDED.account_code, account_id=EXCLUDED.account_id,
+         adjustment_group_id=EXCLUDED.adjustment_group_id, amount=EXCLUDED.amount,
+         category=EXCLUDED.category, counter_account_code=EXCLUDED.counter_account_code,
+         counter_account_id=EXCLUDED.counter_account_id, created_at=EXCLUDED.created_at,
+         direction=EXCLUDED.direction, is_reversal=EXCLUDED.is_reversal,
+         is_supplier_settlement_recovery=EXCLUDED.is_supplier_settlement_recovery,
+         narration=EXCLUDED.narration, party_id=EXCLUDED.party_id,
+         party_name=EXCLUDED.party_name, party_type=EXCLUDED.party_type,
+         projected_at=EXCLUDED.projected_at, reconciled_at=EXCLUDED.reconciled_at,
+         reconciled_ref=EXCLUDED.reconciled_ref, reversal_of=EXCLUDED.reversal_of,
+         source_id=EXCLUDED.source_id, source_key=EXCLUDED.source_key,
+         source_type=EXCLUDED.source_type, status=EXCLUDED.status,
+         transfer_group_id=EXCLUDED.transfer_group_id, trip_id=EXCLUDED.trip_id,
+         txn_date=EXCLUDED.txn_date, txn_type=EXCLUDED.txn_type,
+         vehicle_id=EXCLUDED.vehicle_id, source_shape=EXCLUDED.source_shape`,
+      [
+        str(d['id']), String(d['_id'] ?? ''), str(d['user_id']), str(d['company_id']),
+        str(d['ref_source_key']), str(d['account_code']), str(d['account_id']),
+        str(d['adjustment_group_id']), money(d['amount']), str(d['category']),
+        str(d['counter_account_code']), str(d['counter_account_id']), str(d['created_at']),
+        str(d['direction']), bool(d['is_reversal']), bool(d['is_supplier_settlement_recovery']),
+        str(d['narration']), str(d['party_id']), str(d['party_name']), str(d['party_type']),
+        str(d['projected_at']), str(d['reconciled_at']), str(d['reconciled_ref']),
+        str(d['reversal_of']), str(d['source_id']), str(d['source_key']), str(d['source_type']),
+        str(d['status']), str(d['transfer_group_id']), str(d['trip_id']), str(d['txn_date']),
+        str(d['txn_type']), str(d['vehicle_id']),
+        JSON.stringify(Object.keys(d).filter((k) => k !== '_id' && k !== 'user_id')),
+      ],
+    );
+  }
+  return docs.length;
+}
+
+async function copyFinAccounts(mongo: Db, pool: Pool): Promise<number> {
+  const docs = await mongo.collection<Doc>('fin_accounts').find({}).toArray();
+  for (const d of docs) {
+    await pool.query(
+      `INSERT INTO trukvia.fin_account (
+         id, mongo_id, user_id, company_id, code, name, type, is_system, is_active,
+         remarks, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+       ON CONFLICT (id) DO UPDATE SET
+         mongo_id=EXCLUDED.mongo_id, code=EXCLUDED.code, name=EXCLUDED.name,
+         type=EXCLUDED.type, is_system=EXCLUDED.is_system, is_active=EXCLUDED.is_active,
+         remarks=EXCLUDED.remarks, created_at=EXCLUDED.created_at`,
+      [
+        str(d['id']), String(d['_id'] ?? ''), str(d['user_id']), str(d['company_id']),
+        str(d['code']), str(d['name']), str(d['type']), bool(d['is_system']),
+        bool(d['is_active']), str(d['remarks']), str(d['created_at']),
+      ],
+    );
+  }
+  return docs.length;
+}
+
+async function copyFinDayClosures(mongo: Db, pool: Pool): Promise<number> {
+  const docs = await mongo
+    .collection<Doc>('fin_day_closures')
+    .find({}, { promoteValues: false })
+    .toArray();
+  for (const d of docs) {
+    await pool.query(
+      `INSERT INTO trukvia.fin_day_closure (
+         id, mongo_id, user_id, company_id, close_date, status, closed_at, closed_by,
+         close_notes, snapshot, snapshot_source_count, reopened_at, reopened_by,
+         reopen_reason, history, created_at, modified_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+       ON CONFLICT (id) DO UPDATE SET
+         mongo_id=EXCLUDED.mongo_id, status=EXCLUDED.status, closed_at=EXCLUDED.closed_at,
+         closed_by=EXCLUDED.closed_by, close_notes=EXCLUDED.close_notes,
+         snapshot=EXCLUDED.snapshot, snapshot_source_count=EXCLUDED.snapshot_source_count,
+         reopened_at=EXCLUDED.reopened_at, reopened_by=EXCLUDED.reopened_by,
+         reopen_reason=EXCLUDED.reopen_reason, history=EXCLUDED.history,
+         created_at=EXCLUDED.created_at, modified_at=EXCLUDED.modified_at`,
+      [
+        str(d['id']), String(d['_id'] ?? ''), str(d['user_id']), str(d['company_id']),
+        str(d['close_date']), str(d['status']), str(d['closed_at']), str(d['closed_by']),
+        str(d['close_notes']), jsonOrNull(d['snapshot']), int(d['snapshot_source_count']),
+        str(d['reopened_at']), str(d['reopened_by']), str(d['reopen_reason']),
+        jsonOrNull(d['history']), str(d['created_at']), str(d['modified_at']),
+      ],
+    );
+  }
+  return docs.length;
+}
+
 async function verify(mongo: Db, pool: Pool): Promise<boolean> {
   let ok = true;
   const check = (label: string, a: unknown, b: unknown): void => {
@@ -304,6 +414,9 @@ async function verify(mongo: Db, pool: Pool): Promise<boolean> {
     ['vendor_bills', 'vendor_bill', {}],
     ['vendor_payments', 'vendor_payment', {}],
     ['payment_corrections', 'payment_correction', { payment_type: 'vendor' }],
+    ['fin_txn', 'fin_txn', {}],
+    ['fin_accounts', 'fin_account', {}],
+    ['fin_day_closures', 'fin_day_closure', {}],
   ];
   console.log('counts');
   for (const [coll, table, filter] of pairs) {
@@ -317,6 +430,7 @@ async function verify(mongo: Db, pool: Pool): Promise<boolean> {
     ['vendors', 'opening_balance', 'vendor', 'opening_balance'],
     ['vendor_bills', 'bill_amount', 'vendor_bill', 'bill_amount'],
     ['vendor_payments', 'amount', 'vendor_payment', 'amount'],
+    ['fin_txn', 'amount', 'fin_txn', 'amount'],
   ];
   for (const [coll, field, table, column] of sums) {
     const agg = await mongo
@@ -383,6 +497,9 @@ async function main(): Promise<void> {
     console.log('  vendor_bills       ', await copyBills(mongo, pool));
     console.log('  vendor_payments    ', await copyPayments(mongo, pool));
     console.log('  payment_corrections', await copyCorrections(mongo, pool));
+    console.log('  fin_txn            ', await copyFinTxn(mongo, pool));
+    console.log('  fin_accounts       ', await copyFinAccounts(mongo, pool));
+    console.log('  fin_day_closures   ', await copyFinDayClosures(mongo, pool));
     console.log(`  elapsed ${((Date.now() - started) / 1000).toFixed(1)}s\n`);
   }
 

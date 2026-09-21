@@ -6,6 +6,8 @@ import { VendorWritesController } from './vendors/vendor-writes.controller';
 import { VendorWritesService } from './vendors/vendor-writes.service';
 import { VendorTxnWritesController } from './vendors/vendor-txn-writes.controller';
 import { VendorTxnWritesService } from './vendors/vendor-txn-writes.service';
+import { FinReadsController } from './fin/fin-reads.controller';
+import { FinReadsService } from './fin/fin-reads.service';
 import { MONGO, VendorsService } from './vendors/vendors.service';
 import { VendorBillsService } from './vendors/vendor-bills.service';
 import { VendorPaymentsService } from './vendors/vendor-payments.service';
@@ -19,13 +21,14 @@ export const MONGO_URL = process.env.NEST_MONGO_URL ?? 'mongodb://127.0.0.1:2701
 export const MONGO_DB_NAME = process.env.NEST_MONGO_DB ?? 'trukvia_local_20260921';
 
 @Module({
-  controllers: [VendorsController, VendorReadsController, VendorWritesController, VendorTxnWritesController],
+  controllers: [VendorsController, VendorReadsController, VendorWritesController, VendorTxnWritesController, FinReadsController],
   providers: [
     VendorsService,
     VendorBillsService,
     VendorPaymentsService,
     VendorWritesService,
     VendorTxnWritesService,
+    FinReadsService,
     {
       provide: MONGO,
       useFactory: async () => {
