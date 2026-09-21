@@ -32,10 +32,25 @@ const PG_URL = PG_ADMIN.replace(/\/[^/]+$/, `/${PG_DB}`);
 const REPO = 'D:/Projects/TRUKVIA-clone';
 const PY_PORT = 8401;
 const NEST_PORT = 8402;
+/**
+ * A THIRD process: a Python instance pointed at the NestJS database, acting as
+ * that stack's internal projection hook. In production both services share one
+ * database; the harness only separates them so the two stacks cannot see each
+ * other's writes, so the hook needs its own Python against NEST_DB.
+ */
+const HOOK_PORT = 8403;
 const stamp = Date.now();
 const PY_DB = `trukvia_wparity_py_${stamp}`;
 const NEST_DB = `trukvia_wparity_nest_${stamp}`;
 const TOKEN = 'wparity-token';
+/**
+ * The harness exercises the INTERNAL projection hook end to end: its Python is
+ * started with a secret, and its NestJS is pointed at that Python's
+ * /internal/fin/reproject. Set WPARITY_NO_HOOK=1 to exercise the TypeScript
+ * port fallback instead.
+ */
+const INTERNAL_TOKEN = `wparity-internal-${'x'.repeat(40)}`;
+const USE_HOOK = process.env.WPARITY_NO_HOOK !== '1';
 const UID = 'user_wparity';
 const CID = 'co_wparity';
 
@@ -184,6 +199,30 @@ function startPython(): ChildProcess {
         EMERGENT_LLM_KEY: '',
         REGRESSION_GUARD_PERIODIC: '0',
         PYTHONUTF8: '1',
+        ...(USE_HOOK ? { TRUKVIA_INTERNAL_TOKEN: INTERNAL_TOKEN } : {}),
+      },
+      stdio: 'ignore',
+      shell: false,
+    },
+  );
+}
+
+function startPythonHook(): ChildProcess {
+  return spawn(
+    'D:/trk-venv/Scripts/python.exe',
+    ['-m', 'uvicorn', 'server:app', '--host', '127.0.0.1', '--port', String(HOOK_PORT),
+     '--log-level', 'warning'],
+    {
+      cwd: `${REPO}/backend`,
+      env: {
+        ...process.env,
+        MONGO_URL: MONGO,
+        DB_NAME: NEST_DB,
+        DISABLE_SCHEDULER: '1',
+        EMERGENT_LLM_KEY: '',
+        REGRESSION_GUARD_PERIODIC: '0',
+        PYTHONUTF8: '1',
+        TRUKVIA_INTERNAL_TOKEN: INTERNAL_TOKEN,
       },
       stdio: 'ignore',
       shell: false,
@@ -200,6 +239,12 @@ function startNest(): ChildProcess {
       NEST_MONGO_URL: MONGO,
       NEST_MONGO_DB: NEST_DB,
       PG_URL,
+      ...(USE_HOOK
+        ? {
+            TRUKVIA_FIN_HOOK_URL: `http://127.0.0.1:${HOOK_PORT}/internal/fin/reproject`,
+            TRUKVIA_INTERNAL_TOKEN: INTERNAL_TOKEN,
+          }
+        : { TRUKVIA_FIN_HOOK_URL: '', TRUKVIA_INTERNAL_TOKEN: '' }),
     },
     stdio: 'ignore',
     shell: true,
@@ -497,15 +542,20 @@ async function main(): Promise<void> {
 
   killPort(PY_PORT);
   killPort(NEST_PORT);
+  killPort(HOOK_PORT);
   const py = startPython();
   const nest = startNest();
+  const hook = USE_HOOK ? startPythonHook() : null;
   let pass = 0;
   let fail = 0;
 
   try {
     const pyUp = await waitFor(`http://127.0.0.1:${PY_PORT}/api/auth/health`);
     const nestUp = await waitFor(`http://127.0.0.1:${NEST_PORT}/api/vendors`);
-    if (!pyUp || !nestUp) throw new Error(`servers did not start (py=${pyUp} nest=${nestUp})`);
+    const hookUp = USE_HOOK ? await waitFor(`http://127.0.0.1:${HOOK_PORT}/api/auth/health`) : true;
+    if (!pyUp || !nestUp || !hookUp) {
+      throw new Error(`servers did not start (py=${pyUp} nest=${nestUp} hook=${hookUp})`);
+    }
 
     for (const c of CASES) {
       const headers: Record<string, string> = { 'content-type': 'application/json' };
@@ -586,8 +636,10 @@ async function main(): Promise<void> {
   } finally {
     py.kill();
     nest.kill();
+    hook?.kill();
     killPort(PY_PORT);
     killPort(NEST_PORT);
+    killPort(HOOK_PORT);
     await new Promise((r) => setTimeout(r, 1500));
     await pyDb.dropDatabase();
     await nestDb.dropDatabase();

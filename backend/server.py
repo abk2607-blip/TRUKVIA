@@ -182,6 +182,18 @@ except Exception as _e:
     import logging as _log
     _log.getLogger(__name__).warning(f"Iter150G bank routers not mounted: {_e}")
 
+# Phase 6 slice 1b · INTERNAL service-to-service projection hook for the NestJS
+# vendor module. Mounted OUTSIDE /api (the ingress routes only /api), loopback
+# only, shared-secret authenticated, and disabled unless TRUKVIA_INTERNAL_TOKEN
+# is set. It delegates to the existing hook — no ledger maths of its own — and
+# leaves the public owner-only /api/fin/reproject untouched.
+try:
+    from routers.internal_fin import router as _internal_fin_r
+    app.include_router(_internal_fin_r)
+except Exception as _e:
+    import logging as _log
+    _log.getLogger(__name__).warning(f"internal fin hook not mounted: {_e}")
+
 # Iter132a · Credit Note router (feature-flagged internally by ENABLE_CDN).
 try:
     from routers.notes import router as notes_r
