@@ -32,11 +32,11 @@ import { reprojectVendorSourceOrThrow, VENDOR_SOURCE_TYPES } from './projection'
  * WHAT IS DELIBERATELY NOT HERE
  * -----------------------------
  * The retry driver itself (`replay_pending_failures`), reconciliation,
- * `GET /api/fin/accounts`, `backfill_tenant`, and the TEN source projections
- * that have no TypeScript port yet. Those ten delegate to Python through the
+ * `GET /api/fin/accounts`, `backfill_tenant`, and the NINE source projections
+ * that have no TypeScript port yet. Those nine delegate to Python through the
  * existing forward bridge, so the verified implementation still owns them.
- * Three are ported: vendor_payment, vendor_bill and — since slice 2c unit 2 —
- * mechanic_payment.
+ * Four are ported: vendor_payment, vendor_bill, mechanic_payment and — since
+ * slice 2c unit 3 — supplier_payment.
  */
 
 type Doc = Record<string, unknown>;
@@ -259,7 +259,7 @@ export async function hookAfterSourceWrite(
       deleted = r.deleted;
       written = r.written;
     } else {
-      // One of the ten source types with no TypeScript projection yet, so the
+      // One of the nine source types with no TypeScript projection yet, so the
       // verified Python implementation still owns it. Unreachable Python is a
       // genuine projection failure and is queued like any other.
       if (!hookConfigured()) {

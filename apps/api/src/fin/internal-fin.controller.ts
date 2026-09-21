@@ -8,10 +8,11 @@
  * type has a TypeScript projection. Both directions exist during the migration;
  * neither is wired to anything it did not already call.
  *
- * As of unit 2 exactly ONE source type actually crosses it: `mechanic_payment`,
- * and only when Python is configured to delegate — see the env-gated block in
- * backend/services_fin_txn_hooks.py, which is OFF by default. The other twelve
- * source types never reach here. Rollback is unsetting that env var.
+ * As of unit 3 two source types actually cross it — `mechanic_payment` and
+ * `supplier_payment` — and only when Python is configured to delegate. See the
+ * env-gated block in backend/services_fin_txn_hooks.py, which is OFF by
+ * default; the other eleven source types never reach here. Rollback is
+ * unsetting that env var.
  *
  * This is NOT a public API. Four independent restrictions, each of which alone
  * denies the request — identical to backend/routers/internal_fin.py:
@@ -38,9 +39,9 @@ import { MONGO } from '../vendors/vendors.service';
  * Mirrors internal_fin.py's allowlist, PLUS the types this side has since
  * ported. Python's own endpoint still allows only the two vendor types; that
  * asymmetry is deliberate and is what lets Python delegate mechanic_payment
- * here without NestJS being able to bounce it back.
+ * and supplier_payment here without NestJS being able to bounce them back.
  */
-const ALLOWED_SOURCE_TYPES = ['vendor_bill', 'vendor_payment', 'mechanic_payment'];
+const ALLOWED_SOURCE_TYPES = ['vendor_bill', 'vendor_payment', 'mechanic_payment', 'supplier_payment'];
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const MIN_TOKEN_LEN = 32;
 

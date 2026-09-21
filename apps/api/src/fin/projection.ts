@@ -152,11 +152,27 @@ const str = (v: unknown): string => (typeof v === 'string' ? v : '');
  * copies of this shape drift, and the drift would be a wrong ledger rather
  * than a failing type.
  */
-export function partyPaymentLegs(
-  p: Doc,
-  opts: { apCode: string; partyType: string; partyIdKey: string; srcType: string; txnTypePrefix: string },
-): Leg[] {
+export interface PartyPaymentOpts {
+  apCode: string;
+  partyType: string;
+  partyIdKey: string;
+  srcType: string;
+  txnTypePrefix: string;
+  /**
+   * `project_supplier_payment` ALSO skips historical documents. The shared
+   * helper does not, so vendor and mechanic keep their exact behaviour.
+   */
+  skipIfHistorical?: boolean;
+  /**
+   * `project_supplier_payment` ALSO carries trip_id on every leg. The shared
+   * helper leaves it empty unless a key is named.
+   */
+  tripIdKey?: string;
+}
+
+export function partyPaymentLegs(p: Doc, opts: PartyPaymentOpts): Leg[] {
   if (p['is_deleted'] || p['is_reversed']) return [];
+  if (opts.skipIfHistorical && p['is_historical']) return [];
   const amt = q2(p['amount'] ?? 0);
   if (amt <= 0) return [];
   const date = str(p['date']);
@@ -171,6 +187,7 @@ export function partyPaymentLegs(
     source_id: str(p['id']),
     party_type: opts.partyType,
     party_id: str(p[opts.partyIdKey]),
+    ...(opts.tripIdKey ? { trip_id: str(p[opts.tripIdKey]) } : {}),
     narration,
   };
   if (typ === 'payment_out') {
@@ -246,6 +263,34 @@ export function projectMechanicPayment(p: Doc): Leg[] {
     partyIdKey: 'mechanic_id',
     srcType: 'mechanic_payment',
     txnTypePrefix: 'mechanic',
+  });
+}
+
+/**
+ * services_fin_txn.project_supplier_payment — slice 2c unit 3.
+ *
+ * Python keeps this as a STANDALONE function rather than a `_party_payment_legs`
+ * call, and it is not a pure rename: it differs in exactly two ways, both
+ * verified against the source rather than assumed.
+ *
+ *   1. an extra `is_historical` guard, which the shared helper has not;
+ *   2. `trip_id` carried on every leg, which the shared helper leaves empty.
+ *
+ * Everything else is identical — the fixed AP_SUPPLIER account, the mode
+ * resolution, the `type` default, the leg order, the ref_leg names and the
+ * txn_types. Python's literal "Supplier" in the narration equals the helper's
+ * `party_type.title()` for "supplier", so that matches too. The two real
+ * differences are passed as options so the ledger maths stays in one place.
+ */
+export function projectSupplierPayment(p: Doc): Leg[] {
+  return partyPaymentLegs(p, {
+    apCode: 'AP_SUPPLIER',
+    partyType: 'supplier',
+    partyIdKey: 'supplier_id',
+    srcType: 'supplier_payment',
+    txnTypePrefix: 'supplier',
+    skipIfHistorical: true,
+    tripIdKey: 'trip_id',
   });
 }
 
@@ -429,7 +474,12 @@ async function persistLegs(
  * The source types with a TypeScript projection. Everything else still goes to
  * Python through the forward bridge — see src/fin/fin-hook.ts.
  */
-export const PORTED_SOURCE_TYPES = ['vendor_payment', 'vendor_bill', 'mechanic_payment'] as const;
+export const PORTED_SOURCE_TYPES = [
+  'vendor_payment',
+  'vendor_bill',
+  'mechanic_payment',
+  'supplier_payment',
+] as const;
 export type PortedSourceType = (typeof PORTED_SOURCE_TYPES)[number];
 
 /** @deprecated kept so existing imports keep compiling; prefer PORTED_SOURCE_TYPES. */
@@ -468,6 +518,9 @@ export async function reprojectVendorSourceOrThrow(
   } else if (sourceType === 'mechanic_payment') {
     const doc = await findSource('mechanic_payments');
     if (doc) legs = projectMechanicPayment(doc);
+  } else if (sourceType === 'supplier_payment') {
+    const doc = await findSource('supplier_payments');
+    if (doc) legs = projectSupplierPayment(doc);
   } else {
     const doc = await findSource('vendor_bills');
     if (doc) legs = projectVendorBill(doc, await hasPairedExpense(mongo, uid, cid, sourceId));
