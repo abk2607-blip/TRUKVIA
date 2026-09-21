@@ -49,6 +49,8 @@ const VOLATILE = new Set([
   'user_id',
   // audit rows reference the generated vendor id
   'entity_id',
+  // ledger rows stamp when they were projected
+  'projected_at',
 ]);
 
 /**
@@ -59,7 +61,41 @@ const VOLATILE = new Set([
  */
 const ORDER_INSENSITIVE = new Set(['changes']);
 
+/**
+ * fin_txn rows are created by an UPSERT, and MongoDB builds an upserted
+ * document from the filter's equality fields. pymongo and the Node driver
+ * serialise that filter in different orders, so the stored key order differs
+ * even for an identical call — verified directly:
+ *   pymongo → _id, company_id, ref_source_key, user_id, id, ...
+ *   node    → _id, ref_source_key, user_id, company_id, id, ...
+ * The VALUES are identical (12,032 rows verified by fin-projection-parity), and
+ * JSON objects are unordered, so these documents are compared key-insensitively.
+ */
+const ORDER_INSENSITIVE_COLLECTIONS = new Set(['fin_txn']);
+
+function deepSortKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(deepSortKeys);
+  if (value && typeof value === 'object') {
+    const out: Record<string, unknown> = {};
+    for (const k of Object.keys(value as Record<string, unknown>).sort()) {
+      out[k] = deepSortKeys((value as Record<string, unknown>)[k]);
+    }
+    return out;
+  }
+  return value;
+}
+
+/**
+ * Generated ids appear INSIDE strings too — a ledger row's ref_source_key is
+ * "vendor_bill:<generated id>:suspense_debit" and its source_id is the raw id.
+ * Those differ between the two stacks by design, so the id token is replaced
+ * while the surrounding structure is still compared.
+ */
+const GENERATED_ID = /(ven|vbl|vpay|audit|fintxn|acc)_[0-9a-zA-Z]{8,}/g;
+const scrub = (s: string): string => s.replace(GENERATED_ID, '<gen>');
+
 function normalise(value: unknown, key?: string): unknown {
+  if (typeof value === 'string') return scrub(value);
   if (Array.isArray(value)) return value.map((v) => normalise(v));
   if (value && typeof value === 'object') {
     const entries = Object.entries(value as Record<string, unknown>);
@@ -125,6 +161,12 @@ async function seed(db: Db): Promise<void> {
     imported_ref: '',
     imported_batch: '',
     is_historical: false,
+  });
+  await db.collection('vehicles').insertOne({
+    id: 'veh_seed_1',
+    user_id: UID,
+    company_id: CID,
+    vehicle_number: 'AP16AB1234',
   });
 }
 
@@ -301,6 +343,106 @@ const CASES: Case[] = [
     path: '/api/vendors/ven_seed_1/reactivate',
     inspect: ['vendors', 'audit_logs'],
   },
+  // ── vendor bills ────────────────────────────────────────────────────────
+  {
+    name: 'create bill',
+    method: 'POST',
+    path: '/api/vendor-bills',
+    body: {
+      vendor_id: 'ven_seed_1',
+      bill_number: 'B-001',
+      bill_date: '2026-09-01',
+      bill_amount: 18000,
+      vehicle_id: 'veh_seed_1',
+      narration: 'brake pads',
+    },
+    inspect: ['vendor_bills', 'fin_txn', 'fin_accounts'],
+  },
+  {
+    name: 'create bill, duplicate number -> 409',
+    method: 'POST',
+    path: '/api/vendor-bills',
+    body: { vendor_id: 'ven_seed_1', bill_number: 'B-001', bill_date: '2026-09-01', bill_amount: 100 },
+  },
+  {
+    name: 'create bill, unknown vendor -> 400',
+    method: 'POST',
+    path: '/api/vendor-bills',
+    body: { vendor_id: 'ven_nope', bill_date: '2026-09-01', bill_amount: 100 },
+  },
+  {
+    name: 'create bill, zero amount -> 400',
+    method: 'POST',
+    path: '/api/vendor-bills',
+    body: { vendor_id: 'ven_seed_1', bill_date: '2026-09-01', bill_amount: 0 },
+  },
+  {
+    name: 'create bill, missing bill_date -> 422',
+    method: 'POST',
+    path: '/api/vendor-bills',
+    body: { vendor_id: 'ven_seed_1', bill_amount: 100 },
+  },
+  // ── vendor payments ─────────────────────────────────────────────────────
+  {
+    name: 'create payment (payment_out, Bank)',
+    method: 'POST',
+    path: '/api/vendors/ven_seed_1/payments',
+    body: { vendor_id: 'ven_seed_1', date: '2026-09-02', amount: 5000, mode: 'Bank', ref_no: 'TXN-1' },
+    inspect: ['vendor_payments', 'fin_txn', 'audit_logs'],
+  },
+  {
+    name: 'create payment (receipt_in, Cash)',
+    method: 'POST',
+    path: '/api/vendors/ven_seed_1/payments',
+    body: {
+      vendor_id: 'ven_seed_1',
+      date: '2026-09-03',
+      amount: 1250.75,
+      mode: 'Cash',
+      type: 'receipt_in',
+    },
+    inspect: ['vendor_payments', 'fin_txn'],
+  },
+  {
+    name: 'create payment, body without vendor_id -> 422',
+    method: 'POST',
+    path: '/api/vendors/ven_seed_1/payments',
+    body: { date: '2026-09-02', amount: 100 },
+  },
+  {
+    name: 'create payment, unknown vendor -> 404',
+    method: 'POST',
+    path: '/api/vendors/ven_nope/payments',
+    body: { vendor_id: 'ven_nope', date: '2026-09-02', amount: 100 },
+  },
+  {
+    name: 'create payment, zero amount -> 400',
+    method: 'POST',
+    path: '/api/vendors/ven_seed_1/payments',
+    body: { vendor_id: 'ven_seed_1', date: '2026-09-02', amount: 0 },
+  },
+  {
+    name: 'create payment, bad mode -> 422',
+    method: 'POST',
+    path: '/api/vendors/ven_seed_1/payments',
+    body: { vendor_id: 'ven_seed_1', date: '2026-09-02', amount: 100, mode: 'Barter' },
+  },
+  {
+    name: 'create payment, unknown bill -> 400',
+    method: 'POST',
+    path: '/api/vendors/ven_seed_1/payments',
+    body: { vendor_id: 'ven_seed_1', date: '2026-09-02', amount: 100, vendor_bill_id: 'vbl_nope' },
+  },
+  {
+    name: 'delete payment without reason -> 422',
+    method: 'DELETE',
+    path: '/api/vendors/ven_seed_1/payments/vpay_nope',
+  },
+  {
+    name: 'delete bill, short reason -> 422',
+    method: 'DELETE',
+    path: '/api/vendor-bills/vbl_nope?reason=ab',
+  },
 ];
 
 async function createPgDatabase(): Promise<void> {
@@ -396,8 +538,11 @@ async function main(): Promise<void> {
           pyDb.collection(coll).find({}).sort({ _id: 1 }).toArray(),
           nestDb.collection(coll).find({}).sort({ _id: 1 }).toArray(),
         ]);
-        const na = JSON.stringify(normalise(da));
-        const nb = JSON.stringify(normalise(dbb));
+        const order = ORDER_INSENSITIVE_COLLECTIONS.has(coll)
+          ? (v: unknown) => deepSortKeys(normalise(v))
+          : (v: unknown) => normalise(v);
+        const na = JSON.stringify(order(da));
+        const nb = JSON.stringify(order(dbb));
         if (na !== nb) {
           let at = 0;
           while (at < Math.min(na.length, nb.length) && na[at] === nb[at]) at += 1;
