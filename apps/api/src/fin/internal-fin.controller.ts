@@ -1,5 +1,5 @@
 /**
- * Phase 6 · slice 2c, unit 1 — the REVERSE bridge: Python → NestJS projection.
+ * Phase 6 · slice 2c — the REVERSE bridge: Python → NestJS projection.
  *
  *   POST /internal/fin/reproject
  *
@@ -8,9 +8,10 @@
  * type has a TypeScript projection. Both directions exist during the migration;
  * neither is wired to anything it did not already call.
  *
- * NOTHING IS SWITCHED OVER BY THIS FILE. The endpoint is available and
- * parity-tested; no Python write path calls it yet. Flipping a source module to
- * this direction is a later 2c unit and a deliberate act.
+ * As of unit 2 exactly ONE source type actually crosses it: `mechanic_payment`,
+ * and only when Python is configured to delegate — see the env-gated block in
+ * backend/services_fin_txn_hooks.py, which is OFF by default. The other twelve
+ * source types never reach here. Rollback is unsetting that env var.
  *
  * This is NOT a public API. Four independent restrictions, each of which alone
  * denies the request — identical to backend/routers/internal_fin.py:
@@ -33,7 +34,13 @@ import { pyDumps } from '../common/py-json';
 import { hookAfterSourceWrite } from './fin-hook';
 import { MONGO } from '../vendors/vendors.service';
 
-const ALLOWED_SOURCE_TYPES = ['vendor_bill', 'vendor_payment'];
+/**
+ * Mirrors internal_fin.py's allowlist, PLUS the types this side has since
+ * ported. Python's own endpoint still allows only the two vendor types; that
+ * asymmetry is deliberate and is what lets Python delegate mechanic_payment
+ * here without NestJS being able to bounce it back.
+ */
+const ALLOWED_SOURCE_TYPES = ['vendor_bill', 'vendor_payment', 'mechanic_payment'];
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const MIN_TOKEN_LEN = 32;
 

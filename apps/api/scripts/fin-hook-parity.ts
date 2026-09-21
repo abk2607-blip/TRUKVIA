@@ -249,6 +249,15 @@ interface BridgeCase {
   headers?: Record<string, string>;
   body?: unknown;
   raw?: string;
+  /**
+   * Compare the STATUS only, with the reason. Used where the two sides
+   * legitimately differ because NestJS has ported a source type Python's own
+   * internal endpoint still refuses — the allowlist is rendered into the 400
+   * body, so the text differs by design.
+   */
+  statusOnly?: string;
+  /** Different statuses ARE the contract here; both are asserted literally. */
+  expect?: { py: number; nest: number };
 }
 
 const BRIDGE_CASES: BridgeCase[] = [
@@ -277,11 +286,25 @@ const BRIDGE_CASES: BridgeCase[] = [
     name: 'unsupported source_type -> 400',
     headers: { 'x-internal-token': INTERNAL_TOKEN },
     body: { user_id: UID, company_id: CID, source_type: 'expense', source_id: 'x' },
+    statusOnly: 'the allowlist is rendered into the body, and NestJS has ported mechanic_payment',
   },
   {
     name: 'source_type absent -> 400',
     headers: { 'x-internal-token': INTERNAL_TOKEN },
     body: { user_id: UID, company_id: CID, source_id: 'x' },
+    statusOnly: 'same allowlist text difference',
+  },
+  {
+    /**
+     * The asymmetry, asserted rather than assumed: Python's internal endpoint
+     * still refuses mechanic_payment, while NestJS accepts it because it owns
+     * that projection now. That is exactly what lets Python delegate this one
+     * source type without NestJS being able to bounce the work back.
+     */
+    name: 'mechanic_payment: Python refuses, NestJS accepts',
+    headers: { 'x-internal-token': INTERNAL_TOKEN },
+    body: { user_id: UID, company_id: CID, source_type: 'mechanic_payment', source_id: 'mpay_none' },
+    expect: { py: 400, nest: 200 },
   },
   {
     name: 'valid reproject -> 200',
@@ -390,10 +413,14 @@ async function main(): Promise<void> {
           fetch(`http://127.0.0.1:${NEST_PORT}/internal/fin/reproject`, init),
         ]);
         const [ta, tb] = [await a.text(), await b.text()];
-        const same = a.status === b.status && ta === tb;
+        let same: boolean;
+        if (c.expect) same = a.status === c.expect.py && b.status === c.expect.nest;
+        else if (c.statusOnly) same = a.status === b.status;
+        else same = a.status === b.status && ta === tb;
+        const suffix = c.statusOnly ? `  (status only: ${c.statusOnly})` : '';
         report(
           same,
-          `bridge: ${c.name}`,
+          `bridge: ${c.name}${suffix}`,
           same ? undefined : `py  : ${a.status} ${ta.slice(0, 200)}\n        nest: ${b.status} ${tb.slice(0, 200)}`,
         );
       }

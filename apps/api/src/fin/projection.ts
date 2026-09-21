@@ -21,6 +21,7 @@
  * Legs are written to MongoDB, because fin_txn is still Python-owned data.
  */
 import type { Db } from 'mongodb';
+import { pyRound2 } from '../common/py-round';
 
 /** models.py FIN_SYSTEM_ACCOUNTS, including the appended DRIVER_OUTFLOW entry. */
 export const FIN_SYSTEM_ACCOUNTS: Array<{ code: string; name: string; type: string }> = [
@@ -59,24 +60,19 @@ export function modeAccount(mode: unknown): string {
 }
 
 /**
- * services_fin_txn._q2 — Python's round() is banker's rounding (round-half-to-
- * even), which differs from JavaScript's Math.round on exact .005 cases.
- * Money must match to the paisa, so the tie case is handled explicitly.
+ * services_fin_txn._q2 — `round(float(x or 0), 2)`.
+ *
+ * Python rounds half-to-even against the double's TRUE binary value, so
+ * `round(2.675, 2)` is 2.67: the nearest double to 2.675 is below the midpoint.
+ * The scale-by-100-and-compare version that used to live here read that as a
+ * tie and returned 2.68 — a one-paisa error in a real ledger leg, which this
+ * slice's parity run caught on a mechanic payment of 2.675. `pyRound2` decides
+ * in exact BigInt arithmetic instead.
  */
 export function q2(x: unknown): number {
   const n = typeof x === 'number' ? x : Number(x ?? 0);
   if (!Number.isFinite(n)) return 0;
-  const scaled = n * 100;
-  const floor = Math.floor(scaled);
-  const diff = scaled - floor;
-  let rounded: number;
-  if (Math.abs(diff - 0.5) < Number.EPSILON * Math.abs(scaled) + 1e-9) {
-    // exact tie: round half to even, as Python does
-    rounded = floor % 2 === 0 ? floor : floor + 1;
-  } else {
-    rounded = Math.round(scaled);
-  }
-  return rounded / 100;
+  return pyRound2(n);
 }
 
 export interface Leg {
@@ -149,24 +145,32 @@ type Doc = Record<string, unknown>;
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 
 /**
- * services_fin_txn._party_payment_legs, specialised for vendors via
- * project_vendor_payment (ap_code AP_VENDOR, txn_type prefix "vendor").
+ * services_fin_txn._party_payment_legs — the shared two-leg party payment.
+ *
+ * Python has ONE helper that vendor, mechanic and driver payments each call
+ * with different parameters. Keeping one helper here too is the point: two
+ * copies of this shape drift, and the drift would be a wrong ledger rather
+ * than a failing type.
  */
-export function projectVendorPayment(p: Doc): Leg[] {
+export function partyPaymentLegs(
+  p: Doc,
+  opts: { apCode: string; partyType: string; partyIdKey: string; srcType: string; txnTypePrefix: string },
+): Leg[] {
   if (p['is_deleted'] || p['is_reversed']) return [];
   const amt = q2(p['amount'] ?? 0);
   if (amt <= 0) return [];
   const date = str(p['date']);
   const bankCode = modeAccount(p['mode']);
   const typ = str(p['type']) || 'payment_out';
-  // Python: f"Vendor {typ} · {ref_no}".strip(" ·") — strip() removes any
-  // leading/trailing space or "·" characters, not a single suffix.
-  const narration = `Vendor ${typ} · ${str(p['ref_no'])}`.replace(/^[ ·]+|[ ·]+$/g, '');
+  // Python: f"{party_type.title()} {typ} · {ref_no}".strip(" ·") — strip()
+  // removes any leading/trailing space or "·" characters, not one suffix.
+  const title = opts.partyType.charAt(0).toUpperCase() + opts.partyType.slice(1);
+  const narration = `${title} ${typ} · ${str(p['ref_no'])}`.replace(/^[ ·]+|[ ·]+$/g, '');
   const common = {
-    source_type: 'vendor_payment',
+    source_type: opts.srcType,
     source_id: str(p['id']),
-    party_type: 'vendor',
-    party_id: str(p['vendor_id']),
+    party_type: opts.partyType,
+    party_id: str(p[opts.partyIdKey]),
     narration,
   };
   if (typ === 'payment_out') {
@@ -174,11 +178,11 @@ export function projectVendorPayment(p: Doc): Leg[] {
       leg({
         ...common,
         txn_date: date,
-        account_code: 'AP_VENDOR',
+        account_code: opts.apCode,
         direction: 'in',
         amount: amt,
         counter_account_code: bankCode,
-        txn_type: 'vendor_payment_out',
+        txn_type: `${opts.txnTypePrefix}_payment_out`,
         ref_leg: 'ap_debit',
       }),
       leg({
@@ -187,8 +191,8 @@ export function projectVendorPayment(p: Doc): Leg[] {
         account_code: bankCode,
         direction: 'out',
         amount: amt,
-        counter_account_code: 'AP_VENDOR',
-        txn_type: 'vendor_payment_out',
+        counter_account_code: opts.apCode,
+        txn_type: `${opts.txnTypePrefix}_payment_out`,
         ref_leg: 'bank_credit',
       }),
     ];
@@ -200,21 +204,49 @@ export function projectVendorPayment(p: Doc): Leg[] {
       account_code: bankCode,
       direction: 'in',
       amount: amt,
-      counter_account_code: 'AP_VENDOR',
-      txn_type: 'vendor_receipt_in',
+      counter_account_code: opts.apCode,
+      txn_type: `${opts.txnTypePrefix}_receipt_in`,
       ref_leg: 'bank_debit',
     }),
     leg({
       ...common,
       txn_date: date,
-      account_code: 'AP_VENDOR',
+      account_code: opts.apCode,
       direction: 'out',
       amount: amt,
       counter_account_code: bankCode,
-      txn_type: 'vendor_receipt_in',
+      txn_type: `${opts.txnTypePrefix}_receipt_in`,
       ref_leg: 'ap_credit',
     }),
   ];
+}
+
+/** services_fin_txn.project_vendor_payment. */
+export function projectVendorPayment(p: Doc): Leg[] {
+  return partyPaymentLegs(p, {
+    apCode: 'AP_VENDOR',
+    partyType: 'vendor',
+    partyIdKey: 'vendor_id',
+    srcType: 'vendor_payment',
+    txnTypePrefix: 'vendor',
+  });
+}
+
+/**
+ * services_fin_txn.project_mechanic_payment — slice 2c unit 2.
+ *
+ * Identical in structure to the vendor case; only the payable account, the
+ * party fields and the txn_type prefix differ. It reads one collection, has no
+ * cascade and no paired-document lookup, which is why it was chosen first.
+ */
+export function projectMechanicPayment(p: Doc): Leg[] {
+  return partyPaymentLegs(p, {
+    apCode: 'AP_MECHANIC',
+    partyType: 'mechanic',
+    partyIdKey: 'mechanic_id',
+    srcType: 'mechanic_payment',
+    txnTypePrefix: 'mechanic',
+  });
 }
 
 /**
@@ -393,8 +425,16 @@ async function persistLegs(
   return written;
 }
 
-export const VENDOR_SOURCE_TYPES = ['vendor_payment', 'vendor_bill'] as const;
-export type VendorSourceType = (typeof VENDOR_SOURCE_TYPES)[number];
+/**
+ * The source types with a TypeScript projection. Everything else still goes to
+ * Python through the forward bridge — see src/fin/fin-hook.ts.
+ */
+export const PORTED_SOURCE_TYPES = ['vendor_payment', 'vendor_bill', 'mechanic_payment'] as const;
+export type PortedSourceType = (typeof PORTED_SOURCE_TYPES)[number];
+
+/** @deprecated kept so existing imports keep compiling; prefer PORTED_SOURCE_TYPES. */
+export const VENDOR_SOURCE_TYPES = PORTED_SOURCE_TYPES;
+export type VendorSourceType = PortedSourceType;
 
 /**
  * services_fin_txn.reproject_source, vendor branches only — the THROWING form.
@@ -408,22 +448,28 @@ export async function reprojectVendorSourceOrThrow(
   mongo: Db,
   uid: string,
   cid: string,
-  sourceType: VendorSourceType,
+  sourceType: PortedSourceType,
   sourceId: string,
 ): Promise<{ deleted: number; written: number }> {
   const codeToId = await ensureSystemAccounts(mongo, uid, cid);
+  // None of the ported types has a prefix cascade: invoice and
+  // trip_customer_receipt are the only two that do, and neither is ported.
   const deleted = await deleteBySource(mongo, uid, cid, sourceType, sourceId);
+
+  const findSource = (collection: string): Promise<Doc | null> =>
+    mongo
+      .collection<Doc>(collection)
+      .findOne({ user_id: uid, company_id: cid, id: sourceId }, { projection: { _id: 0 } });
 
   let legs: Leg[] = [];
   if (sourceType === 'vendor_payment') {
-    const doc = await mongo
-      .collection<Doc>('vendor_payments')
-      .findOne({ user_id: uid, company_id: cid, id: sourceId }, { projection: { _id: 0 } });
+    const doc = await findSource('vendor_payments');
     if (doc) legs = projectVendorPayment(doc);
+  } else if (sourceType === 'mechanic_payment') {
+    const doc = await findSource('mechanic_payments');
+    if (doc) legs = projectMechanicPayment(doc);
   } else {
-    const doc = await mongo
-      .collection<Doc>('vendor_bills')
-      .findOne({ user_id: uid, company_id: cid, id: sourceId }, { projection: { _id: 0 } });
+    const doc = await findSource('vendor_bills');
     if (doc) legs = projectVendorBill(doc, await hasPairedExpense(mongo, uid, cid, sourceId));
   }
 
