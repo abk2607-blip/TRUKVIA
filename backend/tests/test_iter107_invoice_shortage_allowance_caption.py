@@ -21,6 +21,18 @@ import uuid
 
 import httpx
 from pypdf import PdfReader
+from datetime import date as _date, timedelta as _timedelta
+
+# Iter-maintenance (Sep 2026): the invoice API refuses a future invoice_date,
+# so these fixtures are anchored to recent PAST days derived at run time. The
+# original day-gaps between them are preserved; a hardcoded calendar date is
+# what silently expired and broke this module in the first place.
+_D = _date.today()
+
+
+def _ago(days: int) -> str:
+    return (_D - _timedelta(days=days)).isoformat()
+
 
 
 API = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/") + "/api"
@@ -59,7 +71,7 @@ def test_product_master_allowance_caption_on_invoice_pdf():
     try:
         t = httpx.post(f"{API}/trips", headers=H, json={
             "customer_id": cust["id"], "product_id": prod["id"],
-            "date": "2026-12-01", "vehicle_id": veh["id"],
+            "date": _ago(3), "vehicle_id": veh["id"],
             "vehicle_number": veh["vehicle_number"], "vehicle_type": "own",
             "tons": 20.0, "loaded_qty": 20.0, "unloaded_qty": 19.85,
             "freight_mode": "per_ton", "rate_per_ton": 1500,
@@ -70,7 +82,7 @@ def test_product_master_allowance_caption_on_invoice_pdf():
         assert t["applied_customer_shortage_limit"] == 0.0
 
         inv = httpx.post(f"{API}/invoices", headers=H, json={
-            "customer_id": cust["id"], "invoice_date": "2026-12-02",
+            "customer_id": cust["id"], "invoice_date": _ago(2),
             "trip_ids": [tid], "hsn_sac": "996791", "gst_treatment": "rcm",
         }, timeout=T).json()
         inv_id = inv["id"]
@@ -110,7 +122,7 @@ def test_custom_customer_allowance_caption_on_invoice_pdf():
     try:
         t = httpx.post(f"{API}/trips", headers=H, json={
             "customer_id": cust["id"], "product_id": prod["id"],
-            "date": "2026-12-01", "vehicle_id": veh["id"],
+            "date": _ago(3), "vehicle_id": veh["id"],
             "vehicle_number": veh["vehicle_number"], "vehicle_type": "own",
             "tons": 20.0, "loaded_qty": 20.0, "unloaded_qty": 19.85,
             "freight_mode": "per_ton", "rate_per_ton": 1500,
@@ -119,7 +131,7 @@ def test_custom_customer_allowance_caption_on_invoice_pdf():
         tid = t["id"]
         assert t["applied_customer_shortage_limit"] == 0.3
         inv = httpx.post(f"{API}/invoices", headers=H, json={
-            "customer_id": cust["id"], "invoice_date": "2026-12-02",
+            "customer_id": cust["id"], "invoice_date": _ago(2),
             "trip_ids": [tid], "hsn_sac": "996791", "gst_treatment": "rcm",
         }, timeout=T).json()
         inv_id = inv["id"]
@@ -163,7 +175,7 @@ def test_caption_reflects_frozen_snapshot_not_current_master():
     try:
         t = httpx.post(f"{API}/trips", headers=H, json={
             "customer_id": cust["id"], "product_id": prod["id"],
-            "date": "2026-12-01", "vehicle_id": veh["id"],
+            "date": _ago(3), "vehicle_id": veh["id"],
             "vehicle_number": veh["vehicle_number"], "vehicle_type": "own",
             "tons": 20.0, "loaded_qty": 20.0, "unloaded_qty": 19.85,
             "freight_mode": "per_ton", "rate_per_ton": 1500,
@@ -176,7 +188,7 @@ def test_caption_reflects_frozen_snapshot_not_current_master():
         }, timeout=T)
         # Invoice PDF must still show the ORIGINAL 0.5% snapshot
         inv = httpx.post(f"{API}/invoices", headers=H, json={
-            "customer_id": cust["id"], "invoice_date": "2026-12-02",
+            "customer_id": cust["id"], "invoice_date": _ago(2),
             "trip_ids": [tid], "hsn_sac": "996791", "gst_treatment": "rcm",
         }, timeout=T).json()
         inv_id = inv["id"]
@@ -212,7 +224,7 @@ def test_shortage_amount_still_correct_after_caption_addition():
     try:
         t = httpx.post(f"{API}/trips", headers=H, json={
             "customer_id": cust["id"], "product_id": prod["id"],
-            "date": "2026-12-01", "vehicle_id": veh["id"],
+            "date": _ago(3), "vehicle_id": veh["id"],
             "vehicle_number": veh["vehicle_number"], "vehicle_type": "own",
             "tons": 20.0, "loaded_qty": 20.0, "unloaded_qty": 19.85,
             "freight_mode": "per_ton", "rate_per_ton": 1500,
@@ -222,7 +234,7 @@ def test_shortage_amount_still_correct_after_caption_addition():
         # Product allowance 0.5% of 20 = 0.1 MT. Actual short 0.15. Net = 0.05 × 40k = 2000.
         assert abs(t["shortage_amount"] - 2000.0) < 0.02
         inv = httpx.post(f"{API}/invoices", headers=H, json={
-            "customer_id": cust["id"], "invoice_date": "2026-12-02",
+            "customer_id": cust["id"], "invoice_date": _ago(2),
             "trip_ids": [tid], "hsn_sac": "996791", "gst_treatment": "rcm",
         }, timeout=T).json()
         inv_id = inv["id"]

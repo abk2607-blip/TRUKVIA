@@ -10,6 +10,18 @@ that trip.
 import os, uuid, io, httpx
 import pytest
 from pypdf import PdfReader
+from datetime import date as _date, timedelta as _timedelta
+
+# Iter-maintenance (Sep 2026): the invoice API refuses a future invoice_date,
+# so these fixtures are anchored to recent PAST days derived at run time. The
+# original day-gaps between them are preserved; a hardcoded calendar date is
+# what silently expired and broke this module in the first place.
+_D = _date.today()
+
+
+def _ago(days: int) -> str:
+    return (_D - _timedelta(days=days)).isoformat()
+
 
 BASE = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001")
 TOK = os.environ["DEMO_TOKEN_VALUE"]
@@ -33,7 +45,7 @@ def blank_trip():
     trip = httpx.post(
         f"{BASE}/api/trips", headers=HA,
         json={
-            "customer_id": cust["id"], "date": "2026-10-01",
+            "customer_id": cust["id"], "date": _ago(3),
             "vehicle_id": veh["id"], "vehicle_number": veh["vehicle_number"],
             "tons": 20, "freight_mode": "per_ton", "rate_per_ton": 1000,
             "from_location": "K", "to_location": "V",
@@ -117,7 +129,7 @@ def test_inline_ref_reflects_in_invoice_pdf(blank_trip):
     inv = httpx.post(
         f"{BASE}/api/invoices", headers=HA,
         json={
-            "customer_id": cid, "invoice_date": "2026-10-02",
+            "customer_id": cid, "invoice_date": _ago(2),
             "trip_ids": [tid], "hsn_sac": "996791",
             "gst_treatment": "rcm", "due_date": "2026-11-01",
         },

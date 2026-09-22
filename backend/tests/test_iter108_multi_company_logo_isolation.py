@@ -18,6 +18,18 @@ import uuid
 
 import httpx
 from pypdf import PdfReader
+from datetime import date as _date, timedelta as _timedelta
+
+# Iter-maintenance (Sep 2026): the invoice API refuses a future invoice_date,
+# so these fixtures are anchored to recent PAST days derived at run time. The
+# original day-gaps between them are preserved; a hardcoded calendar date is
+# what silently expired and broke this module in the first place.
+_D = _date.today()
+
+
+def _ago(days: int) -> str:
+    return (_D - _timedelta(days=days)).isoformat()
+
 
 
 API = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/") + "/api"
@@ -159,7 +171,7 @@ def test_invoice_pdf_embeds_active_company_logo():
                 "vehicle_number": f"AP108{cid[-5:].upper()}", "vehicle_type": "own",
             }, timeout=T).json()
             trip = httpx.post(f"{API}/trips", headers=_hdrs(cid), json={
-                "customer_id": cust["id"], "date": "2026-12-05",
+                "customer_id": cust["id"], "date": _ago(3),
                 "vehicle_id": veh["id"], "vehicle_number": veh["vehicle_number"],
                 "vehicle_type": "own",
                 "tons": 20.0, "loaded_qty": 20.0, "unloaded_qty": 19.9,
@@ -167,7 +179,7 @@ def test_invoice_pdf_embeds_active_company_logo():
                 "product_rate_per_mt": 40000,
             }, timeout=T).json()
             inv = httpx.post(f"{API}/invoices", headers=_hdrs(cid), json={
-                "customer_id": cust["id"], "invoice_date": "2026-12-06",
+                "customer_id": cust["id"], "invoice_date": _ago(2),
                 "trip_ids": [trip["id"]], "hsn_sac": "996791", "gst_treatment": "rcm",
             }, timeout=T).json()
             return cust, veh, trip, inv
