@@ -157,6 +157,8 @@ test("Iter126b · Duplicate button click reuses the same key (same cfg) but prod
 });
 
 // -------------------- Whitelist mirror sanity --------------------
-test("Iter126b · Bucket-B whitelist has the 37 expected patterns (mirrors backend)", () => {
-  expect(BUCKET_B_POST.length).toBe(37);
+test("Iter126b · Bucket-B whitelist has the 52 expected patterns (mirrors backend)", () => {
+  // 37 originally + the 15 Iter133 write endpoints the backend had protected
+  // since Sep 2026 but the client never sent a key for.
+  expect(BUCKET_B_POST.length).toBe(52);
 });

@@ -172,6 +172,27 @@ export const BUCKET_B_POST = [
   /^\/trips\/[^/]+\/regenerate-lr$/,
   /^\/trips\/bulk-regenerate-lr$/,
   /^\/trips\/bulk-all-copies-zip$/,
+  // Iter133 · Expense / Vehicle Cost — Turn 1 write endpoints.
+  // These were added to BUCKET_B_PATTERNS on the backend but never mirrored
+  // here, so the client sent no key and the middleware fell through to its
+  // `if not key: return await call_next(request)` passthrough — leaving a
+  // double-click or a retry free to create a second record.
+  /^\/vendors$/,
+  /^\/vendors\/[^/]+\/reactivate$/,
+  /^\/vendors\/[^/]+\/payments$/,
+  /^\/mechanics$/,
+  /^\/mechanics\/[^/]+\/reactivate$/,
+  /^\/mechanics\/[^/]+\/payments$/,
+  /^\/repair-events$/,
+  /^\/vendor-bills$/,
+  /^\/mechanic-work-orders$/,
+  /^\/expenses$/,
+  /^\/expenses\/bulk-operational$/,
+  // Iter133 · Turn 2C — payment correction writes
+  /^\/vendor-payments\/[^/]+\/correct$/,
+  /^\/vendor-payments\/[^/]+\/correct-amount$/,
+  /^\/mechanic-payments\/[^/]+\/correct$/,
+  /^\/mechanic-payments\/[^/]+\/correct-amount$/,
 ];
 
 const RETRY_DELAYS_MS = [500, 1500];
