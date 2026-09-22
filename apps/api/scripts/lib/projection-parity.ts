@@ -48,6 +48,22 @@ export interface ProjectionParityConfig {
   zeroLegged: string[];
   /** An id that exists under BOTH tenants, to prove scoping. */
   sharedId: string;
+  /**
+   * Further collections to seed, keyed by name. Needed when a projection
+   * consults another collection — mechanic_work_order probes `expenses` for a
+   * paired document, so the pairing states have to exist.
+   */
+  extraCollections?: Record<string, Doc[]>;
+  /**
+   * A source type to project BEFORE the one under test, on all three
+   * databases. This is how mixed ownership gets proved rather than argued:
+   * the PY database has Python project it, the TS database has the NestJS
+   * port project it, and the BRIDGE database has Python project it locally
+   * (because only cfg.sourceType is in the delegation list). If the result
+   * under test is identical across all three, the dependency genuinely does
+   * not care who owns the other projection.
+   */
+  preProject?: { sourceType: string; ids: Array<[string, string, string]> };
   /** Extra assertions over the TypeScript ledger rows. */
   extraChecks?: (rows: Doc[], report: Report) => void;
   /**
@@ -214,12 +230,16 @@ export async function runProjectionParity(cfg: ProjectionParityConfig): Promise<
         .collection('companies')
         .insertOne({ id: cid, user_id: uid, name: 'Parity Co', is_default: true });
     }
-    const docs = cfg.documents.map((d) => {
-      const clean: Doc = {};
-      for (const [k, v] of Object.entries(d)) if (v !== undefined) clean[k] = v;
-      return clean;
-    });
-    await db.collection(cfg.collection).insertMany(docs as never[]);
+    const strip = (rows: Doc[]): Doc[] =>
+      rows.map((d) => {
+        const clean: Doc = {};
+        for (const [k, v] of Object.entries(d)) if (v !== undefined) clean[k] = v;
+        return clean;
+      });
+    await db.collection(cfg.collection).insertMany(strip(cfg.documents) as never[]);
+    for (const [name, rows] of Object.entries(cfg.extraCollections ?? {})) {
+      if (rows.length) await db.collection(name).insertMany(strip(rows) as never[]);
+    }
   };
   await seed(pyDb);
   await seed(tsDb);
@@ -245,6 +265,32 @@ export async function runProjectionParity(cfg: ProjectionParityConfig): Promise<
   };
 
   try {
+    // Mixed-ownership setup: project the dependency FIRST, with a different
+    // owner on each database — Python on PY, the NestJS port on TS.
+    let prePath = '';
+    if (cfg.preProject) {
+      prePath = join(dir, 'pre.json');
+      writeFileSync(prePath, JSON.stringify(cfg.preProject.ids), 'utf8');
+      await runPythonDriver(PY_DB, cfg.preProject.sourceType, prePath);
+      for (const [sid, uid, cid] of cfg.preProject.ids) {
+        const r = await hookAfterSourceWrite(tsDb, uid, cid, cfg.preProject.sourceType, sid);
+        if (!r.ok) throw new Error(`ts pre-projection failed for ${sid}: ${r.error}`);
+      }
+    }
+
+    /**
+     * Every phase below wipes BRIDGE_DB's fin_txn before re-running. When a
+     * dependency was pre-projected, that wipe removes ITS rows too, so they
+     * have to be restored or the phase compares a partial ledger against a
+     * full reference. The dependency is never in the delegation list, so this
+     * always projects locally in Python.
+     */
+    const restorePreProjection = async (env: Record<string, string>): Promise<void> => {
+      if (cfg.preProject) {
+        await runPythonDriver(BRIDGE_DB, cfg.preProject.sourceType, prePath, env);
+      }
+    };
+
     await runPythonDriver(PY_DB, cfg.sourceType, specPath);
 
     for (let round = 0; round < 2; round += 1) {
@@ -291,6 +337,11 @@ export async function runProjectionParity(cfg: ProjectionParityConfig): Promise<
       if (!(await waitFor(`http://127.0.0.1:${cfg.nestPort}/api/vendors`))) {
         throw new Error('NestJS did not start');
       }
+      // Case D: the dependency stays with Python while the type under test
+      // delegates — bridgeEnv lists only cfg.sourceType.
+      if (cfg.preProject) {
+        await runPythonDriver(BRIDGE_DB, cfg.preProject.sourceType, prePath, bridgeEnv);
+      }
       await runPythonDriver(BRIDGE_DB, cfg.sourceType, specPath, bridgeEnv);
       const brText = JSON.stringify(await ledger(brDb));
       report(
@@ -301,6 +352,7 @@ export async function runProjectionParity(cfg: ProjectionParityConfig): Promise<
 
       // Delegation is per source type, so a different list must NOT delegate.
       await brDb.collection('fin_txn').deleteMany({});
+      await restorePreProjection(bridgeEnv);
       await runPythonDriver(BRIDGE_DB, cfg.sourceType, specPath, {
         ...bridgeEnv,
         TRUKVIA_FIN_NODE_SOURCE_TYPES: 'some_other_type',
@@ -314,6 +366,7 @@ export async function runProjectionParity(cfg: ProjectionParityConfig): Promise<
 
       // And with no env at all — the default every deployment starts from.
       await brDb.collection('fin_txn').deleteMany({});
+      await restorePreProjection({});
       await runPythonDriver(BRIDGE_DB, cfg.sourceType, specPath);
       const defaultText = JSON.stringify(await ledger(brDb));
       report(
@@ -485,6 +538,7 @@ export async function runProjectionParity(cfg: ProjectionParityConfig): Promise<
 
     // ── Fallback: configured, but NestJS is gone ─────────────────────────
     await brDb.collection('fin_txn').deleteMany({});
+    await restorePreProjection(bridgeEnv);
     await runPythonDriver(BRIDGE_DB, cfg.sourceType, specPath, bridgeEnv);
     const fbText = JSON.stringify(await ledger(brDb));
     report(

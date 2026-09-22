@@ -268,6 +268,66 @@ export function projectMechanicPayment(p: Doc): Leg[] {
 }
 
 /**
+ * services_fin_txn.project_mechanic_work_order — slice 2c unit 7.
+ *
+ * An ORPHAN-ONLY projection, and the shortest guard list of any unit so far.
+ * A work order posts legs only when NO paired expense exists: in the canonical
+ * flow the Expense carries the real cost, and projecting both would
+ * double-count AP_MECHANIC. When unpaired, the cost is parked in SUSPENSE so
+ * it is visible rather than lost.
+ *
+ * Guard order is `is_deleted`, then the pairing, then the amount. Note what is
+ * NOT here: there is **no is_reversed guard and no is_historical guard** —
+ * unlike every other projection ported so far. Verified against the
+ * interpreter: a reversed or historical work order still projects.
+ *
+ * The date field is `work_date`, not `date`, and the narration is a fixed
+ * `f"WO {id} (orphan)"` with no fallback and no strip — only _leg's 400-char
+ * cap applies. No source_key and no category are set.
+ */
+export function projectMechanicWorkOrder(wo: Doc, hasPaired: boolean): Leg[] {
+  if (pyTruthy(wo['is_deleted'])) return [];
+  if (hasPaired) return [];
+  const amt = q2(wo['amount'] ?? 0);
+  if (amt <= 0) return [];
+
+  const date = str(wo['work_date']);
+  const id = str(wo['id']);
+  const common = {
+    source_type: 'mechanic_work_order',
+    source_id: id,
+    party_type: 'mechanic',
+    party_id: str(wo['mechanic_id']),
+    party_name: str(wo['mechanic_name']),
+    vehicle_id: str(wo['vehicle_id']),
+    trip_id: str(wo['trip_id']),
+    narration: `WO ${id} (orphan)`,
+  };
+  return [
+    leg({
+      ...common,
+      txn_date: date,
+      account_code: 'SUSPENSE',
+      direction: 'in',
+      amount: amt,
+      counter_account_code: 'AP_MECHANIC',
+      txn_type: 'mechanic_wo_orphan',
+      ref_leg: 'suspense_debit',
+    }),
+    leg({
+      ...common,
+      txn_date: date,
+      account_code: 'AP_MECHANIC',
+      direction: 'out',
+      amount: amt,
+      counter_account_code: 'SUSPENSE',
+      txn_type: 'mechanic_wo_orphan',
+      ref_leg: 'ap_credit',
+    }),
+  ];
+}
+
+/**
  * services_fin_txn.project_expense — slice 2c unit 6.
  *
  * The canonical cost projection, and by volume the most important one: roughly
@@ -652,17 +712,48 @@ export async function ensureSystemAccounts(
 }
 
 /** services_fin_txn._has_paired_expense */
-async function hasPairedExpense(mongo: Db, uid: string, cid: string, billId: string): Promise<boolean> {
-  const row = await mongo.collection<Doc>('expenses').findOne(
-    {
-      user_id: uid,
-      company_id: cid,
-      is_deleted: { $ne: true },
-      is_reversed: { $ne: true },
-      vendor_bill_id: billId,
-    },
-    { projection: { _id: 0, id: 1 } },
-  );
+/**
+ * services_fin_txn._has_paired_expense.
+ *
+ * It reads the `expenses` SOURCE collection, not `fin_txn`. That matters more
+ * than it looks: the answer does not depend on who owns the expense
+ * PROJECTION, so pairing behaves identically whether Python or NestJS
+ * projected the expense, or neither has yet. MongoDB owns `expenses` either
+ * way.
+ *
+ * Two details are Mongo semantics rather than Python ones, and both are
+ * deliberate:
+ *
+ *   • `$ne: true` excludes ONLY BSON true. An expense with `is_deleted: 1`,
+ *     `"false"`, `0`, null or the field absent still counts as paired —
+ *     verified against the server. So an expense that projects nothing because
+ *     `pyTruthy(1)` skips it can still SUPPRESS its work order, leaving both
+ *     documents with zero legs. That is Python's behaviour, not a defect here.
+ *   • the probe checks neither `is_historical` nor the amount, so a historical
+ *     or zero-amount expense also suppresses.
+ *
+ * Python applies each key only when truthy, so both can be set at once; the
+ * dispatcher passes exactly one.
+ */
+async function hasPairedExpense(
+  mongo: Db,
+  uid: string,
+  cid: string,
+  opts: { vendorBillId?: string; mechanicWorkOrderId?: string },
+): Promise<boolean> {
+  const filter: Doc = {
+    user_id: uid,
+    company_id: cid,
+    is_deleted: { $ne: true },
+    is_reversed: { $ne: true },
+  };
+  if (pyTruthy(opts.vendorBillId)) filter['vendor_bill_id'] = opts.vendorBillId;
+  if (pyTruthy(opts.mechanicWorkOrderId)) {
+    filter['mechanic_work_order_id'] = opts.mechanicWorkOrderId;
+  }
+  const row = await mongo
+    .collection<Doc>('expenses')
+    .findOne(filter, { projection: { _id: 0, id: 1 } });
   return Boolean(row);
 }
 
@@ -755,6 +846,7 @@ export const PORTED_SOURCE_TYPES = [
   'driver_payment',
   'credit_debit_note',
   'expense',
+  'mechanic_work_order',
 ] as const;
 export type PortedSourceType = (typeof PORTED_SOURCE_TYPES)[number];
 
@@ -806,9 +898,18 @@ export async function reprojectVendorSourceOrThrow(
   } else if (sourceType === 'expense') {
     const doc = await findSource('expenses');
     if (doc) legs = projectExpense(doc);
+  } else if (sourceType === 'mechanic_work_order') {
+    const doc = await findSource('mechanic_work_orders');
+    // Two reads, exactly as Python: the work order, then the pairing probe.
+    if (doc) {
+      legs = projectMechanicWorkOrder(
+        doc,
+        await hasPairedExpense(mongo, uid, cid, { mechanicWorkOrderId: sourceId }),
+      );
+    }
   } else {
     const doc = await findSource('vendor_bills');
-    if (doc) legs = projectVendorBill(doc, await hasPairedExpense(mongo, uid, cid, sourceId));
+    if (doc) legs = projectVendorBill(doc, await hasPairedExpense(mongo, uid, cid, { vendorBillId: sourceId }));
   }
 
   const written = await persistLegs(mongo, uid, cid, legs, codeToId);
