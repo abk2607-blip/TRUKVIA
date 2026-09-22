@@ -1216,8 +1216,33 @@ export async function ensureSystemAccounts(
         remarks: 'seeded by Iter150A-1',
         created_at: nowIso(),
       });
-    } catch {
-      /* Python swallows a racing insert and re-reads below. */
+    } catch (err) {
+      /**
+       * Python re-reads and RE-RAISES; this port dropped both, which made a
+       * refused insert look like a success:
+       *
+       *   except Exception:
+       *       hit = await db.fin_accounts.find_one({...})
+       *       if hit: code_to_id[code] = hit["id"]; continue
+       *       raise
+       *
+       * A racing seeder is benign — the id is derived positionally, so the
+       * winner wrote the same row and the re-read finds it. Anything else is
+       * not benign: swallowing it left `codeToId` holding an id for a row that
+       * does not exist, `persistLegs` then found a truthy id and wrote a
+       * fin_txn leg pointing at a missing account — silently, with no error
+       * and no failure-queue entry. Re-raising keeps the projection atomic:
+       * it throws before any delete or persist, so the caller records the
+       * failure and no ledger row is written.
+       */
+      const hit = await mongo
+        .collection<Doc>('fin_accounts')
+        .findOne({ user_id: uid, company_id: cid, code: seed.code }, { projection: { _id: 0, id: 1 } });
+      if (hit) {
+        codeToId[seed.code] = str(hit['id']);
+        continue;
+      }
+      throw err;
     }
     codeToId[seed.code] = id;
   }
