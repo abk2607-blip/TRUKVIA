@@ -1,0 +1,122 @@
+name: apps-api
+
+# Phase 6 · independent CI evidence for the NestJS Finance migration.
+#
+# This workflow exists because nothing in .github/ covered apps/api, so every
+# result for the 13 ported Finance projections was local-only. It is ADDITIVE:
+# it does not touch backend-node.yml or regression-guard.yml, and it does not
+# read backend/requirements.txt.
+#
+# It runs exactly the two commands that produced the local evidence — no new
+# test strategy is invented here:
+#
+#     npm run typecheck    ->  tsc -p tsconfig.json --noEmit
+#     npm run test         ->  vitest run
+#
+# NO PRODUCTION CONTACT BY CONSTRUCTION. The suite declares no environment
+# variables and opens no MongoDB, PostgreSQL or HTTP connection, so there is
+# nothing to point at a production service and no secret to supply. The job
+# requests read-only permissions and defines no `services:` and no `env:`.
+#
+# Deliberately NOT run here, and why:
+#   * the Finance parity harnesses (scripts/fin-*-parity.ts) hardcode a Windows
+#     Python interpreter and spawn drivers that import the Python backend, so
+#     they would require backend/requirements.txt — the known-broken legacy
+#     dependency path. Out of scope; they stay a local pre-merge check.
+#   * backend/tests/test_internal_fin_hook.py boots a real uvicorn `server:app`,
+#     which needs that same dependency path.
+#   * `npm run lint` — it was not part of the verified local evidence, and
+#     adding it here could only tempt a source change made to please CI.
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'apps/api/**'
+      - '.github/workflows/apps-api.yml'
+  push:
+    branches:
+      - 'review/**'
+    paths:
+      - 'apps/api/**'
+      - '.github/workflows/apps-api.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: apps-api-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: apps/api
+
+jobs:
+  verify:
+    name: typecheck + test (apps/api)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # apps/api/package.json pins engines to ">=24.0.0 <25.0.0", and the
+      # lockfile is npm. cache-dependency-path names the file explicitly so a
+      # missing lockfile fails loudly here rather than silently later.
+      - name: Setup Node.js 24.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24.x'
+          cache: 'npm'
+          cache-dependency-path: apps/api/package-lock.json
+
+      - name: Confirm the npm lockfile is present
+        run: |
+          test -f package-lock.json || { echo "::error::apps/api/package-lock.json is missing"; exit 1; }
+          echo "lockfile present: $(wc -c < package-lock.json) bytes"
+
+      # `npm ci` installs strictly from the lockfile and fails if package.json
+      # and the lockfile disagree — reproducible, unlike `npm install`.
+      - name: Install dependencies (npm ci)
+        run: npm ci
+
+      - name: TypeScript typecheck
+        run: npm run typecheck
+
+      # One run, two reporters: the default reporter for a readable log and the
+      # json reporter for the count guard below. Running vitest twice would
+      # double the time and could disagree with itself.
+      - name: Vitest — full apps/api suite
+        run: npm run test -- --reporter=default --reporter=json --outputFile=${{ runner.temp }}/vitest-report.json
+
+      # A guard, not a test. The local evidence is 560 tests across 16 files;
+      # a silent collection failure would otherwise report zero tests and look
+      # exactly like a pass.
+      - name: Confirm the whole suite was collected
+        run: |
+          node -e '
+            const r = require(process.argv[1]);
+            const files = new Set(r.testResults.map(t => t.name));
+            console.log("test files:", files.size, "| tests:", r.numTotalTests,
+                        "| passed:", r.numPassedTests, "| failed:", r.numFailedTests);
+            if (r.numFailedTests > 0) {
+              console.error("::error::" + r.numFailedTests + " failing tests");
+              process.exit(1);
+            }
+            if (r.numTotalTests < 560 || files.size < 16) {
+              console.error("::error::expected at least 560 tests across 16 files, got " +
+                            r.numTotalTests + " across " + files.size);
+              process.exit(1);
+            }
+          ' "${{ runner.temp }}/vitest-report.json"
+
+      - name: Upload the test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apps-api-vitest-report
+          path: ${{ runner.temp }}/vitest-report.json
+          if-no-files-found: warn
