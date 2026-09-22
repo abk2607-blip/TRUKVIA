@@ -89,6 +89,11 @@ const documents: Doc[] = [
   // narration — NOT stripped, so the separator survives
   base({ id: 'cdn_no_number', note_number: '', invoice_number_snapshot: '' }),
   base({ id: 'cdn_missing_number', note_number: undefined, invoice_number_snapshot: undefined }),
+  // A PRESENT null on either field renders as the literal "None" — the
+  // f-string default applies only to an ABSENT key. Slice 2c step 7.
+  base({ id: 'cdn_null_number', note_number: null }),
+  base({ id: 'cdn_null_invoice', invoice_number_snapshot: null }),
+  base({ id: 'cdn_null_both', note_number: null, invoice_number_snapshot: null }),
   base({ id: 'cdn_no_invoice_snap', invoice_number_snapshot: '' }),
   base({ id: 'cdn_long_number', note_number: 'N'.repeat(500) }), // narration caps at 400
   base({ id: 'cdn_unicode', note_number: 'क्रेडिट · 数', invoice_number_snapshot: 'चालान' }),
@@ -131,6 +136,29 @@ void runProjectionParity({
       rows
         .filter((r) => r['source_id'] === id && r['user_id'] === UID)
         .sort((a, b) => String(a['ref_source_key']).localeCompare(String(b['ref_source_key'])));
+
+    // 0. The f-string fields: an ABSENT key takes the "" default, a PRESENT
+    //    null renders as the literal "None". Slice 2c step 7.
+    report(
+      String(of('cdn_null_number')[0]?.['narration']) === 'CN None · Inv INV-9',
+      'a null note_number interpolates as the literal "None"',
+      JSON.stringify(of('cdn_null_number')[0]?.['narration']),
+    );
+    report(
+      String(of('cdn_null_invoice')[0]?.['narration']) === 'CN CN-001 · Inv None',
+      'a null invoice_number_snapshot interpolates as the literal "None"',
+      JSON.stringify(of('cdn_null_invoice')[0]?.['narration']),
+    );
+    report(
+      String(of('cdn_null_both')[0]?.['narration']) === 'CN None · Inv None',
+      'both nulls render together',
+      JSON.stringify(of('cdn_null_both')[0]?.['narration']),
+    );
+    report(
+      String(of('cdn_missing_number')[0]?.['narration']) === 'CN  · Inv ',
+      'an ABSENT key still takes the "" default, spacing and all',
+      JSON.stringify(of('cdn_missing_number')[0]?.['narration']),
+    );
 
     // 1. A credit note REVERSES the receivable; a debit note adds to it.
     report(

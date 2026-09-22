@@ -178,11 +178,30 @@ export function partyPaymentLegs(p: Doc, opts: PartyPaymentOpts): Leg[] {
   if (amt <= 0) return [];
   const date = str(p['date']);
   const bankCode = modeAccount(p['mode']);
-  const typ = str(p['type']) || 'payment_out';
-  // Python: f"{party_type.title()} {typ} · {ref_no}".strip(" ·") — strip()
-  // removes any leading/trailing space or "·" characters, not one suffix.
+  /**
+   * Python: `typ = p.get("type") or "payment_out"`, keeping the RAW value.
+   * It is then compared to the string, so a non-string type can never equal
+   * "payment_out" and always takes the receipt branch — while still being
+   * interpolated into the narration as Python would render it.
+   */
+  const typ: unknown = pyTruthy(p['type']) ? p['type'] : 'payment_out';
+  /**
+   * Python: f"{party_type.title()} {typ} · {p.get('ref_no', '')}".strip(" ·")
+   *
+   * Two details, both measured by scripts/fin-vendorpay-bridge-parity.ts:
+   *
+   *   - `.get('ref_no', '')` defaults ONLY when the key is absent. A key
+   *     present with value None interpolates as the literal text "None" and
+   *     survives the strip, because "None" ends in a letter. `str()` gave ""
+   *     for both and silently lost a reference that Python shows.
+   *   - strip(" ·") removes ALL leading and trailing spaces and middots,
+   *     not one suffix.
+   */
   const title = opts.partyType.charAt(0).toUpperCase() + opts.partyType.slice(1);
-  const narration = `${title} ${typ} · ${str(p['ref_no'])}`.replace(/^[ ·]+|[ ·]+$/g, '');
+  const narration = `${title} ${pyInterp(typ)} · ${pyInterp(p['ref_no'])}`.replace(
+    /^[ ·]+|[ ·]+$/g,
+    '',
+  );
   const common = {
     source_type: opts.srcType,
     source_id: str(p['id']),
@@ -1005,8 +1024,14 @@ export function projectCreditDebitNote(note: Doc): Leg[] {
     source_id: str(note['id']),
     party_type: 'customer',
     party_id: str(note['customer_id']),
-    // Python f-string, with no .strip() — see note 4 above.
-    narration: `${kind === 'credit' ? 'CN' : 'DN'} ${str(note['note_number'])} · Inv ${str(
+    /**
+     * Python f-string, with no .strip() — see note 4 above.
+     *
+     * `note.get('note_number', '')` defaults ONLY on an absent key, so a
+     * present None renders as the literal "None" on both fields. `str()`
+     * flattened the two cases together; pyInterp keeps them apart.
+     */
+    narration: `${kind === 'credit' ? 'CN' : 'DN'} ${pyInterp(note['note_number'])} · Inv ${pyInterp(
       note['invoice_number_snapshot'],
     )}`,
   };
@@ -1131,7 +1156,10 @@ export function projectVendorBill(vb: Doc, hasPairedExpense: boolean): Leg[] {
     party_name: str(vb['vendor_name']),
     vehicle_id: str(vb['vehicle_id']),
     trip_id: str(vb['trip_id']),
-    narration: `VendorBill ${str(vb['bill_number'])} (orphan)`,
+    // Python: f"VendorBill {vb.get('bill_number', '')} (orphan)" — NOT
+    // stripped, so an absent number leaves the double space and a present
+    // None renders as the literal "None". See partyPaymentLegs above.
+    narration: `VendorBill ${pyInterp(vb['bill_number'])} (orphan)`,
   };
   return [
     leg({

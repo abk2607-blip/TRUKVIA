@@ -136,7 +136,7 @@ function runPythonDriver(
   });
 }
 
-function killPort(port: number): void {
+export function killPort(port: number): void {
   try {
     const out = execFileSync('netstat', ['-ano'], { encoding: 'utf8' });
     for (const line of out.split('\n')) {
@@ -156,7 +156,7 @@ function killPort(port: number): void {
   }
 }
 
-function startNest(dbName: string, port: number, token: string): ChildProcess {
+export function startNest(dbName: string, port: number, token: string): ChildProcess {
   return spawn('npx', ['tsx', 'src/main.ts'], {
     cwd: `${REPO}/apps/api`,
     env: {
@@ -173,7 +173,7 @@ function startNest(dbName: string, port: number, token: string): ChildProcess {
   });
 }
 
-async function waitFor(url: string, tries = 90): Promise<boolean> {
+export async function waitFor(url: string, tries = 90): Promise<boolean> {
   for (let i = 0; i < tries; i += 1) {
     try {
       const r = await fetch(url);
@@ -187,7 +187,7 @@ async function waitFor(url: string, tries = 90): Promise<boolean> {
 }
 
 /** fin_txn rows, minus the two fields that legitimately differ between runs. */
-async function ledger(db: Db): Promise<Doc[]> {
+export async function ledger(db: Db): Promise<Doc[]> {
   const rows = await db
     .collection<Doc>('fin_txn')
     .find({}, { projection: { _id: 0 } })
