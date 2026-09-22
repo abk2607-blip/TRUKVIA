@@ -3,14 +3,14 @@
  *
  *   npx tsx scripts/fin-mechanic-parity.ts
  *
- * The orchestration lives in ./lib/party-payment-parity.ts; this file is only
+ * The orchestration lives in ./lib/projection-parity.ts; this file is only
  * the fixtures. They target the guards and the edges, not the happy path:
  * every branch of _party_payment_legs, both directions, every account-resolving
  * mode including an unknown one, the rounding rule, and the narration strip.
  */
 export {}; // keeps this a module, so it does not share scope with the other scripts
 
-import { runPartyPaymentParity, type Doc } from './lib/party-payment-parity';
+import { runProjectionParity, type Doc } from './lib/projection-parity';
 
 const UID = 'user_mechparity';
 const CID = 'co_mechparity';
@@ -71,7 +71,7 @@ const documents: Doc[] = [
   base({ id: 'mpay_out_bank', user_id: UID2, company_id: CID2, amount: 4242, ref_no: 'OTHER' }),
 ];
 
-void runPartyPaymentParity({
+void runProjectionParity({
   sourceType: 'mechanic_payment',
   collection: 'mechanic_payments',
   slug: 'mech',

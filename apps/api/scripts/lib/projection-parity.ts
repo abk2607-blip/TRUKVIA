@@ -1,5 +1,5 @@
 /**
- * Shared orchestration for a party-payment projection parity run.
+ * Shared orchestration for a single-source-type projection parity run.
  *
  * Three throwaway MongoDB databases, seeded identically:
  *
@@ -14,9 +14,10 @@
  * Every source document is reprojected TWICE on each side, so delete-then-
  * insert idempotency is part of the comparison rather than a separate test.
  *
- * ONE implementation, configured per source type. mechanic_payment and
- * supplier_payment differ only in their fixtures and their extra assertions,
- * and a second copy of this file would drift from the first.
+ * ONE implementation, configured per source type. The source types differ only
+ * in their fixtures and their extra assertions, and a second copy of this file
+ * would drift from the first. It started as a party-payment runner; nothing in
+ * it is specific to party payments, so credit_debit_note reuses it unchanged.
  */
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { createServer, type Server } from 'node:http';
@@ -33,7 +34,7 @@ const PY = 'D:/trk-venv/Scripts/python.exe';
 export type Doc = Record<string, unknown>;
 export type Report = (ok: boolean, name: string, detail?: string) => void;
 
-export interface ParityConfig {
+export interface ProjectionParityConfig {
   /** The fin_txn source_type, e.g. "supplier_payment". */
   sourceType: string;
   /** The MongoDB collection holding the source documents. */
@@ -190,7 +191,7 @@ function diffAt(a: string, b: string): string {
   );
 }
 
-export async function runPartyPaymentParity(cfg: ParityConfig): Promise<void> {
+export async function runProjectionParity(cfg: ProjectionParityConfig): Promise<void> {
   const stamp = Date.now();
   const PY_DB = `trukvia_${cfg.slug}parity_py_${stamp}`;
   const TS_DB = `trukvia_${cfg.slug}parity_ts_${stamp}`;

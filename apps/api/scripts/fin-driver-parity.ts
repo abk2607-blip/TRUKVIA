@@ -3,7 +3,7 @@
  *
  *   npx tsx scripts/fin-driver-parity.ts
  *
- * The orchestration lives in ./lib/party-payment-parity.ts. Two things make
+ * The orchestration lives in ./lib/projection-parity.ts. Two things make
  * this run different from the mechanic and supplier ones:
  *
  *   1. `verifyRouting` is on. driver_payment is reached through the Iter150I
@@ -17,7 +17,7 @@
  */
 export {}; // keeps this a module, so it does not share scope with the other scripts
 
-import { runPartyPaymentParity, type Doc } from './lib/party-payment-parity';
+import { runProjectionParity, type Doc } from './lib/projection-parity';
 
 const UID = 'user_drvparity';
 const CID = 'co_drvparity';
@@ -84,7 +84,7 @@ const documents: Doc[] = [
   base({ id: 'dpay_out_bank', user_id: UID2, company_id: CID2, amount: 4242, ref_no: 'OTHER' }),
 ];
 
-void runPartyPaymentParity({
+void runProjectionParity({
   sourceType: 'driver_payment',
   collection: 'driver_payments',
   slug: 'drv',

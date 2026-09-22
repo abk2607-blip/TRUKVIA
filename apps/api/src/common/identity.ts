@@ -39,7 +39,7 @@ type Doc = Record<string, unknown>;
 const has = (o: object, k: string): boolean => Object.prototype.hasOwnProperty.call(o, k);
 
 /** Python truthiness for the values this code path can see. */
-function pyTruthy(v: unknown): boolean {
+export function pyTruthy(v: unknown): boolean {
   if (v === undefined || v === null || v === false) return false;
   if (v === '' || v === 0) return false;
   if (Array.isArray(v)) return v.length > 0;

@@ -22,6 +22,7 @@
  */
 import type { Db } from 'mongodb';
 import { pyRound2 } from '../common/py-round';
+import { pyTruthy } from '../common/identity';
 
 /** models.py FIN_SYSTEM_ACCOUNTS, including the appended DRIVER_OUTFLOW entry. */
 export const FIN_SYSTEM_ACCOUNTS: Array<{ code: string; name: string; type: string }> = [
@@ -267,6 +268,109 @@ export function projectMechanicPayment(p: Doc): Leg[] {
 }
 
 /**
+ * services_fin_txn.project_credit_debit_note — slice 2c unit 5.
+ *
+ * NOT a party payment, and deliberately not routed through the shared helper:
+ * there is no money side here at all. Both legs are the fixed pair AR/SALES,
+ * so no `mode` is read and no bank account is resolved. A credit note reverses
+ * the customer's receivable; a debit note adds to it.
+ *
+ * Four things differ from every projection ported so far, each verified
+ * against the running interpreter rather than assumed:
+ *
+ *   1. the guards are `status != "issued"` and `is_historical`. There is NO
+ *      is_deleted or is_reversed check — those fields do not exist on the
+ *      CreditDebitNote model; a cancelled note carries status "cancelled",
+ *      which the status guard already rejects;
+ *   2. the amount field is `total_amount`, not `amount`, and the date field is
+ *      `note_date`, not `date`;
+ *   3. `kind` selects the branch by `== "credit"`, so a falsy kind defaults to
+ *      credit and ANY other value — "debit", "weird" — takes the debit branch;
+ *   4. the narration is NOT stripped. Every other projection ends with
+ *      `.strip(" ·")`; this one does not, so an empty note_number and
+ *      invoice_number_snapshot produce exactly `"CN  · Inv "`, two spaces and
+ *      a dangling separator included. Trimming it would be a silent
+ *      difference in a field that reaches the day-book.
+ */
+export function projectCreditDebitNote(note: Doc): Leg[] {
+  if (note['status'] !== 'issued') return [];
+  if (note['is_historical']) return [];
+  const total = q2(note['total_amount'] ?? 0);
+  if (total <= 0) return [];
+
+  /**
+   * Python: `note.get("kind") or "credit"`, then `kind == "credit"`.
+   *
+   * The `or` is PYTHON truthiness, and the comparison is against the raw value
+   * — not a stringified one. A truthy NON-string kind therefore survives the
+   * default and fails the equality test, so Python takes the DEBIT branch.
+   * Coercing with str() first would have turned it into "" and then "credit",
+   * silently flipping the sign of the note. Verified against the interpreter
+   * for 5, True, ['x'] and {'a': 1} — all four give debit_note_issue.
+   */
+  const rawKind = note['kind'];
+  const kind: unknown = pyTruthy(rawKind) ? rawKind : 'credit';
+  const date = str(note['note_date']);
+  const common = {
+    source_type: 'credit_debit_note',
+    source_id: str(note['id']),
+    party_type: 'customer',
+    party_id: str(note['customer_id']),
+    // Python f-string, with no .strip() — see note 4 above.
+    narration: `${kind === 'credit' ? 'CN' : 'DN'} ${str(note['note_number'])} · Inv ${str(
+      note['invoice_number_snapshot'],
+    )}`,
+  };
+
+  if (kind === 'credit') {
+    return [
+      leg({
+        ...common,
+        txn_date: date,
+        account_code: 'AR',
+        direction: 'out',
+        amount: total,
+        counter_account_code: 'SALES',
+        txn_type: 'credit_note_issue',
+        ref_leg: 'ar_credit',
+      }),
+      leg({
+        ...common,
+        txn_date: date,
+        account_code: 'SALES',
+        direction: 'in',
+        amount: total,
+        counter_account_code: 'AR',
+        txn_type: 'credit_note_issue',
+        ref_leg: 'sales_debit',
+      }),
+    ];
+  }
+  return [
+    leg({
+      ...common,
+      txn_date: date,
+      account_code: 'AR',
+      direction: 'in',
+      amount: total,
+      counter_account_code: 'SALES',
+      txn_type: 'debit_note_issue',
+      ref_leg: 'ar_debit',
+    }),
+    leg({
+      ...common,
+      txn_date: date,
+      account_code: 'SALES',
+      direction: 'out',
+      amount: total,
+      counter_account_code: 'AR',
+      txn_type: 'debit_note_issue',
+      ref_leg: 'sales_credit',
+    }),
+  ];
+}
+
+/**
  * services_fin_txn.project_driver_payment — slice 2c unit 4.
  *
  * Verified against the source: it IS a plain `_party_payment_legs` call, with
@@ -505,6 +609,7 @@ export const PORTED_SOURCE_TYPES = [
   'mechanic_payment',
   'supplier_payment',
   'driver_payment',
+  'credit_debit_note',
 ] as const;
 export type PortedSourceType = (typeof PORTED_SOURCE_TYPES)[number];
 
@@ -550,6 +655,9 @@ export async function reprojectVendorSourceOrThrow(
   } else if (sourceType === 'driver_payment') {
     const doc = await findSource('driver_payments');
     if (doc) legs = projectDriverPayment(doc);
+  } else if (sourceType === 'credit_debit_note') {
+    const doc = await findSource('credit_debit_notes');
+    if (doc) legs = projectCreditDebitNote(doc);
   } else {
     const doc = await findSource('vendor_bills');
     if (doc) legs = projectVendorBill(doc, await hasPairedExpense(mongo, uid, cid, sourceId));

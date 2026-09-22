@@ -3,7 +3,7 @@
  *
  *   npx tsx scripts/fin-supplier-parity.ts
  *
- * The orchestration lives in ./lib/party-payment-parity.ts. These fixtures
+ * The orchestration lives in ./lib/projection-parity.ts. These fixtures
  * cover the same ground as the mechanic run PLUS the two things that make
  * supplier_payment genuinely different from _party_payment_legs:
  *
@@ -15,7 +15,7 @@
  */
 export {}; // keeps this a module, so it does not share scope with the other scripts
 
-import { runPartyPaymentParity, type Doc } from './lib/party-payment-parity';
+import { runProjectionParity, type Doc } from './lib/projection-parity';
 
 const UID = 'user_supparity';
 const CID = 'co_supparity';
@@ -90,7 +90,7 @@ const documents: Doc[] = [
   base({ id: 'sp_out_bank', user_id: UID2, company_id: CID2, amount: 4242, ref_no: 'OTHER' }),
 ];
 
-void runPartyPaymentParity({
+void runProjectionParity({
   sourceType: 'supplier_payment',
   collection: 'supplier_payments',
   slug: 'sup',
