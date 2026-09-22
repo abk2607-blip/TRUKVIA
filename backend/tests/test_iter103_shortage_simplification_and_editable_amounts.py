@@ -18,6 +18,18 @@ import os
 import uuid
 
 import httpx
+from datetime import date as _date, timedelta as _timedelta
+
+# Iter-maintenance (Sep 2026): the invoice API refuses a future invoice_date,
+# so these fixtures are anchored to recent PAST days derived at run time. The
+# original day-gaps between them are preserved; a hardcoded calendar date is
+# what silently expired and broke this module in the first place.
+_D = _date.today()
+
+
+def _ago(days: int) -> str:
+    return (_D - _timedelta(days=days)).isoformat()
+
 
 
 API = os.environ.get("REACT_APP_BACKEND_URL", "http://localhost:8001").rstrip("/") + "/api"
@@ -60,7 +72,7 @@ def test_product_allowance_used_when_customer_has_no_custom_limit():
         # method=full_after_limit → deduction = 0.150 × 40000 = 6000.00
         t = httpx.post(f"{API}/trips", headers=H, json={
             "customer_id": cust["id"], "product_id": prod["id"],
-            "date": "2026-11-01",
+            "date": _ago(8),
             "vehicle_id": veh["id"], "vehicle_number": veh["vehicle_number"],
             "vehicle_type": "own",
             "tons": 20.0, "loaded_qty": 20.0, "unloaded_qty": 19.85,
@@ -103,7 +115,7 @@ def test_customer_custom_allowance_wins_over_product():
     try:
         t = httpx.post(f"{API}/trips", headers=H, json={
             "customer_id": cust["id"], "product_id": prod["id"],
-            "date": "2026-11-01",
+            "date": _ago(8),
             "vehicle_id": veh["id"], "vehicle_number": veh["vehicle_number"],
             "vehicle_type": "own",
             "tons": 20.0, "loaded_qty": 20.0, "unloaded_qty": 19.85,
@@ -148,7 +160,7 @@ def test_historical_snapshot_immune_to_customer_edits():
     try:
         t0 = httpx.post(f"{API}/trips", headers=H, json={
             "customer_id": cust["id"], "product_id": prod["id"],
-            "date": "2026-11-01",
+            "date": _ago(8),
             "vehicle_id": veh["id"], "vehicle_number": veh["vehicle_number"],
             "vehicle_type": "own",
             "tons": 20.0, "loaded_qty": 20.0, "unloaded_qty": 19.85,
@@ -216,7 +228,7 @@ def test_excess_amount_does_not_touch_supplier_settlement():
         # unloaded > loaded → excess 0.200 MT
         t = httpx.post(f"{API}/trips", headers=H, json={
             "customer_id": cust["id"], "product_id": prod["id"],
-            "date": "2026-11-02",
+            "date": _ago(7),
             "vehicle_id": veh["id"], "vehicle_number": veh["vehicle_number"],
             "vehicle_type": "supplier", "supplier_id": sup["id"],
             "tons": 20.0, "loaded_qty": 20.0, "unloaded_qty": 20.2,
@@ -266,7 +278,7 @@ def test_manual_shortage_override_flows_to_invoice_and_audit():
     try:
         t = httpx.post(f"{API}/trips", headers=H, json={
             "customer_id": cust["id"], "product_id": prod["id"],
-            "date": "2026-11-03",
+            "date": _ago(6),
             "vehicle_id": veh["id"], "vehicle_number": veh["vehicle_number"],
             "vehicle_type": "own",
             "tons": 20.0, "loaded_qty": 20.0, "unloaded_qty": 19.85,
@@ -305,7 +317,7 @@ def test_manual_shortage_override_flows_to_invoice_and_audit():
 
         # Invoice must pick up the OVERRIDDEN value, not the system value
         inv = httpx.post(f"{API}/invoices", headers=H, json={
-            "customer_id": cust["id"], "invoice_date": "2026-11-04",
+            "customer_id": cust["id"], "invoice_date": _ago(5),
             "trip_ids": [tid], "hsn_sac": "996791", "gst_treatment": "rcm",
         }, timeout=T).json()
         inv_id = inv["id"]
@@ -340,7 +352,7 @@ def test_reverting_manual_to_system_value_clears_override_state():
     try:
         t = httpx.post(f"{API}/trips", headers=H, json={
             "customer_id": cust["id"], "product_id": prod["id"],
-            "date": "2026-11-03",
+            "date": _ago(6),
             "vehicle_id": veh["id"], "vehicle_number": veh["vehicle_number"],
             "vehicle_type": "own",
             "tons": 20.0, "loaded_qty": 20.0, "unloaded_qty": 19.85,
@@ -397,7 +409,7 @@ def test_manual_excess_override_flows_to_invoice_customer_side_only():
     try:
         t = httpx.post(f"{API}/trips", headers=H, json={
             "customer_id": cust["id"], "product_id": prod["id"],
-            "date": "2026-11-05",
+            "date": _ago(4),
             "vehicle_id": veh["id"], "vehicle_number": veh["vehicle_number"],
             "vehicle_type": "supplier", "supplier_id": sup["id"],
             "tons": 20.0, "loaded_qty": 20.0, "unloaded_qty": 20.2,
@@ -433,7 +445,7 @@ def test_manual_excess_override_flows_to_invoice_customer_side_only():
 
         # Invoice picks up the overridden value
         inv = httpx.post(f"{API}/invoices", headers=H, json={
-            "customer_id": cust["id"], "invoice_date": "2026-11-05",
+            "customer_id": cust["id"], "invoice_date": _ago(4),
             "trip_ids": [tid], "hsn_sac": "996791", "gst_treatment": "rcm",
         }, timeout=T).json()
         inv_id = inv["id"]
@@ -482,7 +494,7 @@ def test_supplier_fixed_kg_shortage_logic_unchanged():
         # Supplier limit 50 KG → exceeded → supplier deducts full 0.2 MT × 40000 = 8000.
         t = httpx.post(f"{API}/trips", headers=H, json={
             "customer_id": cust["id"], "product_id": prod["id"],
-            "date": "2026-11-06",
+            "date": _ago(3),
             "vehicle_id": veh["id"], "vehicle_number": veh["vehicle_number"],
             "vehicle_type": "supplier", "supplier_id": sup["id"],
             "tons": 20.0, "loaded_qty": 20.0, "unloaded_qty": 19.8,

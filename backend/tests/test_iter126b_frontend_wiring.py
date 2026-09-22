@@ -25,14 +25,30 @@ DEMO_TOKEN = os.environ["DEMO_TOKEN_VALUE"]
 HDR_BASE = {"Authorization": f"Bearer {DEMO_TOKEN}", "Content-Type": "application/json"}
 
 
-def _extract_patterns(js_or_py: str, marker: str) -> set[str]:
-    """Extract regex-string bodies between the specified marker block."""
-    # Frontend uses `/.../` literals — pull them out.
-    # Backend uses r"..." strings.
-    patterns = set()
-    for m in re.finditer(marker, js_or_py):
-        patterns.add(m.group(1))
-    return patterns
+def _repo_file(*parts: str) -> pathlib.Path:
+    """The container path when it exists, otherwise the same file in the repo.
+
+    The deployed pod holds the tree at /app; a checkout does not. Resolving
+    from __file__ lets the identical assertions run in both places.
+    """
+    deployed = pathlib.Path("/app").joinpath(*parts)
+    if deployed.exists():
+        return deployed
+    return pathlib.Path(__file__).resolve().parents[2].joinpath(*parts)
+
+
+def _block(text: str, start_marker: str, end_marker: str) -> str:
+    """The source between start_marker and the first end_marker after it.
+
+    Scoping the search to the declaration matters: api.js holds other arrays
+    of regex literals (_APPROVAL_ROUTE_MATCHERS among them) whose entries look
+    identical to a file-wide regex scan. Sweeping those in inflated the count
+    and produced phantom "frontend only" drift that no change to the Bucket-B
+    list could ever clear.
+    """
+    i = text.index(start_marker)
+    j = text.index(end_marker, i + len(start_marker))
+    return text[i:j]
 
 
 def test_frontend_bucket_b_mirrors_backend_bucket_b():
@@ -40,8 +56,12 @@ def test_frontend_bucket_b_mirrors_backend_bucket_b():
     (with /api prefix). If they drift, a save on an endpoint the backend
     protects will silently skip the key on the client (creating duplicates
     on retry) — this test is the guard-rail."""
-    fe = pathlib.Path("/app/frontend/src/api.js").read_text()
-    be = pathlib.Path("/app/backend/idempotency.py").read_text()
+    fe_src = _repo_file("frontend", "src", "api.js").read_text(encoding="utf-8")
+    be_src = _repo_file("backend", "idempotency.py").read_text(encoding="utf-8")
+
+    # Only the two Bucket-B declarations — never the rest of either file.
+    fe = _block(fe_src, "export const BUCKET_B_POST = [", "];")
+    be = _block(be_src, "BUCKET_B_PATTERNS", ")]")
 
     # Frontend patterns look like `/^\/trips$/`,
     fe_matches = re.findall(r"/\^\\/(.+?)\$/,", fe)
@@ -57,8 +77,9 @@ def test_frontend_bucket_b_mirrors_backend_bucket_b():
         f"  frontend only: {sorted(fe_norm - be_norm)}\n"
         f"  backend only:  {sorted(be_norm - fe_norm)}"
     )
-    # Sanity: the locked count from Iter126b (see PRD.md).
-    assert len(fe_norm) == 37, f"expected 37 patterns, got {len(fe_norm)}"
+    # Sanity: the locked count. 37 at Iter126b, plus the 15 Iter133
+    # write endpoints the client was not keying until PR #3.
+    assert len(fe_norm) == 52, f"expected 52 patterns, got {len(fe_norm)}"
 
 
 def _first_customer_id() -> str:
@@ -112,7 +133,7 @@ def test_double_click_save_with_frontend_key_creates_one_row():
 def test_frontend_api_js_has_key_attach_hook():
     """Guards against a refactor that accidentally deletes the request
     interceptor's Idempotency-Key attachment block."""
-    src = pathlib.Path("/app/frontend/src/api.js").read_text()
+    src = _repo_file("frontend", "src", "api.js").read_text(encoding="utf-8")
     assert '_isBucketBPost(cfg)' in src, "Bucket-B check missing from api.js"
     assert 'Idempotency-Key' in src, "Idempotency-Key header not attached in api.js"
     assert '_newUuid()' in src, "UUID generator not wired in api.js"

@@ -17,12 +17,40 @@ TOKEN = os.environ["DEMO_TOKEN_VALUE"]
 HEADERS = {"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"}
 
 
+CUSTOMER_NAME = "TEST_Iter42"
+
+
 def _customer():
-    r = requests.get(f"{API}/customers", headers=HEADERS)
-    for c in r.json():
-        if c["name"] == "TEST_Iter42":
+    """Resolve the TEST_Iter42 fixture, creating it only when it truly is absent.
+
+    The plain `GET /api/customers` browse path returns at most 20 000 rows and
+    hides fixture-named customers, so once the tenant grew past that window
+    this fixture stopped being visible there even though it existed. The test
+    then tried to create it again and duplicate-master prevention correctly
+    answered 409, whose body carries no top-level "id" -- every test in this
+    module died on the resulting KeyError before a single trip was made.
+
+    `?q=` is the application's own supported search path: it returns the
+    paginated envelope and deliberately bypasses the fixture-hide filter so
+    tests can find their own fixtures. The customer identity is unchanged.
+    """
+    r = requests.get(f"{API}/customers", headers=HEADERS, params={"q": CUSTOMER_NAME})
+    payload = r.json()
+    items = payload.get("items", []) if isinstance(payload, dict) else payload
+    for c in items:
+        if c["name"] == CUSTOMER_NAME:
             return c["id"]
-    return requests.post(f"{API}/customers", headers=HEADERS, json={"name": "TEST_Iter42", "state": "Andhra Pradesh"}).json()["id"]
+
+    created = requests.post(
+        f"{API}/customers", headers=HEADERS,
+        json={"name": CUSTOMER_NAME, "state": "Andhra Pradesh"},
+    )
+    body = created.json()
+    if created.status_code == 409:
+        # Present but outside the search window -- reuse the row the duplicate
+        # guard just pointed at rather than failing the whole module.
+        return body["detail"]["existing"]["id"]
+    return body["id"]
 
 
 def _make_trip(**overrides):
