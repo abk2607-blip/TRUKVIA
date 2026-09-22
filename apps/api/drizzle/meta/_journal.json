@@ -1,0 +1,41 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1789995512116,
+      "tag": "0000_loose_flatman",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1789996410089,
+      "tag": "0001_marvelous_ultimates",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789996660132,
+      "tag": "0002_dear_triathlon",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1789996910261,
+      "tag": "0003_premium_vector",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1790003743304,
+      "tag": "0004_tense_princess_powerful",
+      "breakpoints": true
+    }
+  ]
+}

@@ -36,8 +36,10 @@ from typing import Any, Dict, List, Optional
 
 from db import db
 from services_fin_txn import reproject_source, SUPPORTED_SOURCE_TYPES
+from services_fin_node_bridge import delegate_to_node, node_bridge_ready
 
 logger = logging.getLogger("iter150a2.hooks")
+
 
 # ── Retry policy ─────────────────────────────────────────────────────────
 # Base backoff = 60s; doubles per attempt; capped at 24h. After
@@ -217,6 +219,12 @@ async def hook_after_source_write(
                 "source_id": source_id, "deleted": None, "written": None,
                 "error": msg, "failure_id": None,
                 "resolved_failure_id": ""}
+
+    # Slice 2c: this source type may be owned by NestJS now. Default off.
+    if node_bridge_ready(source_type):
+        report = await delegate_to_node(user_id, company_id, source_type, source_id)
+        if report is not None:
+            return report
 
     try:
         deleted, written = await reproject_source(
