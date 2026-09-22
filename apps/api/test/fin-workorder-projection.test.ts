@@ -171,28 +171,12 @@ describe('narration', () => {
 
 describe('registration', () => {
   it('joins the ported list', () => {
-    expect([...PORTED_SOURCE_TYPES].sort()).toEqual([
-      'credit_debit_note',
-      'driver_payment',
-      'expense',
-      'mechanic_payment',
-      'mechanic_work_order',
-      'supplier_payment',
-      'vendor_bill',
-      'vendor_payment',
-    ]);
-  });
-
-  it('leaves exactly five source types with Python', () => {
+    expect([...PORTED_SOURCE_TYPES]).toContain('mechanic_work_order');
+    // The exact remaining list lives in the NEWEST slice's tests, so porting
+    // the next source type does not break this file.
     const unported = SUPPORTED_SOURCE_TYPES.filter(
       (t) => !(PORTED_SOURCE_TYPES as readonly string[]).includes(t),
     );
-    expect(unported).toEqual([
-      'invoice',
-      'trip_customer_receipt',
-      'wallet_recharge',
-      'wallet_transfer',
-      'wallet_adjustment',
-    ]);
+    expect(unported).not.toContain('mechanic_work_order');
   });
 });

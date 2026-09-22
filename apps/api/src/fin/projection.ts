@@ -268,6 +268,127 @@ export function projectMechanicPayment(p: Doc): Leg[] {
 }
 
 /**
+ * Python's f-string interpolation, for the one field that needs it.
+ *
+ * `f"… {wa.get('reason', '')}"` renders whatever the value IS. The default
+ * only applies when the key is ABSENT — a key present with value None
+ * interpolates as the literal text "None", which is visible in the narration.
+ * `str()` would give "" for both and silently lose the difference.
+ *
+ * Deliberately narrow: it covers the types a Mongo document can hold here.
+ * The wider `pyStr()` fidelity question across the older projections is still
+ * the separate unit recorded in slice 2c unit 5.
+ */
+function pyInterp(v: unknown): string {
+  if (v === undefined) return ''; // absent key -> the .get() default
+  if (v === null) return 'None';
+  if (typeof v === 'boolean') return v ? 'True' : 'False';
+  if (typeof v === 'string') return v;
+  if (typeof v === 'number') return Number.isInteger(v) ? String(v) : String(v);
+  return String(v);
+}
+
+/**
+ * services_fin_txn.project_wallet_adjustment — slice 2c unit 8.
+ *
+ * A real financial adjustment booked against SUSPENSE, so the correction is
+ * always visible on both sides rather than vanishing into the wallet:
+ *
+ *   increase -> wallet_code in  (wallet_debit)  / SUSPENSE out (suspense_credit)
+ *   decrease -> wallet_code out (wallet_credit) / SUSPENSE in  (suspense_debit)
+ *
+ * The account code comes from the DOCUMENT, not from a fixed literal — this is
+ * the first ported projection where that is true. It is nonetheless safe to
+ * port in isolation:
+ *
+ *   • the model constrains it to Literal["WALLET_FASTAG", "WALLET_FUEL"], and
+ *     BOTH are already in the seed catalog;
+ *   • the projection self-guards — an empty or missing wallet_code returns no
+ *     legs rather than reaching the persist layer;
+ *   • nothing here creates an account. `_persist_legs` only LOOKS UP the code
+ *     in the map `ensure_system_accounts` built, so there is no lazy seeding
+ *     and no dependency on GET /api/fin/accounts.
+ *
+ * A wallet_code that is non-empty but NOT in the catalog — only reachable from
+ * legacy or imported data, never through the API — passes the guard and makes
+ * `_persist_legs` raise. That is a projection FAILURE recorded in
+ * fin_hook_failures, not a silent skip, and the port preserves it by using the
+ * same persist path.
+ *
+ * `reverses_id` is deliberately ignored: a reversal is a separate document with
+ * the opposite direction, and both project identically for a net-zero effect
+ * with the history intact.
+ */
+export function projectWalletAdjustment(wa: Doc): Leg[] {
+  if (pyTruthy(wa['is_deleted'])) return [];
+  const amt = q2(wa['amount'] ?? 0);
+  if (amt <= 0) return [];
+
+  const walletCode = pyTruthy(wa['wallet_code']) ? String(wa['wallet_code']) : '';
+  const direction = pyTruthy(wa['direction']) ? String(wa['direction']) : '';
+  // Exact membership: "INCREASE", "Increase" and "increase " are all rejected.
+  if (!walletCode || (direction !== 'increase' && direction !== 'decrease')) return [];
+
+  const date = str(wa['date']);
+  // U+2212 MINUS SIGN, NOT an ASCII hyphen-minus. The two are visually
+  // identical and a well-meaning find-and-replace would break byte parity on
+  // every decrease narration, so there is a unit test asserting the codepoint.
+  const sign = direction === 'increase' ? '+' : '−';
+  const common = {
+    source_type: 'wallet_adjustment',
+    source_id: str(wa['id']),
+    narration: `Wallet adjustment (${sign}) · ${pyInterp(wa['reason'])}`.replace(/^[ ·]+|[ ·]+$/g, ''),
+  };
+
+  if (direction === 'increase') {
+    return [
+      leg({
+        ...common,
+        txn_date: date,
+        account_code: walletCode,
+        direction: 'in',
+        amount: amt,
+        counter_account_code: 'SUSPENSE',
+        txn_type: 'wallet_adjustment_increase',
+        ref_leg: 'wallet_debit',
+      }),
+      leg({
+        ...common,
+        txn_date: date,
+        account_code: 'SUSPENSE',
+        direction: 'out',
+        amount: amt,
+        counter_account_code: walletCode,
+        txn_type: 'wallet_adjustment_increase',
+        ref_leg: 'suspense_credit',
+      }),
+    ];
+  }
+  return [
+    leg({
+      ...common,
+      txn_date: date,
+      account_code: walletCode,
+      direction: 'out',
+      amount: amt,
+      counter_account_code: 'SUSPENSE',
+      txn_type: 'wallet_adjustment_decrease',
+      ref_leg: 'wallet_credit',
+    }),
+    leg({
+      ...common,
+      txn_date: date,
+      account_code: 'SUSPENSE',
+      direction: 'in',
+      amount: amt,
+      counter_account_code: walletCode,
+      txn_type: 'wallet_adjustment_decrease',
+      ref_leg: 'suspense_debit',
+    }),
+  ];
+}
+
+/**
  * services_fin_txn.project_mechanic_work_order — slice 2c unit 7.
  *
  * An ORPHAN-ONLY projection, and the shortest guard list of any unit so far.
@@ -847,6 +968,7 @@ export const PORTED_SOURCE_TYPES = [
   'credit_debit_note',
   'expense',
   'mechanic_work_order',
+  'wallet_adjustment',
 ] as const;
 export type PortedSourceType = (typeof PORTED_SOURCE_TYPES)[number];
 
@@ -898,6 +1020,9 @@ export async function reprojectVendorSourceOrThrow(
   } else if (sourceType === 'expense') {
     const doc = await findSource('expenses');
     if (doc) legs = projectExpense(doc);
+  } else if (sourceType === 'wallet_adjustment') {
+    const doc = await findSource('wallet_adjustments');
+    if (doc) legs = projectWalletAdjustment(doc);
   } else if (sourceType === 'mechanic_work_order') {
     const doc = await findSource('mechanic_work_orders');
     // Two reads, exactly as Python: the work order, then the pairing probe.
