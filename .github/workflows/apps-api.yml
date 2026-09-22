@@ -35,7 +35,11 @@ on:
       - 'apps/api/**'
       - '.github/workflows/apps-api.yml'
   push:
+    # `main` is here so the baseline is verified AFTER a merge, not only in the
+    # pull request that proposed it. A PR is checked against a test-merge of
+    # main; this checks main as it actually stands.
     branches:
+      - main
       - 'review/**'
     paths:
       - 'apps/api/**'
