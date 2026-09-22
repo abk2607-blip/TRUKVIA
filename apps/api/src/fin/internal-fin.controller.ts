@@ -53,6 +53,8 @@ const ALLOWED_SOURCE_TYPES = [
   'wallet_adjustment',
   'trip_customer_receipt',
   'wallet_recharge',
+  'wallet_transfer',
+  'invoice',
 ];
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const MIN_TOKEN_LEN = 32;

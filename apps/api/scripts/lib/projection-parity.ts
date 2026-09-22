@@ -72,6 +72,20 @@ export interface ProjectionParityConfig {
    * rows between the two sides.
    */
   expectedFailures?: string[];
+  /**
+   * Ordered LIFECYCLE steps run after the main comparison. Each applies the
+   * same mutation to both databases, reprojects the listed source ids on each
+   * side, and compares the resulting ledgers.
+   *
+   * This is what proves a cascade over time rather than at a single instant:
+   * a payment added after the parent was already projected, one removed, a
+   * repeated reproject. A single-shot comparison cannot see any of those.
+   */
+  lifecycle?: Array<{
+    name: string;
+    mutate: (db: Db) => Promise<void>;
+    reproject: Array<[string, string, string]>;
+  }>;
   /** Extra assertions over the TypeScript ledger rows. */
   extraChecks?: (rows: Doc[], report: Report) => void;
   /**
@@ -377,6 +391,24 @@ export async function runProjectionParity(cfg: ProjectionParityConfig): Promise<
     report(scopes.size === 2 && shared.length === 4, 'the shared id projects separately per tenant');
 
     cfg.extraChecks?.(tsRows, report);
+
+    // ── LIFECYCLE: the cascade over time, not at one instant ─────────────
+    for (const step of cfg.lifecycle ?? []) {
+      const stepPath = join(dir, `life-${step.name.replace(/\W+/g, '_')}.json`);
+      writeFileSync(stepPath, JSON.stringify(step.reproject), 'utf8');
+      await step.mutate(pyDb);
+      await step.mutate(tsDb);
+      await runPythonDriver(PY_DB, cfg.sourceType, stepPath);
+      for (const [sid, uid, cid] of step.reproject) {
+        const r = await hookAfterSourceWrite(tsDb, uid, cid, cfg.sourceType, sid);
+        if (!r.ok && !(cfg.expectedFailures ?? []).includes(sid)) {
+          throw new Error(`ts lifecycle projection failed for ${sid}: ${r.error}`);
+        }
+      }
+      const a = JSON.stringify(await ledger(pyDb));
+      const b = JSON.stringify(await ledger(tsDb));
+      report(a === b, `lifecycle: ${step.name}`, a === b ? undefined : diffAt(a, b));
+    }
 
     // ── BRIDGE: Python delegating to a live NestJS ───────────────────────
     killPort(cfg.nestPort);

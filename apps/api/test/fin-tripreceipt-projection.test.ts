@@ -211,10 +211,11 @@ describe('registration', () => {
     expect([...PORTED_SOURCE_TYPES]).toContain('trip_customer_receipt');
   });
 
-  it('leaves exactly three source types with Python', () => {
+  it('is no longer among the types Python owns', () => {
+    // The exact remaining list lives in the NEWEST slice's tests.
     const unported = SUPPORTED_SOURCE_TYPES.filter(
       (t) => !(PORTED_SOURCE_TYPES as readonly string[]).includes(t),
     );
-    expect(unported).toEqual(['invoice', 'wallet_recharge', 'wallet_transfer']);
+    expect(unported).not.toContain('trip_customer_receipt');
   });
 });

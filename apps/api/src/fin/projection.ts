@@ -268,6 +268,222 @@ export function projectMechanicPayment(p: Doc): Leg[] {
 }
 
 /**
+ * services_fin_txn.project_invoice — slice 2c unit 12, the COUPLED unit.
+ *
+ * `invoice` and `invoice_payment` are one migration by construction, not by
+ * choice: a single Python function emits BOTH. There is no
+ * `project_invoice_payment` anywhere — the payments are embedded in the invoice
+ * document and projected inline with their own source_type and a compound
+ * source_id, `{invoice_id}:{payment_id}`. Splitting them would have meant
+ * inventing a second producer that Python does not have.
+ *
+ * Up to three leg pairs, always in this order:
+ *
+ *   1. the raise          AR in (ar_debit) / SALES out (sales_credit)
+ *                         txn_type invoice_raise
+ *   2. the advance offset, only when advance+diesel deductions round above 0
+ *                         CUSTOMER_ADVANCE in (cust_adv_debit)
+ *                         SALES out (sales_offset_credit)
+ *                         txn_type invoice_advance_offset
+ *   3. one pair PER embedded payment, source_type invoice_payment
+ *                         bank in (bank_in) / AR out (ar_credit)
+ *                         txn_type invoice_receipt
+ *
+ * Four details that matter:
+ *
+ *   • a payment with NO id is skipped outright. Unlike trip_customer_receipt
+ *     there is no array-index fallback, so a legacy payment without an id is
+ *     simply never projected;
+ *   • `total_amount <= 0` kills the WHOLE document — the payments do not
+ *     project either, even when they have real amounts;
+ *   • the offset is double-rounded: each deduction is rounded, then their sum
+ *     is rounded again. `_q2(_q2(a) + _q2(b))`, not `_q2(a + b)`;
+ *   • a payment's date falls back to the INVOICE date, and neither narration
+ *     is stripped — a blank invoice number leaves the trailing space in
+ *     `"Invoice "`.
+ */
+export function projectInvoice(inv: Doc): Leg[] {
+  if (pyTruthy(inv['is_historical'])) return [];
+  const invId = str(inv['id']);
+  const total = q2(inv['total_amount'] ?? 0);
+  // A zero-value invoice projects nothing at all, payments included.
+  if (total <= 0) return [];
+
+  const date = str(inv['invoice_date']);
+  const customerId = str(inv['customer_id']);
+  const invoiceNumber = pyInterp(inv['invoice_number']);
+  const common = {
+    source_type: 'invoice',
+    source_id: invId,
+    party_type: 'customer',
+    party_id: customerId,
+    narration: `Invoice ${invoiceNumber}`, // not stripped
+  };
+
+  const legs: Leg[] = [
+    leg({
+      ...common,
+      txn_date: date,
+      account_code: 'AR',
+      direction: 'in',
+      amount: total,
+      counter_account_code: 'SALES',
+      txn_type: 'invoice_raise',
+      ref_leg: 'ar_debit',
+    }),
+    leg({
+      ...common,
+      txn_date: date,
+      account_code: 'SALES',
+      direction: 'out',
+      amount: total,
+      counter_account_code: 'AR',
+      txn_type: 'invoice_raise',
+      ref_leg: 'sales_credit',
+    }),
+  ];
+
+  // Each deduction is rounded BEFORE the sum, and the sum rounded again.
+  const offset = q2(q2(inv['advance_deduction_total'] ?? 0) + q2(inv['diesel_deduction_total'] ?? 0));
+  if (offset > 0) {
+    legs.push(
+      leg({
+        ...common,
+        txn_date: date,
+        account_code: 'CUSTOMER_ADVANCE',
+        direction: 'in',
+        amount: offset,
+        counter_account_code: 'SALES',
+        txn_type: 'invoice_advance_offset',
+        ref_leg: 'cust_adv_debit',
+      }),
+    );
+    legs.push(
+      leg({
+        ...common,
+        txn_date: date,
+        account_code: 'SALES',
+        direction: 'out',
+        amount: offset,
+        counter_account_code: 'CUSTOMER_ADVANCE',
+        txn_type: 'invoice_advance_offset',
+        ref_leg: 'sales_offset_credit',
+      }),
+    );
+  }
+
+  const payments = Array.isArray(inv['payments']) ? inv['payments'] : [];
+  for (const raw of payments) {
+    const p = (raw ?? {}) as Doc;
+    const pid = pyTruthy(p['id']) ? String(p['id']) : '';
+    const amt = q2(p['amount'] ?? 0);
+    // No index fallback here: a payment without an id is simply skipped.
+    if (amt <= 0 || !pid) continue;
+
+    const pCommon = {
+      source_type: 'invoice_payment',
+      source_id: `${invId}:${pid}`,
+      party_type: 'customer',
+      party_id: customerId,
+      narration: `Receipt ${pyInterp(p['reference'])} · Inv ${invoiceNumber}`, // not stripped
+    };
+    const bankCode = modeAccount(pyTruthy(p['mode']) ? p['mode'] : 'Bank');
+    const pDate = pyTruthy(p['date']) ? str(p['date']) : date;
+    legs.push(
+      leg({
+        ...pCommon,
+        txn_date: pDate,
+        account_code: bankCode,
+        direction: 'in',
+        amount: amt,
+        counter_account_code: 'AR',
+        txn_type: 'invoice_receipt',
+        ref_leg: 'bank_in',
+      }),
+    );
+    legs.push(
+      leg({
+        ...pCommon,
+        txn_date: pDate,
+        account_code: 'AR',
+        direction: 'out',
+        amount: amt,
+        counter_account_code: bankCode,
+        txn_type: 'invoice_receipt',
+        ref_leg: 'ar_credit',
+      }),
+    );
+  }
+  return legs;
+}
+
+/**
+ * services_fin_txn.project_wallet_transfer — slice 2c unit 11.
+ *
+ * A direct two-leg wallet-to-wallet move, with no INTER_ACCOUNT contra:
+ *
+ *   source_wallet_code      out (src_credit)  — money leaves the source
+ *   destination_wallet_code in  (dst_debit)   — money lands in the destination
+ *
+ * BOTH account codes are dynamic, which makes this the only projection reading
+ * two document-supplied accounts. Unlike wallet_recharge it self-guards them:
+ * an empty or absent source OR destination returns no legs, as does a
+ * same-wallet transfer (the router already rejects that with a 422; this is the
+ * defensive second line).
+ *
+ * The failure class that DOES survive is the same one recharge has: a code that
+ * is non-empty but not in the seed catalog passes the guard and makes
+ * `_persist_legs` raise, so it is recorded in fin_hook_failures rather than
+ * silently skipped. An invalid destination is never quietly dropped.
+ *
+ * The narration contains U+2192 RIGHTWARDS ARROW and is NOT stripped — another
+ * invisible character that a find-and-replace would corrupt, so a unit test
+ * asserts its codepoint.
+ *
+ * Guards are `is_deleted`, `amount <= 0`, then the two codes. Verified: neither
+ * is_historical nor is_reversed is consulted.
+ */
+export function projectWalletTransfer(wt: Doc): Leg[] {
+  if (pyTruthy(wt['is_deleted'])) return [];
+  const amt = q2(wt['amount'] ?? 0);
+  if (amt <= 0) return [];
+
+  const src = pyTruthy(wt['source_wallet_code']) ? String(wt['source_wallet_code']) : '';
+  const dst = pyTruthy(wt['destination_wallet_code']) ? String(wt['destination_wallet_code']) : '';
+  if (!src || !dst || src === dst) return [];
+
+  const date = str(wt['date']);
+  const common = {
+    source_type: 'wallet_transfer',
+    source_id: str(wt['id']),
+    // U+2192, and no .strip() on this one.
+    narration: `Wallet transfer ${src} → ${dst}`,
+  };
+  return [
+    leg({
+      ...common,
+      txn_date: date,
+      account_code: src,
+      direction: 'out',
+      amount: amt,
+      counter_account_code: dst,
+      txn_type: 'wallet_transfer',
+      ref_leg: 'src_credit',
+    }),
+    leg({
+      ...common,
+      txn_date: date,
+      account_code: dst,
+      direction: 'in',
+      amount: amt,
+      counter_account_code: src,
+      txn_type: 'wallet_transfer',
+      ref_leg: 'dst_debit',
+    }),
+  ];
+}
+
+/**
  * services_fin_txn.project_wallet_recharge — slice 2c unit 10.
  *
  * BANK/CASH -> WALLET. Two legs: the wallet is debited, the funding account
@@ -1132,6 +1348,8 @@ export const PORTED_SOURCE_TYPES = [
   'wallet_adjustment',
   'trip_customer_receipt',
   'wallet_recharge',
+  'wallet_transfer',
+  'invoice',
 ] as const;
 export type PortedSourceType = (typeof PORTED_SOURCE_TYPES)[number];
 
@@ -1163,6 +1381,11 @@ export async function reprojectVendorSourceOrThrow(
    * Python performs it and its count feeds the returned `deleted`.
    */
   let deleted = 0;
+  if (sourceType === 'invoice') {
+    // The parent's reproject clears its embedded payment legs, which live
+    // under a DIFFERENT source_type — the only cascade that crosses one.
+    deleted += await deleteBySource(mongo, uid, cid, 'invoice_payment', `${sourceId}:*`);
+  }
   if (sourceType === 'trip_customer_receipt') {
     deleted += await deleteBySource(mongo, uid, cid, 'trip_customer_receipt', `${sourceId}:*`);
   }
@@ -1192,6 +1415,12 @@ export async function reprojectVendorSourceOrThrow(
   } else if (sourceType === 'expense') {
     const doc = await findSource('expenses');
     if (doc) legs = projectExpense(doc);
+  } else if (sourceType === 'invoice') {
+    const doc = await findSource('invoices');
+    if (doc) legs = projectInvoice(doc);
+  } else if (sourceType === 'wallet_transfer') {
+    const doc = await findSource('wallet_transfers');
+    if (doc) legs = projectWalletTransfer(doc);
   } else if (sourceType === 'wallet_recharge') {
     const doc = await findSource('wallet_recharges');
     if (doc) legs = projectWalletRecharge(doc);
