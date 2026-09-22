@@ -64,6 +64,14 @@ export interface ProjectionParityConfig {
    * not care who owns the other projection.
    */
   preProject?: { sourceType: string; ids: Array<[string, string, string]> };
+  /**
+   * ids whose projection is EXPECTED to fail — because the document reaches
+   * the persist layer with an account code that cannot be resolved. Those
+   * write no ledger rows and a fin_hook_failures row instead, so the harness
+   * must not treat ok=false as a harness error, and must compare the failure
+   * rows between the two sides.
+   */
+  expectedFailures?: string[];
   /** Extra assertions over the TypeScript ledger rows. */
   extraChecks?: (rows: Doc[], report: Report) => void;
   /**
@@ -296,7 +304,9 @@ export async function runProjectionParity(cfg: ProjectionParityConfig): Promise<
     for (let round = 0; round < 2; round += 1) {
       for (const [sid, uid, cid] of spec) {
         const r = await hookAfterSourceWrite(tsDb, uid, cid, cfg.sourceType, sid);
-        if (!r.ok) throw new Error(`ts projection failed for ${sid}: ${r.error}`);
+        if (!r.ok && !(cfg.expectedFailures ?? []).includes(sid)) {
+          throw new Error(`ts projection failed for ${sid}: ${r.error}`);
+        }
       }
     }
 
@@ -307,6 +317,49 @@ export async function runProjectionParity(cfg: ProjectionParityConfig): Promise<
     const pyText = JSON.stringify(pyRows);
     const tsText = JSON.stringify(tsRows);
     report(pyText === tsText, 'fin_txn rows identical', pyText === tsText ? undefined : diffAt(pyText, tsText));
+
+    /**
+     * When a projection is expected to FAIL, the interesting output is not the
+     * ledger — it is the fin_hook_failures row. Compared key-insensitively for
+     * the upsert-ordering reason documented in scripts/fin-hook-parity.ts, with
+     * ids and timestamps normalised.
+     */
+    if ((cfg.expectedFailures ?? []).length > 0) {
+      const failures = async (db: Db): Promise<Doc[]> => {
+        const rows = await db
+          .collection<Doc>('fin_hook_failures')
+          .find({}, { projection: { _id: 0 } })
+          .toArray();
+        return rows
+          .map((r) => {
+            const out: Doc = {};
+            for (const k of Object.keys(r).sort()) {
+              out[k] =
+                k === 'id' || k.endsWith('_at') ? `<${k}>` : k === 'error' ? '<error>' : r[k];
+            }
+            return out;
+          })
+          .sort((a, b) => String(a['source_id']).localeCompare(String(b['source_id'])));
+      };
+      const pf = await failures(pyDb);
+      const tf = await failures(tsDb);
+      report(
+        JSON.stringify(pf) === JSON.stringify(tf),
+        `fin_hook_failures identical (${pf.length} rows)`,
+        JSON.stringify(pf) === JSON.stringify(tf)
+          ? undefined
+          : diffAt(JSON.stringify(pf), JSON.stringify(tf)),
+      );
+      report(
+        pf.length === (cfg.expectedFailures ?? []).length,
+        'every expected failure produced exactly one queue row',
+        `expected ${(cfg.expectedFailures ?? []).length}, got ${pf.length}`,
+      );
+      report(
+        pf.every((r) => r['status'] === 'pending' && r['retry_count'] === 0),
+        'each failure row is queued as pending with retry_count 0',
+      );
+    }
 
     const pyAcc = JSON.stringify(await accounts(pyDb));
     const tsAcc = JSON.stringify(await accounts(tsDb));

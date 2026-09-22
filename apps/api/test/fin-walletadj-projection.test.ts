@@ -214,23 +214,11 @@ describe('rounding', () => {
 
 describe('registration', () => {
   it('joins the ported list', () => {
-    expect([...PORTED_SOURCE_TYPES].sort()).toEqual([
-      'credit_debit_note',
-      'driver_payment',
-      'expense',
-      'mechanic_payment',
-      'mechanic_work_order',
-      'supplier_payment',
-      'vendor_bill',
-      'vendor_payment',
-      'wallet_adjustment',
-    ]);
-  });
-
-  it('leaves exactly four source types with Python', () => {
+    expect([...PORTED_SOURCE_TYPES]).toContain('wallet_adjustment');
+    // The exact remaining list lives in the NEWEST slice's tests.
     const unported = SUPPORTED_SOURCE_TYPES.filter(
       (t) => !(PORTED_SOURCE_TYPES as readonly string[]).includes(t),
     );
-    expect(unported).toEqual(['invoice', 'trip_customer_receipt', 'wallet_recharge', 'wallet_transfer']);
+    expect(unported).not.toContain('wallet_adjustment');
   });
 });

@@ -51,6 +51,8 @@ const ALLOWED_SOURCE_TYPES = [
   'expense',
   'mechanic_work_order',
   'wallet_adjustment',
+  'trip_customer_receipt',
+  'wallet_recharge',
 ];
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const MIN_TOKEN_LEN = 32;

@@ -268,6 +268,154 @@ export function projectMechanicPayment(p: Doc): Leg[] {
 }
 
 /**
+ * services_fin_txn.project_wallet_recharge — slice 2c unit 10.
+ *
+ * BANK/CASH -> WALLET. Two legs: the wallet is debited, the funding account
+ * credited.
+ *
+ * THE IMPORTANT DIFFERENCE FROM wallet_adjustment: there is **no guard on
+ * wallet_code**. An empty, absent or unknown code is NOT skipped — it becomes
+ * the leg's `account_code` and the failure surfaces later, when `_persist_legs`
+ * cannot resolve it and raises. That distinction is deliberate and preserved:
+ *
+ *   projection guard (is_deleted, amount <= 0) -> zero legs, ok=true, written 0
+ *   persistence lookup failure (bad wallet_code) -> RAISES -> ok=false and a
+ *                                                   fin_hook_failures row
+ *
+ * Collapsing the second case into the first would turn a recorded, retryable
+ * failure into a silent no-op, which is exactly the class of bug the hook
+ * queue exists to catch. The model constrains the field to the two seeded
+ * wallets, so this is reachable only from legacy or imported data.
+ *
+ * Guards are `is_deleted` and `amount <= 0` — nothing else. Verified: neither
+ * is_historical nor is_reversed is consulted.
+ */
+export function projectWalletRecharge(wr: Doc): Leg[] {
+  if (pyTruthy(wr['is_deleted'])) return [];
+  const amt = q2(wr['amount'] ?? 0);
+  if (amt <= 0) return [];
+
+  const date = str(wr['date']);
+  // No guard: an empty code flows straight through to the persist layer.
+  const walletCode = pyTruthy(wr['wallet_code']) ? String(wr['wallet_code']) : '';
+  const fundingCode = modeAccount(pyTruthy(wr['funding_mode']) ? wr['funding_mode'] : 'Bank');
+  const common = {
+    source_type: 'wallet_recharge',
+    source_id: str(wr['id']),
+    narration: `Wallet recharge · ${pyInterp(wr['reference'])}`.replace(/^[ ·]+|[ ·]+$/g, ''),
+  };
+  return [
+    leg({
+      ...common,
+      txn_date: date,
+      account_code: walletCode,
+      direction: 'in',
+      amount: amt,
+      counter_account_code: fundingCode,
+      txn_type: 'wallet_recharge_in',
+      ref_leg: 'wallet_debit',
+    }),
+    leg({
+      ...common,
+      txn_date: date,
+      account_code: fundingCode,
+      direction: 'out',
+      amount: amt,
+      counter_account_code: walletCode,
+      txn_type: 'wallet_recharge_in',
+      ref_leg: 'funding_credit',
+    }),
+  ];
+}
+
+/**
+ * services_fin_txn.project_trip_customer_receipts — slice 2c unit 9.
+ *
+ * Money received from a customer against a specific trip, OUTSIDE the invoice
+ * flow. The source document is the TRIP, and the reproject key is the trip id —
+ * but each embedded receipt gets its OWN compound source_id, `{trip_id}:{rid}`,
+ * which is why this source type needs the prefix cascade when the parent is
+ * reprojected.
+ *
+ * It deliberately does NOT credit AR: Invoice.total_amount is already net of
+ * these deductions, so crediting AR here would double-reduce it. The offset
+ * lives in the invoice projection instead.
+ *
+ * Three things to get right:
+ *
+ *   1. the receipt key falls back to the ORIGINAL ARRAY POSITION when a legacy
+ *      receipt carries no id — `idx0`, `idx1`, … Skipped receipts do NOT
+ *      renumber the ones after them, so a middle receipt with a zero amount
+ *      leaves `idx0` and `idx2`. Filtering before enumerating would silently
+ *      rewrite every downstream key and break idempotency;
+ *   2. a zero or negative receipt is SKIPPED, not fatal — the rest of the
+ *      array still projects;
+ *   3. the receipt `type` is interpolated into the txn_type AND the category,
+ *      so txn_type is dynamic: trip_customer_advance_receipt,
+ *      trip_customer_diesel_receipt, and whatever else the data holds.
+ *
+ * Guards: `is_historical` on the trip, and an empty receipts array. There is
+ * NO is_deleted guard on the trip — verified against the interpreter.
+ */
+export function projectTripCustomerReceipts(trip: Doc): Leg[] {
+  if (pyTruthy(trip['is_historical'])) return [];
+  const receipts = Array.isArray(trip['customer_receipts']) ? trip['customer_receipts'] : [];
+  if (receipts.length === 0) return [];
+
+  const tripId = str(trip['id']);
+  const customerId = str(trip['customer_id']);
+  const tripDate = str(trip['date']);
+  const legs: Leg[] = [];
+
+  receipts.forEach((raw, i) => {
+    const r = (raw ?? {}) as Doc;
+    // `str(r.get("id") or "").strip() or f"idx{i}"` — note the index is the
+    // POSITION in the original array, not a count of projected receipts.
+    const rid = (pyTruthy(r['id']) ? String(r['id']) : '').trim() || `idx${i}`;
+    const amt = q2(r['amount'] ?? 0);
+    if (amt <= 0) return; // skip this receipt only
+
+    const date = pyTruthy(r['date']) ? str(r['date']) : tripDate;
+    const bankCode = modeAccount(pyTruthy(r['mode']) ? r['mode'] : 'Bank');
+    const rtype = pyTruthy(r['type']) ? String(r['type']) : 'advance';
+    const common = {
+      source_type: 'trip_customer_receipt',
+      source_id: `${tripId}:${rid}`,
+      party_type: 'customer',
+      party_id: customerId,
+      trip_id: tripId,
+      narration: `Trip customer ${rtype} receipt`,
+      category: rtype,
+    };
+    legs.push(
+      leg({
+        ...common,
+        txn_date: date,
+        account_code: bankCode,
+        direction: 'in',
+        amount: amt,
+        counter_account_code: 'CUSTOMER_ADVANCE',
+        txn_type: `trip_customer_${rtype}_receipt`,
+        ref_leg: 'bank_debit',
+      }),
+    );
+    legs.push(
+      leg({
+        ...common,
+        txn_date: date,
+        account_code: 'CUSTOMER_ADVANCE',
+        direction: 'out',
+        amount: amt,
+        counter_account_code: bankCode,
+        txn_type: `trip_customer_${rtype}_receipt`,
+        ref_leg: 'cust_adv_credit',
+      }),
+    );
+  });
+  return legs;
+}
+
+/**
  * Python's f-string interpolation, for the one field that needs it.
  *
  * `f"… {wa.get('reason', '')}"` renders whatever the value IS. The default
@@ -886,9 +1034,22 @@ async function deleteBySource(
   sourceType: string,
   sourceId: string,
 ): Promise<number> {
-  const res = await mongo
-    .collection('fin_txn')
-    .deleteMany({ user_id: uid, company_id: cid, source_type: sourceType, source_id: sourceId });
+  const filter: Doc = { user_id: uid, company_id: cid, source_type: sourceType };
+  if (sourceId.endsWith(':*')) {
+    /**
+     * The PREFIX form, for compound keys like `{trip_id}:{receipt_id}`, so a
+     * parent's reproject also clears its embedded children.
+     *
+     * Python builds `{"$regex": f"^{prefix}"}` with NO escaping, and that is
+     * reproduced deliberately: escaping would change which rows a source id
+     * containing a regex metacharacter deletes. The scope is still narrowed by
+     * source_type, so a cascade can never reach another projection's rows.
+     */
+    filter['source_id'] = { $regex: `^${sourceId.slice(0, -1)}` };
+  } else {
+    filter['source_id'] = sourceId;
+  }
+  const res = await mongo.collection('fin_txn').deleteMany(filter);
   return res.deletedCount ?? 0;
 }
 
@@ -969,6 +1130,8 @@ export const PORTED_SOURCE_TYPES = [
   'expense',
   'mechanic_work_order',
   'wallet_adjustment',
+  'trip_customer_receipt',
+  'wallet_recharge',
 ] as const;
 export type PortedSourceType = (typeof PORTED_SOURCE_TYPES)[number];
 
@@ -992,9 +1155,18 @@ export async function reprojectVendorSourceOrThrow(
   sourceId: string,
 ): Promise<{ deleted: number; written: number }> {
   const codeToId = await ensureSystemAccounts(mongo, uid, cid);
-  // None of the ported types has a prefix cascade: invoice and
-  // trip_customer_receipt are the only two that do, and neither is ported.
-  const deleted = await deleteBySource(mongo, uid, cid, sourceType, sourceId);
+  /**
+   * The cascade, exactly as reproject_source orders it: the PREFIX delete
+   * first, then the exact-match one. trip_customer_receipt stores its rows
+   * under `{trip_id}:{receipt_id}`, so only the prefix form finds them; the
+   * exact delete that follows is a no-op for this type but is kept because
+   * Python performs it and its count feeds the returned `deleted`.
+   */
+  let deleted = 0;
+  if (sourceType === 'trip_customer_receipt') {
+    deleted += await deleteBySource(mongo, uid, cid, 'trip_customer_receipt', `${sourceId}:*`);
+  }
+  deleted += await deleteBySource(mongo, uid, cid, sourceType, sourceId);
 
   const findSource = (collection: string): Promise<Doc | null> =>
     mongo
@@ -1020,6 +1192,13 @@ export async function reprojectVendorSourceOrThrow(
   } else if (sourceType === 'expense') {
     const doc = await findSource('expenses');
     if (doc) legs = projectExpense(doc);
+  } else if (sourceType === 'wallet_recharge') {
+    const doc = await findSource('wallet_recharges');
+    if (doc) legs = projectWalletRecharge(doc);
+  } else if (sourceType === 'trip_customer_receipt') {
+    // The reproject key is the TRIP id; the receipts live inside the document.
+    const doc = await findSource('trips');
+    if (doc) legs = projectTripCustomerReceipts(doc);
   } else if (sourceType === 'wallet_adjustment') {
     const doc = await findSource('wallet_adjustments');
     if (doc) legs = projectWalletAdjustment(doc);
