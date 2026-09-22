@@ -48,6 +48,7 @@ const ALLOWED_SOURCE_TYPES = [
   'supplier_payment',
   'driver_payment',
   'credit_debit_note',
+  'expense',
 ];
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 const MIN_TOKEN_LEN = 32;

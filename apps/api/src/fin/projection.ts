@@ -268,6 +268,150 @@ export function projectMechanicPayment(p: Doc): Leg[] {
 }
 
 /**
+ * services_fin_txn.project_expense — slice 2c unit 6.
+ *
+ * The canonical cost projection, and by volume the most important one: roughly
+ * 79% of existing ledger rows come through here. Every payable, vendor and
+ * supplier-recovery leg is funnelled into this one function precisely so a
+ * paired VendorBill or MechanicWorkOrder cannot double-count the same cost.
+ *
+ * The debit side is always EXPENSE_DEFAULT. What varies is the CREDIT side,
+ * chosen by a top-down chain in which the FIRST match wins — verified branch by
+ * branch against the running interpreter:
+ *
+ *   1a. supplier_owned_vehicle AND mode "supplier_settlement_adjustment"
+ *         -> AP_SUPPLIER, expense_supplier_settlement_recovery
+ *            party_type is FORCED to "supplier", overriding the document,
+ *            and the credit leg carries is_supplier_settlement_recovery.
+ *   1b. supplier_owned_vehicle AND mode "company_borne" -> CASH
+ *   2.  document source_type "fastag_import"     -> WALLET_FASTAG
+ *   3.  document source_type "fleet_card_import" -> WALLET_FUEL
+ *   4.  vendor_bill_id set          -> AP_VENDOR
+ *   5.  mechanic_work_order_id set  -> AP_MECHANIC
+ *   6.  settlement_mode "cash_now"  -> CASH
+ *   7.  otherwise                   -> SUSPENSE, expense_unrouted
+ *
+ * Two things about that chain are easy to get wrong and are tested both ways:
+ *
+ *   • a supplier-owned vehicle whose mode is NEITHER of the two named ones
+ *     falls THROUGH to rules 2-7 rather than landing anywhere supplier-ish;
+ *   • `supplier_owned_vehicle` is read with `bool()`, not `== True`, so the
+ *     STRING "false" is truthy and selects the supplier branch. pyTruthy
+ *     reproduces that; a `=== true` test would silently reroute the row.
+ *
+ * The credit leg's ref_leg is DYNAMIC — `f"{credit_code.lower()}_credit"` —
+ * so ref_source_key varies with the branch: ap_supplier_credit, cash_credit,
+ * wallet_fastag_credit, wallet_fuel_credit, ap_vendor_credit,
+ * ap_mechanic_credit, suspense_credit.
+ *
+ * All eight accounts it can name are already in the seed catalog, so no branch
+ * lazily creates anything new.
+ */
+export function projectExpense(exp: Doc): Leg[] {
+  if (pyTruthy(exp['is_deleted']) || pyTruthy(exp['is_reversed'])) return [];
+  const amt = q2(exp['amount'] ?? 0);
+  if (amt <= 0) return [];
+  // Python checks is_historical AFTER the amount; the order is unobservable
+  // because both return [], but it is kept for line-by-line comparison.
+  if (pyTruthy(exp['is_historical'])) return [];
+
+  const date = str(exp['date']);
+  const srcKey = str(exp['source_key']);
+  // The DOCUMENT's own source_type, not the leg's — the leg is always
+  // source_type "expense".
+  const docSourceType = pyTruthy(exp['source_type']) ? exp['source_type'] : 'manual';
+  const suppOwned = pyTruthy(exp['supplier_owned_vehicle']);
+  const suppMode = pyTruthy(exp['supplier_settlement_mode'])
+    ? exp['supplier_settlement_mode']
+    : 'n/a';
+  const settlement = pyTruthy(exp['settlement_mode']) ? exp['settlement_mode'] : 'payable';
+  // vendor_bill_id and mechanic_work_order_id are only ever TESTED, never
+  // emitted, so Python truthiness on the raw value is exactly right.
+  const hasVendorBill = pyTruthy(exp['vendor_bill_id']);
+  const hasWorkOrder = pyTruthy(exp['mechanic_work_order_id']);
+
+  let partyType = str(exp['party_type']);
+  let creditCode: string;
+  let txnType: string;
+  let isSettlementRecovery = false;
+
+  if (suppOwned && suppMode === 'supplier_settlement_adjustment') {
+    creditCode = 'AP_SUPPLIER';
+    txnType = 'expense_supplier_settlement_recovery';
+    // Forced, overriding whatever the document carried.
+    partyType = 'supplier';
+    isSettlementRecovery = true;
+  } else if (suppOwned && suppMode === 'company_borne') {
+    creditCode = 'CASH';
+    txnType = 'expense_company_borne';
+  } else if (docSourceType === 'fastag_import') {
+    creditCode = 'WALLET_FASTAG';
+    txnType = 'expense_fastag_toll';
+  } else if (docSourceType === 'fleet_card_import') {
+    creditCode = 'WALLET_FUEL';
+    txnType = 'expense_fleet_diesel';
+  } else if (hasVendorBill) {
+    creditCode = 'AP_VENDOR';
+    txnType = 'expense_vendor_payable';
+  } else if (hasWorkOrder) {
+    creditCode = 'AP_MECHANIC';
+    txnType = 'expense_mechanic_payable';
+  } else if (settlement === 'cash_now') {
+    creditCode = 'CASH';
+    txnType = 'expense_cash_now';
+  } else {
+    creditCode = 'SUSPENSE';
+    txnType = 'expense_unrouted';
+  }
+
+  const category = str(exp['category']);
+  // Python: (narration or category or "")[:400]. `category` itself is NOT
+  // truncated on the leg — only the narration is.
+  const narrationSource = pyTruthy(exp['narration'])
+    ? str(exp['narration'])
+    : pyTruthy(exp['category'])
+      ? category
+      : '';
+  const common = {
+    source_type: 'expense',
+    source_id: str(exp['id']),
+    source_key: srcKey,
+    party_type: partyType,
+    party_id: str(exp['party_id']),
+    party_name: str(exp['party_name']),
+    vehicle_id: str(exp['vehicle_id']),
+    trip_id: str(exp['trip_id']),
+    category,
+    narration: narrationSource.slice(0, 400),
+  };
+
+  return [
+    leg({
+      ...common,
+      txn_date: date,
+      account_code: 'EXPENSE_DEFAULT',
+      direction: 'in',
+      amount: amt,
+      counter_account_code: creditCode,
+      txn_type: txnType,
+      ref_leg: 'expense_debit',
+    }),
+    leg({
+      ...common,
+      txn_date: date,
+      account_code: creditCode,
+      direction: 'out',
+      amount: amt,
+      counter_account_code: 'EXPENSE_DEFAULT',
+      txn_type: txnType,
+      ref_leg: `${creditCode.toLowerCase()}_credit`,
+      // Only the CREDIT leg carries the flag, and only on branch 1a.
+      is_supplier_settlement_recovery: isSettlementRecovery,
+    }),
+  ];
+}
+
+/**
  * services_fin_txn.project_credit_debit_note — slice 2c unit 5.
  *
  * NOT a party payment, and deliberately not routed through the shared helper:
@@ -610,6 +754,7 @@ export const PORTED_SOURCE_TYPES = [
   'supplier_payment',
   'driver_payment',
   'credit_debit_note',
+  'expense',
 ] as const;
 export type PortedSourceType = (typeof PORTED_SOURCE_TYPES)[number];
 
@@ -658,6 +803,9 @@ export async function reprojectVendorSourceOrThrow(
   } else if (sourceType === 'credit_debit_note') {
     const doc = await findSource('credit_debit_notes');
     if (doc) legs = projectCreditDebitNote(doc);
+  } else if (sourceType === 'expense') {
+    const doc = await findSource('expenses');
+    if (doc) legs = projectExpense(doc);
   } else {
     const doc = await findSource('vendor_bills');
     if (doc) legs = projectVendorBill(doc, await hasPairedExpense(mongo, uid, cid, sourceId));

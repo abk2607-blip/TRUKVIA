@@ -283,10 +283,17 @@ const BRIDGE_CASES: BridgeCase[] = [
     body: { user_id: UID, company_id: CID, source_type: 'vendor_payment', source_id: '   ' },
   },
   {
+    /**
+     * Deliberately a NON-source-type rather than a real-but-unported one.
+     * This fixture used "expense", which broke the moment expense was ported:
+     * NestJS started answering 200 while Python still answered 400. A value
+     * that will never be a source type keeps the case testing the allowlist
+     * itself rather than the porting schedule.
+     */
     name: 'unsupported source_type -> 400',
     headers: { 'x-internal-token': INTERNAL_TOKEN },
-    body: { user_id: UID, company_id: CID, source_type: 'expense', source_id: 'x' },
-    statusOnly: 'the allowlist is rendered into the body, and NestJS has ported mechanic_payment',
+    body: { user_id: UID, company_id: CID, source_type: 'not_a_source_type', source_id: 'x' },
+    statusOnly: 'the allowlist is rendered into the body, and the two sides have ported different amounts',
   },
   {
     name: 'source_type absent -> 400',
