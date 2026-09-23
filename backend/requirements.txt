@@ -1,3 +1,9 @@
+# `emergentintegrations` is published on Emergent's own public package index,
+# not on PyPI. Declaring the index here means every environment - the platform
+# image, CI and a local checkout - resolves it from the same place. The index
+# is public: no credential, token or secret is involved.
+--extra-index-url https://d33sy5i8bnduwe.cloudfront.net/simple/
+
 aiohappyeyeballs==2.7.1
 aiohttp==3.14.3
 aiosignal==1.4.0
