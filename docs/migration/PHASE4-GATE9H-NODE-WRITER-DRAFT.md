@@ -940,14 +940,38 @@ reasons:
 the platform already runs the Python API under, key for key, and they are **repository templates
 only** — the same status `backend-node.conf` has carried since Gate 9f.
 
-**What that does and does not settle.** The pod's `/etc/supervisor/conf.d` is **image-managed and
-is not persistent repository content** (Gate 9f §7), so **installing a second supervisord program
-— or providing an equivalent managed process — is a PLATFORM action**, not a repository one.
-**Whether the live platform supports a second supervisord program has NOT been verified**: the
-preflight that produced these findings had **no live platform access** and is **repository-derived
-evidence only**. Nothing here is a live platform verification, and **no deployment target exists**.
-Note also that `backend-node`'s own program has never been installed either, so this installation
-path has not been exercised once on this platform.
+**What that does and does not settle.** Installing a second supervisord program — or providing an
+equivalent managed process — is a **PLATFORM action**, not a repository one (Gate 9f §7). The
+repository cannot perform it and does not.
+
+**Live platform capability — VERIFIED, READ-ONLY, 2026-09-23.** An operator ran a read-only
+capability check against the production pod. **It created nothing.** What it established:
+
+- The production pod runs **supervisord**, with six programs registered and five running.
+- `supervisord.conf` includes **`files = /etc/supervisor/conf.d/*.conf`**, so **a second program
+  can be represented by another `.conf` sibling** in that directory — three existing "extra"
+  `.conf` files are already picked up by that glob.
+- **`conf.d` is writable at filesystem level** (`rw` ext4 mount, uid 0, mode 755).
+- **Port 8003 is currently free** — no listener. 8001 is the Python backend, 8002 is reserved for
+  `backend-node`.
+- **`/app/apps/api` exists** in the pod.
+- **No `apps-api` program exists**, and **no `apps-api` production deployment target exists**.
+- **The three `apps-api` templates are NOT present in the live pod.** Only the `backend-node`
+  equivalents are.
+
+**Capability is not installation.** The check confirms the pod *can* carry another program; it
+does **not** mean one was added, and **nothing was installed, created, provisioned, restarted or
+deployed by it**. The pod was mid-restart from **unrelated platform deployment activity** during
+the check; **that activity is not step 5a and must not be read as its execution**.
+
+**One thing the check leaves open: how a committed template actually becomes an installed
+program.** `deploy/supervisor/backend-node.conf` has been on `origin/main` since 2026-09-19 and
+**is present in the pod**, yet **no `backend-node` program is registered** — so a template being
+present in `/app/deploy/` is demonstrably **not** sufficient to install it. The platform's own
+note that `conf.d` is re-templated on deploy cuts the other way too: a file placed there at
+runtime would not survive. **The durable install path is therefore still unknown**, and it is a
+question for the platform, not a repository change. **This is not a platform failure** — nothing
+has been attempted, and nothing indicates it cannot work.
 
 **Step 5a therefore remains NOT YET EXECUTED / OUTSTANDING.**
 
@@ -956,7 +980,7 @@ path has not been exercised once on this platform.
 | Item | Status |
 |---|---|
 | Repository deployment templates | **READY — committed.** Repository preparation is COMPLETE |
-| Live platform capability (second supervisord program, or equivalent) | **NOT YET VERIFIED** — requires an operator on the platform; no live access was used |
+| Live platform capability (second supervisord program, or equivalent) | **VERIFIED — LIVE PLATFORM, READ-ONLY** (2026-09-23). supervisord present, `conf.d/*.conf` include confirmed, `conf.d` writable, port 8003 free, `/app/apps/api` present. **Nothing was created or installed** |
 | Build and start path | **CLOSED — verified locally.** `npm run build` exit 0 → `dist/src/main.js`; start script corrected to `node dist/src/main.js`; bounded local `npm start` started the application and terminated cleanly. **Local only — nothing was built or started in production** |
 | Actual production deployment target | **NOT DONE / OUTSTANDING** — creating it is a PLATFORM action and requires the authorisations below |
 | `/health/live`, `/health/ready` on `apps/api` | **IMPLEMENTED — verified locally.** Production readiness not verified; no production process exists to check |
@@ -966,7 +990,7 @@ path has not been exercised once on this platform.
 step itself has not been performed. Separating the four things it depends on:
 
 - **Repository preparation — COMPLETE** (templates, build/start path, health endpoints).
-- **Live platform capability confirmation — PENDING.**
+- **Live platform capability confirmation — COMPLETE** (read-only, 2026-09-23).
 - **Actual deployment-target creation — PENDING**, a PLATFORM action.
 - **U2 authorisation and the Gate 9g reopening (§3, §4) — PENDING**, gate-owner decisions.
 
@@ -1160,7 +1184,7 @@ weakened even if no writes are occurring.
 |---|---|---|
 | Create `nodeLedgerWriter` role | **PLATFORM** | NOT DONE |
 | Provision the credential into Node's env | **PLATFORM** | NOT DONE |
-| Provision a production deployment target for `apps/api` — Finance-writer deployment artifact (§6 step 5a) | **PLATFORM** | **NOT DONE / OUTSTANDING.** **Repository artifacts: READY** — `apps-api.conf`, `run-apps-api.sh` and `apps-api.production.env.example` are committed. **Actual production deployment target: NOT DONE.** **Live platform capability: NOT YET VERIFIED** — installing a second supervisord program is a platform action into an image-managed `conf.d`, and the preflight had no live platform access. Without the target there is no process environment for step 5b to provision |
+| Provision a production deployment target for `apps/api` — Finance-writer deployment artifact (§6 step 5a) | **PLATFORM** | **NOT DONE / OUTSTANDING.** **Repository artifacts: READY** — `apps-api.conf`, `run-apps-api.sh` and `apps-api.production.env.example` are committed. **Actual production deployment target: NOT DONE.** **Live platform capability: VERIFIED — READ-ONLY** (2026-09-23): supervisord runs the pod, `conf.d/*.conf` is included by glob, `conf.d` is writable, port 8003 is free and `/app/apps/api` is present. **The check created nothing**, and the three `apps-api` templates are **not present in the pod**. Without the target there is no process environment for step 5b to provision |
 | Provision `TRUKVIA_FIN_WRITER_ALLOWED_DB` — Finance-writer runtime authorisation (§6 step 5b) | **PLATFORM** | **NOT DONE.** The mechanism exists and is tested (§4 B); **the platform value has not been provisioned.** When it is provisioned, the value is **never recorded here**. Without it the writer refuses to boot in production, so step 6 cannot pass |
 | Verify production `DB_NAME` (U2) | **PLATFORM** | **ANSWERED 2026-09-23 — YES** (§4), and **E1 is SATISFIED** for that confirmation. The verification is done; **U2 itself remains BLOCKED / FAIL-CLOSED** — a `yes` does **not** unblock the writer. Nothing was changed: the database was not renamed and no production authorisation was granted |
 | Backup + tested restore | **PLATFORM** | **RESTORE TESTED 2026-09-23** (§5.8) — checksum matched, `mongorestore` exit 0 into a fresh disposable database. The **activation-instant backup itself is still NOT TAKEN**, because no activation has occurred |
@@ -1189,7 +1213,7 @@ Gate 9h may be declared GREEN only when **all** of the following exist as record
 | E1 | U2 answered (yes/no only), recorded — **SATISFIED 2026-09-23** (§4): answered **yes**, recorded without the value. This satisfies E1 as written; it does **not** unblock U2, which stays BLOCKED / fail-closed |
 | E2 | `fin_accounts` question resolved and recorded — **SATISFIED 2026-09-23** (§3, §12): the question is answered and recorded, and the answer is that Node **requires `insert` on `fin_accounts`**. Granting that production role/permission is **E3**, which remains outstanding |
 | E3 | `nodeLedgerWriter` role created, with the boundary proof (S3 succeeds, S4 refused with code 13) |
-| E3a | Finance-writer production deployment target (§6 step 5a) — **REQUIRED, NOT YET SATISFIED**. Once it exists, the evidence to be recorded is: that a production deployment target for `apps/api` **was provisioned**, and that it carries `NODE_ENV=production`, `NEST_MONGO_URL`, `NEST_MONGO_DB`, `TRUKVIA_FIN_WRITER_ALLOWED_DB`, `PG_URL` and `TRUKVIA_INTERNAL_TOKEN` in its process environment. Two of its sub-requirements are now **SATISFIED, locally**, verified 2026-09-23: a **reproducible build from the tracked lockfile** (`npm run build` exit 0, `package-lock.json` unchanged), and a **corrected, verified start path** — the exact compiled entrypoint is `dist/src/main.js`, the start command was corrected to `node dist/src/main.js`, and a **bounded local** `npm start` started the application successfully and then terminated cleanly. **That is local evidence only and does not make E3a satisfied**, which still requires the production deployment target, the production runtime provisioning above, and a production readiness check. A third sub-requirement is also now **SATISFIED, locally**: `GET /health/live` and `GET /health/ready` **exist** on `apps/api`, readiness returns 503 when the database does not answer, and that behaviour was **verified locally** (§6). A fourth is satisfied on the repository side only: the **three deployment templates exist and are committed** (`apps-api.conf`, `run-apps-api.sh`, `apps-api.production.env.example`). **What is still missing is the thing E3a is actually about**: the **actual production deployment target does not exist**, and **the live platform install path has not been verified** — the preflight behind these findings had no live platform access and is repository-derived only. **Production readiness has NOT been verified** either, since no production Finance-writer process exists to check. E3a overall therefore stays **REQUIRED / NOT YET SATISFIED**. What is recorded is the **fact of provisioning and the names of the variables — never their values**, and never a service name, deployment identifier or platform secret. This evidence will **not** imply that the writer was started, which is E6 / step 6, and will **not** imply that any production write occurred |
+| E3a | Finance-writer production deployment target (§6 step 5a) — **REQUIRED, NOT YET SATISFIED**. Once it exists, the evidence to be recorded is: that a production deployment target for `apps/api` **was provisioned**, and that it carries `NODE_ENV=production`, `NEST_MONGO_URL`, `NEST_MONGO_DB`, `TRUKVIA_FIN_WRITER_ALLOWED_DB`, `PG_URL` and `TRUKVIA_INTERNAL_TOKEN` in its process environment. Two of its sub-requirements are now **SATISFIED, locally**, verified 2026-09-23: a **reproducible build from the tracked lockfile** (`npm run build` exit 0, `package-lock.json` unchanged), and a **corrected, verified start path** — the exact compiled entrypoint is `dist/src/main.js`, the start command was corrected to `node dist/src/main.js`, and a **bounded local** `npm start` started the application successfully and then terminated cleanly. **That is local evidence only and does not make E3a satisfied**, which still requires the production deployment target, the production runtime provisioning above, and a production readiness check. A third sub-requirement is also now **SATISFIED, locally**: `GET /health/live` and `GET /health/ready` **exist** on `apps/api`, readiness returns 503 when the database does not answer, and that behaviour was **verified locally** (§6). A fourth is satisfied on the repository side only: the **three deployment templates exist and are committed** (`apps-api.conf`, `run-apps-api.sh`, `apps-api.production.env.example`). A fifth is satisfied as a **read-only live platform capability check** (2026-09-23): the **supervisord mechanism is confirmed live**, the **`conf.d/*.conf` include behaviour is confirmed**, **port 8003 availability is confirmed** and the **`/app/apps/api` source directory is confirmed** — while **no deployment target was created** and the **three `apps-api` templates are not installed or present in the current pod**. **What is still missing is the thing E3a is actually about**: the **actual production deployment target does not exist**, and the **durable install path from a committed template to a registered program is still unknown**. **Production readiness has NOT been verified** either, since no production Finance-writer process exists to check. E3a overall therefore stays **REQUIRED / NOT YET SATISFIED**. What is recorded is the **fact of provisioning and the names of the variables — never their values**, and never a service name, deployment identifier or platform secret. This evidence will **not** imply that the writer was started, which is E6 / step 6, and will **not** imply that any production write occurred |
 | E3b | Finance-writer runtime authorisation (§6 step 5b) — **REQUIRED, NOT YET SATISFIED**, because step 5b has not been executed. Once it is, the evidence to be recorded is: that `TRUKVIA_FIN_WRITER_ALLOWED_DB` **was provisioned** on the platform, and that the existing guard **accepted** it as an **exact whole-string** match against the configured database name. What is recorded is the **fact of provisioning and of the guard's acceptance — never the value**: the production database name must not be written here, in the runbook, in a commit message or in any log. This evidence will **not** imply that the writer was started, which is E6 / step 6, and will **not** imply that any production write occurred |
 | E4 | Backup taken **and its restore demonstrated** on a throwaway database — **restore demonstrated 2026-09-23** (§5.8): checksum matched, `mongorestore` exit 0, 960,150 documents, 0 failures. **Still outstanding on the first half**: no backup has been taken at an activation instant. The §5.10 rehearsal created an activation-time backup **of a disposable clone**, which does not satisfy this |
 | E5 | Activation timestamp and fingerprints (R2, R3) recorded |
@@ -1264,11 +1288,13 @@ recorded above:
 3. **No production deployment target for `apps/api`** — §6 step 5a. **Repository deployment
    artifacts are READY**: `apps-api.conf`, `run-apps-api.sh` and
    `apps-api.production.env.example` are committed and follow the `backend-node` supervisord
-   pattern. **The actual production deployment target is still OUTSTANDING**, and **platform
-   capability for installing or activating a second supervisord program remains UNVERIFIED** —
-   `/etc/supervisor/conf.d` is image-managed, and the preflight that established this had **no
-   live platform access**. **This is not a confirmed platform failure**: nothing has been tried,
-   and nothing says it cannot work. It is an unverified capability and an unperformed action.
+   pattern. **Live platform capability is VERIFIED** by a read-only check on 2026-09-23:
+   supervisord runs the pod, `supervisord.conf` includes `conf.d/*.conf`, `conf.d` is writable,
+   port 8003 is free and `/app/apps/api` is present. **The actual `apps/api` production
+   deployment target is OUTSTANDING / NOT CREATED**, and the **current pod does not contain the
+   three `apps-api` deployment templates yet**. **This is not a platform failure** — the
+   capability is there; the action has not been taken, and the durable path from a committed
+   template to a registered program is still an open question for the platform.
 4. **U2 and E3 remain unresolved** — no database has been authorised for Finance writes and the
    production `nodeLedgerWriter` role does not exist.
 
