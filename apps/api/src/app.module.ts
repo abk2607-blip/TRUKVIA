@@ -14,6 +14,7 @@ import { FinStatusReadsController } from './fin/fin-status-reads.controller';
 import { FinStatusReadsService } from './fin/fin-status-reads.service';
 import { InternalFinController } from './fin/internal-fin.controller';
 import { MONGO, VendorsService } from './vendors/vendors.service';
+import { assertFinanceWriterAuthorised } from './fin/writer-authorisation';
 import { VendorBillsService } from './vendors/vendor-bills.service';
 import { VendorPaymentsService } from './vendors/vendor-payments.service';
 
@@ -39,6 +40,17 @@ export const MONGO_DB_NAME = process.env.NEST_MONGO_DB ?? 'trukvia_local_2026092
     {
       provide: MONGO,
       useFactory: async () => {
+        /**
+         * Gate 9h · U2. This is the one place the Finance writer obtains its
+         * database, so the authorisation check belongs here rather than on
+         * each write route. It runs BEFORE the client connects: an
+         * unauthorised deployment never opens a connection at all.
+         *
+         * backend-node's "prod" substring guard does not cover this
+         * application — that is a separate codebase, and assuming otherwise
+         * was the gap U2 exposed.
+         */
+        assertFinanceWriterAuthorised({ dbName: MONGO_DB_NAME });
         const client = new MongoClient(MONGO_URL, { maxPoolSize: 10 });
         await client.connect();
         return client.db(MONGO_DB_NAME);

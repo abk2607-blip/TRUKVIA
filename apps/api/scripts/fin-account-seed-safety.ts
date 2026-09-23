@@ -117,6 +117,28 @@ async function ledger(db: Db): Promise<Doc[]> {
   return db.collection<Doc>('fin_txn').find({}, { projection: { _id: 0 } }).toArray();
 }
 
+/**
+ * A comparable snapshot of the ledger.
+ *
+ * Keys are sorted because an upsert-insert builds the document from the filter
+ * fields first, and MongoDB does not promise a stable order for them: two
+ * identical reprojections can return `user_id` and `ref_source_key` the other
+ * way round. Only the ORDER varies, never a value — measured directly — so a
+ * raw JSON.stringify compares presentation rather than content. The slice-2c
+ * parity harnesses sort keys for exactly this reason.
+ */
+function snapshot(rows: Doc[]): string {
+  const ordered = rows.map((r) => {
+    const out: Doc = {};
+    for (const k of Object.keys(r).sort()) {
+      out[k] = k === 'created_at' || k === 'projected_at' ? '<x>' : r[k];
+    }
+    return out;
+  });
+  ordered.sort((a, b) => String(a['ref_source_key']).localeCompare(String(b['ref_source_key'])));
+  return JSON.stringify(ordered);
+}
+
 async function main(): Promise<void> {
   const client = new MongoClient(MONGO);
   await client.connect();
@@ -211,17 +233,9 @@ async function main(): Promise<void> {
       const db = await mk('e');
       await preSeedAccounts(db);
       await reprojectVendorSourceOrThrow(db, UID, CID, 'vendor_payment', 'vp_seed');
-      const first = JSON.stringify(
-        (await ledger(db))
-          .map((r) => ({ ...r, created_at: '<x>', projected_at: '<x>' }))
-          .sort((a, b) => String(a['ref_source_key']).localeCompare(String(b['ref_source_key']))),
-      );
+      const first = snapshot(await ledger(db));
       await reprojectVendorSourceOrThrow(db, UID, CID, 'vendor_payment', 'vp_seed');
-      const second = JSON.stringify(
-        (await ledger(db))
-          .map((r) => ({ ...r, created_at: '<x>', projected_at: '<x>' }))
-          .sort((a, b) => String(a['ref_source_key']).localeCompare(String(b['ref_source_key']))),
-      );
+      const second = snapshot(await ledger(db));
       report(first === second, 'E. reprojection remains idempotent and byte-identical');
 
       const m = await ensureSystemAccounts(db, UID, CID);

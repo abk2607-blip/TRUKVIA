@@ -347,8 +347,9 @@ weakened even if no writes are occurring.
 | Set / unset reverse-bridge env | **PLATFORM** | NOT DONE |
 | Restart Node / Python | **PLATFORM** | NOT DONE |
 | Parity verification per source type | **CODE / workstream** | method exists, not run against production data |
-| Boundary proof S3/S4 | **CODE / workstream** | NOT WRITTEN |
-| Resolve the `fin_accounts` question | **CODE / workstream** | NOT DONE |
+| Boundary proof S3/S4 against the real role | **CODE / workstream** | **NOT WRITTEN** — needs the role to exist first |
+| Safety proof S4b (refused creation writes no ledger row) | **CODE / workstream** | **DONE** — `scripts/fin-account-seed-safety.ts`, 16/16, commit `10b0e82`. Must be re-run against the real role at activation. |
+| Resolve the `fin_accounts` question | **CODE / workstream** | **DONE 2026-09-23** — Node requires `insert`; see §3 |
 | Decide the write-pause mechanism (§5.5) | **GATE OWNER** | NOT DECIDED |
 | Decide whether a writer marker is required (A1) | **GATE OWNER** | NOT DECIDED |
 
