@@ -24,6 +24,24 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The backend suite was written to run inside the Emergent pod, where the
+      # repository lives at /app. Roughly forty of the sixty-seven critical
+      # suites are source guardrails that read files by absolute path -
+      # /app/backend/server.py, /app/frontend/src/pages/Login.jsx and so on - so
+      # on a runner they all fail with FileNotFoundError. Reproducing the layout
+      # with one symlink keeps those tests exactly as written; rewriting 300+
+      # hard-coded paths across 100+ files would be the larger and riskier
+      # change, and would diverge from the environment they actually run in.
+      - name: Provide the pod-style /app path
+        run: |
+          if [ -e /app ] || [ -L /app ]; then
+            echo "::error::/app already exists on this runner; refusing to replace it." >&2
+            ls -ld /app >&2
+            exit 1
+          fi
+          sudo ln -s "$GITHUB_WORKSPACE" /app
+          test -f /app/backend/scripts/run_regression.sh
+
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
