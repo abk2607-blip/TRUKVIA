@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, Request, Response, Depends, Upload
 from fastapi.responses import StreamingResponse
 from typing import List, Optional
 from datetime import datetime, timezone, timedelta
-import io, os, uuid, secrets, re, requests, base64
+import io, os, uuid, secrets, re, requests, base64, asyncio
 
 import logging
 from db import db
@@ -556,7 +556,18 @@ async def invoice_pdf(iid: str, user=Depends(get_current_user)):
         {"_id": 0},
     ).to_list(1000)
     trips.sort(key=lambda t: t.get("date", ""))
-    pdf_bytes = build_invoice_pdf(company, customer, inv, trips)
+    # build_invoice_pdf is synchronous and CPU-bound (reportlab lays the whole
+    # document out), so calling it directly here held the event loop for the
+    # entire render and every other request queued behind it. Same reason
+    # server.py runs init_storage in an executor. Hand it to a worker thread:
+    # identical bytes, identical arguments, the loop stays free.
+    pdf_bytes = await asyncio.to_thread(
+        build_invoice_pdf,
+        company,
+        customer,
+        inv,
+        trips,
+    )
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
