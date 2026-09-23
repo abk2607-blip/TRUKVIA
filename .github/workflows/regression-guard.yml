@@ -42,6 +42,16 @@ jobs:
           sudo ln -s "$GITHUB_WORKSPACE" /app
           test -f /app/backend/scripts/run_regression.sh
 
+      # One suite reads this file's TEXT rather than the environment - it asserts
+      # the literal `REGRESSION_GUARD_STRICT=1` appears in backend/.env - so an
+      # env var cannot satisfy it. The platform image ships the real file; here we
+      # write the single line that test needs and nothing else. It is runner-local
+      # and git-ignored (*.env), so it is never committed. NO secret, NO key, and
+      # in particular NO email configuration goes in here.
+      - name: Provide the pod-style backend .env
+        run: |
+          echo 'REGRESSION_GUARD_STRICT=1' > /app/backend/.env
+
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
@@ -69,9 +79,16 @@ jobs:
       # a real preview token and never a repository secret. Writing it to
       # $GITHUB_ENV makes it available to every later step, which is what both the
       # backend process and pytest need - they must agree on the same value.
+      #
+      # The `-men_2026` suffix is load-bearing, not decoration. auth.py derives the
+      # demo user's id as `user_demo_{DEMO_TOKEN[-8:]}`, and one suite inserts its
+      # fixtures directly into Mongo under the literal id `user_demo_men_2026`. A
+      # freely random token therefore authenticates as a DIFFERENT user and those
+      # rows come back 404. The token stays random; only its last eight characters
+      # are pinned, which is exactly what the derivation reads.
       - name: Generate a CI-only demo token
         run: |
-          TOKEN="ci-$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+          TOKEN="ci-$(python -c 'import secrets; print(secrets.token_urlsafe(32))')-men_2026"
           echo "::add-mask::$TOKEN"
           echo "DEMO_TOKEN_VALUE=$TOKEN" >> "$GITHUB_ENV"
           echo "IS_PREVIEW_ENV=1" >> "$GITHUB_ENV"
