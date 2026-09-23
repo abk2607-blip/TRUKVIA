@@ -113,6 +113,41 @@ jobs:
           done
           echo "Backend failed to start"; cat /tmp/uvicorn.log; exit 1
 
+      # One suite asserts the guard-history collection is non-empty - its own
+      # docstring says "or already have entries", i.e. it was written against the
+      # pod database where earlier guard runs have left rows behind. A fresh
+      # regression_ci has none, and the only two writers both shell out to the
+      # FULL regression suite, so triggering one from inside this job would nest a
+      # second complete run. Seeding a single row is the cheap, non-recursive
+      # equivalent. It uses pymongo, which requirements.txt already installed.
+      - name: Seed one guard-history row (throwaway CI database only)
+        env:
+          MONGO_URL: mongodb://localhost:27017
+          DB_NAME: regression_ci
+        run: |
+          python - <<'PY'
+          import os
+          from datetime import datetime, timezone
+          from pymongo import MongoClient
+
+          url, name = os.environ["MONGO_URL"], os.environ["DB_NAME"]
+          # Refuse anything that is not the local throwaway service container.
+          assert url.startswith(("mongodb://localhost:", "mongodb://127.0.0.1:")), "refusing a non-local MONGO_URL"
+          assert name == "regression_ci", "refusing a database other than regression_ci"
+
+          db = MongoClient(url)[name]
+          # Same six fields server.py writes after a real guard run.
+          db.deploy_status_history.insert_one({
+              "checked_at": datetime.now(timezone.utc).isoformat(),
+              "status": "pass",
+              "exit_code": 0,
+              "elapsed_s": 0.0,
+              "output_tail": "seeded by CI - this throwaway database has no prior guard run",
+              "failed_tests": [],
+          })
+          print("seeded rows:", db.deploy_status_history.count_documents({}))
+          PY
+
       - name: Run regression guard
         env:
           BACKEND_URL_INTERNAL: http://localhost:8001
