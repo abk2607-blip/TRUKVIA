@@ -1,12 +1,13 @@
 # Phase 4 · Gate 9h — Node business-writer authorisation (DRAFT)
 
-**Status: DRAFT — NOT A GATE RESULT.** Nothing in this document is authorised. One part has since
-been **partially rehearsed**: the U4 recovery path, on a **disposable clone only** (§5.7,
-2026-09-23). That rehearsal is evidence about the *procedure* and produced three corrections to it.
-It is **not** activation evidence, it did not touch production, and it authorises nothing. Every
-other section remains unrehearsed and unverified, and the document still contains **no activation
-evidence**. Preparing or updating it does **not** authorise activating the Node writer, changing any
-database permission, or switching any traffic.
+**Status: DRAFT — NOT A GATE RESULT.** Nothing in this document is authorised. Two parts have since
+been **rehearsed, both on disposable local state only** (2026-09-23): the U4 recovery path on a
+disposable clone (§5.7), which produced three corrections to the procedure, and the R1 backup restore
+into a fresh disposable database (§5.8), which passed. Neither is **activation evidence**, neither
+touched production, and neither authorises anything. Every other section remains unrehearsed and
+unverified, and the document still contains **no activation evidence**. Preparing or updating it does
+**not** authorise activating the Node writer, changing any database permission, or switching any
+traffic.
 
 Gate 9g (`6685637`) remains in force and remains **BLOCKED**. This draft is the plan that would have
 to be executed, and independently verified, before Gate 9h could be opened at all.
@@ -122,29 +123,27 @@ transcript, or in any log.**
 
 **This section replaces Gate 9g §13.4.** The **recovery path** was rehearsed on a disposable clone on
 2026-09-23 (§5.7) and three corrections came out of it, which are written into §5.2 and §5.3 below.
-The **restore path (R1) has still never been rehearsed.** The procedure below is therefore the
-corrected one, with the parts that remain unrehearsed marked as such.
+The **restore path (R1) was rehearsed on 2026-09-23 and passed** (§5.8). The procedure below is
+therefore the corrected one, with the parts that remain unrehearsed marked as such.
 
 ### 5.1 Evidence that must exist BEFORE writer activation
 
 | # | Requirement | Status |
 |---|---|---|
-| R1 | A verified, restorable backup of `fin_txn` and `fin_hook_failures`, taken immediately before activation, with its restore actually tested on a throwaway database | **BLOCKED** — see below |
+| R1 | A verified, restorable backup of `fin_txn` and `fin_hook_failures`, taken immediately before activation, with its restore actually tested on a throwaway database | **VERIFIED / PASS** for the restore rehearsal (§5.8). The activation-instant backup itself has not been taken, because no activation has occurred |
 | R2 | A recorded row count and a content fingerprint of both collections at the activation instant | **NOT DONE** for activation; the *method* was exercised in §5.7 |
 | R3 | The exact activation timestamp, recorded to the second, so writes can be bounded by time | **NOT DONE** for activation; and §5.7 showed a timestamp alone is **not sufficient** to identify affected rows |
 | R4 | Confirmation that every affected `fin_txn` row carries `projected_at` / `created_at`, so Node-era rows are identifiable | **VERIFIED** in the §5.7 rehearsal — 370/370 relevant rows carried both fields |
-| R5 | A named operator who can execute the restore and has the access to do so | **ASSIGNED 2026-09-23** — the gate owner/operator. Not exercised: whether that access is sufficient to execute a restore is untested, because R1 is BLOCKED |
+| R5 | A named operator who can execute the restore and has the access to do so | **ASSIGNED 2026-09-23** — the gate owner/operator. The restore itself was demonstrated in §5.8, but on a local machine against a local disposable database; whether this operator holds the production access a real restore would need is untested |
 
-**R1 — why it is BLOCKED.** The 2026-09-23 rehearsal could not attempt it. The authoritative backup
-artifact was not present on the rehearsal machine, and retrieving it would have required production
-access, which the rehearsal was forbidden to use. Consequently **the SHA-256 was not verified in this
-rehearsal and no restore was executed.** This is a statement about the rehearsal's reach, **not**
-about the artifact: nothing observed suggests the backup is invalid or unusable. It simply was not
-available here, so R1 carries no evidence either way.
+**R1 — now demonstrated.** The restore was rehearsed on 2026-09-23 and **passed**; the evidence is in
+§5.8. The authoritative artifact was found on the local machine, its SHA-256 matched the previously
+verified hash, and `mongorestore` completed with exit code 0 into a fresh disposable database.
 
-R1 remains the one that cannot be skipped. **Without a tested restore, this gate cannot open** — and
-the successful recovery rehearsal in §5.7 does **not** substitute for it, because it exercised
-reprojection, which is a different mechanism from restore.
+R1 remains the one that cannot be skipped, and what is now proven is the **restore mechanism**, not
+the activation backup: no backup has been taken at an activation instant, because no activation has
+occurred. The recovery rehearsal in §5.7 still does **not** substitute for it either, because
+reprojection is a different mechanism from restore — the two are now both demonstrated, separately.
 
 R2 and R3 are recorded as *method demonstrated, activation capture not taken*. In the rehearsal a row
 count and a SHA-256 content fingerprint over the affected scope proved sufficient both to detect the
@@ -243,7 +242,9 @@ if the source records are intact.
 5. **Fallback path — restore from backup.** Only if reprojection cannot produce a correct ledger —
    which now explicitly includes the orphaned-`source_id` case in step 4. Restore `fin_txn` and
    `fin_hook_failures` from R1 to the activation-instant state, then reproject anything written after
-   it through Python, again subject to step 4. **This path remains unrehearsed (R1 is BLOCKED).**
+   it through Python, again subject to step 4. **The restore mechanism itself is now demonstrated
+   (§5.8); this fallback path as a whole — restore followed by reprojection — has not been rehearsed
+   end to end.**
 6. **Never** restore business/source collections from this backup — they were never at risk, and
    restoring them would destroy legitimate operator work done since activation.
 
@@ -345,14 +346,15 @@ was not — see §5.2), the §5.3 procedure was executed, and recovery was verif
 
 **What was NOT executed, and must not be read as done:**
 
-- **R1 backup restore** — the authoritative artifact was not available on the rehearsal machine and
-  obtaining it would have needed production access. No SHA-256 verification, no restore. See §5.1.
+- **R1 backup restore** — not attempted during *this* rehearsal: the artifact had not yet been located
+  on the machine. It was found and the restore was rehearsed separately later the same day; that is
+  recorded in §5.8, not here.
 - **§5.6 check 5** — no UI spot check by a business user.
 - **A live writer reversion.** §11 step 1 was exercised only at the guard level: the `apps/api`
   Finance-writer authorisation check was shown to refuse startup when the authorisation is unset or
   points elsewhere. **No writer process was started, stopped or reverted**, so E9 (§13) is *not*
   satisfied by this rehearsal.
-- Nothing in production was contacted, read or written, and the authoritative validation database was
+- Nothing in production was contacted, read or written, and the local validation database was
   confirmed unchanged afterwards.
 
 **Separate pre-existing observation — reversed `vendor_payment` stale legs.** One `vendor_payment`
@@ -367,10 +369,80 @@ the orphan finding in §5.3 step 4, which has the opposite consequence.
 
 | # | Prerequisite | Status |
 |---|---|---|
-| U4-a | R1 backup-restore rehearsal, on a throwaway database, with the artifact's checksum verified | **BLOCKED** — needs the artifact and an authorised operator |
+| U4-a | R1 backup-restore rehearsal, on a throwaway database, with the artifact's checksum verified | **VERIFIED 2026-09-23** (§5.8) — checksum matched, restore exit code 0 |
 | U4-b | The corrected parity-based recovery identification procedure (§5.3 step 2) adopted and rehearsed end-to-end | drafted here, **not yet re-rehearsed as a whole** |
 | U4-c | The source-existence scope restriction for reprojection (§5.3 step 4) adopted as a hard rule in the runbook | drafted here, **not yet operationalised** |
 | U4-d | The §5.5 write-pause / reversion decision (Option A or B) taken and written in | **DECIDED 2026-09-23 — Option B** (§5.5); the window has not been exercised |
+
+### 5.8 R1 backup-restore rehearsal — 2026-09-23, PASS
+
+**Result: the restore works.** This closes U4-a. It does not close U4 (§5.7).
+
+**Artifact.** The exact expected artifact was found on the local machine — two byte-identical copies,
+56,723,720 bytes each — and its **SHA-256 matched the previously verified hash**. It is a genuine
+`mongodump --archive --gzip` stream (mongodump 100.18.0, server 7.0.43). **The artifact itself was
+opened read-only and was not modified.**
+
+**Tooling.** `mongorestore` was not installed on the machine: the MongoDB Server 7.0 installation
+ships only `mongod`, and the Database Tools are a separate package. The official MongoDB Database
+Tools 100.9.4 were therefore used in **portable form, extracted into a scratchpad directory**. Nothing
+was installed: **no system, registry, PATH or repository modification was made by that tooling**, and
+the directory can simply be deleted. This matters for R1 because the requirement is that an operator
+can restore the backup with standard tooling — a bespoke reader would not have demonstrated that.
+
+**Restore.**
+
+| | |
+|---|---|
+| Target | `trukvia_r1restore_1790137793` — a **fresh disposable database**, created for this rehearsal. **Disposable rehearsal state, not production.** |
+| Namespace mapping | `--nsFrom`/`--nsTo`, so no local database was ever created under the production database name |
+| `mongorestore` exit code | **0** |
+| Reported | **960,150 document(s) restored successfully. 0 document(s) failed to restore.** |
+| Restored | **62 collections**, **181 indexes** |
+
+**The `save_health` count difference — TTL expiry, not a restore failure.** The restore reported
+960,150 objects; a live count immediately afterwards gave **957,190**. The **2,960** difference was
+isolated to **exactly one collection, `save_health`** (log 8,855, live 5,895); the other 61
+collections agreed with the log exactly. `save_health` carries a TTL index `save_health_ttl` with
+**`expireAfterSeconds` = 1,209,600 (14 days)**, measured directly on the restored collection, and the
+backup predates the rehearsal, so MongoDB's TTL monitor removed the aged telemetry rows once they
+were written. The documents were restored correctly and then expired by design. **This explanation
+applies to `save_health` only and is not generalised to any other collection.**
+
+For the collections R1 exists to protect — `fin_txn`, `fin_hook_failures` and `fin_accounts` —
+**no TTL index exists**, so they restore without this effect.
+
+**The backup is authoritative for this rehearsal; the local validation database is NOT a complete
+copy of it.** Measured, side by side:
+
+| | Restored from backup | Local validation DB |
+|---|---|---|
+| Collections | **62** | 58 |
+| `fin_txn` | **28,360** | 28,164 |
+| `fin_accounts` | **15,887** | 15,663 |
+| `trips` | **117,632** | 116,867 |
+| `vendor_payments` | 2,040 | 2,040 |
+
+Four collections present in the restore are **absent from the validation database**:
+`fin_hook_failures`, `fuel`, `saved_trip_filters`, `team_members`.
+
+**These differences are not restore failures** — the restore reported zero failures. They mean only
+that the validation database is a partial copy. **Why it is partial was not measured and is not
+inferred here.** The consequence for this gate is narrow but real: **validation-database counts are
+not a proxy for the authoritative backup**, and any count taken as backup evidence must come from a
+restore of the artifact, not from the validation database.
+
+**Isolation.** Production was **not accessed** — no connection, no read, no write, and the artifact
+was not fetched from it. No local database was created under the production database name. The local
+validation database was confirmed unchanged afterwards (58 collections, 956,097 documents, `fin_txn`
+28,164, `fin_accounts` 15,663, `vendor_payments` 2,040 — all matching its pre-rehearsal baseline). The
+U4 corruption/recovery drill was **not** re-run.
+
+**What this does and does not establish.** It establishes that the named artifact is intact and
+restorable with standard tooling into a clean database. It does **not** establish that a backup has
+been taken at an activation instant (R2/R3 remain as recorded), that the assigned operator holds the
+production access a real restore would require (R5), or that the §5.3 step 5 fallback path —
+restore followed by reprojection — works end to end. **U4 remains PARTIAL.**
 
 ---
 
@@ -527,7 +599,7 @@ weakened even if no writes are occurring.
 | Create `nodeLedgerWriter` role | **PLATFORM** | NOT DONE |
 | Provision the credential into Node's env | **PLATFORM** | NOT DONE |
 | Verify production `DB_NAME` (U2) | **PLATFORM** | NOT DONE |
-| Backup + tested restore | **PLATFORM** | **NOT DONE — BLOCKED.** The 2026-09-23 rehearsal could not attempt it: the artifact was not available on the rehearsal machine and fetching it needs production access (§5.1, R1) |
+| Backup + tested restore | **PLATFORM** | **RESTORE TESTED 2026-09-23** (§5.8) — checksum matched, `mongorestore` exit 0 into a fresh disposable database. The **activation-instant backup itself is still NOT TAKEN**, because no activation has occurred |
 | Recovery-path rehearsal (reprojection) | **CODE / workstream** | **DONE 2026-09-23** on a disposable clone — byte-exact recovery, and three procedure corrections (§5.7). Does **not** satisfy the restore requirement above |
 | Set / unset reverse-bridge env | **PLATFORM** | NOT DONE |
 | Restart Node / Python | **PLATFORM** | NOT DONE |
@@ -553,7 +625,7 @@ Gate 9h may be declared GREEN only when **all** of the following exist as record
 | E1 | U2 answered (yes/no only), recorded |
 | E2 | `fin_accounts` question resolved and recorded |
 | E3 | `nodeLedgerWriter` role created, with the boundary proof (S3 succeeds, S4 refused with code 13) |
-| E4 | Backup taken **and its restore demonstrated** on a throwaway database — **still outstanding**; the 2026-09-23 rehearsal demonstrated *reprojection* recovery, which is a different mechanism and does not satisfy E4 (§5.1 R1, §5.7) |
+| E4 | Backup taken **and its restore demonstrated** on a throwaway database — **restore demonstrated 2026-09-23** (§5.8): checksum matched, `mongorestore` exit 0, 960,150 documents, 0 failures. **Still outstanding on the first half**: no backup has been taken at an activation instant |
 | E5 | Activation timestamp and fingerprints (R2, R3) recorded |
 | E6 | Pre-write smoke checks S1–S7 green |
 | E7 | First-write criteria C1–C6 green for the first source type, **including the business-user check** |
@@ -579,11 +651,12 @@ Preparing this draft does **not**:
 - reopen, amend or supersede Gate 9g (`6685637`), which remains in force and BLOCKED;
 - constitute evidence that anything in §13 has been done.
 
-**Every table in this document reports its true state.** With two exceptions, recorded as evidence
+**Every table in this document reports its true state.** With three exceptions, recorded as evidence
 and nothing more, every status is NOT DONE, NOT VERIFIED, BLOCKED, UNKNOWN or UNRESOLVED. The
-exceptions are R4, verified during the §5.7 rehearsal, and the reprojection recovery path itself,
-rehearsed on a disposable clone on 2026-09-23. **Neither is activation evidence.** No production
-system was contacted, no restore was tested, no writer was started, and U4 remains PARTIAL.
+exceptions are R4, verified during the §5.7 rehearsal; the reprojection recovery path itself,
+rehearsed on a disposable clone on 2026-09-23; and R1, whose restore was demonstrated the same day
+into a fresh disposable database (§5.8). **None of them is activation evidence.** No production system
+was contacted, no writer was started, and U4 remains PARTIAL.
 
 Opening Gate 9h requires an explicit, recorded decision by the gate owner to allow Node business
 writes at all — a policy decision that this document exists to inform, not to make.
@@ -592,8 +665,9 @@ writes at all — a policy decision that this document exists to inform, not to 
 
 ## 15. Readiness state
 
-**DRAFT — NOT SUBMITTED, NOT AUTHORISED.** Partially rehearsed: the U4 recovery path only, on a
-disposable clone (§5.7). Everything else remains unrehearsed.
+**DRAFT — NOT SUBMITTED, NOT AUTHORISED.** Partially rehearsed: the U4 recovery path on a disposable
+clone (§5.7), and the R1 backup restore into a fresh disposable database (§5.8). Everything else
+remains unrehearsed.
 
 **Blocker status after the 2026-09-23 investigation:**
 
@@ -601,7 +675,7 @@ disposable clone (§5.7). Everything else remains unrehearsed.
 |---|---|
 | **U2** | **OPEN** — production `DB_NAME` unverified (Gate 9g §14). Operator answers yes/no only; the value is never printed. |
 | **U3** | **RESOLVED (code) / OPEN (permission).** The silent-failure hazard is fixed and proven 16/16. Node still **requires** `insert` on `fin_accounts` (§3); granting it remains an operator action, not yet done. |
-| **U4** | **PARTIAL — still OPEN and MANDATORY, not GREEN.** Rehearsed 2026-09-23 on a disposable clone (§5.7): the **recovery path is proven** — byte-exact fingerprint recovery, §5.6 checks 1–4 passed, R4 **VERIFIED** 370/370, parity detected all four injected corruptions. But the gate stays PARTIAL because (a) **R1 is BLOCKED** — the backup artifact was unavailable to the rehearsal, so no checksum verification and no restore, and reprojection does not substitute for restore; (b) the recovery procedure needed **three corrections** that are now drafted but not themselves re-rehearsed — parity-based identification (a deleted leg is invisible to a timestamp scan), the source-existence scope restriction (**185 `source_id`s vs 151 source documents; 34 orphans = 68 legs = ₹25,500** would be destroyed by a blind reprojection), and the non-optional detector set (row counts can be fully masked by delete + ghost-insert); (c) the §5.5 policy is now decided (Option B, 2026-09-23) but has never been exercised. Outstanding items are itemised as **U4-a … U4-d** in §5.7. The earlier concern about rows written under a different `ref_source_key` was **not** exercised in this rehearsal and remains untested; backup must still cover **`fin_accounts`**. |
+| **U4** | **PARTIAL — still OPEN and MANDATORY, not GREEN.** Rehearsed 2026-09-23 on a disposable clone (§5.7): the **recovery path is proven** — byte-exact fingerprint recovery, §5.6 checks 1–4 passed, R4 **VERIFIED** 370/370, parity detected all four injected corruptions. **R1 is now VERIFIED** (§5.8, 2026-09-23): the artifact's SHA-256 matched and `mongorestore` restored it into a fresh disposable database with exit code 0, 960,150 documents and 0 failures. But the gate stays PARTIAL because (a) R1 proves the **restore mechanism only** — no activation-instant backup has been taken, the assigned operator's production access is untested, and the §5.3 step 5 restore-then-reproject path has not been rehearsed end to end; (b) the recovery procedure needed **three corrections** that are now drafted but not themselves re-rehearsed — parity-based identification (a deleted leg is invisible to a timestamp scan), the source-existence scope restriction (**185 `source_id`s vs 151 source documents; 34 orphans = 68 legs = ₹25,500** would be destroyed by a blind reprojection), and the non-optional detector set (row counts can be fully masked by delete + ghost-insert); (c) the §5.5 policy is now decided (Option B, 2026-09-23) but has never been exercised. Outstanding items are itemised as **U4-a … U4-d** in §5.7. The earlier concern about rows written under a different `ref_source_key` was **not** exercised in this rehearsal and remains untested; backup must still cover **`fin_accounts`**. |
 | **U5** | **POLICY DECIDED — execution still OPEN and MANDATORY.** Write-pause mechanism chosen 2026-09-23 (§5.5): **Option B, the declared quiet window**, with R5 assigned to the gate owner/operator. Option A was rejected on evidence — day closure is **not** a data-entry lock and no canonical write path enforces it. Option B is **coordination, not enforcement**, and no window has ever been declared or exercised, so **E11 is not satisfied**. Separately, and unchanged from 2026-09-23: reverting the env is sufficient **without any code change**, but `os.environ` is per-process, so a `.env` edit needs a **process restart** — it is not instant like `.node-routing-kill`, and an in-flight write can still complete. That is the §11 Node-writer control, which is distinct from this policy. |
 | **U6** | **DEFERRED — not an activation blocker.** No writer attribution exists and timestamps cannot substitute (§9). Recorded as future hardening. |
 
