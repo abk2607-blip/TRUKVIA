@@ -674,7 +674,8 @@ type; several of those have no `modified_at` field at all.
 
 ## 6. Writer activation sequence
 
-**NOT YET EXECUTED. Each step requires its predecessor to be green and recorded.**
+**Step 1 recorded 2026-09-23. Steps 2–3 were already recorded; steps 4–12 are NOT YET EXECUTED.**
+Each step requires its predecessor to be green and recorded.
 
 | Step | Action | Owner |
 |---|---|---|
@@ -690,6 +691,20 @@ type; several of those have no `modified_at` field at all.
 | 10 | First-write controls observed (§8) | Migration workstream |
 | 11 | Repeat 9–10 per source type, one at a time | — |
 | 12 | Only after all enabled types are green: consider retiring the forward bridge | Gate owner |
+
+**Step 1 — gate-owner decision, recorded 2026-09-23: YES.** The gate owner authorises **proceeding
+with the Gate 9h controlled sequence** for Node Finance business writes. That is the whole of what
+has been authorised. It does **not** authorise any individual production operation, does **not**
+create a role or a credential, does **not** set `TRUKVIA_FIN_WRITER_ALLOWED_DB`, does **not** start
+or restart the writer, does **not** enable reverse delegation, and involves **no production access of
+any kind**. **U2 remains BLOCKED / FAIL-CLOSED** (§4), **E3 remains outstanding**, and **Gate 9h
+itself remains DRAFT / NOT AUTHORIZED** (§15).
+
+Steps 2 and 3 were recorded earlier (E1, §4; E2, §3). **Steps 4–12 have not been executed** — the
+activation-time backup and fingerprints (R1/R2), creation of the production `nodeLedgerWriter` role,
+credential provisioning, the production S3/S4 boundary proof, the writer restart and readiness check,
+the pre-write smoke checks, the activation timestamp (R3) and reverse delegation enablement all
+remain prerequisites, in that order.
 
 Steps 9–11 are deliberately incremental. **Enabling all thirteen source types at once is explicitly
 forbidden by this gate.**
@@ -892,15 +907,21 @@ were performed on disposable local state. No production system was contacted, no
 and U4 remains PARTIAL.
 
 Opening Gate 9h requires an explicit, recorded decision by the gate owner to allow Node business
-writes at all — a policy decision that this document exists to inform, not to make.
+writes at all — a policy decision that this document exists to inform, not to make. **That decision
+was recorded on 2026-09-23 (§6 step 1): YES, proceed with the controlled sequence.** It authorises
+the **sequence**, not any step within it; every item §13 lists remains outstanding, and nothing above
+in this section has been authorised by it.
 
 ---
 
 ## 15. Readiness state
 
-**DRAFT — NOT SUBMITTED, NOT AUTHORISED.** Partially rehearsed: the U4 recovery path on a disposable
-clone (§5.7), and the R1 backup restore into a fresh disposable database (§5.8). Everything else
-remains unrehearsed.
+**DRAFT — NOT SUBMITTED, NOT AUTHORISED FOR ACTIVATION.** The gate owner recorded step 1 on
+2026-09-23 (§6): proceed with the controlled sequence. That authorises the **sequence** and nothing
+inside it — no role, no credential, no `TRUKVIA_FIN_WRITER_ALLOWED_DB`, no writer start or restart,
+no reverse delegation, no production access — and **step 4, the activation-time backup, has not been
+executed**. Partially rehearsed: the U4 recovery path on a disposable clone (§5.7), and the R1 backup
+restore into a fresh disposable database (§5.8). Everything else remains unrehearsed.
 
 **Blocker status after the 2026-09-23 investigation:**
 
