@@ -29,18 +29,34 @@ jobs:
         with:
           python-version: "3.11"
 
+      # `emergentintegrations` is an Emergent RUNTIME package: the platform image
+      # serves it, public PyPI does not. `pip install -r requirements.txt` therefore
+      # cannot resolve it here and the job dies before a single test runs.
+      #
+      # backend/requirements.txt stays AUTHORITATIVE AND UNCHANGED — production needs
+      # that pin — so CI installs from a filtered COPY. No other version is pinned,
+      # and no private index or secret is introduced.
       - name: Install backend deps
         run: |
           cd backend
           pip install --upgrade pip
-          pip install -r requirements.txt
+          CI_REQS="$(mktemp)"
+          grep -v '^emergentintegrations==0\.2\.0[[:space:]]*$' requirements.txt > "$CI_REQS"
+          pip install -r "$CI_REQS"
+          rm -f "$CI_REQS"
 
       - name: Start backend (background)
         env:
           MONGO_URL: mongodb://localhost:27017
           DB_NAME: regression_ci
           CORS_ORIGINS: "*"
-          EMERGENT_LLM_KEY: dummy
+          # Empty ON PURPOSE, and it is what makes the step above safe. The AI
+          # routes check this key FIRST and answer 503 "AI is not configured"; only
+          # a non-empty key reaches their lazy `emergentintegrations` import, which
+          # would then be an uncaught ImportError and a 500. The regression suite
+          # accepts 503 and asserts no real AI response, so CI deliberately
+          # exercises the not-configured path instead of a real AI call.
+          EMERGENT_LLM_KEY: ""
         run: |
           cd backend
           nohup uvicorn server:app --host 0.0.0.0 --port 8001 > /tmp/uvicorn.log 2>&1 &
