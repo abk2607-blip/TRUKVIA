@@ -253,7 +253,8 @@ if the source records are intact.
    `fin_hook_failures` from R1 to the activation-instant state, then reproject anything written after
    it through Python, again subject to step 4. **The restore mechanism itself is now demonstrated
    (§5.8); this fallback path as a whole — restore followed by reprojection — has not been rehearsed
-   end to end.**
+   end to end.** The §5.9 rehearsal reached this step for real: an orphan-backed residual discrepancy
+   survived a correctly scoped reprojection, so this path is not hypothetical.
 6. **Never** restore business/source collections from this backup — they were never at risk, and
    restoring them would destroy legitimate operator work done since activation.
 
@@ -379,7 +380,7 @@ the orphan finding in §5.3 step 4, which has the opposite consequence.
 | # | Prerequisite | Status |
 |---|---|---|
 | U4-a | R1 backup-restore rehearsal, on a throwaway database, with the artifact's checksum verified | **VERIFIED 2026-09-23** (§5.8) — checksum matched, restore exit code 0 |
-| U4-b | The corrected parity-based recovery identification procedure (§5.3 step 2) adopted and rehearsed end-to-end | drafted here, **not yet re-rehearsed as a whole** |
+| U4-b | The corrected parity-based recovery identification procedure (§5.3 step 2) adopted and rehearsed end-to-end | **PARTIAL — not GREEN.** Rehearsed once end to end on 2026-09-23 (§5.9): timestamp scan ∪ parity found all three injected changes where timestamp-only missed one, source-existence filtering excluded 34 orphan candidates, and the source-backed damage recovered byte-exact. **Not complete**: step 1 verified the post-reversion state rather than executing a reversion (E9 pending), step 5 was required by the resulting state but **not executed**, and §5.6 check 5 was not executed |
 | U4-c | The source-existence scope restriction for reprojection (§5.3 step 4) adopted as a hard rule in the runbook | **PARTIAL — not GREEN.** The authoritative orphan-scope measurement is **complete** (§5.3 step 4, 11 source types, 11,285 orphaned `source_id`s over 22,638 legs), and the rule is now captured in the runbook artifact **`docs/migration/PHASE4-GATE9H-NODE-WRITER-RUNBOOK.md` §2**. It is a **documentation-level hard rule only: no write-path guard enforces it**, and it has **not been exercised in any operation**. It stays open until the acceptance wording above is satisfied in practice, not only on paper |
 | U4-d | The §5.5 write-pause / reversion decision (Option A or B) taken and written in | **DECIDED 2026-09-23 — Option B** (§5.5); the window has not been exercised |
 
@@ -452,6 +453,60 @@ restorable with standard tooling into a clean database. It does **not** establis
 been taken at an activation instant (R2/R3 remain as recorded), that the assigned operator holds the
 production access a real restore would require (R5), or that the §5.3 step 5 fallback path —
 restore followed by reprojection — works end to end. **U4 remains PARTIAL.**
+
+### 5.9 U4-B end-to-end rehearsal — 2026-09-23, disposable clone only, PARTIAL
+
+**Result: the corrected identification procedure works. U4-B stays PARTIAL, not GREEN.** The §5.3
+sequence was run once, end to end, exactly as written above.
+
+**Scope.** A fresh disposable clone, `trukvia_u4b_1790141306`, taken from the restored backup
+database (§5.8), which was left unchanged. Test scope: **`mechanic_payment`, one tenant** — the
+smallest scope in the data containing both source-backed and orphaned `source_id`s, and deliberately
+not the §5.7 scope.
+
+| | |
+|---|---:|
+| `source_id`s in scope | 63 — **29 source-backed, 34 orphan** |
+| Ledger legs | 126 |
+| Pre-rehearsal fingerprint | `sha256 00cc600c…82d1` |
+| Activation instant (R3) | 2026-09-23T05:29:30+00:00 |
+
+**Simulated bad writes, three shapes:** **D1** a source-backed leg deleted · **D2** a source-backed
+amount changed · **D3** a narration changed on an **orphan** source. D2 and D3 were stamped at the
+activation instant; D1, being a deletion, leaves no row to stamp.
+
+**§5.3 steps, as executed:**
+
+| Step | Result |
+|---|---|
+| 1 — stop the bleeding | `node_bridge_ready` returned **False**, so Python was the writer. **No writer process was running, so no actual stop or reversion was executed** — this verified the post-reversion state only. **E9 remains pending.** |
+| 2 — identify (timestamp ∪ parity) | timestamp scan **2** (D2, D3) · parity **36** · **union 36**. Timestamp-only would have **missed D1** entirely |
+| 3 / 4 — reproject, source-existence restricted | 36 candidates → **2 source-backed reprojected (D1, D2)**, **34 orphan candidates excluded and reported**. **D3 was among the excluded orphans.** No blind full-scope reprojection was run |
+| 5 — fallback restore | **Required by the resulting state, and NOT rehearsed.** After reprojection the fingerprint differed from the baseline; the **residual discrepancy was exactly D3** |
+| 6 — never restore business/source collections | `mechanic_payments` **463 → 463, unchanged** |
+
+**§5.6 verification:** checks **1–4 passed** (parity byte-exact across the source-backed ids,
+`fin_hook_failures` 0 pending, 126/126 legs, debits equal credits). **Check 5, the UI spot check, was
+NOT executed** — it needs a human and a running application.
+
+**What this rehearsal established.**
+
+- The corrected identification principle works **in practice**, not only on paper: **timestamp scan
+  ∪ parity, followed by source-existence filtering.**
+- **Timestamp-only identification is insufficient** — D1 was missed, exactly as §5.3 step 2 predicts.
+- **Parity was the only detector** that found all three injected changes, and it also surfaced the
+  pre-existing discrepancies in the scope.
+- **Source-existence filtering prevented 34 pre-existing orphan candidates from being blindly
+  reprojected.**
+- **Steps 2 and 4 must be understood together:** parity *generates* candidates; source-existence
+  validation *determines which candidates are safe to reproject*. Neither is sufficient alone.
+- **An orphan-backed residual discrepancy is not repaired by source-backed reprojection alone.**
+  When such a residual remains, the documented fallback restore path may be required — and
+  **restore followed by reprojection remains unrehearsed end to end.**
+
+**Why U4-B is PARTIAL and not GREEN:** step 1 verified a state rather than executing a reversion
+(E9 pending), step 5 was not executed, and §5.6 check 5 was not executed. The acceptance wording
+"rehearsed end-to-end" is therefore not yet fully satisfied.
 
 ---
 
@@ -684,7 +739,7 @@ remains unrehearsed.
 |---|---|
 | **U2** | **OPEN** — production `DB_NAME` unverified (Gate 9g §14). Operator answers yes/no only; the value is never printed. |
 | **U3** | **RESOLVED (code) / OPEN (permission).** The silent-failure hazard is fixed and proven 16/16. Node still **requires** `insert` on `fin_accounts` (§3); granting it remains an operator action, not yet done. |
-| **U4** | **PARTIAL — still OPEN and MANDATORY, not GREEN.** Rehearsed 2026-09-23 on a disposable clone (§5.7): the **recovery path is proven** — byte-exact fingerprint recovery, §5.6 checks 1–4 passed, R4 **VERIFIED** 370/370, parity detected all four injected corruptions. **R1 is now VERIFIED** (§5.8, 2026-09-23): the artifact's SHA-256 matched and `mongorestore` restored it into a fresh disposable database with exit code 0, 960,150 documents and 0 failures. But the gate stays PARTIAL because (a) R1 proves the **restore mechanism only** — no activation-instant backup has been taken, the assigned operator's production access is untested, and the §5.3 step 5 restore-then-reproject path has not been rehearsed end to end; (b) the recovery procedure needed **three corrections** that are now drafted but not themselves re-rehearsed — parity-based identification (a deleted leg is invisible to a timestamp scan), the source-existence scope restriction (**185 `source_id`s vs 151 source documents; 34 orphans = 68 legs = ₹25,500** would be destroyed by a blind reprojection), and the non-optional detector set (row counts can be fully masked by delete + ghost-insert); (c) the §5.5 policy is now decided (Option B, 2026-09-23) but has never been exercised. Outstanding items are itemised as **U4-a … U4-d** in §5.7. The earlier concern about rows written under a different `ref_source_key` was **not** exercised in this rehearsal and remains untested; backup must still cover **`fin_accounts`**. |
+| **U4** | **PARTIAL — still OPEN and MANDATORY, not GREEN.** Rehearsed 2026-09-23 on a disposable clone (§5.7): the **recovery path is proven** — byte-exact fingerprint recovery, §5.6 checks 1–4 passed, R4 **VERIFIED** 370/370, parity detected all four injected corruptions. **R1 is now VERIFIED** (§5.8, 2026-09-23): the artifact's SHA-256 matched and `mongorestore` restored it into a fresh disposable database with exit code 0, 960,150 documents and 0 failures. But the gate stays PARTIAL because (a) R1 proves the **restore mechanism only** — no activation-instant backup has been taken, the assigned operator's production access is untested, and the §5.3 step 5 restore-then-reproject path has not been rehearsed end to end; (b) the recovery procedure needed **three corrections** — parity-based identification (a deleted leg is invisible to a timestamp scan), the source-existence scope restriction (**185 `source_id`s vs 151 source documents; 34 orphans = 68 legs = ₹25,500** would be destroyed by a blind reprojection), and the non-optional detector set (row counts can be fully masked by delete + ghost-insert). The first two were exercised together in the §5.9 rehearsal, which nonetheless ended PARTIAL; the third is recorded but not separately re-rehearsed; (c) the §5.5 policy is now decided (Option B, 2026-09-23) but has never been exercised. Outstanding items are itemised as **U4-a … U4-d** in §5.7. The earlier concern about rows written under a different `ref_source_key` was **not** exercised in this rehearsal and remains untested; backup must still cover **`fin_accounts`**. |
 | **U5** | **POLICY DECIDED — execution still OPEN and MANDATORY.** Write-pause mechanism chosen 2026-09-23 (§5.5): **Option B, the declared quiet window**, with R5 assigned to the gate owner/operator. Option A was rejected on evidence — day closure is **not** a data-entry lock and no canonical write path enforces it. Option B is **coordination, not enforcement**, and no window has ever been declared or exercised, so **E11 is not satisfied**. Separately, and unchanged from 2026-09-23: reverting the env is sufficient **without any code change**, but `os.environ` is per-process, so a `.env` edit needs a **process restart** — it is not instant like `.node-routing-kill`, and an in-flight write can still complete. That is the §11 Node-writer control, which is distinct from this policy. |
 | **U6** | **DEFERRED — not an activation blocker.** No writer attribution exists and timestamps cannot substitute (§9). Recorded as future hardening. |
 

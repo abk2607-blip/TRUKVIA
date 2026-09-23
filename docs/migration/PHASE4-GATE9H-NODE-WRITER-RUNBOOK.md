@@ -44,6 +44,27 @@ repaired.
 An orphan is **not** the same thing as a reversed or voided record. A reversed or voided source
 still **has** a document; it is not an orphan, and the check in step 2 passes for it.
 
+### 2.0 Candidates and validation belong together
+
+Proven in the Gate 9h §5.9 end-to-end rehearsal. Identification and validation are **two halves of
+one step**, and neither is safe alone:
+
+1. **Parity comparison produces the recovery candidates** — and the candidate set includes
+   **pre-existing orphan discrepancies**, because a fresh Python reprojection produces no legs for a
+   source that no longer exists, so every orphan shows up as a difference.
+2. **Every candidate must pass source-existence validation (§2) before it is reprojected.** A
+   candidate list is not a reprojection list.
+3. **Orphan / source-less candidates are excluded and escalated.** In the §5.9 rehearsal, 34 of 36
+   candidates were pre-existing orphans; reprojecting the list as-is would have destroyed their
+   ledger legs.
+4. **Source-backed candidates may be reprojected.** In that rehearsal the two source-backed
+   candidates recovered byte-exact.
+5. **If a residual discrepancy remains because the affected source document is absent, do NOT
+   blind-reproject it.** Reprojection cannot repair it — it can only delete it.
+6. **The fallback restore path is a separate recovery path** (Gate 9h §5.3 step 5) and **has NOT
+   been rehearsed end to end.** A residual of this kind is where that path begins, not something to
+   force through reprojection.
+
 ### 2.1 Source-type mapping
 
 Taken from the dispatch in `backend/services_fin_txn.py` (`reproject_source`). It is not inferred.
