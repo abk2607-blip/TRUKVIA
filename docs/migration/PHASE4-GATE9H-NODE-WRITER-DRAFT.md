@@ -233,6 +233,15 @@ if the source records are intact.
    ledger legs and ₹25,500** in that scope alone. Reprojecting them blindly would have deleted all 68
    legs with no possibility of recreating them.
 
+   **Authoritative full-scope measurement, 2026-09-23 (U4-C).** The scan was then repeated read-only
+   across **all 11 `source_type`s present** in the restored backup database (§5.8), against each
+   type's authoritative source collection: **14,146 distinct `source_id`s carried ledger legs, 2,861
+   had an existing source document, and 11,285 (79.8%) were orphaned, accounting for 22,638 ledger
+   legs.** The `vendor_payment` figure above was independently reproduced. **The nominal orphan
+   amounts are not evidence of confirmed business loss** — the dataset contains substantial
+   synthetic / test-shaped data and the cause of the orphans was not determined. The rule is stated
+   operationally in **`PHASE4-GATE9H-NODE-WRITER-RUNBOOK.md` §2**.
+
    **Rule:** before reprojecting, confirm the source document exists for each `source_id`. Orphaned
    `source_id`s are **excluded from reprojection** and escalated separately — they can only be
    addressed by restore (step 5) or by a deliberate, recorded decision, never by reprojection.
@@ -371,7 +380,7 @@ the orphan finding in §5.3 step 4, which has the opposite consequence.
 |---|---|---|
 | U4-a | R1 backup-restore rehearsal, on a throwaway database, with the artifact's checksum verified | **VERIFIED 2026-09-23** (§5.8) — checksum matched, restore exit code 0 |
 | U4-b | The corrected parity-based recovery identification procedure (§5.3 step 2) adopted and rehearsed end-to-end | drafted here, **not yet re-rehearsed as a whole** |
-| U4-c | The source-existence scope restriction for reprojection (§5.3 step 4) adopted as a hard rule in the runbook | drafted here, **not yet operationalised** |
+| U4-c | The source-existence scope restriction for reprojection (§5.3 step 4) adopted as a hard rule in the runbook | **PARTIAL — not GREEN.** The authoritative orphan-scope measurement is **complete** (§5.3 step 4, 11 source types, 11,285 orphaned `source_id`s over 22,638 legs), and the rule is now captured in the runbook artifact **`docs/migration/PHASE4-GATE9H-NODE-WRITER-RUNBOOK.md` §2**. It is a **documentation-level hard rule only: no write-path guard enforces it**, and it has **not been exercised in any operation**. It stays open until the acceptance wording above is satisfied in practice, not only on paper |
 | U4-d | The §5.5 write-pause / reversion decision (Option A or B) taken and written in | **DECIDED 2026-09-23 — Option B** (§5.5); the window has not been exercised |
 
 ### 5.8 R1 backup-restore rehearsal — 2026-09-23, PASS
