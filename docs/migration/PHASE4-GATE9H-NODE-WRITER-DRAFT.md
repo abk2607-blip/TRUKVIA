@@ -680,17 +680,22 @@ To be run **after** the credential change and **before** the first delegated wri
 | S2 | `GET /api/auth/health` on Python | 200, `db: up` |
 | S3 | Node can write `fin_txn` in a throwaway scope | succeeds |
 | S4 | Node **cannot** write a business collection | refused, code 13 |
-| S4b | A refused `fin_accounts` creation **fails the projection** and writes **no** `fin_txn` row | throws; 0 ledger rows; 1 `fin_hook_failures` row |
+| S4b | **Misconfiguration test, not a smoke check** (see below). *If* a `fin_accounts` creation is refused, it **fails the projection** and writes **no** `fin_txn` row | throws; 0 ledger rows; 1 `fin_hook_failures` row |
 | S5 | Reverse bridge env is still **off** | `node_bridge_ready()` false for every type |
 | S6 | Forward bridge still reachable | Python→Node internal hook answers |
 | S7 | Failure queue is empty for the target scope | 0 pending / retrying |
 
 S4 is the boundary proof. **If S4 does not refuse, stop — the role is too broad.**
 
-S4b is the safety proof. It is already demonstrated in the code path by
-`scripts/fin-account-seed-safety.ts` (16/16, cases C and D); at activation it must be re-run against
-the **real role**, because that is the first time the refusal comes from MongoDB rather than from a
-test constraint.
+S4b is the **negative-path safety proof**, and it is deliberately **not** a check against the
+correctly configured role. §3 grants `insert` on `fin_accounts`, so a correctly provisioned
+`nodeLedgerWriter` **will not** be refused there — a local disposable-MongoDB rehearsal confirmed the
+insert succeeds under exactly the §3 privileges. S4b therefore covers the **misconfiguration** case:
+if that grant is ever missing or later revoked, the refusal must fail the projection **safely rather
+than silently**. It is already demonstrated by `scripts/fin-account-seed-safety.ts` (16/16, cases C
+and D), where the refusal is produced by a collection validator; **that evidence stands unchanged**.
+**Re-running it against the correctly configured role would prove nothing, because that role is not
+refused.**
 
 ---
 
@@ -804,8 +809,8 @@ weakened even if no writes are occurring.
 | Set / unset reverse-bridge env | **PLATFORM** | NOT DONE |
 | Restart Node / Python | **PLATFORM** | NOT DONE |
 | Parity verification per source type | **CODE / workstream** | method exists, not run against production data |
-| Boundary proof S3/S4 against the real role | **CODE / workstream** | **NOT WRITTEN** — needs the role to exist first |
-| Safety proof S4b (refused creation writes no ledger row) | **CODE / workstream** | **DONE** — `scripts/fin-account-seed-safety.ts`, 16/16, commit `10b0e82`. Must be re-run against the real role at activation. |
+| Boundary proof S3/S4 against the real role | **CODE / workstream** | **Rehearsed locally 2026-09-23** on a disposable `mongod --auth` carrying exactly the §3 privileges: S3 succeeded, and S4 was refused with **code 13** for every business collection listed in §3. **Still outstanding against the production role**, which does not exist yet |
+| Safety proof S4b (refused creation writes no ledger row) | **CODE / workstream** | **DONE** — `scripts/fin-account-seed-safety.ts`, 16/16, commit `10b0e82`. It is a **misconfiguration test** (§7): the correctly configured role is granted `insert` on `fin_accounts` and is not refused, so there is nothing to re-run against it. |
 | Resolve the `fin_accounts` question | **CODE / workstream** | **DONE 2026-09-23** — Node requires `insert`; see §3 |
 | Decide the write-pause mechanism (§5.5) | **GATE OWNER** | **DECIDED 2026-09-23 — Option B, declared quiet window.** Coordination only, no enforcement; never exercised |
 | Decide whether a writer marker is required (A1) | **GATE OWNER** | NOT DECIDED |
