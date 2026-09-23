@@ -272,25 +272,41 @@ if the source records are intact.
    ledger to the activation fingerprint, temporarily rolling back legitimate work, which was then
    reconstructed by a controlled, source-backed reprojection.
 
-   **How "anything written after it" is identified — the method demonstrated in §5.10.** After the
-   restore has returned `fin_txn` to the activation fingerprint:
+   **How "anything written after it" is identified — `vendor_payment` only.** This rule is written
+   for the **first activation scope** and for no other source type. §8.1 fixes that scope to
+   `vendor_payment`, one tenant, one controlled document, so this is the only rule that has to be
+   right at activation. After the restore has returned `fin_txn` to the activation fingerprint:
 
-   1. Identify legitimate post-activation source activity by **`modified_at >= activation
-      timestamp`** on the **authoritative source collection** for the enabled source type.
+   1. Identify post-activation `vendor_payment` activity as the **union of four existing source-side
+      signals**, any one of which at or after the activation timestamp:
+
+      - `created_at` · `modified_at` · `deleted_at` · `reversed_at`
+
+      **`modified_at` alone is not sufficient and must never be used as the sole signal** — the soft
+      delete path writes `deleted_at` and does not touch `modified_at`.
    2. Apply the **existing source-existence validation** (step 4) to that list.
-   3. **Reproject only the source-backed** legitimate activity. Orphaned `source_id`s stay excluded
-      and reported, exactly as in step 4.
-   4. **Verify** by fingerprint and parity, per §5.6.
+   3. **Reproject only the source-backed** candidates. Orphaned `source_id`s stay excluded and
+      reported, exactly as in step 4.
+   4. **Keep a reversal together as a pair.** An amount correction marks the original payment
+      `is_reversed` and inserts a fresh row carrying `reversal_of`. **Both must be in the recovery
+      set**; the union above picks up both, because the original gets `reversed_at` and the fresh row
+      gets `created_at` at the same moment.
+   5. Use **`payment_corrections`** as **secondary** evidence for corrections and reversals — it
+      carries `payment_id`, `corrected_at`, `before`/`after`/`diff` and the linked reversal/new ids.
+      `audit_logs` are **secondary only** and must not be relied on as the primary signal: every
+      audit write is wrapped in a swallow-all `except`, and the correction paths write no audit row
+      at all.
+   6. **Verify** by fingerprint and parity, per §5.6.
 
-   **This is a method demonstrated in rehearsal, not a technical control.** Nothing enforces it; it
-   is a procedure an operator follows, and §5.10 is the only evidence that it works.
+   **This is a procedure, not a technical control.** Nothing enforces it.
 
-   **Scope of the evidence.** It was demonstrated for **`mechanic_payment` only**, where the source
-   documents carry `modified_at` and the criterion selected exactly the one legitimate source.
-   **Whether every source type carries `modified_at` with the same semantics has not been verified**,
-   so this is **not** presented as a universal algorithm. Before any source type other than
-   `mechanic_payment` is enabled, the criterion must be confirmed for that type — or a different
-   criterion recorded here for it.
+   **Scope of the evidence.** The four signals were established by a read-only audit of all **six**
+   ledger-affecting `vendor_payment` write paths against the restored backup, and every path was
+   found to carry at least one of them, with each signal present on 100% of the documents in the
+   state that path produces. **That result is specific to `vendor_payment`.** It is **not** valid for
+   `mechanic_payment` and **not** valid for the remaining source types — several of them have no
+   `modified_at` field at all, or never populate it. **Before any other source type is enabled, its
+   own signals must be audited and a rule for it recorded here.**
 6. **Never** restore business/source collections from this backup — they were never at risk, and
    restoring them would destroy legitimate operator work done since activation.
 
@@ -416,7 +432,7 @@ the orphan finding in §5.3 step 4, which has the opposite consequence.
 | # | Prerequisite | Status |
 |---|---|---|
 | U4-a | R1 backup-restore rehearsal, on a throwaway database, with the artifact's checksum verified | **VERIFIED 2026-09-23** (§5.8) — checksum matched, restore exit code 0 |
-| U4-b | The corrected parity-based recovery identification procedure (§5.3 step 2) adopted and rehearsed end-to-end | **PARTIAL — not GREEN.** Rehearsed once end to end on 2026-09-23 (§5.9): timestamp scan ∪ parity found all three injected changes where timestamp-only missed one, source-existence filtering excluded 34 orphan candidates, and the source-backed damage recovered byte-exact. **Step 5 is now VERIFIED** (§5.10, 2026-09-23): restore → reproject was executed end to end on a fresh disposable clone and reached byte-exact recovery with 0 residual differences. **Still not complete**: step 1 verified the post-reversion state rather than executing a reversion (**E9 pending**), and §5.6 check 5 was not executed. U4-B therefore stays **PARTIAL** |
+| U4-b | The corrected parity-based recovery identification procedure (§5.3 step 2) adopted and rehearsed end-to-end | **PARTIAL — not GREEN.** Rehearsed once end to end on 2026-09-23 (§5.9): timestamp scan ∪ parity found all three injected changes where timestamp-only missed one, source-existence filtering excluded 34 orphan candidates, and the source-backed damage recovered byte-exact. **Step 5 is now VERIFIED** on two counts: the **restore → reproject mechanism** (§5.10, 2026-09-23, byte-exact, 0 residual differences), and the **recovery-identification method for the first activation scope** — a six-path read-only audit established the `vendor_payment` signal set now recorded in §5.3 step 5. **Still not complete**: step 1 verified the post-reversion state rather than executing a reversion (**E9 pending**), §5.6 check 5 was not executed, the activation-time production backup remains a separate outstanding requirement (E4/R1), and **the identification rule is verified for `vendor_payment` only** — every other source type remains unverified unless separately audited. U4-B therefore stays **PARTIAL** |
 | U4-c | The source-existence scope restriction for reprojection (§5.3 step 4) adopted as a hard rule in the runbook | **PARTIAL — not GREEN.** The authoritative orphan-scope measurement is **complete** (§5.3 step 4, 11 source types, 11,285 orphaned `source_id`s over 22,638 legs), and the rule is now captured in the runbook artifact **`docs/migration/PHASE4-GATE9H-NODE-WRITER-RUNBOOK.md` §2**. **The rule has since been exercised** on disposable-clone rehearsals — §5.9 and §5.10 each generated parity candidates, applied source-existence filtering, and excluded and reported 34 orphan candidates rather than reprojecting them. It remains a **documentation-level hard rule only: no write-path guard enforces it**, so it depends on the operator following it. It stays **PARTIAL** until the acceptance wording above is satisfied outside a rehearsal |
 | U4-d | The §5.5 write-pause / reversion decision (Option A or B) taken and written in | **DECIDED 2026-09-23 — Option B** (§5.5); the window has not been exercised |
 
@@ -619,14 +635,14 @@ it does not by itself establish that a candidate is bad Node activity.** Parity 
 filtering remain necessary. No method for distinguishing legitimate from bad activity beyond this was
 rehearsed, and none is claimed.
 
-**§5.3 step 5 now documents the demonstrated identification method**: after restoring `fin_txn` to
-the activation state, identify post-activation source activity by **`modified_at >= activation
-timestamp`**, apply **source-existence validation**, **reproject only the source-backed** legitimate
-activity, then **verify by parity and fingerprint**. It was demonstrated for the **`mechanic_payment`
-rehearsal scope only**, and **whether every other source type carries compatible `modified_at`
-semantics remains unverified and must not be generalised**. The remaining issue is therefore **not**
-that the method is unspecified — it is **validating its applicability and semantics for the other
-source types**, where required.
+**The identification rule has since been settled for the first activation scope, and `modified_at`
+is not it.** A read-only audit of all six ledger-affecting `vendor_payment` write paths established
+that the criterion used in this rehearsal is **insufficient on its own**: the soft-delete path writes
+`deleted_at` and never touches `modified_at`, so a legitimate deletion after activation would be
+missed entirely. §5.3 step 5 now carries the corrected rule — the union of `created_at`,
+`modified_at`, `deleted_at` and `reversed_at` — **scoped to `vendor_payment`, which §8.1 makes the
+first activation scope**. It is **not** generalised to `mechanic_payment` or to any other source
+type; several of those have no `modified_at` field at all.
 
 ---
 

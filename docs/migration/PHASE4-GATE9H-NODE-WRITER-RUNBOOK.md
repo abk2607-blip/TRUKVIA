@@ -134,9 +134,39 @@ Proven in Gate 9h §5.10:
 5. **The U5 Option B quiet window matters here**, because it limits how much activity can occur
    during the restore-and-reprojection interval. It is **coordination, not technical enforcement**.
 
+### 4.2 Identifying post-activation activity — `vendor_payment` ONLY
+
+This rule covers the **first activation scope** (Gate 9h §8.1: `vendor_payment`, one tenant, one
+controlled document) and **no other source type**.
+
+After the restore, identify post-activation `vendor_payment` activity as the **union of four existing
+source-side signals**, any one of which at or after the activation timestamp:
+
+    created_at   ·   modified_at   ·   deleted_at   ·   reversed_at
+
+1. **`modified_at` must never be used alone.** The soft-delete path writes `deleted_at` and does not
+   touch `modified_at`, so a legitimate deletion would be missed.
+2. **Source-existence validation (§2) remains mandatory** on the resulting candidate list.
+3. **Orphan / source-less candidates are excluded and escalated**, exactly as in §2.
+4. **No blind full-scope reprojection**, at any point.
+5. **Keep a reversal pair together.** An amount correction marks the original payment `is_reversed`
+   and inserts a fresh row carrying `reversal_of`. **Both belong in the recovery set** — the union
+   above picks up both, because the original gets `reversed_at` and the fresh row `created_at` at the
+   same moment.
+6. **`payment_corrections` is reliable secondary evidence** for corrections and reversals
+   (`payment_id`, `corrected_at`, `before`/`after`/`diff`, linked reversal/new ids).
+   **`audit_logs` are secondary only and must not be the primary signal** — every audit write is
+   wrapped in a swallow-all `except`, and the correction paths write no audit row at all.
+
+**This rule does not cover the other source types.** It was established by auditing all six
+ledger-affecting `vendor_payment` write paths; several other source types have no `modified_at` field
+at all or never populate it. Each additional source type must be audited and given its own rule here
+before it is enabled.
+
 **Still not proven, and not to be claimed:** a **production activation-time backup** has not been
-taken — the §5.10 artifact was a dump of disposable rehearsal state — and an **actual Node-writer
-stop or reversion** has never been executed.
+taken — the §5.10 artifact was a dump of disposable rehearsal state — an **actual Node-writer stop or
+reversion** has never been executed, the **quiet window has never been exercised**, and nothing here
+was executed against production.
 
 ---
 
