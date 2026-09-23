@@ -798,7 +798,7 @@ weakened even if no writes are occurring.
 |---|---|---|
 | Create `nodeLedgerWriter` role | **PLATFORM** | NOT DONE |
 | Provision the credential into Node's env | **PLATFORM** | NOT DONE |
-| Verify production `DB_NAME` (U2) | **PLATFORM** | NOT DONE |
+| Verify production `DB_NAME` (U2) | **PLATFORM** | **ANSWERED 2026-09-23 — YES** (§4), and **E1 is SATISFIED** for that confirmation. The verification is done; **U2 itself remains BLOCKED / FAIL-CLOSED** — a `yes` does **not** unblock the writer. Nothing was changed: the database was not renamed and no production authorisation was granted |
 | Backup + tested restore | **PLATFORM** | **RESTORE TESTED 2026-09-23** (§5.8) — checksum matched, `mongorestore` exit 0 into a fresh disposable database. The **activation-instant backup itself is still NOT TAKEN**, because no activation has occurred |
 | Recovery-path rehearsal (reprojection) | **CODE / workstream** | **DONE 2026-09-23** on a disposable clone — byte-exact recovery, and three procedure corrections (§5.7). Does **not** satisfy the restore requirement above |
 | Set / unset reverse-bridge env | **PLATFORM** | NOT DONE |
@@ -823,7 +823,7 @@ Gate 9h may be declared GREEN only when **all** of the following exist as record
 | # | Evidence |
 |---|---|
 | E1 | U2 answered (yes/no only), recorded — **SATISFIED 2026-09-23** (§4): answered **yes**, recorded without the value. This satisfies E1 as written; it does **not** unblock U2, which stays BLOCKED / fail-closed |
-| E2 | `fin_accounts` question resolved and recorded |
+| E2 | `fin_accounts` question resolved and recorded — **SATISFIED 2026-09-23** (§3, §12): the question is answered and recorded, and the answer is that Node **requires `insert` on `fin_accounts`**. Granting that production role/permission is **E3**, which remains outstanding |
 | E3 | `nodeLedgerWriter` role created, with the boundary proof (S3 succeeds, S4 refused with code 13) |
 | E4 | Backup taken **and its restore demonstrated** on a throwaway database — **restore demonstrated 2026-09-23** (§5.8): checksum matched, `mongorestore` exit 0, 960,150 documents, 0 failures. **Still outstanding on the first half**: no backup has been taken at an activation instant. The §5.10 rehearsal created an activation-time backup **of a disposable clone**, which does not satisfy this |
 | E5 | Activation timestamp and fingerprints (R2, R3) recorded |
