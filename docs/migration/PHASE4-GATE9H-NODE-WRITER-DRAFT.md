@@ -163,11 +163,36 @@ therefore the corrected one, with the parts that remain unrehearsed marked as su
 
 ### 5.1 Evidence that must exist BEFORE writer activation
 
+**What "activation" means — gate-owner decision, recorded 2026-09-23.** For Gate 9h, **"Activation"
+means step 9 (§6): enabling reverse delegation for the first approved source type, one tenant and one
+deliberately selected document, as defined by §5.5 / §8.1.** It follows from §1, where the governed
+transition is from "Python is the only business writer" to "Node may perform approved business
+writes", and from §11, where `TRUKVIA_FIN_NODE_SOURCE_TYPES` is the control that starts and stops
+Node business writes. Steps 5–8 establish the role, the credential, writer readiness and the smoke
+checks, but **none of them lets Node write**.
+
+**R1, R2 and R3 all refer to that single boundary** — R1 **immediately before** it, R2 and R3 **at**
+it. That is what makes §5.3 step 5 work: the state R1 restores to and the instant R3 bounds writes by
+must be the same point, or the recovery set is wrong. Steps between a backup and the boundary do not
+stop Python, so any gap makes all three stale.
+
+**How the boundary timestamps are written down — gate-owner decision, recorded 2026-09-23.** The
+backup boundary (**T0**, the instant R1 is taken) and the activation instant (**T1**, which is R3)
+are both recorded in **full UTC ISO-8601 with microseconds and a `+00:00` offset**, exactly as the
+source timestamps are stored — for example `2026-09-23T08:33:33.025337+00:00`. **Second-truncated
+timestamps must not be used.** The source fields are stored as strings and the recovery queries
+compare them as strings, so a truncated boundary sorts before every value inside the same second and
+shifts the boundary by up to a second. Matching the stored representation removes that. The §5.7 and
+§5.10 rehearsals used truncated timestamps; **that is a known limitation of those rehearsals, not of
+this rule.**
+
+**Recording these decisions does not authorise step 9, or any other production operation.**
+
 | # | Requirement | Status |
 |---|---|---|
-| R1 | A verified, restorable backup of `fin_txn` and `fin_hook_failures`, taken immediately before activation, with its restore actually tested on a throwaway database | **VERIFIED / PASS** for the restore rehearsal (§5.8). The activation-instant backup itself has not been taken, because no activation has occurred |
-| R2 | A recorded row count and a content fingerprint of both collections at the activation instant | **NOT DONE** for activation; the *method* was exercised in §5.7 |
-| R3 | The exact activation timestamp, recorded to the second, so writes can be bounded by time | **NOT DONE** for activation; and §5.7 showed a timestamp alone is **not sufficient** to identify affected rows |
+| R1 | A verified, restorable backup of `fin_txn` and `fin_hook_failures`, taken immediately before the **step-9 activation boundary**, with its restore actually tested on a throwaway database | **VERIFIED / PASS** for the restore rehearsal (§5.8). The activation-instant backup itself has not been taken, because no activation has occurred |
+| R2 | A recorded row count and a content fingerprint of the **whole of both collections** — `fin_txn` and `fin_hook_failures` in full, every tenant and every source type, not the affected scope — at the **step-9 activation instant** | **NOT DONE** for activation. The *method* is now proven for **both** collections; see "R2 — how the fingerprint is computed" below |
+| R3 | The exact **step-9 activation timestamp** (**T1**), recorded in **full UTC ISO-8601 with microseconds and `+00:00`** as required above — **not** to the second — so writes can be bounded by time | **NOT DONE** for activation; and §5.7 showed a timestamp alone is **not sufficient** to identify affected rows |
 | R4 | Confirmation that every affected `fin_txn` row carries `projected_at` / `created_at`, so Node-era rows are identifiable | **VERIFIED** in the §5.7 rehearsal — 370/370 relevant rows carried both fields |
 | R5 | A named operator who can execute the restore and has the access to do so | **ASSIGNED 2026-09-23** — the gate owner/operator. The restore itself was demonstrated in §5.8, but on a local machine against a local disposable database; whether this operator holds the production access a real restore would need is untested |
 
@@ -180,10 +205,77 @@ the activation backup: no backup has been taken at an activation instant, becaus
 occurred. The recovery rehearsal in §5.7 still does **not** substitute for it either, because
 reprojection is a different mechanism from restore — the two are now both demonstrated, separately.
 
-R2 and R3 are recorded as *method demonstrated, activation capture not taken*. In the rehearsal a row
-count and a SHA-256 content fingerprint over the affected scope proved sufficient both to detect the
-injected damage and to confirm recovery, and a timestamp was recorded to the second — but no
-activation-instant capture exists, because no activation has occurred.
+R2 and R3 are recorded as *method demonstrated, activation capture not taken*. In the §5.7 rehearsal a
+row count and a SHA-256 content fingerprint **over the affected scope** proved sufficient both to
+detect the injected damage and to confirm recovery, and a timestamp was recorded to the second.
+**That affected-scope figure is rehearsal-specific evidence and is not the production R2 baseline** —
+the R2 baseline is whole-collection, as the R2 row above states, and is captured with microsecond
+timestamps. No activation-instant capture exists, because no activation has occurred.
+
+**R2 — how the fingerprint is computed.** The procedure below is the one already proven; it is
+recorded here so the activation capture is reproducible rather than improvised. **It is a procedure,
+not a tool**: no module, CLI or service exists or is to be built for it, and none is needed.
+
+Both collections share one canonical body. Only the **document ordering** is collection-specific:
+
+```python
+VOLATILE = {"_id", "created_at", "projected_at"}
+
+SORT_KEY = {
+    "fin_txn":           lambda r: str(r.get("ref_source_key")),
+    "fin_hook_failures": lambda r: (str(r.get("user_id")),
+                                    str(r.get("company_id")),
+                                    str(r.get("source_type")),
+                                    str(r.get("source_id"))),
+}
+
+body = json.dumps(
+    sorted(({k: r[k] for k in sorted(r) if k not in VOLATILE} for r in rows),
+           key=SORT_KEY[collection]),
+    default=str, sort_keys=True, separators=(",", ":"))
+
+fingerprint = hashlib.sha256(body.encode()).hexdigest()
+```
+
+The hash, the canonicalisation and the `VOLATILE` exclusions are **unchanged** from the already-proven
+`fin_txn` method, and the `fin_txn` sort key is **unchanged**. `fin_hook_failures` carries no
+`ref_source_key`, so it takes its own sort key — the tuple its `fin_hook_fail_source_uniq` index
+enforces unique. Every other field of both collections stays in the hashed body, including the mutable
+ones (`status`, `retry_count`, `history`, `last_attempt_at`, `next_attempt_at`, `resolved_at`):
+**R2 is a point-in-time content fingerprint**, so a field is not excluded merely because it changes.
+
+**Evidence — disposable rehearsal, 2026-09-23.** A non-empty `fin_hook_failures` collection was built
+through the real application functions across **two tenants and four statuses** (`pending`,
+`retrying`, `resolved`, `permanently_failed`), including rows with `retry_count` 2 and 8 and non-empty
+`history`. The rule was shown to be:
+
+| Property | Result |
+|---|---|
+| Order-independent | **PASS** — natural `find()`, `find().sort({_id:-1})` and a shuffled list produced one identical digest, with the `_id` orders genuinely differing between the first two |
+| Repeatable | **PASS** — five fresh reads of the unchanged collection, five identical digests |
+| Restore-stable | **PASS** — dump and restore into a second disposable database reproduced the digest exactly, with `_id`s preserved |
+| Composite key enforced | **PASS** — a deliberate duplicate `(user_id, company_id, source_type, source_id)` was rejected by `fin_hook_fail_source_uniq`; the row count did not move |
+| Python/Node type compatibility | **PASS** — all fifteen fields wrote the same BSON types from both writers; `retry_count` is `int32` from each, and the nested `history[].attempt` likewise |
+| `fin_txn` regression | **PASS** — the §5.7 scope reproduced `sha256 709595a3…c53fa` byte-exact under the unchanged rule |
+
+The Python/Node comparison rests on a Node-written failure row together with a read-only inspection of
+both writers' value-construction paths and of the BSON serialiser's integer rule. **A Node replay was
+not executed**, and nothing here claims it was: the retry and `history` rows in the rehearsal were
+Python-written.
+
+**Known accepted residual — not a new blocker.** `fin_txn`'s `ref_source_key` uniqueness is enforced
+**per tenant**, not collection-wide, so a whole-collection tie is theoretically possible. It was not
+observed: both whole-collection datasets examined carried **0 duplicate keys** (28,164/28,164 and
+28,360/28,360 distinct). The algorithm is **deliberately left unchanged**, and this is recorded as a
+known accepted residual rather than a defect to fix.
+
+**Tooling and secrecy.** The capture needs only the Python standard library (`json`, `hashlib`) and the
+**already-present** `pymongo` pin in `backend/requirements.txt`. **No package installation is
+required.** The connection string and the database name are supplied by the operator at run time and
+are **never written into this document, the runbook, a commit message or any recorded output.**
+
+**No maximum activation-window duration is currently defined.** Nothing here places an upper bound on
+`[T0, T1)`; setting one would be a separate gate-owner decision.
 
 ### 5.2 How a bad Node write would be detected
 
@@ -301,7 +393,31 @@ if the source records are intact.
    **How "anything written after it" is identified — `vendor_payment` only.** This rule is written
    for the **first activation scope** and for no other source type. §8.1 fixes that scope to
    `vendor_payment`, one tenant, one controlled document, so this is the only rule that has to be
-   right at activation. After the restore has returned `fin_txn` to the activation fingerprint:
+   right at activation.
+
+   **The two windows.** The restore returns the ledger to **T0**, the instant R1 was taken, while
+   Node writes are bounded by **T1**, the step-9 activation instant that R3 records. Both are the
+   microsecond-precision UTC values §5.1 requires. Recovery therefore has **two** windows, and
+   **both are mandatory**:
+
+   - **WINDOW A — `T0 <= signal < T1`.** Legitimate Python-era activity between the backup and
+     activation. The restore rolls it back, so it has to be reprojected again.
+   - **WINDOW B — `signal >= T1`.** Post-activation activity, identified by the rule below.
+
+   **Proven failure — disposable rehearsal, 2026-09-23: WINDOW A alone is not enough.**
+   Reprojecting only WINDOW A left the ledger at **382 of 384 legs with a fingerprint mismatch**,
+   because activity falling exactly at T1 belongs to WINDOW B. Running WINDOW B as well gave
+   **384/384 and a byte-exact fingerprint.** A recovery that runs one window and not the other is
+   incomplete.
+
+   **Order after the R1 restore to T0: reproject WINDOW A first, then WINDOW B.**
+
+   Both windows use the same four source-side signals, the same source-existence validation, the
+   same reversal-pair rule and the same existing `reproject_source` entry point listed below.
+   **All of it is operator-run** (§5.4): no recovery module, CLI or automation exists for it, and
+   none is to be built.
+
+   After the restore has returned `fin_txn` to the activation fingerprint:
 
    1. Identify post-activation `vendor_payment` activity as the **union of four existing source-side
       signals**, any one of which at or after the activation timestamp:
@@ -682,12 +798,12 @@ Each step requires its predecessor to be green and recorded.
 | 1 | Gate owner records the decision to allow Node business writes | Gate owner |
 | 2 | U2 answered (§4) | Operator |
 | 3 | `fin_accounts` question settled (§3) | Migration workstream + gate owner |
-| 4 | Backup taken and **restore tested** (R1), fingerprints recorded (R2) | Operator |
+| 4 | Backup procedure and restore validation **readied** (R1 method, §5.8). **The activation-time backup itself is taken immediately before step 9**, not here | Operator |
 | 5 | `nodeLedgerWriter` role created; boundary proof run (§3) | Operator |
 | 6 | Node restarted with the new credential; `/health/ready` 200 | Operator |
 | 7 | Pre-write smoke checks (§7) all green | Migration workstream |
-| 8 | Activation timestamp recorded (R3) | Operator |
-| 9 | Reverse delegation enabled for **ONE** source type (§8) | Operator |
+| 8 | Activation timestamp and fingerprint capture **readied** (R2, R3); the activation-time backup (R1) taken now, immediately before step 9 | Operator |
+| 9 | Reverse delegation enabled for **ONE** source type (§8) — **this is the activation boundary**; R2 and R3 are captured at it | Operator |
 | 10 | First-write controls observed (§8) | Migration workstream |
 | 11 | Repeat 9–10 per source type, one at a time | — |
 | 12 | Only after all enabled types are green: consider retiring the forward bridge | Gate owner |
@@ -725,8 +841,17 @@ To be run **after** the credential change and **before** the first delegated wri
 | S5 | Reverse bridge env is still **off** | `node_bridge_ready()` false for every type |
 | S6 | Forward bridge still reachable | Python→Node internal hook answers |
 | S7 | Failure queue is empty for the target scope | 0 pending / retrying |
+| S8 | `fin_hook_failures` carries the index `fin_hook_fail_source_uniq`, `unique: true`, on `(user_id, company_id, source_type, source_id)` | index present, `unique: true` |
 
 S4 is the boundary proof. **If S4 does not refuse, stop — the role is too broad.**
+
+S8 exists because **no application startup path creates this index.** `ensure_hook_indexes()` is
+called only by the replay CLI and by the test-suite; its NestJS counterpart `ensureHookIndexes` has
+no call site at all. The index **was** observed in the restored production backup (§5.8), so it is
+present today — but nothing recreates it, and the R2 fingerprint's determinism for
+`fin_hook_failures` depends on that uniqueness. **Verify it; do not assume the application will
+restore it.** If it is absent, stop and escalate: creating it is a separate, deliberate operator
+action and is not part of this check.
 
 S4b is the **negative-path safety proof**, and it is deliberately **not** a check against the
 correctly configured role. §3 grants `insert` on `fin_accounts`, so a correctly provisioned
@@ -744,8 +869,14 @@ refused.**
 
 ### 8.1 Smallest possible scope
 
-- **One source type.** `vendor_payment` is the recommended first, because its reverse-bridge
-  behaviour is the most heavily certified and it has no branch that can fail at persist.
+- **One source type — `vendor_payment`, DESIGNATED by the gate owner 2026-09-23.** It was
+  recommended here because its reverse-bridge behaviour is the most heavily certified and it has no
+  branch that can fail at persist, and a write-path audit established code-level signal coverage for
+  all six of its ledger-affecting paths; that recommendation is now a **designation**. The six-path
+  bounded-window rehearsal and the operator-run bounded recovery for it have since been
+  **rehearsed to byte-exact recovery on disposable state** (§5.3 step 5). **That is rehearsal
+  evidence only — it is not activation evidence, and the bounded-recovery rule is proven for
+  `vendor_payment` alone.**
 - **One tenant**, if `TRUKVIA_FIN_NODE_SOURCE_TYPES` can be scoped that way — **NOT VERIFIED**;
   the env gate is per source type, not per tenant. If it cannot, the first write must instead be a
   single deliberate reprojection of one known document, performed by the operator.
@@ -873,7 +1004,7 @@ Gate 9h may be declared GREEN only when **all** of the following exist as record
 | E3 | `nodeLedgerWriter` role created, with the boundary proof (S3 succeeds, S4 refused with code 13) |
 | E4 | Backup taken **and its restore demonstrated** on a throwaway database — **restore demonstrated 2026-09-23** (§5.8): checksum matched, `mongorestore` exit 0, 960,150 documents, 0 failures. **Still outstanding on the first half**: no backup has been taken at an activation instant. The §5.10 rehearsal created an activation-time backup **of a disposable clone**, which does not satisfy this |
 | E5 | Activation timestamp and fingerprints (R2, R3) recorded |
-| E6 | Pre-write smoke checks S1–S7 green |
+| E6 | Pre-write smoke checks S1–S8 green |
 | E7 | First-write criteria C1–C6 green for the first source type, **including the business-user check** |
 | E8 | The same for every subsequently enabled source type |
 | E9 | Reversion (§11 step 1) demonstrated at least once, deliberately, and shown to stop Node writes |
