@@ -110,18 +110,44 @@ below, a `yes` means Gate 9h stays blocked until a separately authorised change 
 has been changed:** the production `DB_NAME` was not renamed, no environment variable was set, no
 guard was modified, and the production writer was never started.
 
+**A — `backend-node` production boot protection (a separate application).**
 `backend-node/src/config.ts:84` refuses to boot when:
 
 ```ts
 nodeEnv === 'production' && dbName.toLowerCase().includes('prod')
 ```
 
+That guard belongs to **`backend-node`, the read shadow**. It is not the Finance writer, and this
+substring test exists **nowhere in `apps/api`**. A `yes` therefore stops **that** application from
+booting against production; it says nothing about the writer.
+
+**B — Finance writer (`apps/api`) authorisation.** The writer's production control is
+`assertFinanceWriterAuthorised` (`apps/api/src/fin/writer-authorisation.ts`, commit `6bd8ff5`): with
+`NODE_ENV=production` it **fails closed** while `TRUKVIA_FIN_WRITER_ALLOWED_DB` is absent, and when
+that variable is present it requires an **exact whole-string match** against the configured database
+name. The check runs in the `MONGO` provider **before `new MongoClient`**, so an unauthorised
+deployment never opens a connection; a test pins that ordering. **A database name containing `prod`
+does not by itself block this guard** — the writer is blocked because **no database has been
+authorised**, which is a different thing.
+
+**C — what U2 actually is.** U2 is a **gate-owner authorisation decision**, not a property of either
+guard. The existence of a correct and tested guard does **not** satisfy U2; it is what makes staying
+blocked safe. **No production writer authorisation has been granted**, so U2 remains
+**BLOCKED / FAIL-CLOSED**.
+
 **Procedure — no secret is printed or shared:**
 1. The operator inspects the production `DB_NAME` **privately**, on the platform.
 2. The operator reports **only a yes/no**: does the lowercase name contain the substring `prod`?
 3. If **no** → U2 satisfied; record the answer, not the value.
-4. If **yes** → Node will not boot in production at all. That requires a separately authorised
-   change (either the guard or the database name), and Gate 9h stays blocked until it is resolved.
+4. If **yes** → **`backend-node`** will not boot against production. For the **Finance writer** this
+   changes nothing on its own: `apps/api` stays fail-closed until the gate owner authorises a
+   database (B above). Either way **Gate 9h stays blocked**.
+
+**On remedies.** Renaming the production database or changing the `backend-node` guard were the two
+options recorded when U2 was framed around that application, and they remain the only options **for
+`backend-node`**. **The production database must not be renamed.** They are **not** the mechanism for
+the Finance writer, which is authorised — or not — through B above. Which path, if any, is taken is a
+**gate-owner decision that has not been made**.
 
 **The actual `DB_NAME` value must never appear in this document, in a commit message, in a chat
 transcript, or in any log.**
