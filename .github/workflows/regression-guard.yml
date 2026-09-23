@@ -37,10 +37,13 @@ jobs:
           cd backend
           pip install --upgrade pip
           pip install -r requirements.txt
-          # Test-only. Eight regression tests read generated invoice PDFs with
-          # pypdf; nothing the backend serves imports it, so it does NOT belong in
-          # backend/requirements.txt.
+          # Test-only. Regression tests read generated PDFs with pypdf and PyMuPDF
+          # (imported as `fitz`); nothing the backend serves imports either, so
+          # neither belongs in backend/requirements.txt. Note: the package that
+          # provides `import fitz` is PyMuPDF - the PyPI project literally named
+          # `fitz` is a different, unrelated one.
           pip install pypdf
+          pip install PyMuPDF
 
       # The demo token is how the regression suite authenticates. The platform
       # image supplies it through /app/backend/.env, which does not exist on a
