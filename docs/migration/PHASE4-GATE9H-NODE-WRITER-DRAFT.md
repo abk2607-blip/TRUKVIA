@@ -820,7 +820,7 @@ Each step requires its predecessor to be green and recorded.
 | 5 | `nodeLedgerWriter` role created; boundary proof run (§3) | Operator |
 | 5a | Finance-writer **production deployment target / artifact provisioned** for `apps/api` — none exists today (see below). **NOT YET EXECUTED / OUTSTANDING** | Operator — **platform action** |
 | 5b | Finance-writer runtime authorisation provisioned — `TRUKVIA_FIN_WRITER_ALLOWED_DB` set to the exact production database name (§4 B). **NOT YET EXECUTED** | Operator — **platform action** |
-| 6 | Node restarted with the new credential; `/health/ready` 200 — **not currently satisfiable, see below** | Operator |
+| 6 | Node restarted with the new credential; `/health/ready` 200 — endpoints now exist (see below); **the production restart and check have not happened** | Operator |
 | 7 | Pre-write smoke checks (§7) all green | Migration workstream |
 | 8 | Activation timestamp and fingerprint capture **readied** (R2, R3); the activation-time backup (R1) taken now, immediately before step 9 | Operator |
 | 9 | Reverse delegation enabled for **ONE** source type (§8) — **this is the activation boundary**; R2 and R3 are captured at it | Operator |
@@ -844,14 +844,26 @@ restart and readiness check,
 the pre-write smoke checks, the activation timestamp (R3) and reverse delegation enablement all
 remain prerequisites, in that order.
 
-**Step 6 cannot pass as written — `apps/api` has no health endpoint.** A read-only audit on
-2026-09-23 enumerated every route in `apps/api`: twenty-four, all of them `api/...` or
-`internal/fin/reproject`. **There is no `/health/live` and no `/health/ready`.** The endpoints
-step 6 and §7 S1 refer to live in **`backend-node`** (`backend-node/src/health.ts`), which is a
-different application and not the Finance writer. **A `/health/live` and `/health/ready`
-implementation for `apps/api` is therefore required before the existing step-6 acceptance
-criterion can be met.** Nothing is implemented by recording this, and no step is added for it
-here; the criterion is left unchanged and its current unsatisfiability is stated plainly.
+**Step 6 — what is now closed, and what is not.** A read-only audit on 2026-09-23 found that
+`apps/api` had **no health endpoint at all**: the endpoints step 6 and §7 S1 referred to lived in
+**`backend-node`** (`backend-node/src/health.ts`), a different application and not the Finance
+writer. That gap is **closed at code level**:
+
+- **The endpoints exist in `apps/api`.** `GET /health/live` and `GET /health/ready` are
+  implemented, porting the `backend-node` response semantics — liveness makes no dependency
+  call, readiness pings the database the application already holds and returns **503** when that
+  ping does not answer. Readiness reuses the existing `MONGO` provider, so there is still exactly
+  one Mongo connection and the Finance-writer authorisation guard is **not** bypassed. The
+  loopback binding is unchanged and **no new public routing was added**.
+- **Local behaviour was verified**, 2026-09-23: focused health tests 8/8, the full `apps/api`
+  suite 591/591, typecheck, `npm run build`, and a **bounded local** run against a **disposable**
+  local database in which `/health/live` and `/health/ready` both answered 200.
+- **The production writer restart and readiness check have NOT happened.** No production
+  Finance-writer process exists to restart (§6 step 5a), so nothing has been checked in
+  production and no production readiness is claimed.
+
+**Step 6 therefore remains outstanding.** What changed is that its acceptance criterion is now
+*satisfiable*; it has not been satisfied.
 
 **Step 5a — Finance-writer production deployment target.** A read-only preflight on 2026-09-23
 established that **`apps/api` has no production deployment target** in the repository or in the
@@ -909,7 +921,7 @@ reasons:
 |---|---|
 | Build and start path | **CLOSED — verified locally.** `npm run build` exit 0 → `dist/src/main.js`; start script corrected to `node dist/src/main.js`; bounded local `npm start` started the application and terminated cleanly. **Local only — nothing was built or started in production** |
 | Production deployment target | **NOT DONE / OUTSTANDING** |
-| `/health/live`, `/health/ready` on `apps/api` | **STILL MISSING** |
+| `/health/live`, `/health/ready` on `apps/api` | **IMPLEMENTED — verified locally.** Production readiness not verified; no production process exists to check |
 | Runtime provisioning of the six variables | **NOT DONE** |
 
 **Step 5a therefore remains NOT YET EXECUTED / OUTSTANDING.** One prerequisite of it has been
@@ -947,7 +959,8 @@ To be run **after** the credential change and **before** the first delegated wri
 
 | # | Check | Expected |
 |---|---|---|
-| S1 | `GET /health/ready` on Node — **on `backend-node`; the Finance writer `apps/api` has no such endpoint yet (§6)** | 200, `"routes":"ok"` |
+| S1 | `GET /health/ready` on Node — **on `backend-node`** | 200, `"routes":"ok"` |
+| S1b | `GET /health/ready` on the **Finance writer `apps/api`** — implemented and verified locally (§6); **its contract has no `routes` key** | 200, `"checks":{"mongo":"ok"}` |
 | S2 | `GET /api/auth/health` on Python | 200, `db: up` |
 | S3 | Node can write `fin_txn` in a throwaway scope | succeeds |
 | S4 | Node **cannot** write a business collection | refused, code 13 |
@@ -956,6 +969,12 @@ To be run **after** the credential change and **before** the first delegated wri
 | S6 | Forward bridge still reachable | Python→Node internal hook answers |
 | S7 | Failure queue is empty for the target scope | 0 pending / retrying |
 | S8 | `fin_hook_failures` carries the index `fin_hook_fail_source_uniq`, `unique: true`, on `(user_id, company_id, source_type, source_id)` | index present, `unique: true` |
+
+S1 and S1b are **two different applications**. `backend-node` is the read shadow and has had
+health endpoints since Gate 9f; `apps/api`, the Finance writer, had none until they were
+implemented on 2026-09-23 and **verified locally only** (§6). **Neither check has been run in
+production for Gate 9h**, and S1b cannot be until the production Finance-writer process is
+actually started (§6 steps 5a, 5b, 6). **S1 acceptance therefore remains outstanding.**
 
 S4 is the boundary proof. **If S4 does not refuse, stop — the role is too broad.**
 
@@ -1125,7 +1144,7 @@ Gate 9h may be declared GREEN only when **all** of the following exist as record
 | E1 | U2 answered (yes/no only), recorded — **SATISFIED 2026-09-23** (§4): answered **yes**, recorded without the value. This satisfies E1 as written; it does **not** unblock U2, which stays BLOCKED / fail-closed |
 | E2 | `fin_accounts` question resolved and recorded — **SATISFIED 2026-09-23** (§3, §12): the question is answered and recorded, and the answer is that Node **requires `insert` on `fin_accounts`**. Granting that production role/permission is **E3**, which remains outstanding |
 | E3 | `nodeLedgerWriter` role created, with the boundary proof (S3 succeeds, S4 refused with code 13) |
-| E3a | Finance-writer production deployment target (§6 step 5a) — **REQUIRED, NOT YET SATISFIED**. Once it exists, the evidence to be recorded is: that a production deployment target for `apps/api` **was provisioned**, and that it carries `NODE_ENV=production`, `NEST_MONGO_URL`, `NEST_MONGO_DB`, `TRUKVIA_FIN_WRITER_ALLOWED_DB`, `PG_URL` and `TRUKVIA_INTERNAL_TOKEN` in its process environment. Two of its sub-requirements are now **SATISFIED, locally**, verified 2026-09-23: a **reproducible build from the tracked lockfile** (`npm run build` exit 0, `package-lock.json` unchanged), and a **corrected, verified start path** — the exact compiled entrypoint is `dist/src/main.js`, the start command was corrected to `node dist/src/main.js`, and a **bounded local** `npm start` started the application successfully and then terminated cleanly. **That is local evidence only and does not make E3a satisfied**, which still requires the production deployment target, the production runtime provisioning above, and **working `/health/live` and `/health/ready` endpoints on `apps/api`** — still **REQUIRED / NOT YET SATISFIED**, since those endpoints do not exist today (§6). What is recorded is the **fact of provisioning and the names of the variables — never their values**, and never a service name, deployment identifier or platform secret. This evidence will **not** imply that the writer was started, which is E6 / step 6, and will **not** imply that any production write occurred |
+| E3a | Finance-writer production deployment target (§6 step 5a) — **REQUIRED, NOT YET SATISFIED**. Once it exists, the evidence to be recorded is: that a production deployment target for `apps/api` **was provisioned**, and that it carries `NODE_ENV=production`, `NEST_MONGO_URL`, `NEST_MONGO_DB`, `TRUKVIA_FIN_WRITER_ALLOWED_DB`, `PG_URL` and `TRUKVIA_INTERNAL_TOKEN` in its process environment. Two of its sub-requirements are now **SATISFIED, locally**, verified 2026-09-23: a **reproducible build from the tracked lockfile** (`npm run build` exit 0, `package-lock.json` unchanged), and a **corrected, verified start path** — the exact compiled entrypoint is `dist/src/main.js`, the start command was corrected to `node dist/src/main.js`, and a **bounded local** `npm start` started the application successfully and then terminated cleanly. **That is local evidence only and does not make E3a satisfied**, which still requires the production deployment target, the production runtime provisioning above, and a production readiness check. A third sub-requirement is also now **SATISFIED, locally**: `GET /health/live` and `GET /health/ready` **exist** on `apps/api`, readiness returns 503 when the database does not answer, and that behaviour was **verified locally** (§6). **Production readiness has NOT been verified** — no production Finance-writer process exists to check — so E3a overall stays **REQUIRED / NOT YET SATISFIED**. What is recorded is the **fact of provisioning and the names of the variables — never their values**, and never a service name, deployment identifier or platform secret. This evidence will **not** imply that the writer was started, which is E6 / step 6, and will **not** imply that any production write occurred |
 | E3b | Finance-writer runtime authorisation (§6 step 5b) — **REQUIRED, NOT YET SATISFIED**, because step 5b has not been executed. Once it is, the evidence to be recorded is: that `TRUKVIA_FIN_WRITER_ALLOWED_DB` **was provisioned** on the platform, and that the existing guard **accepted** it as an **exact whole-string** match against the configured database name. What is recorded is the **fact of provisioning and of the guard's acceptance — never the value**: the production database name must not be written here, in the runbook, in a commit message or in any log. This evidence will **not** imply that the writer was started, which is E6 / step 6, and will **not** imply that any production write occurred |
 | E4 | Backup taken **and its restore demonstrated** on a throwaway database — **restore demonstrated 2026-09-23** (§5.8): checksum matched, `mongorestore` exit 0, 960,150 documents, 0 failures. **Still outstanding on the first half**: no backup has been taken at an activation instant. The §5.10 rehearsal created an activation-time backup **of a disposable clone**, which does not satisfy this |
 | E5 | Activation timestamp and fingerprints (R2, R3) recorded |
@@ -1183,8 +1202,13 @@ restore into a fresh disposable database (§5.8). Everything else remains unrehe
 These are **repository facts**, not new decisions, and none of them changes any evidence already
 recorded above:
 
-1. **No `/health/live` or `/health/ready` on `apps/api`** — §6 step 6 and §7 S1 cannot be
-   satisfied by the Finance writer as written.
+1. **Health endpoints — CLOSED, locally.** `apps/api` now implements `GET /health/live` and
+   `GET /health/ready`, reusing the existing `MONGO` provider — no second Mongo client, no
+   writer-authorisation bypass, the loopback binding unchanged and no new public routing.
+   Focused health tests (8/8), the full `apps/api` suite (591/591), typecheck, `npm run build`
+   and a **bounded local** live/ready check all passed. **This is local evidence only;
+   production readiness has not been verified**, because no production Finance-writer process
+   exists to check.
 2. **Build and start path — CLOSED, locally.** Verified on 2026-09-23: `npm run build` exits 0
    and produces `dist/src/main.js`; the `apps/api` start script, which pointed at a path the
    build does not produce, was corrected to `node dist/src/main.js`; and a **bounded local**
