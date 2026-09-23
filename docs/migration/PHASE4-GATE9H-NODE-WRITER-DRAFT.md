@@ -903,6 +903,18 @@ reasons:
 
 **No production value for any of the six is provisioned today.**
 
+**Where step 5a stands, as of 2026-09-23:**
+
+| Item | Status |
+|---|---|
+| Build and start path | **CLOSED — verified locally.** `npm run build` exit 0 → `dist/src/main.js`; start script corrected to `node dist/src/main.js`; bounded local `npm start` started the application and terminated cleanly. **Local only — nothing was built or started in production** |
+| Production deployment target | **NOT DONE / OUTSTANDING** |
+| `/health/live`, `/health/ready` on `apps/api` | **STILL MISSING** |
+| Runtime provisioning of the six variables | **NOT DONE** |
+
+**Step 5a therefore remains NOT YET EXECUTED / OUTSTANDING.** One prerequisite of it has been
+closed; the step itself has not been performed.
+
 **Step 5b — Finance-writer runtime authorisation.** Steps 5 and 6 cannot be joined directly.
 `assertFinanceWriterAuthorised` (`apps/api/src/fin/writer-authorisation.ts`) runs inside the `MONGO`
 provider **before `new MongoClient`**, and in production it **refuses to boot** while
@@ -1113,7 +1125,7 @@ Gate 9h may be declared GREEN only when **all** of the following exist as record
 | E1 | U2 answered (yes/no only), recorded — **SATISFIED 2026-09-23** (§4): answered **yes**, recorded without the value. This satisfies E1 as written; it does **not** unblock U2, which stays BLOCKED / fail-closed |
 | E2 | `fin_accounts` question resolved and recorded — **SATISFIED 2026-09-23** (§3, §12): the question is answered and recorded, and the answer is that Node **requires `insert` on `fin_accounts`**. Granting that production role/permission is **E3**, which remains outstanding |
 | E3 | `nodeLedgerWriter` role created, with the boundary proof (S3 succeeds, S4 refused with code 13) |
-| E3a | Finance-writer production deployment target (§6 step 5a) — **REQUIRED, NOT YET SATISFIED**. Once it exists, the evidence to be recorded is: that a production deployment target for `apps/api` **was provisioned**, and that it carries `NODE_ENV=production`, `NEST_MONGO_URL`, `NEST_MONGO_DB`, `TRUKVIA_FIN_WRITER_ALLOWED_DB`, `PG_URL` and `TRUKVIA_INTERNAL_TOKEN` in its process environment. It further requires, all **REQUIRED / NOT YET SATISFIED**: a **reproducible production build** from the committed lockfile; a **verified production start path**, since the build output location and the start command have not been reconciled and no CI job exercises the build; and **working `/health/live` and `/health/ready` endpoints on `apps/api`**, which do not exist today (§6). What is recorded is the **fact of provisioning and the names of the variables — never their values**, and never a service name, deployment identifier or platform secret. This evidence will **not** imply that the writer was started, which is E6 / step 6, and will **not** imply that any production write occurred |
+| E3a | Finance-writer production deployment target (§6 step 5a) — **REQUIRED, NOT YET SATISFIED**. Once it exists, the evidence to be recorded is: that a production deployment target for `apps/api` **was provisioned**, and that it carries `NODE_ENV=production`, `NEST_MONGO_URL`, `NEST_MONGO_DB`, `TRUKVIA_FIN_WRITER_ALLOWED_DB`, `PG_URL` and `TRUKVIA_INTERNAL_TOKEN` in its process environment. Two of its sub-requirements are now **SATISFIED, locally**, verified 2026-09-23: a **reproducible build from the tracked lockfile** (`npm run build` exit 0, `package-lock.json` unchanged), and a **corrected, verified start path** — the exact compiled entrypoint is `dist/src/main.js`, the start command was corrected to `node dist/src/main.js`, and a **bounded local** `npm start` started the application successfully and then terminated cleanly. **That is local evidence only and does not make E3a satisfied**, which still requires the production deployment target, the production runtime provisioning above, and **working `/health/live` and `/health/ready` endpoints on `apps/api`** — still **REQUIRED / NOT YET SATISFIED**, since those endpoints do not exist today (§6). What is recorded is the **fact of provisioning and the names of the variables — never their values**, and never a service name, deployment identifier or platform secret. This evidence will **not** imply that the writer was started, which is E6 / step 6, and will **not** imply that any production write occurred |
 | E3b | Finance-writer runtime authorisation (§6 step 5b) — **REQUIRED, NOT YET SATISFIED**, because step 5b has not been executed. Once it is, the evidence to be recorded is: that `TRUKVIA_FIN_WRITER_ALLOWED_DB` **was provisioned** on the platform, and that the existing guard **accepted** it as an **exact whole-string** match against the configured database name. What is recorded is the **fact of provisioning and of the guard's acceptance — never the value**: the production database name must not be written here, in the runbook, in a commit message or in any log. This evidence will **not** imply that the writer was started, which is E6 / step 6, and will **not** imply that any production write occurred |
 | E4 | Backup taken **and its restore demonstrated** on a throwaway database — **restore demonstrated 2026-09-23** (§5.8): checksum matched, `mongorestore` exit 0, 960,150 documents, 0 failures. **Still outstanding on the first half**: no backup has been taken at an activation instant. The §5.10 rehearsal created an activation-time backup **of a disposable clone**, which does not satisfy this |
 | E5 | Activation timestamp and fingerprints (R2, R3) recorded |
@@ -1173,9 +1185,13 @@ recorded above:
 
 1. **No `/health/live` or `/health/ready` on `apps/api`** — §6 step 6 and §7 S1 cannot be
    satisfied by the Finance writer as written.
-2. **Production build and start path not yet verified** — no `nest-cli.json` is present, the
-   compiler output location and `npm start` have not been reconciled, and no CI job runs the
-   build.
+2. **Build and start path — CLOSED, locally.** Verified on 2026-09-23: `npm run build` exits 0
+   and produces `dist/src/main.js`; the `apps/api` start script, which pointed at a path the
+   build does not produce, was corrected to `node dist/src/main.js`; and a **bounded local**
+   `npm start` reached "Nest application successfully started" with all routes mapped, then
+   terminated cleanly. `package-lock.json` was unchanged, so the build is reproducible from the
+   tracked lockfile. **This was a local verification only — nothing was built, started or
+   deployed in production**, and no CI job runs the build yet.
 3. **No production deployment target for `apps/api`** — §6 step 5a; the `deploy/` artifacts
    provision `backend-node` and the Python routing environment only.
 4. **`PG_URL` has no fail-closed protection** — unlike the Mongo path, a misconfigured
