@@ -37,6 +37,24 @@ jobs:
           cd backend
           pip install --upgrade pip
           pip install -r requirements.txt
+          # Test-only. Eight regression tests read generated invoice PDFs with
+          # pypdf; nothing the backend serves imports it, so it does NOT belong in
+          # backend/requirements.txt.
+          pip install pypdf
+
+      # The demo token is how the regression suite authenticates. The platform
+      # image supplies it through /app/backend/.env, which does not exist on a
+      # runner, so CI mints its own for this job only: a fresh random value, never
+      # a real preview token and never a repository secret. Writing it to
+      # $GITHUB_ENV makes it available to every later step, which is what both the
+      # backend process and pytest need - they must agree on the same value.
+      - name: Generate a CI-only demo token
+        run: |
+          TOKEN="ci-$(python -c 'import secrets; print(secrets.token_urlsafe(32))')"
+          echo "::add-mask::$TOKEN"
+          echo "DEMO_TOKEN_VALUE=$TOKEN" >> "$GITHUB_ENV"
+          echo "IS_PREVIEW_ENV=1" >> "$GITHUB_ENV"
+          echo "ENABLE_DEMO_TOKEN=1" >> "$GITHUB_ENV"
 
       - name: Start backend (background)
         env:
@@ -60,6 +78,9 @@ jobs:
       - name: Run regression guard
         env:
           BACKEND_URL_INTERNAL: http://localhost:8001
+          # Roughly half the suite discovers the base URL from this variable and
+          # falls back to /app/frontend/.env, which a runner does not have.
+          REACT_APP_BACKEND_URL: http://localhost:8001
           MONGO_URL: mongodb://localhost:27017
           DB_NAME: regression_ci
         run: |
