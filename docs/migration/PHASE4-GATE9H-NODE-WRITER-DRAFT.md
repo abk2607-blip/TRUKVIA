@@ -133,7 +133,7 @@ corrected one, with the parts that remain unrehearsed marked as such.
 | R2 | A recorded row count and a content fingerprint of both collections at the activation instant | **NOT DONE** for activation; the *method* was exercised in §5.7 |
 | R3 | The exact activation timestamp, recorded to the second, so writes can be bounded by time | **NOT DONE** for activation; and §5.7 showed a timestamp alone is **not sufficient** to identify affected rows |
 | R4 | Confirmation that every affected `fin_txn` row carries `projected_at` / `created_at`, so Node-era rows are identifiable | **VERIFIED** in the §5.7 rehearsal — 370/370 relevant rows carried both fields |
-| R5 | A named operator who can execute the restore and has the access to do so | **NOT ASSIGNED** — not exercised in the rehearsal; no operator was named |
+| R5 | A named operator who can execute the restore and has the access to do so | **ASSIGNED 2026-09-23** — the gate owner/operator. Not exercised: whether that access is sufficient to execute a restore is untested, because R1 is BLOCKED |
 
 **R1 — why it is BLOCKED.** The 2026-09-23 rehearsal could not attempt it. The authoritative backup
 artifact was not present on the rehearsal machine, and retrieving it would have required production
@@ -261,15 +261,44 @@ if the source records are intact.
 
 ### 5.5 Pausing business writes during rollback
 
-**UNRESOLVED — needs a decision.** Two options, neither yet chosen:
+**DECIDED 2026-09-23 — Option B, the declared quiet window.** This is the U5 policy.
 
-- **Option A — day closing.** Use the existing day-closure mechanism to freeze the affected period.
-  Reuses a control the business already understands; scope is a date, not a collection.
-- **Option B — announced quiet window.** Perform the rollback when no operator is entering data.
-  Simpler, but relies on coordination rather than enforcement.
+This section governs the coordination of **business writes** during the affected-window operation.
+Enabling or disabling the **Node writer** is a different control and remains §11; the two must not be
+conflated.
 
-Whichever is chosen must be written into this gate **before** activation, not improvised during an
-incident.
+- **Option B — declared quiet window. SELECTED.** Perform the operation when no operator is entering
+  data for the affected scope. It relies on coordination rather than enforcement.
+- **Option A — day closing. NOT SELECTED**, because its premise does not hold. The existing
+  day-closure mechanism is **not** a data-entry or write lock: `FinDayClosure` records a financial
+  checkpoint, and its own definition states that any past business date remains enterable across
+  every canonical source type after that day has been closed. No canonical write path consults
+  `fin_day_closures` — only the day-closing router itself and reconciliation reporting. Closing a day
+  would record a checkpoint without pausing anything, and making it enforce would require a new
+  control in every write path, which this gate does not introduce.
+
+**What Option B does and does not provide.** It is coordination, **not technical enforcement**.
+Nothing in the system rejects a write during the window; a write made during it is still accepted and
+projected normally. What the window buys is a *verifiable* before-and-after state for §5.6.
+
+**The declared quiet-window procedure**, at the level the §5.7 rehearsal established and no further:
+
+1. The named operator (R5) **declares the window**, recording its start and end.
+2. The window is **scoped** to the affected tenant and the enabled source type, not the whole system.
+   Under §8.1 the first activation is one source type, one tenant and one deliberately reprojected
+   document, so the window is correspondingly small.
+3. A **row count and content fingerprint are taken before and after** the window over the affected
+   scope, as in §5.7.
+4. **Parity verification** is run per §5.6, with checks 1–4 together and parity decisive.
+5. Any **legitimate activity that did occur** during the window is identified and accounted for in
+   that verification — §5.6 check 3 already requires counts to be read "adjusted for legitimate
+   activity since". Unaccounted movement means the verification is incomplete, not that the data is
+   necessarily wrong.
+
+**Not yet exercised.** No quiet window has ever been declared. The §5.7 rehearsal ran on a disposable
+clone with no concurrent operators, so the coordination itself is untested and §13 E11 remains
+outstanding on that basis. The policy is recorded here **before** activation, rather than improvised
+during an incident, which is what this section always required.
 
 ### 5.6 How rollback success is verified
 
@@ -341,7 +370,7 @@ the orphan finding in §5.3 step 4, which has the opposite consequence.
 | U4-a | R1 backup-restore rehearsal, on a throwaway database, with the artifact's checksum verified | **BLOCKED** — needs the artifact and an authorised operator |
 | U4-b | The corrected parity-based recovery identification procedure (§5.3 step 2) adopted and rehearsed end-to-end | drafted here, **not yet re-rehearsed as a whole** |
 | U4-c | The source-existence scope restriction for reprojection (§5.3 step 4) adopted as a hard rule in the runbook | drafted here, **not yet operationalised** |
-| U4-d | The §5.5 write-pause / reversion decision (Option A or B) taken and written in | **NOT DECIDED** |
+| U4-d | The §5.5 write-pause / reversion decision (Option A or B) taken and written in | **DECIDED 2026-09-23 — Option B** (§5.5); the window has not been exercised |
 
 ---
 
@@ -506,7 +535,7 @@ weakened even if no writes are occurring.
 | Boundary proof S3/S4 against the real role | **CODE / workstream** | **NOT WRITTEN** — needs the role to exist first |
 | Safety proof S4b (refused creation writes no ledger row) | **CODE / workstream** | **DONE** — `scripts/fin-account-seed-safety.ts`, 16/16, commit `10b0e82`. Must be re-run against the real role at activation. |
 | Resolve the `fin_accounts` question | **CODE / workstream** | **DONE 2026-09-23** — Node requires `insert`; see §3 |
-| Decide the write-pause mechanism (§5.5) | **GATE OWNER** | NOT DECIDED |
+| Decide the write-pause mechanism (§5.5) | **GATE OWNER** | **DECIDED 2026-09-23 — Option B, declared quiet window.** Coordination only, no enforcement; never exercised |
 | Decide whether a writer marker is required (A1) | **GATE OWNER** | NOT DECIDED |
 
 **No code change is required to activate the writer.** The bridge is already implemented and
@@ -531,8 +560,8 @@ Gate 9h may be declared GREEN only when **all** of the following exist as record
 | E8 | The same for every subsequently enabled source type |
 | E9 | Reversion (§11 step 1) demonstrated at least once, deliberately, and shown to stop Node writes |
 | E10 | Day-book / ledger reconciliation before and after, matching |
-| E11 | Write-pause mechanism (§5.5) chosen and documented |
-| E12 | Named operator assigned for rollback (R5) |
+| E11 | Write-pause mechanism (§5.5) chosen and documented — **policy recorded 2026-09-23 (Option B)**, but **still outstanding as evidence**: no quiet window has ever been declared or exercised, and the policy provides coordination, not enforcement |
+| E12 | Named operator assigned for rollback (R5) — **assigned 2026-09-23** to the gate owner/operator (§5.1 R5) |
 
 **E9 is not optional.** A reversion path that has never been exercised is an assumption, not a
 control.
@@ -572,8 +601,8 @@ disposable clone (§5.7). Everything else remains unrehearsed.
 |---|---|
 | **U2** | **OPEN** — production `DB_NAME` unverified (Gate 9g §14). Operator answers yes/no only; the value is never printed. |
 | **U3** | **RESOLVED (code) / OPEN (permission).** The silent-failure hazard is fixed and proven 16/16. Node still **requires** `insert` on `fin_accounts` (§3); granting it remains an operator action, not yet done. |
-| **U4** | **PARTIAL — still OPEN and MANDATORY, not GREEN.** Rehearsed 2026-09-23 on a disposable clone (§5.7): the **recovery path is proven** — byte-exact fingerprint recovery, §5.6 checks 1–4 passed, R4 **VERIFIED** 370/370, parity detected all four injected corruptions. But the gate stays PARTIAL because (a) **R1 is BLOCKED** — the backup artifact was unavailable to the rehearsal, so no checksum verification and no restore, and reprojection does not substitute for restore; (b) the recovery procedure needed **three corrections** that are now drafted but not themselves re-rehearsed — parity-based identification (a deleted leg is invisible to a timestamp scan), the source-existence scope restriction (**185 `source_id`s vs 151 source documents; 34 orphans = 68 legs = ₹25,500** would be destroyed by a blind reprojection), and the non-optional detector set (row counts can be fully masked by delete + ghost-insert); (c) §5.5 remains undecided. Outstanding items are itemised as **U4-a … U4-d** in §5.7. The earlier concern about rows written under a different `ref_source_key` was **not** exercised in this rehearsal and remains untested; backup must still cover **`fin_accounts`**. |
-| **U5** | **OPEN and MANDATORY.** Write-pause mechanism undecided (§5.5). Verified 2026-09-23: reverting the env is sufficient **without any code change**, but `os.environ` is per-process, so a `.env` edit needs a **process restart** — it is not instant like `.node-routing-kill`, and an in-flight write can still complete. |
+| **U4** | **PARTIAL — still OPEN and MANDATORY, not GREEN.** Rehearsed 2026-09-23 on a disposable clone (§5.7): the **recovery path is proven** — byte-exact fingerprint recovery, §5.6 checks 1–4 passed, R4 **VERIFIED** 370/370, parity detected all four injected corruptions. But the gate stays PARTIAL because (a) **R1 is BLOCKED** — the backup artifact was unavailable to the rehearsal, so no checksum verification and no restore, and reprojection does not substitute for restore; (b) the recovery procedure needed **three corrections** that are now drafted but not themselves re-rehearsed — parity-based identification (a deleted leg is invisible to a timestamp scan), the source-existence scope restriction (**185 `source_id`s vs 151 source documents; 34 orphans = 68 legs = ₹25,500** would be destroyed by a blind reprojection), and the non-optional detector set (row counts can be fully masked by delete + ghost-insert); (c) the §5.5 policy is now decided (Option B, 2026-09-23) but has never been exercised. Outstanding items are itemised as **U4-a … U4-d** in §5.7. The earlier concern about rows written under a different `ref_source_key` was **not** exercised in this rehearsal and remains untested; backup must still cover **`fin_accounts`**. |
+| **U5** | **POLICY DECIDED — execution still OPEN and MANDATORY.** Write-pause mechanism chosen 2026-09-23 (§5.5): **Option B, the declared quiet window**, with R5 assigned to the gate owner/operator. Option A was rejected on evidence — day closure is **not** a data-entry lock and no canonical write path enforces it. Option B is **coordination, not enforcement**, and no window has ever been declared or exercised, so **E11 is not satisfied**. Separately, and unchanged from 2026-09-23: reverting the env is sufficient **without any code change**, but `os.environ` is per-process, so a `.env` edit needs a **process restart** — it is not instant like `.node-routing-kill`, and an in-flight write can still complete. That is the §11 Node-writer control, which is distinct from this policy. |
 | **U6** | **DEFERRED — not an activation blocker.** No writer attribution exists and timestamps cannot substitute (§9). Recorded as future hardening. |
 
 **Required before this can become a real gate:** §13 E1–E12 in full.
