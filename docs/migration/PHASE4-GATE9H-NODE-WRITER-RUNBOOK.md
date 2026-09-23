@@ -116,8 +116,27 @@ Two cases are **not** clean one-to-one lookups and must be treated under §6:
 - **Reprojection is not a substitute for restore.** They are different mechanisms.
 - **Restore is a separate recovery path** (Gate 9h §5.3 step 5). The restore mechanism itself was
   demonstrated on 2026-09-23 (Gate 9h §5.8).
-- **Restore followed by reprojection has NOT been rehearsed end to end.** Do not claim or assume
-  otherwise.
+- **Restore followed by reprojection is now VERIFIED end to end** on a disposable clone, to
+  byte-exact recovery (Gate 9h §5.10, 2026-09-23).
+
+### 4.1 Restore rolls back legitimate work too
+
+Proven in Gate 9h §5.10:
+
+1. **The restore is collection-level** — it replaces the whole of `fin_txn` and `fin_hook_failures`,
+   not just the affected scope.
+2. **Legitimate ledger activity recorded after the activation instant is rolled back with it.** This
+   was observed directly, not inferred.
+3. **A controlled reprojection of the legitimate, source-backed post-activation activity is therefore
+   required after the restore.** The restore alone does not leave a correct ledger.
+4. **The source-existence hard rule (§2) still applies** to that reprojection, and **no blind
+   full-scope reprojection may be run** at any point.
+5. **The U5 Option B quiet window matters here**, because it limits how much activity can occur
+   during the restore-and-reprojection interval. It is **coordination, not technical enforcement**.
+
+**Still not proven, and not to be claimed:** a **production activation-time backup** has not been
+taken — the §5.10 artifact was a dump of disposable rehearsal state — and an **actual Node-writer
+stop or reversion** has never been executed.
 
 ---
 
