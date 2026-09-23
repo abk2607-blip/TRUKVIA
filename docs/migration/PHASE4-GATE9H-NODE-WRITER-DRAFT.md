@@ -903,11 +903,30 @@ commit message or in any log**, and neither is any other value in the table abov
 The last two entries were added after the 2026-09-23 readiness preflight and matter for different
 reasons:
 
-- **`PG_URL` has no production fail-closed guard in `apps/api`.** Unlike the Mongo path, nothing
-  checks that the configured PostgreSQL target is authorised; the value simply defaults to a local
-  one and the pool connects lazily, so a misconfigured deployment **boots successfully and fails
-  later**, at the first read, rather than refusing at startup. That asymmetry is recorded here; it
-  is not fixed by this document.
+- **`PG_URL` is listed for completeness, and is outside the Gate 9h runtime dependency.** The
+  Gate 9h surface (§8.1) is Mongo-only and never queries PostgreSQL, and there is no boot-time
+  PostgreSQL connection, so the writer boots, passes readiness and reprojects whether or not this
+  variable is right. It belongs on this list because the process reads it, not because Gate 9h
+  needs it. **No new PostgreSQL authorisation variable is required by Gate 9h**, and none is
+  introduced here.
+- **`PG_URL` has no production fail-closed guard in `apps/api` — recorded, not fixed.** Unlike the
+  Mongo path, nothing checks that the configured PostgreSQL target is authorised; the value
+  defaults to a local one and the pool connects lazily, so a misconfigured deployment **boots
+  successfully and fails later**, at the first query, rather than refusing at startup.
+
+  **PG hardening — recommended, NOT performed.** `apps/api` holds **three SQL write sites**, all
+  **outside Gate 9h**: `INSERT INTO trukvia.fin_day_closure` in the day-closure writes, and
+  `INSERT INTO trukvia.vendor` / `DELETE FROM trukvia.vendor` in the vendor writes. A production
+  fail-closed guard is **recommended for those unrelated routes**. **It has not been
+  implemented**, and this document does not authorise implementing it.
+
+  **There is a coupling that makes it a real design choice, not a drop-in.** `src/db/pg.ts` is
+  loaded **transitively** on the Gate 9h path, because the `MONGO` injection token is exported
+  from `src/vendors/vendors.service.ts` and importing that file pulls the PostgreSQL module in
+  with it. A guard that refuses at **module load** would therefore stop the **Finance writer**
+  from booting, even though the Gate 9h path never queries PostgreSQL. **That trade-off must be
+  chosen deliberately — by moving the token, by guarding somewhere other than module load, or by
+  accepting the coupling — and it is neither chosen nor authorised here.**
 - **`TRUKVIA_INTERNAL_TOKEN` is required for the internal reproject bridge.** `POST
   /internal/fin/reproject` compares it in constant time against the `x-internal-token` header and
   answers 401 when it is absent or wrong, so the Gate 9h path does not work without it. **It is a
@@ -1218,10 +1237,19 @@ recorded above:
    deployed in production**, and no CI job runs the build yet.
 3. **No production deployment target for `apps/api`** — §6 step 5a; the `deploy/` artifacts
    provision `backend-node` and the Python routing environment only.
-4. **`PG_URL` has no fail-closed protection** — unlike the Mongo path, a misconfigured
-   PostgreSQL target boots and fails later rather than refusing at startup.
-5. **U2 and E3 remain unresolved** — no database has been authorised for Finance writes and the
+4. **U2 and E3 remain unresolved** — no database has been authorised for Finance writes and the
    production `nodeLedgerWriter` role does not exist.
+
+**Not a blocker: `PG_URL` fail-closed protection — general production-hardening recommendation.**
+A read-only preflight on 2026-09-23 reclassified this. The **Gate 9h surface does not touch
+PostgreSQL**: `POST /internal/fin/reproject` and everything it calls are Mongo-only, and there is
+no boot-time PostgreSQL connection, so the writer **boots, answers its readiness check and
+reprojects with no PostgreSQL connectivity at all** — observed locally, where nothing was
+listening on the PostgreSQL port and the process started and answered 200 regardless. The
+PG-backed routes are the vendor and day-closure CRUD routes, which are **outside Gate 9h** (§8.1).
+A fail-closed `PG_URL` guard may be added later as general production hardening; on current
+repository evidence it is **not required for Gate 9h activation**, and it has not been
+implemented. See §6 step 5a for what such a guard would involve.
 
 **Blocker status after the 2026-09-23 investigation:**
 
