@@ -72,8 +72,15 @@ role: nodeLedgerWriter
 ```
 
 **Boundary — what Node must still be refused:**
-- Any write to `trips`, `invoices`, `customers`, `vendors`, `expenses`, `suppliers`, `vehicles`,
-  `companies`, `user_sessions`, `audit_logs`, or any other business collection.
+- Any write to `trips`, `invoices`, `customers`, `vendors`, `vendor_bills`, `vendor_payments`,
+  `expenses`, `suppliers`, `vehicles`, `companies`, `user_sessions`, `audit_logs`, or any other
+  business collection.
+- **`fin_day_closures` — also refused.** It is not a business collection, but it is **not part of
+  the Gate 9h Finance-writer surface** either, and the role above does **not** grant it. A
+  read-only code audit on 2026-09-23 found that `apps/api` contains day-closure write paths —
+  `POST /api/fin/day-closures` and `POST /api/fin/day-closures/{close_date}/reopen`, which
+  `insertOne`/`updateOne` on `fin_day_closures` and `insertOne` on `audit_logs`. **Those writes
+  must be refused.** Nothing in Gate 9h needs them.
 - `fin_accounts` — **RESOLVED 2026-09-23. Node DOES require insert here.**
   `ensureSystemAccounts` (`apps/api/src/fin/projection.ts`) is a per-code find-or-insert that runs
   first in **every** projection. The discovery pass found **1,180 scopes: 857 hold 13 accounts, 323
@@ -90,6 +97,17 @@ role: nodeLedgerWriter
   persist, so the projection is atomic and the caller records the failure.
   Evidence: `apps/api/scripts/fin-account-seed-safety.ts` — **16/16**.
 - Schema/admin operations.
+
+**The deployed writer process contains business-write endpoints that this role refuses — and that
+is the intended outcome.** A read-only code audit on 2026-09-23 enumerated **fourteen** write
+endpoints in `apps/api` that reach `vendors`, `vendor_bills`, `vendor_payments`, `audit_logs` and
+`fin_day_closures`: the vendor, vendor-bill and vendor-payment CRUD routes, and the two
+day-closure routes above. **None of them is Gate 9h traffic** — the Gate 9h surface is the single
+internal reproject endpoint (§8.1) — and **the role must continue to reject every one of them**.
+The grants above are **not** widened for them, now or later; S4 is the check that proves the
+rejection. Their presence in the process is a **scope observation, not an authorisation**: they
+receive no traffic in the intended deployment, and the role is the control that makes that safe
+rather than merely likely.
 
 **Verification required (NOT YET DONE):** repeat the Gate 9g style proof in the negative direction —
 show that the new user *can* write the two collections and *cannot* write a business collection
@@ -802,7 +820,7 @@ Each step requires its predecessor to be green and recorded.
 | 5 | `nodeLedgerWriter` role created; boundary proof run (§3) | Operator |
 | 5a | Finance-writer **production deployment target / artifact provisioned** for `apps/api` — none exists today (see below). **NOT YET EXECUTED / OUTSTANDING** | Operator — **platform action** |
 | 5b | Finance-writer runtime authorisation provisioned — `TRUKVIA_FIN_WRITER_ALLOWED_DB` set to the exact production database name (§4 B). **NOT YET EXECUTED** | Operator — **platform action** |
-| 6 | Node restarted with the new credential; `/health/ready` 200 | Operator |
+| 6 | Node restarted with the new credential; `/health/ready` 200 — **not currently satisfiable, see below** | Operator |
 | 7 | Pre-write smoke checks (§7) all green | Migration workstream |
 | 8 | Activation timestamp and fingerprint capture **readied** (R2, R3); the activation-time backup (R1) taken now, immediately before step 9 | Operator |
 | 9 | Reverse delegation enabled for **ONE** source type (§8) — **this is the activation boundary**; R2 and R3 are captured at it | Operator |
@@ -825,6 +843,15 @@ deployment target (step 5a), the Finance-writer runtime authorisation (step 5b),
 restart and readiness check,
 the pre-write smoke checks, the activation timestamp (R3) and reverse delegation enablement all
 remain prerequisites, in that order.
+
+**Step 6 cannot pass as written — `apps/api` has no health endpoint.** A read-only audit on
+2026-09-23 enumerated every route in `apps/api`: twenty-four, all of them `api/...` or
+`internal/fin/reproject`. **There is no `/health/live` and no `/health/ready`.** The endpoints
+step 6 and §7 S1 refer to live in **`backend-node`** (`backend-node/src/health.ts`), which is a
+different application and not the Finance writer. **A `/health/live` and `/health/ready`
+implementation for `apps/api` is therefore required before the existing step-6 acceptance
+criterion can be met.** Nothing is implemented by recording this, and no step is added for it
+here; the criterion is left unchanged and its current unsatisfiability is stated plainly.
 
 **Step 5a — Finance-writer production deployment target.** A read-only preflight on 2026-09-23
 established that **`apps/api` has no production deployment target** in the repository or in the
@@ -852,12 +879,29 @@ provisioned in production today**, and no value for any of them is recorded here
 | `NEST_MONGO_URL` | The connection the writer would open |
 | `NEST_MONGO_DB` | **The database the writer will actually open** |
 | `TRUKVIA_FIN_WRITER_ALLOWED_DB` | The authorised database (step 5b) |
+| `PG_URL` | The PostgreSQL read model `apps/api` also uses |
+| `TRUKVIA_INTERNAL_TOKEN` | Shared secret for the internal reproject bridge |
 
 `TRUKVIA_FIN_WRITER_ALLOWED_DB` must **exactly equal `NEST_MONGO_DB` by whole-string comparison**.
 **If `NEST_MONGO_DB` is absent the application falls back to a local database name**, which then
 cannot match the authorised name, and the guard **fails closed** — the correct outcome, but step 6
 will not pass. **The actual production database value is not recorded here, in the runbook, in a
-commit message or in any log.**
+commit message or in any log**, and neither is any other value in the table above.
+
+The last two entries were added after the 2026-09-23 readiness preflight and matter for different
+reasons:
+
+- **`PG_URL` has no production fail-closed guard in `apps/api`.** Unlike the Mongo path, nothing
+  checks that the configured PostgreSQL target is authorised; the value simply defaults to a local
+  one and the pool connects lazily, so a misconfigured deployment **boots successfully and fails
+  later**, at the first read, rather than refusing at startup. That asymmetry is recorded here; it
+  is not fixed by this document.
+- **`TRUKVIA_INTERNAL_TOKEN` is required for the internal reproject bridge.** `POST
+  /internal/fin/reproject` compares it in constant time against the `x-internal-token` header and
+  answers 401 when it is absent or wrong, so the Gate 9h path does not work without it. **It is a
+  secret: its value is never recorded here or anywhere else in this repository.**
+
+**No production value for any of the six is provisioned today.**
 
 **Step 5b — Finance-writer runtime authorisation.** Steps 5 and 6 cannot be joined directly.
 `assertFinanceWriterAuthorised` (`apps/api/src/fin/writer-authorisation.ts`) runs inside the `MONGO`
@@ -891,7 +935,7 @@ To be run **after** the credential change and **before** the first delegated wri
 
 | # | Check | Expected |
 |---|---|---|
-| S1 | `GET /health/ready` on Node | 200, `"routes":"ok"` |
+| S1 | `GET /health/ready` on Node — **on `backend-node`; the Finance writer `apps/api` has no such endpoint yet (§6)** | 200, `"routes":"ok"` |
 | S2 | `GET /api/auth/health` on Python | 200, `db: up` |
 | S3 | Node can write `fin_txn` in a throwaway scope | succeeds |
 | S4 | Node **cannot** write a business collection | refused, code 13 |
@@ -939,6 +983,13 @@ refused.**
   the env gate is per source type, not per tenant. If it cannot, the first write must instead be a
   single deliberate reprojection of one known document, performed by the operator.
 - **One document**, reprojected deliberately rather than by waiting for organic traffic.
+- **One endpoint.** The Gate 9h Finance-writer surface is **`POST /internal/fin/reproject` and
+  nothing else**, reached by Python over loopback with the `x-internal-token` shared secret, as
+  `PHASE6-SLICE2C-STEP6-REVERSE-BRIDGE.md` defines it. Through it, Node writes only what the
+  `nodeLedgerWriter` role permits (§3). **No vendor, vendor-bill, vendor-payment or day-closure
+  CRUD write endpoint is part of Gate 9h activation**, even though `apps/api` contains them (§3);
+  they carry no Gate 9h traffic and the role refuses their writes. The **loopback-only binding and
+  the internal token remain the boundary** and are not relaxed by this gate.
 
 ### 8.2 Success criteria
 
@@ -1062,12 +1113,12 @@ Gate 9h may be declared GREEN only when **all** of the following exist as record
 | E1 | U2 answered (yes/no only), recorded — **SATISFIED 2026-09-23** (§4): answered **yes**, recorded without the value. This satisfies E1 as written; it does **not** unblock U2, which stays BLOCKED / fail-closed |
 | E2 | `fin_accounts` question resolved and recorded — **SATISFIED 2026-09-23** (§3, §12): the question is answered and recorded, and the answer is that Node **requires `insert` on `fin_accounts`**. Granting that production role/permission is **E3**, which remains outstanding |
 | E3 | `nodeLedgerWriter` role created, with the boundary proof (S3 succeeds, S4 refused with code 13) |
-| E3a | Finance-writer production deployment target (§6 step 5a) — **REQUIRED, NOT YET SATISFIED**. Once it exists, the evidence to be recorded is: that a production deployment target for `apps/api` **was provisioned**, and that it carries `NODE_ENV=production`, `NEST_MONGO_URL`, `NEST_MONGO_DB` and `TRUKVIA_FIN_WRITER_ALLOWED_DB` in its process environment. What is recorded is the **fact of provisioning and the names of the variables — never their values**, and never a service name, deployment identifier or platform secret. This evidence will **not** imply that the writer was started, which is E6 / step 6, and will **not** imply that any production write occurred |
+| E3a | Finance-writer production deployment target (§6 step 5a) — **REQUIRED, NOT YET SATISFIED**. Once it exists, the evidence to be recorded is: that a production deployment target for `apps/api` **was provisioned**, and that it carries `NODE_ENV=production`, `NEST_MONGO_URL`, `NEST_MONGO_DB`, `TRUKVIA_FIN_WRITER_ALLOWED_DB`, `PG_URL` and `TRUKVIA_INTERNAL_TOKEN` in its process environment. It further requires, all **REQUIRED / NOT YET SATISFIED**: a **reproducible production build** from the committed lockfile; a **verified production start path**, since the build output location and the start command have not been reconciled and no CI job exercises the build; and **working `/health/live` and `/health/ready` endpoints on `apps/api`**, which do not exist today (§6). What is recorded is the **fact of provisioning and the names of the variables — never their values**, and never a service name, deployment identifier or platform secret. This evidence will **not** imply that the writer was started, which is E6 / step 6, and will **not** imply that any production write occurred |
 | E3b | Finance-writer runtime authorisation (§6 step 5b) — **REQUIRED, NOT YET SATISFIED**, because step 5b has not been executed. Once it is, the evidence to be recorded is: that `TRUKVIA_FIN_WRITER_ALLOWED_DB` **was provisioned** on the platform, and that the existing guard **accepted** it as an **exact whole-string** match against the configured database name. What is recorded is the **fact of provisioning and of the guard's acceptance — never the value**: the production database name must not be written here, in the runbook, in a commit message or in any log. This evidence will **not** imply that the writer was started, which is E6 / step 6, and will **not** imply that any production write occurred |
 | E4 | Backup taken **and its restore demonstrated** on a throwaway database — **restore demonstrated 2026-09-23** (§5.8): checksum matched, `mongorestore` exit 0, 960,150 documents, 0 failures. **Still outstanding on the first half**: no backup has been taken at an activation instant. The §5.10 rehearsal created an activation-time backup **of a disposable clone**, which does not satisfy this |
 | E5 | Activation timestamp and fingerprints (R2, R3) recorded |
 | E6 | Pre-write smoke checks S1–S8 green |
-| E7 | First-write criteria C1–C6 green for the first source type, **including the business-user check** |
+| E7 | First-write criteria C1–C6 green for the first source type, **including the business-user check** — and the write reached Node through **`POST /internal/fin/reproject` only** (§8.1), over loopback with the internal token, with no vendor/bill/payment/day-closure CRUD endpoint involved |
 | E8 | The same for every subsequently enabled source type |
 | E9 | Reversion (§11 step 1) demonstrated at least once, deliberately, and shown to stop Node writes |
 | E10 | Day-book / ledger reconciliation before and after, matching |
@@ -1115,6 +1166,22 @@ inside it — no role, no credential, no `TRUKVIA_FIN_WRITER_ALLOWED_DB`, no wri
 no reverse delegation, no production access — and **step 8, the activation-time backup, has not been
 executed**. Partially rehearsed: the U4 recovery path on a disposable clone (§5.7), and the R1 backup
 restore into a fresh disposable database (§5.8). Everything else remains unrehearsed.
+
+**`apps/api` deployment blockers, found by the 2026-09-23 readiness and architecture preflights.**
+These are **repository facts**, not new decisions, and none of them changes any evidence already
+recorded above:
+
+1. **No `/health/live` or `/health/ready` on `apps/api`** — §6 step 6 and §7 S1 cannot be
+   satisfied by the Finance writer as written.
+2. **Production build and start path not yet verified** — no `nest-cli.json` is present, the
+   compiler output location and `npm start` have not been reconciled, and no CI job runs the
+   build.
+3. **No production deployment target for `apps/api`** — §6 step 5a; the `deploy/` artifacts
+   provision `backend-node` and the Python routing environment only.
+4. **`PG_URL` has no fail-closed protection** — unlike the Mongo path, a misconfigured
+   PostgreSQL target boots and fails later rather than refusing at startup.
+5. **U2 and E3 remain unresolved** — no database has been authorised for Finance writes and the
+   production `nodeLedgerWriter` role does not exist.
 
 **Blocker status after the 2026-09-23 investigation:**
 
