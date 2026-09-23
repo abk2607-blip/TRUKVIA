@@ -800,6 +800,7 @@ Each step requires its predecessor to be green and recorded.
 | 3 | `fin_accounts` question settled (§3) | Migration workstream + gate owner |
 | 4 | Backup procedure and restore validation **readied** (R1 method, §5.8). **The activation-time backup itself is taken immediately before step 9**, not here | Operator |
 | 5 | `nodeLedgerWriter` role created; boundary proof run (§3) | Operator |
+| 5b | Finance-writer runtime authorisation provisioned — `TRUKVIA_FIN_WRITER_ALLOWED_DB` set to the exact production database name (§4 B). **NOT YET EXECUTED** | Operator — **platform action** |
 | 6 | Node restarted with the new credential; `/health/ready` 200 | Operator |
 | 7 | Pre-write smoke checks (§7) all green | Migration workstream |
 | 8 | Activation timestamp and fingerprint capture **readied** (R2, R3); the activation-time backup (R1) taken now, immediately before step 9 | Operator |
@@ -818,9 +819,31 @@ itself remains DRAFT / NOT AUTHORIZED** (§15).
 
 Steps 2 and 3 were recorded earlier (E1, §4; E2, §3). **Steps 4–12 have not been executed** — the
 activation-time backup and fingerprints (R1/R2), creation of the production `nodeLedgerWriter` role,
-credential provisioning, the production S3/S4 boundary proof, the writer restart and readiness check,
+credential provisioning, the production S3/S4 boundary proof, the Finance-writer runtime
+authorisation (step 5b), the writer restart and readiness check,
 the pre-write smoke checks, the activation timestamp (R3) and reverse delegation enablement all
 remain prerequisites, in that order.
+
+**Step 5b — Finance-writer runtime authorisation.** Steps 5 and 6 cannot be joined directly.
+`assertFinanceWriterAuthorised` (`apps/api/src/fin/writer-authorisation.ts`) runs inside the `MONGO`
+provider **before `new MongoClient`**, and in production it **refuses to boot** while
+`TRUKVIA_FIN_WRITER_ALLOWED_DB` is absent, or while it does not match the configured database name
+by an **exact, whole-string** comparison — no substring, no prefix, no pattern. Step 6 therefore
+cannot reach `/health/ready` until this variable is provisioned. It is an **operator / platform
+action** and it **has not been executed**.
+
+**The value is never recorded.** The database name is provisioned on the platform and appears
+nowhere else — not in this document, not in the runbook, not in a commit message, not in a log and
+not in any report. The guard deliberately keeps both the configured and the authorised name out of
+its error text, so a failure is diagnosable without either being printed.
+
+**What step 5b is not.** It does **not** require any change to `backend-node`, whose separate boot
+guard (§4 A) belongs to a different application; it does **not** rename the production database,
+which §4 forbids; it does **not** start or restart the writer, which is step 6; and it does **not**
+enable reverse delegation, which is step 9. Provisioning the variable is the **technical half** of
+U2 (§4 B). **U2's authorisation half is a gate-owner decision that has not been made**, so recording
+this step authorises nothing: **U2 stays BLOCKED / FAIL-CLOSED** until that decision exists, and
+this document remains DRAFT and NOT AUTHORISED FOR ACTIVATION.
 
 Steps 9–11 are deliberately incremental. **Enabling all thirteen source types at once is explicitly
 forbidden by this gate.**
@@ -975,6 +998,7 @@ weakened even if no writes are occurring.
 |---|---|---|
 | Create `nodeLedgerWriter` role | **PLATFORM** | NOT DONE |
 | Provision the credential into Node's env | **PLATFORM** | NOT DONE |
+| Provision `TRUKVIA_FIN_WRITER_ALLOWED_DB` — Finance-writer runtime authorisation (§6 step 5b) | **PLATFORM** | **NOT DONE.** The mechanism exists and is tested (§4 B); **the platform value has not been provisioned.** When it is provisioned, the value is **never recorded here**. Without it the writer refuses to boot in production, so step 6 cannot pass |
 | Verify production `DB_NAME` (U2) | **PLATFORM** | **ANSWERED 2026-09-23 — YES** (§4), and **E1 is SATISFIED** for that confirmation. The verification is done; **U2 itself remains BLOCKED / FAIL-CLOSED** — a `yes` does **not** unblock the writer. Nothing was changed: the database was not renamed and no production authorisation was granted |
 | Backup + tested restore | **PLATFORM** | **RESTORE TESTED 2026-09-23** (§5.8) — checksum matched, `mongorestore` exit 0 into a fresh disposable database. The **activation-instant backup itself is still NOT TAKEN**, because no activation has occurred |
 | Recovery-path rehearsal (reprojection) | **CODE / workstream** | **DONE 2026-09-23** on a disposable clone — byte-exact recovery, and three procedure corrections (§5.7). Does **not** satisfy the restore requirement above |
@@ -1002,6 +1026,7 @@ Gate 9h may be declared GREEN only when **all** of the following exist as record
 | E1 | U2 answered (yes/no only), recorded — **SATISFIED 2026-09-23** (§4): answered **yes**, recorded without the value. This satisfies E1 as written; it does **not** unblock U2, which stays BLOCKED / fail-closed |
 | E2 | `fin_accounts` question resolved and recorded — **SATISFIED 2026-09-23** (§3, §12): the question is answered and recorded, and the answer is that Node **requires `insert` on `fin_accounts`**. Granting that production role/permission is **E3**, which remains outstanding |
 | E3 | `nodeLedgerWriter` role created, with the boundary proof (S3 succeeds, S4 refused with code 13) |
+| E3b | Finance-writer runtime authorisation (§6 step 5b) — **REQUIRED, NOT YET SATISFIED**, because step 5b has not been executed. Once it is, the evidence to be recorded is: that `TRUKVIA_FIN_WRITER_ALLOWED_DB` **was provisioned** on the platform, and that the existing guard **accepted** it as an **exact whole-string** match against the configured database name. What is recorded is the **fact of provisioning and of the guard's acceptance — never the value**: the production database name must not be written here, in the runbook, in a commit message or in any log. This evidence will **not** imply that the writer was started, which is E6 / step 6, and will **not** imply that any production write occurred |
 | E4 | Backup taken **and its restore demonstrated** on a throwaway database — **restore demonstrated 2026-09-23** (§5.8): checksum matched, `mongorestore` exit 0, 960,150 documents, 0 failures. **Still outstanding on the first half**: no backup has been taken at an activation instant. The §5.10 rehearsal created an activation-time backup **of a disposable clone**, which does not satisfy this |
 | E5 | Activation timestamp and fingerprints (R2, R3) recorded |
 | E6 | Pre-write smoke checks S1–S8 green |
@@ -1050,7 +1075,7 @@ in this section has been authorised by it.
 **DRAFT — NOT SUBMITTED, NOT AUTHORISED FOR ACTIVATION.** The gate owner recorded step 1 on
 2026-09-23 (§6): proceed with the controlled sequence. That authorises the **sequence** and nothing
 inside it — no role, no credential, no `TRUKVIA_FIN_WRITER_ALLOWED_DB`, no writer start or restart,
-no reverse delegation, no production access — and **step 4, the activation-time backup, has not been
+no reverse delegation, no production access — and **step 8, the activation-time backup, has not been
 executed**. Partially rehearsed: the U4 recovery path on a disposable clone (§5.7), and the R1 backup
 restore into a fresh disposable database (§5.8). Everything else remains unrehearsed.
 
@@ -1064,4 +1089,4 @@ restore into a fresh disposable database (§5.8). Everything else remains unrehe
 | **U5** | **POLICY DECIDED — execution still OPEN and MANDATORY.** Write-pause mechanism chosen 2026-09-23 (§5.5): **Option B, the declared quiet window**, with R5 assigned to the gate owner/operator. Option A was rejected on evidence — day closure is **not** a data-entry lock and no canonical write path enforces it. Option B is **coordination, not enforcement**, and no window has ever been declared or exercised, so **E11 is not satisfied**. Separately, and unchanged from 2026-09-23: reverting the env is sufficient **without any code change**, but `os.environ` is per-process, so a `.env` edit needs a **process restart** — it is not instant like `.node-routing-kill`, and an in-flight write can still complete. That is the §11 Node-writer control, which is distinct from this policy. |
 | **U6** | **DEFERRED — not an activation blocker.** No writer attribution exists and timestamps cannot substitute (§9). Recorded as future hardening. |
 
-**Required before this can become a real gate:** §13 E1–E12 in full.
+**Required before this can become a real gate:** §13 E1–E12, including E3b, in full.
