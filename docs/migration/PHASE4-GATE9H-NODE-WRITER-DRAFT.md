@@ -800,6 +800,7 @@ Each step requires its predecessor to be green and recorded.
 | 3 | `fin_accounts` question settled (§3) | Migration workstream + gate owner |
 | 4 | Backup procedure and restore validation **readied** (R1 method, §5.8). **The activation-time backup itself is taken immediately before step 9**, not here | Operator |
 | 5 | `nodeLedgerWriter` role created; boundary proof run (§3) | Operator |
+| 5a | Finance-writer **production deployment target / artifact provisioned** for `apps/api` — none exists today (see below). **NOT YET EXECUTED / OUTSTANDING** | Operator — **platform action** |
 | 5b | Finance-writer runtime authorisation provisioned — `TRUKVIA_FIN_WRITER_ALLOWED_DB` set to the exact production database name (§4 B). **NOT YET EXECUTED** | Operator — **platform action** |
 | 6 | Node restarted with the new credential; `/health/ready` 200 | Operator |
 | 7 | Pre-write smoke checks (§7) all green | Migration workstream |
@@ -819,10 +820,44 @@ itself remains DRAFT / NOT AUTHORIZED** (§15).
 
 Steps 2 and 3 were recorded earlier (E1, §4; E2, §3). **Steps 4–12 have not been executed** — the
 activation-time backup and fingerprints (R1/R2), creation of the production `nodeLedgerWriter` role,
-credential provisioning, the production S3/S4 boundary proof, the Finance-writer runtime
-authorisation (step 5b), the writer restart and readiness check,
+credential provisioning, the production S3/S4 boundary proof, the Finance-writer production
+deployment target (step 5a), the Finance-writer runtime authorisation (step 5b), the writer
+restart and readiness check,
 the pre-write smoke checks, the activation timestamp (R3) and reverse delegation enablement all
 remain prerequisites, in that order.
+
+**Step 5a — Finance-writer production deployment target.** A read-only preflight on 2026-09-23
+established that **`apps/api` has no production deployment target** in the repository or in the
+platform evidence reviewed. The artifacts under `deploy/` provision **`backend-node`, the read
+shadow**, and the Python routing environment; **none of them is the Finance writer.** `apps/api`
+carries no supervisor program, no run script, no production environment template and no container
+definition, it reads its configuration straight from `process.env` with no loader of its own, and
+its own CI states that it makes no production contact by construction.
+
+**A production deployment target for `apps/api` must therefore exist before step 5b can be
+executed** — step 5b provisions a variable into a process environment, and there is currently no
+such process. Creating that target is a **separate operator / platform action**, outside the
+artifacts this repository holds today, and it is **NOT YET EXECUTED / OUTSTANDING**. No service
+name, deployment identifier, container name or platform secret is recorded here, because none was
+inspected and none belongs in this document. **Recording this step authorises nothing**: neither
+creating the target nor anything that follows it is authorised by its appearing here.
+
+**Runtime configuration the target must carry (step 5a) before step 5b means anything.** The
+Finance writer needs all four of the following in its process environment. **None of them is
+provisioned in production today**, and no value for any of them is recorded here:
+
+| Variable | Why it is needed |
+|---|---|
+| `NODE_ENV=production` | Selects the fail-closed branch of the authorisation guard |
+| `NEST_MONGO_URL` | The connection the writer would open |
+| `NEST_MONGO_DB` | **The database the writer will actually open** |
+| `TRUKVIA_FIN_WRITER_ALLOWED_DB` | The authorised database (step 5b) |
+
+`TRUKVIA_FIN_WRITER_ALLOWED_DB` must **exactly equal `NEST_MONGO_DB` by whole-string comparison**.
+**If `NEST_MONGO_DB` is absent the application falls back to a local database name**, which then
+cannot match the authorised name, and the guard **fails closed** — the correct outcome, but step 6
+will not pass. **The actual production database value is not recorded here, in the runbook, in a
+commit message or in any log.**
 
 **Step 5b — Finance-writer runtime authorisation.** Steps 5 and 6 cannot be joined directly.
 `assertFinanceWriterAuthorised` (`apps/api/src/fin/writer-authorisation.ts`) runs inside the `MONGO`
@@ -998,6 +1033,7 @@ weakened even if no writes are occurring.
 |---|---|---|
 | Create `nodeLedgerWriter` role | **PLATFORM** | NOT DONE |
 | Provision the credential into Node's env | **PLATFORM** | NOT DONE |
+| Provision a production deployment target for `apps/api` — Finance-writer deployment artifact (§6 step 5a) | **PLATFORM** | **NOT DONE / OUTSTANDING.** A read-only preflight found no production deployment target for `apps/api`; the existing `deploy/` artifacts provision `backend-node` and the Python routing environment, not the Finance writer. Creating it is a separate platform action. Without it there is no process environment for step 5b to provision |
 | Provision `TRUKVIA_FIN_WRITER_ALLOWED_DB` — Finance-writer runtime authorisation (§6 step 5b) | **PLATFORM** | **NOT DONE.** The mechanism exists and is tested (§4 B); **the platform value has not been provisioned.** When it is provisioned, the value is **never recorded here**. Without it the writer refuses to boot in production, so step 6 cannot pass |
 | Verify production `DB_NAME` (U2) | **PLATFORM** | **ANSWERED 2026-09-23 — YES** (§4), and **E1 is SATISFIED** for that confirmation. The verification is done; **U2 itself remains BLOCKED / FAIL-CLOSED** — a `yes` does **not** unblock the writer. Nothing was changed: the database was not renamed and no production authorisation was granted |
 | Backup + tested restore | **PLATFORM** | **RESTORE TESTED 2026-09-23** (§5.8) — checksum matched, `mongorestore` exit 0 into a fresh disposable database. The **activation-instant backup itself is still NOT TAKEN**, because no activation has occurred |
@@ -1026,6 +1062,7 @@ Gate 9h may be declared GREEN only when **all** of the following exist as record
 | E1 | U2 answered (yes/no only), recorded — **SATISFIED 2026-09-23** (§4): answered **yes**, recorded without the value. This satisfies E1 as written; it does **not** unblock U2, which stays BLOCKED / fail-closed |
 | E2 | `fin_accounts` question resolved and recorded — **SATISFIED 2026-09-23** (§3, §12): the question is answered and recorded, and the answer is that Node **requires `insert` on `fin_accounts`**. Granting that production role/permission is **E3**, which remains outstanding |
 | E3 | `nodeLedgerWriter` role created, with the boundary proof (S3 succeeds, S4 refused with code 13) |
+| E3a | Finance-writer production deployment target (§6 step 5a) — **REQUIRED, NOT YET SATISFIED**. Once it exists, the evidence to be recorded is: that a production deployment target for `apps/api` **was provisioned**, and that it carries `NODE_ENV=production`, `NEST_MONGO_URL`, `NEST_MONGO_DB` and `TRUKVIA_FIN_WRITER_ALLOWED_DB` in its process environment. What is recorded is the **fact of provisioning and the names of the variables — never their values**, and never a service name, deployment identifier or platform secret. This evidence will **not** imply that the writer was started, which is E6 / step 6, and will **not** imply that any production write occurred |
 | E3b | Finance-writer runtime authorisation (§6 step 5b) — **REQUIRED, NOT YET SATISFIED**, because step 5b has not been executed. Once it is, the evidence to be recorded is: that `TRUKVIA_FIN_WRITER_ALLOWED_DB` **was provisioned** on the platform, and that the existing guard **accepted** it as an **exact whole-string** match against the configured database name. What is recorded is the **fact of provisioning and of the guard's acceptance — never the value**: the production database name must not be written here, in the runbook, in a commit message or in any log. This evidence will **not** imply that the writer was started, which is E6 / step 6, and will **not** imply that any production write occurred |
 | E4 | Backup taken **and its restore demonstrated** on a throwaway database — **restore demonstrated 2026-09-23** (§5.8): checksum matched, `mongorestore` exit 0, 960,150 documents, 0 failures. **Still outstanding on the first half**: no backup has been taken at an activation instant. The §5.10 rehearsal created an activation-time backup **of a disposable clone**, which does not satisfy this |
 | E5 | Activation timestamp and fingerprints (R2, R3) recorded |
@@ -1089,4 +1126,4 @@ restore into a fresh disposable database (§5.8). Everything else remains unrehe
 | **U5** | **POLICY DECIDED — execution still OPEN and MANDATORY.** Write-pause mechanism chosen 2026-09-23 (§5.5): **Option B, the declared quiet window**, with R5 assigned to the gate owner/operator. Option A was rejected on evidence — day closure is **not** a data-entry lock and no canonical write path enforces it. Option B is **coordination, not enforcement**, and no window has ever been declared or exercised, so **E11 is not satisfied**. Separately, and unchanged from 2026-09-23: reverting the env is sufficient **without any code change**, but `os.environ` is per-process, so a `.env` edit needs a **process restart** — it is not instant like `.node-routing-kill`, and an in-flight write can still complete. That is the §11 Node-writer control, which is distinct from this policy. |
 | **U6** | **DEFERRED — not an activation blocker.** No writer attribution exists and timestamps cannot substitute (§9). Recorded as future hardening. |
 
-**Required before this can become a real gate:** §13 E1–E12, including E3b, in full.
+**Required before this can become a real gate:** §13 E1–E12, including E3a and E3b, in full.
