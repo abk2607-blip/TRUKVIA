@@ -1312,11 +1312,21 @@ async def startup_event():
             [("user_id", 1), ("company_id", 1), ("kind", 1), ("note_number", 1)],
             partialFilterExpression={"note_number": {"$type": "string", "$gt": ""}},
         )
-        # Iter134 · Unique invoice number per tenant (defends against manual
-        # override collisions and any theoretical FY-scoped counter race).
+        # Iter134 · Unique invoice number, scoped the same way the number is
+        # minted: services._next_invoice_number_for_company increments the
+        # counter on the COMPANY document and uses the company's own prefix,
+        # so two companies of one user legitimately both reach INV/<FY>/0001.
+        # A (user_id, invoice_number) key rejected that second company's very
+        # first invoice. Defends against manual override collisions and any
+        # theoretical FY-scoped counter race, per company.
+        #
+        # Deployments that still carry the older (user_id, invoice_number)
+        # index under this same name get IndexKeySpecsConflict here and keep
+        # the old one; replacing it is a deliberate operator step, never an
+        # automatic drop from startup.
         try:
             await db.invoices.create_index(
-                [("user_id", 1), ("invoice_number", 1)],
+                [("user_id", 1), ("company_id", 1), ("invoice_number", 1)],
                 unique=True, name="uniq_user_invoice_number",
                 partialFilterExpression={"invoice_number": {"$type": "string", "$gt": ""}},
             )

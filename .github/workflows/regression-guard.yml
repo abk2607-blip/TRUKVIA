@@ -24,23 +24,86 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # The backend suite was written to run inside the Emergent pod, where the
+      # repository lives at /app. Roughly forty of the sixty-seven critical
+      # suites are source guardrails that read files by absolute path -
+      # /app/backend/server.py, /app/frontend/src/pages/Login.jsx and so on - so
+      # on a runner they all fail with FileNotFoundError. Reproducing the layout
+      # with one symlink keeps those tests exactly as written; rewriting 300+
+      # hard-coded paths across 100+ files would be the larger and riskier
+      # change, and would diverge from the environment they actually run in.
+      - name: Provide the pod-style /app path
+        run: |
+          if [ -e /app ] || [ -L /app ]; then
+            echo "::error::/app already exists on this runner; refusing to replace it." >&2
+            ls -ld /app >&2
+            exit 1
+          fi
+          sudo ln -s "$GITHUB_WORKSPACE" /app
+          test -f /app/backend/scripts/run_regression.sh
+
+      # One suite reads this file's TEXT rather than the environment - it asserts
+      # the literal `REGRESSION_GUARD_STRICT=1` appears in backend/.env - so an
+      # env var cannot satisfy it. The platform image ships the real file; here we
+      # write the single line that test needs and nothing else. It is runner-local
+      # and git-ignored (*.env), so it is never committed. NO secret, NO key, and
+      # in particular NO email configuration goes in here.
+      - name: Provide the pod-style backend .env
+        run: |
+          echo 'REGRESSION_GUARD_STRICT=1' > /app/backend/.env
+
       - name: Setup Python 3.11
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
+      # Plain install. `emergentintegrations` resolves because requirements.txt now
+      # declares Emergent's own public package index, so CI installs exactly what
+      # the platform image installs — no filtered copy, no CI-only divergence.
       - name: Install backend deps
         run: |
           cd backend
           pip install --upgrade pip
           pip install -r requirements.txt
+          # Test-only. Regression tests read generated PDFs with pypdf and PyMuPDF
+          # (imported as `fitz`); nothing the backend serves imports either, so
+          # neither belongs in backend/requirements.txt. Note: the package that
+          # provides `import fitz` is PyMuPDF - the PyPI project literally named
+          # `fitz` is a different, unrelated one.
+          pip install pypdf
+          pip install PyMuPDF
+
+      # The demo token is how the regression suite authenticates. The platform
+      # image supplies it through /app/backend/.env, which does not exist on a
+      # runner, so CI mints its own for this job only: a fresh random value, never
+      # a real preview token and never a repository secret. Writing it to
+      # $GITHUB_ENV makes it available to every later step, which is what both the
+      # backend process and pytest need - they must agree on the same value.
+      #
+      # The `-men_2026` suffix is load-bearing, not decoration. auth.py derives the
+      # demo user's id as `user_demo_{DEMO_TOKEN[-8:]}`, and one suite inserts its
+      # fixtures directly into Mongo under the literal id `user_demo_men_2026`. A
+      # freely random token therefore authenticates as a DIFFERENT user and those
+      # rows come back 404. The token stays random; only its last eight characters
+      # are pinned, which is exactly what the derivation reads.
+      - name: Generate a CI-only demo token
+        run: |
+          TOKEN="ci-$(python -c 'import secrets; print(secrets.token_urlsafe(32))')-men_2026"
+          echo "::add-mask::$TOKEN"
+          echo "DEMO_TOKEN_VALUE=$TOKEN" >> "$GITHUB_ENV"
+          echo "IS_PREVIEW_ENV=1" >> "$GITHUB_ENV"
+          echo "ENABLE_DEMO_TOKEN=1" >> "$GITHUB_ENV"
 
       - name: Start backend (background)
         env:
           MONGO_URL: mongodb://localhost:27017
           DB_NAME: regression_ci
           CORS_ORIGINS: "*"
-          EMERGENT_LLM_KEY: dummy
+          # Empty ON PURPOSE, and there is no real key anywhere in CI. The AI routes
+          # check this key FIRST and answer 503 "AI is not configured", so the suite
+          # never reaches a live LLM call. The regression tests accept 503 and assert
+          # no real AI response, so CI deliberately exercises the not-configured path.
+          EMERGENT_LLM_KEY: ""
         run: |
           cd backend
           nohup uvicorn server:app --host 0.0.0.0 --port 8001 > /tmp/uvicorn.log 2>&1 &
@@ -50,17 +113,68 @@ jobs:
           done
           echo "Backend failed to start"; cat /tmp/uvicorn.log; exit 1
 
+      # One suite asserts the guard-history collection is non-empty - its own
+      # docstring says "or already have entries", i.e. it was written against the
+      # pod database where earlier guard runs have left rows behind. A fresh
+      # regression_ci has none, and the only two writers both shell out to the
+      # FULL regression suite, so triggering one from inside this job would nest a
+      # second complete run. Seeding a single row is the cheap, non-recursive
+      # equivalent. It uses pymongo, which requirements.txt already installed.
+      - name: Seed one guard-history row (throwaway CI database only)
+        env:
+          MONGO_URL: mongodb://localhost:27017
+          DB_NAME: regression_ci
+        run: |
+          python - <<'PY'
+          import os
+          from datetime import datetime, timezone
+          from pymongo import MongoClient
+
+          url, name = os.environ["MONGO_URL"], os.environ["DB_NAME"]
+          # Refuse anything that is not the local throwaway service container.
+          assert url.startswith(("mongodb://localhost:", "mongodb://127.0.0.1:")), "refusing a non-local MONGO_URL"
+          assert name == "regression_ci", "refusing a database other than regression_ci"
+
+          db = MongoClient(url)[name]
+          # Same six fields server.py writes after a real guard run.
+          db.deploy_status_history.insert_one({
+              "checked_at": datetime.now(timezone.utc).isoformat(),
+              "status": "pass",
+              "exit_code": 0,
+              "elapsed_s": 0.0,
+              "output_tail": "seeded by CI - this throwaway database has no prior guard run",
+              "failed_tests": [],
+          })
+          print("seeded rows:", db.deploy_status_history.count_documents({}))
+          PY
+
       - name: Run regression guard
         env:
           BACKEND_URL_INTERNAL: http://localhost:8001
+          # Roughly half the suite discovers the base URL from this variable and
+          # falls back to /app/frontend/.env, which a runner does not have.
+          REACT_APP_BACKEND_URL: http://localhost:8001
           MONGO_URL: mongodb://localhost:27017
           DB_NAME: regression_ci
         run: |
           bash backend/scripts/run_regression.sh
 
+      # predeploy_check.sh stage 1 re-runs run_regression.sh, which sets no
+      # environment of its own - it reads whatever the caller exports. This
+      # step declared only BACKEND_URL, so the same suite that passes above
+      # failed here: tests doing os.environ["MONGO_URL"] raised KeyError,
+      # c[os.environ.get("DB_NAME")] became client[None], and the ones that
+      # default REACT_APP_BACKEND_URL to a hosted preview URL aimed off-box.
+      # Step-level env does not carry between steps, so the values from the
+      # regression-guard step are repeated verbatim here. All five point at
+      # this runner: localhost and the throwaway regression_ci database.
       - name: Run pre-deploy smoke (Trip + Halting E2E)
         env:
           BACKEND_URL: http://localhost:8001
+          BACKEND_URL_INTERNAL: http://localhost:8001
+          REACT_APP_BACKEND_URL: http://localhost:8001
+          MONGO_URL: mongodb://localhost:27017
+          DB_NAME: regression_ci
         run: |
           bash backend/scripts/predeploy_check.sh
 

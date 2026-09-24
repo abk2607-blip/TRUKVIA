@@ -1,0 +1,1322 @@
+# Phase 4 · Gate 9h — Node business-writer authorisation (DRAFT)
+
+**Status: DRAFT — NOT A GATE RESULT.** Nothing in this document is authorised. Two parts have since
+been **rehearsed, both on disposable local state only** (2026-09-23): the U4 recovery path on a
+disposable clone (§5.7), which produced three corrections to the procedure, and the R1 backup restore
+into a fresh disposable database (§5.8), which passed. Neither is **activation evidence**, neither
+touched production, and neither authorises anything. Every other section remains unrehearsed and
+unverified, and the document still contains **no activation evidence**. Preparing or updating it does
+**not** authorise activating the Node writer, changing any database permission, or switching any
+traffic.
+
+Gate 9g (`6685637`) remains in force and remains **BLOCKED**. This draft is the plan that would have
+to be executed, and independently verified, before Gate 9h could be opened at all.
+
+**Prepared:** 2026-09-23 · **Author:** migration workstream · **Supersedes:** nothing
+**Updated:** 2026-09-23 — U4 recovery-path rehearsal findings recorded in §5 (documentation only)
+
+---
+
+## 1. Purpose and scope
+
+Gate 9h would govern exactly one transition:
+
+> **from** "Python is the only business writer"
+> **to** "Node may perform approved business writes."
+
+**In scope:** the `fin_txn` / `fin_hook_failures` projection writes reached through the reverse
+bridge (Python → Node), one source type at a time.
+
+**Out of scope, and unchanged by this gate:**
+- The frozen GET/HEAD allowlist and the Python front door (Gate 9f).
+- Deferred routes — they stay with Python.
+- Maker-Checker.
+- Any business write that is not a ledger projection. Trips, invoices, payments and every other
+  source record continue to be written by Python. **MongoDB remains the system of record.**
+
+---
+
+## 2. Exact changes from Gate 9g
+
+| Aspect | Gate 9g (in force) | Gate 9h (proposed) |
+|---|---|---|
+| Node traffic | GET/HEAD only, frozen allowlist | unchanged, **plus** loopback `POST /internal/fin/reproject` |
+| Node DB user | `{ role: "read", db: "<DB_NAME>" }` — strategy 1 | read **plus write on two named collections only** (§3) |
+| Business writer | "Python is the only business writer" (§10) | Python for all source records; **Node for the ledger projection of enabled source types only** |
+| Node writes observed | **0** in 1,127 profiled operations | expected **> 0** and deliberately so |
+| Data rollback | "No data rollback is ever needed, because Node performs no writes" (§13.4) | **that guarantee no longer holds** — §5 replaces it |
+| Kill switch | `touch /app/backend/.node-routing-kill` | unchanged for reads; writes have their own switch (§11) |
+
+**The single most important consequence:** Gate 9g's rollback position rests entirely on Node
+performing no writes. Gate 9h removes that premise, so a real data rollback plan (§5) becomes a
+**precondition**, not a formality.
+
+---
+
+## 3. Required Node database write permission and its boundary
+
+**NOT YET PROVISIONED — OPERATOR ACTION REQUIRED.**
+
+The permission must be the narrowest that allows the projection to work. A broad `readWrite` role
+is **not** acceptable and would fail this gate.
+
+Proposed custom role (**NOT YET CREATED, NOT YET REHEARSED**):
+
+```
+role: nodeLedgerWriter
+  read                on db "<DB_NAME>"
+  insert/update/remove on "<DB_NAME>.fin_txn"
+  insert/update/remove on "<DB_NAME>.fin_hook_failures"
+  createIndex          on "<DB_NAME>.fin_hook_failures"   (see note)
+  insert               on "<DB_NAME>.fin_accounts"          (REQUIRED — see below)
+```
+
+**Boundary — what Node must still be refused:**
+- Any write to `trips`, `invoices`, `customers`, `vendors`, `vendor_bills`, `vendor_payments`,
+  `expenses`, `suppliers`, `vehicles`, `companies`, `user_sessions`, `audit_logs`, or any other
+  business collection.
+- **`fin_day_closures` — also refused.** It is not a business collection, but it is **not part of
+  the Gate 9h Finance-writer surface** either, and the role above does **not** grant it. A
+  read-only code audit on 2026-09-23 found that `apps/api` contains day-closure write paths —
+  `POST /api/fin/day-closures` and `POST /api/fin/day-closures/{close_date}/reopen`, which
+  `insertOne`/`updateOne` on `fin_day_closures` and `insertOne` on `audit_logs`. **Those writes
+  must be refused.** Nothing in Gate 9h needs them.
+- `fin_accounts` — **RESOLVED 2026-09-23. Node DOES require insert here.**
+  `ensureSystemAccounts` (`apps/api/src/fin/projection.ts`) is a per-code find-or-insert that runs
+  first in **every** projection. The discovery pass found **1,180 scopes: 857 hold 13 accounts, 323
+  hold 14** — the difference is always `DRIVER_OUTFLOW`. A 13-account scope becomes 14 the moment
+  it next projects, so for 857 scopes Node's first write WILL attempt an insert. The role must
+  therefore carry `insert` on `fin_accounts`, scoped to that collection and nothing more.
+
+  **The silent-failure hazard this created is now fixed.** The port had dropped Python's re-read and
+  re-raise, so a refused insert was swallowed, `codeToId` still held the positionally derived id,
+  and `persistLegs` wrote a ledger leg pointing at an account row that does not exist — with no
+  error and no failure-queue entry. `ensureSystemAccounts` now mirrors
+  `services_fin_txn.ensure_system_accounts` exactly: re-read after a failed insert, continue if the
+  row is there (the benign race), **raise if it is not**. The throw happens before any delete or
+  persist, so the projection is atomic and the caller records the failure.
+  Evidence: `apps/api/scripts/fin-account-seed-safety.ts` — **16/16**.
+- Schema/admin operations.
+
+**The deployed writer process contains business-write endpoints that this role refuses — and that
+is the intended outcome.** A read-only code audit on 2026-09-23 enumerated **fourteen** write
+endpoints in `apps/api` that reach `vendors`, `vendor_bills`, `vendor_payments`, `audit_logs` and
+`fin_day_closures`: the vendor, vendor-bill and vendor-payment CRUD routes, and the two
+day-closure routes above. **None of them is Gate 9h traffic** — the Gate 9h surface is the single
+internal reproject endpoint (§8.1) — and **the role must continue to reject every one of them**.
+The grants above are **not** widened for them, now or later; S4 is the check that proves the
+rejection. Their presence in the process is a **scope observation, not an authorisation**: they
+receive no traffic in the intended deployment, and the role is the control that makes that safe
+rather than merely likely.
+
+**Verification required (NOT YET DONE):** repeat the Gate 9g style proof in the negative direction —
+show that the new user *can* write the two collections and *cannot* write a business collection
+(expect code 13), mirroring how `node_ro` was proven in Gate 9g §8.
+
+---
+
+## 4. U2 — production `DB_NAME` verification
+
+**STATUS: ANSWERED 2026-09-23 — the answer is YES, so U2 is BLOCKED / FAIL-CLOSED.** The operator
+inspected the production `DB_NAME` privately and reported, yes/no only, that the lowercase name
+**does contain the substring `prod`**. That is the whole of what was reported and the whole of what
+is recorded here: **the value itself was not disclosed and does not appear anywhere in this
+document.**
+
+This resolves the *question* and does **not** resolve the *blocker*. Per step 4 of the procedure
+below, a `yes` means Gate 9h stays blocked until a separately authorised change is made. **Nothing
+has been changed:** the production `DB_NAME` was not renamed, no environment variable was set, no
+guard was modified, and the production writer was never started.
+
+**A — `backend-node` production boot protection (a separate application).**
+`backend-node/src/config.ts:84` refuses to boot when:
+
+```ts
+nodeEnv === 'production' && dbName.toLowerCase().includes('prod')
+```
+
+That guard belongs to **`backend-node`, the read shadow**. It is not the Finance writer, and this
+substring test exists **nowhere in `apps/api`**. A `yes` therefore stops **that** application from
+booting against production; it says nothing about the writer.
+
+**B — Finance writer (`apps/api`) authorisation.** The writer's production control is
+`assertFinanceWriterAuthorised` (`apps/api/src/fin/writer-authorisation.ts`, commit `6bd8ff5`): with
+`NODE_ENV=production` it **fails closed** while `TRUKVIA_FIN_WRITER_ALLOWED_DB` is absent, and when
+that variable is present it requires an **exact whole-string match** against the configured database
+name. The check runs in the `MONGO` provider **before `new MongoClient`**, so an unauthorised
+deployment never opens a connection; a test pins that ordering. **A database name containing `prod`
+does not by itself block this guard** — the writer is blocked because **no database has been
+authorised**, which is a different thing.
+
+**C — what U2 actually is.** U2 is a **gate-owner authorisation decision**, not a property of either
+guard. The existence of a correct and tested guard does **not** satisfy U2; it is what makes staying
+blocked safe. **No production writer authorisation has been granted**, so U2 remains
+**BLOCKED / FAIL-CLOSED**.
+
+**Procedure — no secret is printed or shared:**
+1. The operator inspects the production `DB_NAME` **privately**, on the platform.
+2. The operator reports **only a yes/no**: does the lowercase name contain the substring `prod`?
+3. If **no** → U2 satisfied; record the answer, not the value.
+4. If **yes** → **`backend-node`** will not boot against production. For the **Finance writer** this
+   changes nothing on its own: `apps/api` stays fail-closed until the gate owner authorises a
+   database (B above). Either way **Gate 9h stays blocked**.
+
+**On remedies.** Renaming the production database or changing the `backend-node` guard were the two
+options recorded when U2 was framed around that application, and they remain the only options **for
+`backend-node`**. **The production database must not be renamed.** They are **not** the mechanism for
+the Finance writer, which is authorised — or not — through B above. Which path, if any, is taken is a
+**gate-owner decision that has not been made**.
+
+**The actual `DB_NAME` value must never appear in this document, in a commit message, in a chat
+transcript, or in any log.**
+
+---
+
+## 5. Data rollback plan
+
+**This section replaces Gate 9g §13.4.** The **recovery path** was rehearsed on a disposable clone on
+2026-09-23 (§5.7) and three corrections came out of it, which are written into §5.2 and §5.3 below.
+The **restore path (R1) was rehearsed on 2026-09-23 and passed** (§5.8). The procedure below is
+therefore the corrected one, with the parts that remain unrehearsed marked as such.
+
+### 5.1 Evidence that must exist BEFORE writer activation
+
+**What "activation" means — gate-owner decision, recorded 2026-09-23.** For Gate 9h, **"Activation"
+means step 9 (§6): enabling reverse delegation for the first approved source type, one tenant and one
+deliberately selected document, as defined by §5.5 / §8.1.** It follows from §1, where the governed
+transition is from "Python is the only business writer" to "Node may perform approved business
+writes", and from §11, where `TRUKVIA_FIN_NODE_SOURCE_TYPES` is the control that starts and stops
+Node business writes. Steps 5–8 establish the role, the credential, writer readiness and the smoke
+checks, but **none of them lets Node write**.
+
+**R1, R2 and R3 all refer to that single boundary** — R1 **immediately before** it, R2 and R3 **at**
+it. That is what makes §5.3 step 5 work: the state R1 restores to and the instant R3 bounds writes by
+must be the same point, or the recovery set is wrong. Steps between a backup and the boundary do not
+stop Python, so any gap makes all three stale.
+
+**How the boundary timestamps are written down — gate-owner decision, recorded 2026-09-23.** The
+backup boundary (**T0**, the instant R1 is taken) and the activation instant (**T1**, which is R3)
+are both recorded in **full UTC ISO-8601 with microseconds and a `+00:00` offset**, exactly as the
+source timestamps are stored — for example `2026-09-23T08:33:33.025337+00:00`. **Second-truncated
+timestamps must not be used.** The source fields are stored as strings and the recovery queries
+compare them as strings, so a truncated boundary sorts before every value inside the same second and
+shifts the boundary by up to a second. Matching the stored representation removes that. The §5.7 and
+§5.10 rehearsals used truncated timestamps; **that is a known limitation of those rehearsals, not of
+this rule.**
+
+**Recording these decisions does not authorise step 9, or any other production operation.**
+
+| # | Requirement | Status |
+|---|---|---|
+| R1 | A verified, restorable backup of `fin_txn` and `fin_hook_failures`, taken immediately before the **step-9 activation boundary**, with its restore actually tested on a throwaway database | **VERIFIED / PASS** for the restore rehearsal (§5.8). The activation-instant backup itself has not been taken, because no activation has occurred |
+| R2 | A recorded row count and a content fingerprint of the **whole of both collections** — `fin_txn` and `fin_hook_failures` in full, every tenant and every source type, not the affected scope — at the **step-9 activation instant** | **NOT DONE** for activation. The *method* is now proven for **both** collections; see "R2 — how the fingerprint is computed" below |
+| R3 | The exact **step-9 activation timestamp** (**T1**), recorded in **full UTC ISO-8601 with microseconds and `+00:00`** as required above — **not** to the second — so writes can be bounded by time | **NOT DONE** for activation; and §5.7 showed a timestamp alone is **not sufficient** to identify affected rows |
+| R4 | Confirmation that every affected `fin_txn` row carries `projected_at` / `created_at`, so Node-era rows are identifiable | **VERIFIED** in the §5.7 rehearsal — 370/370 relevant rows carried both fields |
+| R5 | A named operator who can execute the restore and has the access to do so | **ASSIGNED 2026-09-23** — the gate owner/operator. The restore itself was demonstrated in §5.8, but on a local machine against a local disposable database; whether this operator holds the production access a real restore would need is untested |
+
+**R1 — now demonstrated.** The restore was rehearsed on 2026-09-23 and **passed**; the evidence is in
+§5.8. The authoritative artifact was found on the local machine, its SHA-256 matched the previously
+verified hash, and `mongorestore` completed with exit code 0 into a fresh disposable database.
+
+R1 remains the one that cannot be skipped, and what is now proven is the **restore mechanism**, not
+the activation backup: no backup has been taken at an activation instant, because no activation has
+occurred. The recovery rehearsal in §5.7 still does **not** substitute for it either, because
+reprojection is a different mechanism from restore — the two are now both demonstrated, separately.
+
+R2 and R3 are recorded as *method demonstrated, activation capture not taken*. In the §5.7 rehearsal a
+row count and a SHA-256 content fingerprint **over the affected scope** proved sufficient both to
+detect the injected damage and to confirm recovery, and a timestamp was recorded to the second.
+**That affected-scope figure is rehearsal-specific evidence and is not the production R2 baseline** —
+the R2 baseline is whole-collection, as the R2 row above states, and is captured with microsecond
+timestamps. No activation-instant capture exists, because no activation has occurred.
+
+**R2 — how the fingerprint is computed.** The procedure below is the one already proven; it is
+recorded here so the activation capture is reproducible rather than improvised. **It is a procedure,
+not a tool**: no module, CLI or service exists or is to be built for it, and none is needed.
+
+Both collections share one canonical body. Only the **document ordering** is collection-specific:
+
+```python
+VOLATILE = {"_id", "created_at", "projected_at"}
+
+SORT_KEY = {
+    "fin_txn":           lambda r: str(r.get("ref_source_key")),
+    "fin_hook_failures": lambda r: (str(r.get("user_id")),
+                                    str(r.get("company_id")),
+                                    str(r.get("source_type")),
+                                    str(r.get("source_id"))),
+}
+
+body = json.dumps(
+    sorted(({k: r[k] for k in sorted(r) if k not in VOLATILE} for r in rows),
+           key=SORT_KEY[collection]),
+    default=str, sort_keys=True, separators=(",", ":"))
+
+fingerprint = hashlib.sha256(body.encode()).hexdigest()
+```
+
+The hash, the canonicalisation and the `VOLATILE` exclusions are **unchanged** from the already-proven
+`fin_txn` method, and the `fin_txn` sort key is **unchanged**. `fin_hook_failures` carries no
+`ref_source_key`, so it takes its own sort key — the tuple its `fin_hook_fail_source_uniq` index
+enforces unique. Every other field of both collections stays in the hashed body, including the mutable
+ones (`status`, `retry_count`, `history`, `last_attempt_at`, `next_attempt_at`, `resolved_at`):
+**R2 is a point-in-time content fingerprint**, so a field is not excluded merely because it changes.
+
+**Evidence — disposable rehearsal, 2026-09-23.** A non-empty `fin_hook_failures` collection was built
+through the real application functions across **two tenants and four statuses** (`pending`,
+`retrying`, `resolved`, `permanently_failed`), including rows with `retry_count` 2 and 8 and non-empty
+`history`. The rule was shown to be:
+
+| Property | Result |
+|---|---|
+| Order-independent | **PASS** — natural `find()`, `find().sort({_id:-1})` and a shuffled list produced one identical digest, with the `_id` orders genuinely differing between the first two |
+| Repeatable | **PASS** — five fresh reads of the unchanged collection, five identical digests |
+| Restore-stable | **PASS** — dump and restore into a second disposable database reproduced the digest exactly, with `_id`s preserved |
+| Composite key enforced | **PASS** — a deliberate duplicate `(user_id, company_id, source_type, source_id)` was rejected by `fin_hook_fail_source_uniq`; the row count did not move |
+| Python/Node type compatibility | **PASS** — all fifteen fields wrote the same BSON types from both writers; `retry_count` is `int32` from each, and the nested `history[].attempt` likewise |
+| `fin_txn` regression | **PASS** — the §5.7 scope reproduced `sha256 709595a3…c53fa` byte-exact under the unchanged rule |
+
+The Python/Node comparison rests on a Node-written failure row together with a read-only inspection of
+both writers' value-construction paths and of the BSON serialiser's integer rule. **A Node replay was
+not executed**, and nothing here claims it was: the retry and `history` rows in the rehearsal were
+Python-written.
+
+**Known accepted residual — not a new blocker.** `fin_txn`'s `ref_source_key` uniqueness is enforced
+**per tenant**, not collection-wide, so a whole-collection tie is theoretically possible. It was not
+observed: both whole-collection datasets examined carried **0 duplicate keys** (28,164/28,164 and
+28,360/28,360 distinct). The algorithm is **deliberately left unchanged**, and this is recorded as a
+known accepted residual rather than a defect to fix.
+
+**Tooling and secrecy.** The capture needs only the Python standard library (`json`, `hashlib`) and the
+**already-present** `pymongo` pin in `backend/requirements.txt`. **No package installation is
+required.** The connection string and the database name are supplied by the operator at run time and
+are **never written into this document, the runbook, a commit message or any recorded output.**
+
+**No maximum activation-window duration is currently defined.** Nothing here places an upper bound on
+`[T0, T1)`; setting one would be a separate gate-owner decision.
+
+### 5.2 How a bad Node write would be detected
+
+Ordered by how quickly each fires:
+
+1. **Parity comparison (primary).** Reproject a sample of the enabled source type through Python
+   into a throwaway database and compare byte-exact against what Node wrote. This is the same
+   method used across slice 2c; it is the only check that proves *correctness* rather than absence
+   of errors.
+2. **Failure queue.** A rising `fin_hook_failures` count, or rows reaching `permanently_failed`.
+3. **Row-count drift.** `fin_txn` growing or shrinking against the expected leg count per source.
+4. **Ledger balance check.** Debits and credits must remain equal per scope.
+5. **Application errors** in the Python bridge log (`node projection bridge returned …`).
+
+**Measured 2026-09-23 (§5.7).** Four corruption shapes were injected into a disposable clone.
+**Detectors 1, 3 and 4 were exercised against them**, together with the §5.3 step 2 timestamp scan;
+those are the four columns below. **Detector 2 was run and produced nothing** — no `pending` or
+`retrying` rows appeared, which is what should happen, because the corruption was written straight
+into `fin_txn` rather than through the hook and so never reached the failure queue; it is therefore
+not evidence either way about that detector's usefulness against a real faulty writer. **Detector 5
+was not tested at all**: no Node writer was running and no bridge traffic existed, so there was no
+Python bridge log to inspect, and nothing below says anything about it. The result:
+
+| Injected corruption | 1 parity | 3 row-count | 4 balance | timestamp scan (§5.3 step 2) |
+|---|---|---|---|---|
+| C1 — narration text altered on one leg | **detected** | missed | missed | detected |
+| C2 — amount altered on one leg | **detected** | missed | detected | detected |
+| C3 — one leg deleted | **detected** | detected | detected | **missed** |
+| C4 — spurious extra leg inserted | **detected** | detected | detected | detected |
+
+**Parity was the only detector that detected all four corruption scenarios.** Row-count and balance
+each caught some of them, as the matrix shows; neither caught every one.
+
+Two specific weaknesses were observed rather than assumed:
+
+- **The row-count detector can be fully masked.** C3 and C4 together removed one row and added one
+  row, so the global `fin_txn` count was **identical** before and after the corruption (28,164 both
+  times). A count that has not moved is therefore **not** evidence that nothing was written.
+- **Balance and count are both blind to value-neutral corruption.** C1 changed only narration text:
+  the money was right, the row count was right, debits still equalled credits, and only parity saw
+  it. This is the same class of defect as the narration `str()`/f-string parity defect found in slice
+  2c, which is why it was chosen.
+
+**Consequently:** parity is the **primary** detector, and detectors 1, 3 and 4 are **not optional**
+during rollback verification (§5.6) — they are the minimum set, run together, with parity decisive
+where they disagree.
+
+**UNRESOLVED:** 1–4 are still manual today. Whether an automated check is required before activation
+remains a decision for the gate owner; the rehearsal does not settle it, but it does show that a
+manual parity run cannot be dropped in favour of the cheaper counters.
+
+### 5.3 How affected data would be restored
+
+The ledger is a **derived projection**, which makes rollback easier than for source data — but only
+if the source records are intact.
+
+1. **Stop the bleeding** — §11 reversion, so Python is the writer again.
+2. **Identify the affected rows — by parity, not by timestamp alone.**
+   The timestamp scan is the starting point: `fin_txn` rows whose `source_type` is an enabled type
+   and whose `projected_at` is at or after the activation timestamp (R3). **It is not sufficient on
+   its own.** A bad write that *deletes* a leg leaves no row behind, so there is nothing for the scan
+   to match, and the damaged source is silently omitted from the recovery set.
+
+   This was not theoretical: in the §5.7 rehearsal the timestamp scan found **3 of the 4** damaged
+   sources, and reprojecting exactly that set left the ledger still wrong (369 legs against a
+   baseline of 370, fingerprint mismatch). The missing source was found only by parity.
+
+   **The recovery set is therefore the union of the timestamp scan and a parity comparison** against
+   a fresh Python reprojection of the enabled source type. Parity is what makes missing legs
+   visible; the timestamp scan only narrows the work.
+3. **Preferred path — reproject, do not restore.** Because the ledger derives from Mongo source
+   records that Python still owns, the clean fix is to reproject those sources through Python, which
+   deletes and rewrites its own rows by `source_id`. **This is the recommended path** — but only
+   within the scope restriction in step 4.
+4. **Scope restriction — reproject only `source_id`s whose source document still exists.**
+   Reprojection is delete-then-insert. If the authoritative source document is absent, the delete
+   still happens and **nothing is inserted in its place**, so a blind reprojection *destroys* ledger
+   rows rather than repairing them.
+
+   Measured in the §5.7 rehearsal scope: **185 `source_id`s carried `vendor_payment` ledger legs, but
+   only 151 source documents existed.** The remaining **34 orphaned `source_id`s account for 68
+   ledger legs and ₹25,500** in that scope alone. Reprojecting them blindly would have deleted all 68
+   legs with no possibility of recreating them.
+
+   **Authoritative full-scope measurement, 2026-09-23 (U4-C).** The scan was then repeated read-only
+   across **all 11 `source_type`s present** in the restored backup database (§5.8), against each
+   type's authoritative source collection: **14,146 distinct `source_id`s carried ledger legs, 2,861
+   had an existing source document, and 11,285 (79.8%) were orphaned, accounting for 22,638 ledger
+   legs.** The `vendor_payment` figure above was independently reproduced. **The nominal orphan
+   amounts are not evidence of confirmed business loss** — the dataset contains substantial
+   synthetic / test-shaped data and the cause of the orphans was not determined. The rule is stated
+   operationally in **`PHASE4-GATE9H-NODE-WRITER-RUNBOOK.md` §2**.
+
+   **Rule:** before reprojecting, confirm the source document exists for each `source_id`. Orphaned
+   `source_id`s are **excluded from reprojection** and escalated separately — they can only be
+   addressed by restore (step 5) or by a deliberate, recorded decision, never by reprojection.
+
+   *This is distinct from the reversed-payment observation in §5.7, which is a separate, pre-existing
+   condition and not an orphan.*
+5. **Fallback path — restore from backup.** Only if reprojection cannot produce a correct ledger —
+   which now explicitly includes the orphaned-`source_id` case in step 4. Restore `fin_txn` and
+   `fin_hook_failures` from R1 to the activation-instant state, then reproject anything written after
+   it through Python, again subject to step 4. **This path was rehearsed end to end on 2026-09-23 and
+   reached byte-exact recovery (§5.10).** The §5.9 rehearsal had already reached this step for real:
+   an orphan-backed residual discrepancy survived a correctly scoped reprojection, so it is not
+   hypothetical.
+
+   **The restore is collection-level.** It restores the whole of `fin_txn` and `fin_hook_failures`,
+   across every tenant and source type — not only the affected scope. **Legitimate ledger activity
+   recorded after the activation instant therefore disappears with the restore**, which is precisely
+   why the second half of this step exists. §5.10 observed this directly: the restore returned the
+   ledger to the activation fingerprint, temporarily rolling back legitimate work, which was then
+   reconstructed by a controlled, source-backed reprojection.
+
+   **How "anything written after it" is identified — `vendor_payment` only.** This rule is written
+   for the **first activation scope** and for no other source type. §8.1 fixes that scope to
+   `vendor_payment`, one tenant, one controlled document, so this is the only rule that has to be
+   right at activation.
+
+   **The two windows.** The restore returns the ledger to **T0**, the instant R1 was taken, while
+   Node writes are bounded by **T1**, the step-9 activation instant that R3 records. Both are the
+   microsecond-precision UTC values §5.1 requires. Recovery therefore has **two** windows, and
+   **both are mandatory**:
+
+   - **WINDOW A — `T0 <= signal < T1`.** Legitimate Python-era activity between the backup and
+     activation. The restore rolls it back, so it has to be reprojected again.
+   - **WINDOW B — `signal >= T1`.** Post-activation activity, identified by the rule below.
+
+   **Proven failure — disposable rehearsal, 2026-09-23: WINDOW A alone is not enough.**
+   Reprojecting only WINDOW A left the ledger at **382 of 384 legs with a fingerprint mismatch**,
+   because activity falling exactly at T1 belongs to WINDOW B. Running WINDOW B as well gave
+   **384/384 and a byte-exact fingerprint.** A recovery that runs one window and not the other is
+   incomplete.
+
+   **Order after the R1 restore to T0: reproject WINDOW A first, then WINDOW B.**
+
+   Both windows use the same four source-side signals, the same source-existence validation, the
+   same reversal-pair rule and the same existing `reproject_source` entry point listed below.
+   **All of it is operator-run** (§5.4): no recovery module, CLI or automation exists for it, and
+   none is to be built.
+
+   After the restore has returned `fin_txn` to the activation fingerprint:
+
+   1. Identify post-activation `vendor_payment` activity as the **union of four existing source-side
+      signals**, any one of which at or after the activation timestamp:
+
+      - `created_at` · `modified_at` · `deleted_at` · `reversed_at`
+
+      **`modified_at` alone is not sufficient and must never be used as the sole signal** — the soft
+      delete path writes `deleted_at` and does not touch `modified_at`.
+   2. Apply the **existing source-existence validation** (step 4) to that list.
+   3. **Reproject only the source-backed** candidates. Orphaned `source_id`s stay excluded and
+      reported, exactly as in step 4.
+   4. **Keep a reversal together as a pair.** An amount correction marks the original payment
+      `is_reversed` and inserts a fresh row carrying `reversal_of`. **Both must be in the recovery
+      set**; the union above picks up both, because the original gets `reversed_at` and the fresh row
+      gets `created_at` at the same moment.
+   5. Use **`payment_corrections`** as **secondary** evidence for corrections and reversals — it
+      carries `payment_id`, `corrected_at`, `before`/`after`/`diff` and the linked reversal/new ids.
+      `audit_logs` are **secondary only** and must not be relied on as the primary signal: every
+      audit write is wrapped in a swallow-all `except`, and the correction paths write no audit row
+      at all.
+   6. **Verify** by fingerprint and parity, per §5.6.
+
+   **This is a procedure, not a technical control.** Nothing enforces it.
+
+   **Scope of the evidence.** The four signals were established by a read-only audit of all **six**
+   ledger-affecting `vendor_payment` write paths against the restored backup, and every path was
+   found to carry at least one of them, with each signal present on 100% of the documents in the
+   state that path produces. **That result is specific to `vendor_payment`.** It is **not** valid for
+   `mechanic_payment` and **not** valid for the remaining source types — several of them have no
+   `modified_at` field at all, or never populate it. **Before any other source type is enabled, its
+   own signals must be audited and a rule for it recorded here.**
+6. **Never** restore business/source collections from this backup — they were never at risk, and
+   restoring them would destroy legitimate operator work done since activation.
+
+### 5.4 Who performs rollback
+
+| Action | Who |
+|---|---|
+| Decide to roll back | Gate owner / product owner |
+| Unset the writer env (reversion) | Operator — **platform action** |
+| Reproject through Python | Operator, using the existing replay CLI |
+| Restore from backup | Operator with database credentials — **platform action** |
+| Verify the result | Migration workstream, using parity comparison |
+
+**No automated or agent-initiated rollback.** Every step is deliberate and operator-run.
+
+### 5.5 Pausing business writes during rollback
+
+**DECIDED 2026-09-23 — Option B, the declared quiet window.** This is the U5 policy.
+
+This section governs the coordination of **business writes** during the affected-window operation.
+Enabling or disabling the **Node writer** is a different control and remains §11; the two must not be
+conflated.
+
+- **Option B — declared quiet window. SELECTED.** Perform the operation when no operator is entering
+  data for the affected scope. It relies on coordination rather than enforcement.
+- **Option A — day closing. NOT SELECTED**, because its premise does not hold. The existing
+  day-closure mechanism is **not** a data-entry or write lock: `FinDayClosure` records a financial
+  checkpoint, and its own definition states that any past business date remains enterable across
+  every canonical source type after that day has been closed. No canonical write path consults
+  `fin_day_closures` — only the day-closing router itself and reconciliation reporting. Closing a day
+  would record a checkpoint without pausing anything, and making it enforce would require a new
+  control in every write path, which this gate does not introduce.
+
+**What Option B does and does not provide.** It is coordination, **not technical enforcement**.
+Nothing in the system rejects a write during the window; a write made during it is still accepted and
+projected normally. What the window buys is a *verifiable* before-and-after state for §5.6.
+
+**The declared quiet-window procedure**, at the level the §5.7 rehearsal established and no further:
+
+1. The named operator (R5) **declares the window**, recording its start and end.
+2. The window is **scoped** to the affected tenant and the enabled source type, not the whole system.
+   Under §8.1 the first activation is one source type, one tenant and one deliberately reprojected
+   document, so the window is correspondingly small.
+3. A **row count and content fingerprint are taken before and after** the window over the affected
+   scope, as in §5.7.
+4. **Parity verification** is run per §5.6, with checks 1–4 together and parity decisive.
+5. Any **legitimate activity that did occur** during the window is identified and accounted for in
+   that verification — §5.6 check 3 already requires counts to be read "adjusted for legitimate
+   activity since". Unaccounted movement means the verification is incomplete, not that the data is
+   necessarily wrong.
+
+**Not yet exercised.** No quiet window has ever been declared. The §5.7 rehearsal ran on a disposable
+clone with no concurrent operators, so the coordination itself is untested and §13 E11 remains
+outstanding on that basis. The policy is recorded here **before** activation, rather than improvised
+during an incident, which is what this section always required.
+
+### 5.6 How rollback success is verified
+
+1. Byte-exact parity between the restored ledger and a fresh Python reprojection of the same sources.
+2. `fin_hook_failures` holds no `pending` or `retrying` rows for the affected scope.
+3. Row counts match R2, adjusted for legitimate activity since.
+4. Debits equal credits per scope.
+5. A spot check of at least one real invoice/statement in the UI by a business user.
+
+Per §5.2, checks 1–4 are run **together**, not as alternatives, and check 1 is decisive. A passing
+count or balance with a failing parity means the recovery is not complete.
+
+**Rehearsal result (§5.7), disposable clone, 2026-09-23:**
+
+| # | Result |
+|---|---|
+| 1 | **PASS — byte-exact.** Post-recovery fingerprint `sha256 709595a3…c53fa` was identical to the pre-drill fingerprint |
+| 2 | **PASS** — 0 `pending` / `retrying` rows |
+| 3 | **PASS** — 370 legs in scope, 28,164 rows globally, both matching the pre-drill capture |
+| 4 | **PASS** — 177,550.0 in / 177,550.0 out |
+| 5 | **NOT EXECUTED** — requires a human and a running application; neither was in scope for the rehearsal |
+
+Byte-exact recovery was reached **only after the complete required reprojection set had been
+identified** by the corrected procedure in §5.3 step 2 (timestamp scan ∪ parity), restricted to
+source-backed `source_id`s per step 4. The first attempt, following the previous
+timestamp-only wording, did not recover the ledger.
+
+### 5.7 U4 rehearsal — 2026-09-23, disposable clone only
+
+**Scope of the exercise.** A disposable clone of the local validation database (58 collections,
+956,097 documents, 117 indexes, verified equal to its source) was created for this purpose and
+dropped afterwards. One tenant scope was used: 185 `vendor_payment` `source_id`s carrying 370 ledger
+legs. Four corruption shapes (§5.2) were injected, detectors 1–4 were run against them (detector 5
+was not — see §5.2), the §5.3 procedure was executed, and recovery was verified against §5.6.
+
+**What was executed:**
+
+- Pre-drill evidence capture (row counts, SHA-256 content fingerprint, timestamp to the second).
+- R4 confirmation — 370/370 rows carried both `projected_at` and `created_at`.
+- Controlled corruption, detection, reprojection-based recovery, and §5.6 verification.
+- A pre-corruption parity baseline: **300 of 302 legs on source-backed `source_id`s were byte-identical
+  between the existing ledger rows and a fresh Python reprojection**, with zero field-level
+  differences.
+
+**What was NOT executed, and must not be read as done:**
+
+- **R1 backup restore** — not attempted during *this* rehearsal: the artifact had not yet been located
+  on the machine. It was found and the restore was rehearsed separately later the same day; that is
+  recorded in §5.8, not here.
+- **§5.6 check 5** — no UI spot check by a business user.
+- **A live writer reversion.** §11 step 1 was exercised only at the guard level: the `apps/api`
+  Finance-writer authorisation check was shown to refuse startup when the authorisation is unset or
+  points elsewhere. **No writer process was started, stopped or reverted**, so E9 (§13) is *not*
+  satisfied by this rehearsal.
+- Nothing in production was contacted, read or written, and the local validation database was
+  confirmed unchanged afterwards.
+
+**Separate pre-existing observation — reversed `vendor_payment` stale legs.** One `vendor_payment`
+carrying `is_reversed: true` still had an active pair of ledger legs (₹3,000) that Python's own
+projection would not produce, because `_party_payment_legs` returns no legs for a reversed payment.
+Of 143 reversed `vendor_payment` records in the clone, this was the **only** one affected. This is a
+pre-existing data condition, **not** a Node-writer risk and **not** an orphaned `source_id` —
+reprojection *corrects* it rather than damaging it. It is recorded here so it is not confused with
+the orphan finding in §5.3 step 4, which has the opposite consequence.
+
+**Remaining U4 prerequisites.** U4 cannot move past PARTIAL until all of the following exist:
+
+| # | Prerequisite | Status |
+|---|---|---|
+| U4-a | R1 backup-restore rehearsal, on a throwaway database, with the artifact's checksum verified | **VERIFIED 2026-09-23** (§5.8) — checksum matched, restore exit code 0 |
+| U4-b | The corrected parity-based recovery identification procedure (§5.3 step 2) adopted and rehearsed end-to-end | **PARTIAL — not GREEN.** Rehearsed once end to end on 2026-09-23 (§5.9): timestamp scan ∪ parity found all three injected changes where timestamp-only missed one, source-existence filtering excluded 34 orphan candidates, and the source-backed damage recovered byte-exact. **Step 5 is now VERIFIED** on two counts: the **restore → reproject mechanism** (§5.10, 2026-09-23, byte-exact, 0 residual differences), and the **recovery-identification method for the first activation scope** — a six-path read-only audit established the `vendor_payment` signal set now recorded in §5.3 step 5. **Still not complete**: step 1 verified the post-reversion state rather than executing a reversion (**E9 pending**), §5.6 check 5 was not executed, the activation-time production backup remains a separate outstanding requirement (E4/R1), and **the identification rule is verified for `vendor_payment` only** — every other source type remains unverified unless separately audited. U4-B therefore stays **PARTIAL** |
+| U4-c | The source-existence scope restriction for reprojection (§5.3 step 4) adopted as a hard rule in the runbook | **PARTIAL — not GREEN.** The authoritative orphan-scope measurement is **complete** (§5.3 step 4, 11 source types, 11,285 orphaned `source_id`s over 22,638 legs), and the rule is now captured in the runbook artifact **`docs/migration/PHASE4-GATE9H-NODE-WRITER-RUNBOOK.md` §2**. **The rule has since been exercised** on disposable-clone rehearsals — §5.9 and §5.10 each generated parity candidates, applied source-existence filtering, and excluded and reported 34 orphan candidates rather than reprojecting them. It remains a **documentation-level hard rule only: no write-path guard enforces it**, so it depends on the operator following it. It stays **PARTIAL** until the acceptance wording above is satisfied outside a rehearsal |
+| U4-d | The §5.5 write-pause / reversion decision (Option A or B) taken and written in | **DECIDED 2026-09-23 — Option B** (§5.5); the window has not been exercised |
+
+### 5.8 R1 backup-restore rehearsal — 2026-09-23, PASS
+
+**Result: the restore works.** This closes U4-a. It does not close U4 (§5.7).
+
+**Artifact.** The exact expected artifact was found on the local machine — two byte-identical copies,
+56,723,720 bytes each — and its **SHA-256 matched the previously verified hash**. It is a genuine
+`mongodump --archive --gzip` stream (mongodump 100.18.0, server 7.0.43). **The artifact itself was
+opened read-only and was not modified.**
+
+**Tooling.** `mongorestore` was not installed on the machine: the MongoDB Server 7.0 installation
+ships only `mongod`, and the Database Tools are a separate package. The official MongoDB Database
+Tools 100.9.4 were therefore used in **portable form, extracted into a scratchpad directory**. Nothing
+was installed: **no system, registry, PATH or repository modification was made by that tooling**, and
+the directory can simply be deleted. This matters for R1 because the requirement is that an operator
+can restore the backup with standard tooling — a bespoke reader would not have demonstrated that.
+
+**Restore.**
+
+| | |
+|---|---|
+| Target | `trukvia_r1restore_1790137793` — a **fresh disposable database**, created for this rehearsal. **Disposable rehearsal state, not production.** |
+| Namespace mapping | `--nsFrom`/`--nsTo`, so no local database was ever created under the production database name |
+| `mongorestore` exit code | **0** |
+| Reported | **960,150 document(s) restored successfully. 0 document(s) failed to restore.** |
+| Restored | **62 collections**, **181 indexes** |
+
+**The `save_health` count difference — TTL expiry, not a restore failure.** The restore reported
+960,150 objects; a live count immediately afterwards gave **957,190**. The **2,960** difference was
+isolated to **exactly one collection, `save_health`** (log 8,855, live 5,895); the other 61
+collections agreed with the log exactly. `save_health` carries a TTL index `save_health_ttl` with
+**`expireAfterSeconds` = 1,209,600 (14 days)**, measured directly on the restored collection, and the
+backup predates the rehearsal, so MongoDB's TTL monitor removed the aged telemetry rows once they
+were written. The documents were restored correctly and then expired by design. **This explanation
+applies to `save_health` only and is not generalised to any other collection.**
+
+For the collections R1 exists to protect — `fin_txn`, `fin_hook_failures` and `fin_accounts` —
+**no TTL index exists**, so they restore without this effect.
+
+**The backup is authoritative for this rehearsal; the local validation database is NOT a complete
+copy of it.** Measured, side by side:
+
+| | Restored from backup | Local validation DB |
+|---|---|---|
+| Collections | **62** | 58 |
+| `fin_txn` | **28,360** | 28,164 |
+| `fin_accounts` | **15,887** | 15,663 |
+| `trips` | **117,632** | 116,867 |
+| `vendor_payments` | 2,040 | 2,040 |
+
+Four collections present in the restore are **absent from the validation database**:
+`fin_hook_failures`, `fuel`, `saved_trip_filters`, `team_members`.
+
+**These differences are not restore failures** — the restore reported zero failures. They mean only
+that the validation database is a partial copy. **Why it is partial was not measured and is not
+inferred here.** The consequence for this gate is narrow but real: **validation-database counts are
+not a proxy for the authoritative backup**, and any count taken as backup evidence must come from a
+restore of the artifact, not from the validation database.
+
+**Isolation.** Production was **not accessed** — no connection, no read, no write, and the artifact
+was not fetched from it. No local database was created under the production database name. The local
+validation database was confirmed unchanged afterwards (58 collections, 956,097 documents, `fin_txn`
+28,164, `fin_accounts` 15,663, `vendor_payments` 2,040 — all matching its pre-rehearsal baseline). The
+U4 corruption/recovery drill was **not** re-run.
+
+**What this does and does not establish.** It establishes that the named artifact is intact and
+restorable with standard tooling into a clean database. It does **not** establish that a backup has
+been taken at an activation instant (R2/R3 remain as recorded), that the assigned operator holds the
+production access a real restore would require (R5), or that the §5.3 step 5 fallback path —
+restore followed by reprojection — works end to end. *(That last one was rehearsed separately the
+same day and is now VERIFIED; see §5.10.)* **U4 remains PARTIAL.**
+
+### 5.9 U4-B end-to-end rehearsal — 2026-09-23, disposable clone only, PARTIAL
+
+**Result: the corrected identification procedure works. U4-B stays PARTIAL, not GREEN.** The §5.3
+sequence was run once, end to end, exactly as written above.
+
+**Scope.** A fresh disposable clone, `trukvia_u4b_1790141306`, taken from the restored backup
+database (§5.8), which was left unchanged. Test scope: **`mechanic_payment`, one tenant** — the
+smallest scope in the data containing both source-backed and orphaned `source_id`s, and deliberately
+not the §5.7 scope.
+
+| | |
+|---|---:|
+| `source_id`s in scope | 63 — **29 source-backed, 34 orphan** |
+| Ledger legs | 126 |
+| Pre-rehearsal fingerprint | `sha256 00cc600c…82d1` |
+| Activation instant (R3) | 2026-09-23T05:29:30+00:00 |
+
+**Simulated bad writes, three shapes:** **D1** a source-backed leg deleted · **D2** a source-backed
+amount changed · **D3** a narration changed on an **orphan** source. D2 and D3 were stamped at the
+activation instant; D1, being a deletion, leaves no row to stamp.
+
+**§5.3 steps, as executed:**
+
+| Step | Result |
+|---|---|
+| 1 — stop the bleeding | `node_bridge_ready` returned **False**, so Python was the writer. **No writer process was running, so no actual stop or reversion was executed** — this verified the post-reversion state only. **E9 remains pending.** |
+| 2 — identify (timestamp ∪ parity) | timestamp scan **2** (D2, D3) · parity **36** · **union 36**. Timestamp-only would have **missed D1** entirely |
+| 3 / 4 — reproject, source-existence restricted | 36 candidates → **2 source-backed reprojected (D1, D2)**, **34 orphan candidates excluded and reported**. **D3 was among the excluded orphans.** No blind full-scope reprojection was run |
+| 5 — fallback restore | **Required by the resulting state, and NOT rehearsed.** After reprojection the fingerprint differed from the baseline; the **residual discrepancy was exactly D3** |
+| 6 — never restore business/source collections | `mechanic_payments` **463 → 463, unchanged** |
+
+**§5.6 verification:** checks **1–4 passed** (parity byte-exact across the source-backed ids,
+`fin_hook_failures` 0 pending, 126/126 legs, debits equal credits). **Check 5, the UI spot check, was
+NOT executed** — it needs a human and a running application.
+
+**What this rehearsal established.**
+
+- The corrected identification principle works **in practice**, not only on paper: **timestamp scan
+  ∪ parity, followed by source-existence filtering.**
+- **Timestamp-only identification is insufficient** — D1 was missed, exactly as §5.3 step 2 predicts.
+- **Parity was the only detector** that found all three injected changes, and it also surfaced the
+  pre-existing discrepancies in the scope.
+- **Source-existence filtering prevented 34 pre-existing orphan candidates from being blindly
+  reprojected.**
+- **Steps 2 and 4 must be understood together:** parity *generates* candidates; source-existence
+  validation *determines which candidates are safe to reproject*. Neither is sufficient alone.
+- **An orphan-backed residual discrepancy is not repaired by source-backed reprojection alone.**
+  When such a residual remains, the documented fallback restore path may be required — and
+  **restore followed by reprojection remains unrehearsed end to end.**
+
+**Why U4-B was PARTIAL after this rehearsal:** step 1 verified a state rather than executing a
+reversion (E9 pending), step 5 was not executed **in this run — it was rehearsed separately the same
+day and is now VERIFIED (§5.10)** — and §5.6 check 5 was not executed. U4-B **remains PARTIAL**, now
+on the strength of E9 and check 5 alone.
+
+### 5.10 U4-B step 5 — restore → reproject, 2026-09-23, VERIFIED
+
+**Result: §5.3 step 5 works end to end and reached byte-exact recovery.** This closes the step 5 gap
+left open by §5.9. It does **not** make U4-B GREEN or U4 GREEN.
+
+**Environment.** A fresh disposable clone, `trukvia_u4b5_1790142411`, taken from the restored backup
+database (§5.8), which was not written to. Scope: **`mechanic_payment`, one tenant** — **63
+`source_id`s (29 source-backed, 34 orphan), 126 ledger legs**, baseline fingerprint
+`sha256 00cc600c…82d1`. **Activation instant: 2026-09-23T05:48:36+00:00.**
+
+**The R1 artifact for this rehearsal** was created with `mongodump` against the disposable clone at
+the activation instant, scoped to **`fin_txn` (28,360 documents) and `fin_hook_failures` (0)** — the
+two collections step 5 names, and nothing else. **It is a backup of disposable rehearsal state, not
+of production.**
+
+**Conditions after the activation instant.** One **legitimate** business change (a source-backed
+`mechanic_payment` amount, reprojected by Python, the sanctioned writer), plus three simulated bad
+writes: **D1** a source-backed leg deleted · **D2** a source-backed amount changed · **D3** a
+narration changed on an **orphan** source.
+
+**Steps 2–4.** Timestamp candidates **3** (D2, D3 and the legitimate activity) · parity candidates
+**36** · **union 37**. Source-existence filtering reprojected **3 source-backed** candidates and
+**excluded and reported 34 orphan** candidates. The **residual discrepancy after source-backed
+reprojection was exactly the orphan D3**, which triggered step 5.
+
+**Step 5, as executed.**
+
+| | |
+|---|---|
+| Restore | `mongorestore` of `fin_txn` + `fin_hook_failures` from the rehearsal R1 artifact — **exit code 0, 28,360 documents restored, 0 failed** |
+| Post-restore state | Returned to the activation fingerprint **`00cc600c…82d1`**. The orphan damage was undone; **the legitimate post-activation activity was temporarily rolled back with it** |
+| Identify post-activation work | `modified_at >= activation instant` on the source collection found **exactly the one legitimate source** |
+| Source-existence check | **Passed** — 1 source-backed, 0 orphan |
+| Reproject | The legitimate source only. **No blind full-scope reprojection was run** |
+| Final fingerprint | **`6de1facd0a79a4c68f500176bb02a05a9a0b6151713cae870cd02905b3941048`** — **exactly the expected value** |
+| Residual differences | **0** |
+| Business collection | `mechanic_payments` **463 → 463, unchanged** (step 6 held) |
+
+**§5.6 verification:** checks **1–4 PASS** (parity byte-exact across source-backed ids,
+`fin_hook_failures` 0 pending, 126/126 legs and 28,360/28,360 rows, debits equal credits
+86,700.0 / 86,700.0). **Check 5, the UI spot check, was NOT executed** — it requires a human and a
+running application.
+
+**The 34 orphan `source_id`s remained excluded and reported throughout** and were not reprojected at
+any point. Their nominal amounts are **not** evidence of confirmed business loss.
+
+#### What this does and does not prove
+
+- It **proves the restore → reproject mechanism** on a disposable clone, end to end, to byte-exact
+  recovery.
+- It does **not** prove that a **production activation-time backup has been taken**. The artifact
+  used here was a dump of disposable rehearsal state. **E4's activation-time-backup half remains
+  outstanding.**
+- **E9 remains pending** — no Node-writer stop or reversion was executed at any point.
+- **E11 remains pending** — the declared quiet window was not exercised.
+- **U4 overall remains PARTIAL.**
+
+#### Two operational findings
+
+**A. Restore scope is collection-level, so legitimate work disappears with it.** The tested restore
+replaces the whole of `fin_txn` and `fin_hook_failures`, not the affected scope. Legitimate ledger
+activity recorded after the activation instant is therefore rolled back, and **the restore must be
+followed by a controlled reprojection of the legitimate, source-backed post-activation activity** —
+the second half of §5.3 step 5 is not optional. The **U5 Option B quiet window is operationally
+important here**, because it limits how much activity can occur during the restore/reprojection
+interval. It is **coordination, not technical enforcement**.
+
+**B. A timestamp scan cannot tell legitimate activity from bad writes.** In this rehearsal the scan
+returned the legitimate Python activity alongside D2 and D3. **A timestamp scan generates candidates;
+it does not by itself establish that a candidate is bad Node activity.** Parity and source-existence
+filtering remain necessary. No method for distinguishing legitimate from bad activity beyond this was
+rehearsed, and none is claimed.
+
+**The identification rule has since been settled for the first activation scope, and `modified_at`
+is not it.** A read-only audit of all six ledger-affecting `vendor_payment` write paths established
+that the criterion used in this rehearsal is **insufficient on its own**: the soft-delete path writes
+`deleted_at` and never touches `modified_at`, so a legitimate deletion after activation would be
+missed entirely. §5.3 step 5 now carries the corrected rule — the union of `created_at`,
+`modified_at`, `deleted_at` and `reversed_at` — **scoped to `vendor_payment`, which §8.1 makes the
+first activation scope**. It is **not** generalised to `mechanic_payment` or to any other source
+type; several of those have no `modified_at` field at all.
+
+---
+
+## 6. Writer activation sequence
+
+**Step 1 recorded 2026-09-23. Steps 2–3 were already recorded; steps 4–12 are NOT YET EXECUTED.**
+Each step requires its predecessor to be green and recorded.
+
+| Step | Action | Owner |
+|---|---|---|
+| 1 | Gate owner records the decision to allow Node business writes | Gate owner |
+| 2 | U2 answered (§4) | Operator |
+| 3 | `fin_accounts` question settled (§3) | Migration workstream + gate owner |
+| 4 | Backup procedure and restore validation **readied** (R1 method, §5.8). **The activation-time backup itself is taken immediately before step 9**, not here | Operator |
+| 5 | `nodeLedgerWriter` role created; boundary proof run (§3) | Operator |
+| 5a | Finance-writer **production deployment target / artifact provisioned** for `apps/api` — none exists today (see below). **NOT YET EXECUTED / OUTSTANDING** | Operator — **platform action** |
+| 5b | Finance-writer runtime authorisation provisioned — `TRUKVIA_FIN_WRITER_ALLOWED_DB` set to the exact production database name (§4 B). **NOT YET EXECUTED** | Operator — **platform action** |
+| 6 | Node restarted with the new credential; `/health/ready` 200 — endpoints now exist (see below); **the production restart and check have not happened** | Operator |
+| 7 | Pre-write smoke checks (§7) all green | Migration workstream |
+| 8 | Activation timestamp and fingerprint capture **readied** (R2, R3); the activation-time backup (R1) taken now, immediately before step 9 | Operator |
+| 9 | Reverse delegation enabled for **ONE** source type (§8) — **this is the activation boundary**; R2 and R3 are captured at it | Operator |
+| 10 | First-write controls observed (§8) | Migration workstream |
+| 11 | Repeat 9–10 per source type, one at a time | — |
+| 12 | Only after all enabled types are green: consider retiring the forward bridge | Gate owner |
+
+**Step 1 — gate-owner decision, recorded 2026-09-23: YES.** The gate owner authorises **proceeding
+with the Gate 9h controlled sequence** for Node Finance business writes. That is the whole of what
+has been authorised. It does **not** authorise any individual production operation, does **not**
+create a role or a credential, does **not** set `TRUKVIA_FIN_WRITER_ALLOWED_DB`, does **not** start
+or restart the writer, does **not** enable reverse delegation, and involves **no production access of
+any kind**. **U2 remains BLOCKED / FAIL-CLOSED** (§4), **E3 remains outstanding**, and **Gate 9h
+itself remains DRAFT / NOT AUTHORIZED** (§15).
+
+Steps 2 and 3 were recorded earlier (E1, §4; E2, §3). **Steps 4–12 have not been executed** — the
+activation-time backup and fingerprints (R1/R2), creation of the production `nodeLedgerWriter` role,
+credential provisioning, the production S3/S4 boundary proof, the Finance-writer production
+deployment target (step 5a), the Finance-writer runtime authorisation (step 5b), the writer
+restart and readiness check,
+the pre-write smoke checks, the activation timestamp (R3) and reverse delegation enablement all
+remain prerequisites, in that order.
+
+**Step 6 — what is now closed, and what is not.** A read-only audit on 2026-09-23 found that
+`apps/api` had **no health endpoint at all**: the endpoints step 6 and §7 S1 referred to lived in
+**`backend-node`** (`backend-node/src/health.ts`), a different application and not the Finance
+writer. That gap is **closed at code level**:
+
+- **The endpoints exist in `apps/api`.** `GET /health/live` and `GET /health/ready` are
+  implemented, porting the `backend-node` response semantics — liveness makes no dependency
+  call, readiness pings the database the application already holds and returns **503** when that
+  ping does not answer. Readiness reuses the existing `MONGO` provider, so there is still exactly
+  one Mongo connection and the Finance-writer authorisation guard is **not** bypassed. The
+  loopback binding is unchanged and **no new public routing was added**.
+- **Local behaviour was verified**, 2026-09-23: focused health tests 8/8, the full `apps/api`
+  suite 591/591, typecheck, `npm run build`, and a **bounded local** run against a **disposable**
+  local database in which `/health/live` and `/health/ready` both answered 200.
+- **The production writer restart and readiness check have NOT happened.** No production
+  Finance-writer process exists to restart (§6 step 5a), so nothing has been checked in
+  production and no production readiness is claimed.
+
+**Step 6 therefore remains outstanding.** What changed is that its acceptance criterion is now
+*satisfiable*; it has not been satisfied.
+
+**Step 5a — Finance-writer production deployment target.** A read-only preflight on 2026-09-23
+established that **`apps/api` has no production deployment target** in the repository or in the
+platform evidence reviewed. The artifacts under `deploy/` provision **`backend-node`, the read
+shadow**, and the Python routing environment; **none of them is the Finance writer.** `apps/api`
+carries no supervisor program, no run script, no production environment template and no container
+definition, it reads its configuration straight from `process.env` with no loader of its own, and
+its own CI states that it makes no production contact by construction.
+
+**A production deployment target for `apps/api` must therefore exist before step 5b can be
+executed** — step 5b provisions a variable into a process environment, and there is currently no
+such process. Creating that target is a **separate operator / platform action**, outside the
+artifacts this repository holds today, and it is **NOT YET EXECUTED / OUTSTANDING**. No service
+name, deployment identifier, container name or platform secret is recorded here, because none was
+inspected and none belongs in this document. **Recording this step authorises nothing**: neither
+creating the target nor anything that follows it is authorised by its appearing here.
+
+**Runtime configuration the target must carry (step 5a) before step 5b means anything.** The
+Finance writer needs all four of the following in its process environment. **None of them is
+provisioned in production today**, and no value for any of them is recorded here:
+
+| Variable | Why it is needed |
+|---|---|
+| `NODE_ENV=production` | Selects the fail-closed branch of the authorisation guard |
+| `NEST_MONGO_URL` | The connection the writer would open |
+| `NEST_MONGO_DB` | **The database the writer will actually open** |
+| `TRUKVIA_FIN_WRITER_ALLOWED_DB` | The authorised database (step 5b) |
+| `PG_URL` | The PostgreSQL read model `apps/api` also uses |
+| `TRUKVIA_INTERNAL_TOKEN` | Shared secret for the internal reproject bridge |
+
+`TRUKVIA_FIN_WRITER_ALLOWED_DB` must **exactly equal `NEST_MONGO_DB` by whole-string comparison**.
+**If `NEST_MONGO_DB` is absent the application falls back to a local database name**, which then
+cannot match the authorised name, and the guard **fails closed** — the correct outcome, but step 6
+will not pass. **The actual production database value is not recorded here, in the runbook, in a
+commit message or in any log**, and neither is any other value in the table above.
+
+The last two entries were added after the 2026-09-23 readiness preflight and matter for different
+reasons:
+
+- **`PG_URL` is listed for completeness, and is outside the Gate 9h runtime dependency.** The
+  Gate 9h surface (§8.1) is Mongo-only and never queries PostgreSQL, and there is no boot-time
+  PostgreSQL connection, so the writer boots, passes readiness and reprojects whether or not this
+  variable is right. It belongs on this list because the process reads it, not because Gate 9h
+  needs it. **No new PostgreSQL authorisation variable is required by Gate 9h**, and none is
+  introduced here.
+- **`PG_URL` has no production fail-closed guard in `apps/api` — recorded, not fixed.** Unlike the
+  Mongo path, nothing checks that the configured PostgreSQL target is authorised; the value
+  defaults to a local one and the pool connects lazily, so a misconfigured deployment **boots
+  successfully and fails later**, at the first query, rather than refusing at startup.
+
+  **PG hardening — recommended, NOT performed.** `apps/api` holds **three SQL write sites**, all
+  **outside Gate 9h**: `INSERT INTO trukvia.fin_day_closure` in the day-closure writes, and
+  `INSERT INTO trukvia.vendor` / `DELETE FROM trukvia.vendor` in the vendor writes. A production
+  fail-closed guard is **recommended for those unrelated routes**. **It has not been
+  implemented**, and this document does not authorise implementing it.
+
+  **There is a coupling that makes it a real design choice, not a drop-in.** `src/db/pg.ts` is
+  loaded **transitively** on the Gate 9h path, because the `MONGO` injection token is exported
+  from `src/vendors/vendors.service.ts` and importing that file pulls the PostgreSQL module in
+  with it. A guard that refuses at **module load** would therefore stop the **Finance writer**
+  from booting, even though the Gate 9h path never queries PostgreSQL. **That trade-off must be
+  chosen deliberately — by moving the token, by guarding somewhere other than module load, or by
+  accepting the coupling — and it is neither chosen nor authorised here.**
+- **`TRUKVIA_INTERNAL_TOKEN` is required for the internal reproject bridge.** `POST
+  /internal/fin/reproject` compares it in constant time against the `x-internal-token` header and
+  answers 401 when it is absent or wrong, so the Gate 9h path does not work without it. **It is a
+  secret: its value is never recorded here or anywhere else in this repository.**
+
+**No production value for any of the six is provisioned today.**
+
+**Repository deployment templates now exist.** Three were added on 2026-09-23 and are committed:
+`deploy/supervisor/apps-api.conf`, `deploy/supervisor/run-apps-api.sh` and
+`deploy/env/apps-api.production.env.example`. They follow the `backend-node` supervisord pattern
+the platform already runs the Python API under, key for key, and they are **repository templates
+only** — the same status `backend-node.conf` has carried since Gate 9f.
+
+**What that does and does not settle.** Installing a second supervisord program — or providing an
+equivalent managed process — is a **PLATFORM action**, not a repository one (Gate 9f §7). The
+repository cannot perform it and does not.
+
+**Live platform capability — VERIFIED, READ-ONLY, 2026-09-23.** An operator ran a read-only
+capability check against the production pod. **It created nothing.** What it established:
+
+- The production pod runs **supervisord**, with six programs registered and five running.
+- `supervisord.conf` includes **`files = /etc/supervisor/conf.d/*.conf`**, so **a second program
+  can be represented by another `.conf` sibling** in that directory — three existing "extra"
+  `.conf` files are already picked up by that glob.
+- **`conf.d` is writable at filesystem level** (`rw` ext4 mount, uid 0, mode 755).
+- **Port 8003 is currently free** — no listener. 8001 is the Python backend, 8002 is reserved for
+  `backend-node`.
+- **`/app/apps/api` exists** in the pod.
+- **No `apps-api` program exists**, and **no `apps-api` production deployment target exists**.
+- **The three `apps-api` templates are NOT present in the live pod.** Only the `backend-node`
+  equivalents are.
+
+**Capability is not installation.** The check confirms the pod *can* carry another program; it
+does **not** mean one was added, and **nothing was installed, created, provisioned, restarted or
+deployed by it**. The pod was mid-restart from **unrelated platform deployment activity** during
+the check; **that activity is not step 5a and must not be read as its execution**.
+
+**One thing the check leaves open: how a committed template actually becomes an installed
+program.** `deploy/supervisor/backend-node.conf` has been on `origin/main` since 2026-09-19 and
+**is present in the pod**, yet **no `backend-node` program is registered** — so a template being
+present in `/app/deploy/` is demonstrably **not** sufficient to install it. The platform's own
+note that `conf.d` is re-templated on deploy cuts the other way too: a file placed there at
+runtime would not survive. **The durable install path is therefore still unknown**, and it is a
+question for the platform, not a repository change. **This is not a platform failure** — nothing
+has been attempted, and nothing indicates it cannot work.
+
+**Step 5a therefore remains NOT YET EXECUTED / OUTSTANDING.**
+
+**Where step 5a stands, as of 2026-09-23:**
+
+| Item | Status |
+|---|---|
+| Repository deployment templates | **READY — committed.** Repository preparation is COMPLETE |
+| Live platform capability (second supervisord program, or equivalent) | **VERIFIED — LIVE PLATFORM, READ-ONLY** (2026-09-23). supervisord present, `conf.d/*.conf` include confirmed, `conf.d` writable, port 8003 free, `/app/apps/api` present. **Nothing was created or installed** |
+| Build and start path | **CLOSED — verified locally.** `npm run build` exit 0 → `dist/src/main.js`; start script corrected to `node dist/src/main.js`; bounded local `npm start` started the application and terminated cleanly. **Local only — nothing was built or started in production** |
+| Actual production deployment target | **NOT DONE / OUTSTANDING** — creating it is a PLATFORM action and requires the authorisations below |
+| `/health/live`, `/health/ready` on `apps/api` | **IMPLEMENTED — verified locally.** Production readiness not verified; no production process exists to check |
+| Runtime provisioning of the six variables | **NOT DONE** |
+
+**Step 5a therefore remains NOT YET EXECUTED / OUTSTANDING.** Some prerequisites are closed; the
+step itself has not been performed. Separating the four things it depends on:
+
+- **Repository preparation — COMPLETE** (templates, build/start path, health endpoints).
+- **Live platform capability confirmation — COMPLETE** (read-only, 2026-09-23).
+- **Actual deployment-target creation — PENDING**, a PLATFORM action.
+- **U2 authorisation and the Gate 9g reopening (§3, §4) — PENDING**, gate-owner decisions.
+
+No execution step is added for any of them here, and none of them is authorised by this record.
+
+**Step 5b — Finance-writer runtime authorisation.** Steps 5 and 6 cannot be joined directly.
+`assertFinanceWriterAuthorised` (`apps/api/src/fin/writer-authorisation.ts`) runs inside the `MONGO`
+provider **before `new MongoClient`**, and in production it **refuses to boot** while
+`TRUKVIA_FIN_WRITER_ALLOWED_DB` is absent, or while it does not match the configured database name
+by an **exact, whole-string** comparison — no substring, no prefix, no pattern. Step 6 therefore
+cannot reach `/health/ready` until this variable is provisioned. It is an **operator / platform
+action** and it **has not been executed**.
+
+**The value is never recorded.** The database name is provisioned on the platform and appears
+nowhere else — not in this document, not in the runbook, not in a commit message, not in a log and
+not in any report. The guard deliberately keeps both the configured and the authorised name out of
+its error text, so a failure is diagnosable without either being printed.
+
+**What step 5b is not.** It does **not** require any change to `backend-node`, whose separate boot
+guard (§4 A) belongs to a different application; it does **not** rename the production database,
+which §4 forbids; it does **not** start or restart the writer, which is step 6; and it does **not**
+enable reverse delegation, which is step 9. Provisioning the variable is the **technical half** of
+U2 (§4 B). **U2's authorisation half is a gate-owner decision that has not been made**, so recording
+this step authorises nothing: **U2 stays BLOCKED / FAIL-CLOSED** until that decision exists, and
+this document remains DRAFT and NOT AUTHORISED FOR ACTIVATION.
+
+Steps 9–11 are deliberately incremental. **Enabling all thirteen source types at once is explicitly
+forbidden by this gate.**
+
+---
+
+## 7. Pre-write smoke / health checks
+
+To be run **after** the credential change and **before** the first delegated write:
+
+| # | Check | Expected |
+|---|---|---|
+| S1 | `GET /health/ready` on Node — **on `backend-node`** | 200, `"routes":"ok"` |
+| S1b | `GET /health/ready` on the **Finance writer `apps/api`** — implemented and verified locally (§6); **its contract has no `routes` key** | 200, `"checks":{"mongo":"ok"}` |
+| S2 | `GET /api/auth/health` on Python | 200, `db: up` |
+| S3 | Node can write `fin_txn` in a throwaway scope | succeeds |
+| S4 | Node **cannot** write a business collection | refused, code 13 |
+| S4b | **Misconfiguration test, not a smoke check** (see below). *If* a `fin_accounts` creation is refused, it **fails the projection** and writes **no** `fin_txn` row | throws; 0 ledger rows; 1 `fin_hook_failures` row |
+| S5 | Reverse bridge env is still **off** | `node_bridge_ready()` false for every type |
+| S6 | Forward bridge still reachable | Python→Node internal hook answers |
+| S7 | Failure queue is empty for the target scope | 0 pending / retrying |
+| S8 | `fin_hook_failures` carries the index `fin_hook_fail_source_uniq`, `unique: true`, on `(user_id, company_id, source_type, source_id)` | index present, `unique: true` |
+
+S1 and S1b are **two different applications**. `backend-node` is the read shadow and has had
+health endpoints since Gate 9f; `apps/api`, the Finance writer, had none until they were
+implemented on 2026-09-23 and **verified locally only** (§6). **Neither check has been run in
+production for Gate 9h**, and S1b cannot be until the production Finance-writer process is
+actually started (§6 steps 5a, 5b, 6). **S1 acceptance therefore remains outstanding.**
+
+S4 is the boundary proof. **If S4 does not refuse, stop — the role is too broad.**
+
+S8 exists because **no application startup path creates this index.** `ensure_hook_indexes()` is
+called only by the replay CLI and by the test-suite; its NestJS counterpart `ensureHookIndexes` has
+no call site at all. The index **was** observed in the restored production backup (§5.8), so it is
+present today — but nothing recreates it, and the R2 fingerprint's determinism for
+`fin_hook_failures` depends on that uniqueness. **Verify it; do not assume the application will
+restore it.** If it is absent, stop and escalate: creating it is a separate, deliberate operator
+action and is not part of this check.
+
+S4b is the **negative-path safety proof**, and it is deliberately **not** a check against the
+correctly configured role. §3 grants `insert` on `fin_accounts`, so a correctly provisioned
+`nodeLedgerWriter` **will not** be refused there — a local disposable-MongoDB rehearsal confirmed the
+insert succeeds under exactly the §3 privileges. S4b therefore covers the **misconfiguration** case:
+if that grant is ever missing or later revoked, the refusal must fail the projection **safely rather
+than silently**. It is already demonstrated by `scripts/fin-account-seed-safety.ts` (16/16, cases C
+and D), where the refusal is produced by a collection validator; **that evidence stands unchanged**.
+**Re-running it against the correctly configured role would prove nothing, because that role is not
+refused.**
+
+---
+
+## 8. First-write controls
+
+### 8.1 Smallest possible scope
+
+- **One source type — `vendor_payment`, DESIGNATED by the gate owner 2026-09-23.** It was
+  recommended here because its reverse-bridge behaviour is the most heavily certified and it has no
+  branch that can fail at persist, and a write-path audit established code-level signal coverage for
+  all six of its ledger-affecting paths; that recommendation is now a **designation**. The six-path
+  bounded-window rehearsal and the operator-run bounded recovery for it have since been
+  **rehearsed to byte-exact recovery on disposable state** (§5.3 step 5). **That is rehearsal
+  evidence only — it is not activation evidence, and the bounded-recovery rule is proven for
+  `vendor_payment` alone.**
+- **One tenant**, if `TRUKVIA_FIN_NODE_SOURCE_TYPES` can be scoped that way — **NOT VERIFIED**;
+  the env gate is per source type, not per tenant. If it cannot, the first write must instead be a
+  single deliberate reprojection of one known document, performed by the operator.
+- **One document**, reprojected deliberately rather than by waiting for organic traffic.
+- **One endpoint.** The Gate 9h Finance-writer surface is **`POST /internal/fin/reproject` and
+  nothing else**, reached by Python over loopback with the `x-internal-token` shared secret, as
+  `PHASE6-SLICE2C-STEP6-REVERSE-BRIDGE.md` defines it. Through it, Node writes only what the
+  `nodeLedgerWriter` role permits (§3). **No vendor, vendor-bill, vendor-payment or day-closure
+  CRUD write endpoint is part of Gate 9h activation**, even though `apps/api` contains them (§3);
+  they carry no Gate 9h traffic and the role refuses their writes. The **loopback-only binding and
+  the internal token remain the boundary** and are not relaxed by this gate.
+
+### 8.2 Success criteria
+
+| # | Criterion |
+|---|---|
+| C1 | The ledger rows Node wrote are **byte-exact** against a Python reprojection of the same document into a throwaway database |
+| C2 | Exactly the expected number of legs; no duplicates |
+| C3 | `fin_txn` ids follow the `ref_source_key` rule |
+| C4 | No new `fin_hook_failures` row |
+| C5 | Debits equal credits for the affected scope |
+| C6 | A business user confirms the corresponding invoice/statement still reads correctly in the UI |
+
+C6 matters as much as C1. **The project's stated priority is that the app works after Node takes
+over, not merely that the rows match.**
+
+### 8.3 Stop conditions — abort immediately if any occurs
+
+- Any parity mismatch, however small.
+- Any duplicate ledger row.
+- Any unexpected `fin_hook_failures` row.
+- Any write to a collection outside the two named in §3.
+- Any error in the Python bridge log that is not a clean `ok: true`.
+- Any business user reporting a wrong figure.
+
+---
+
+## 9. Audit and reconciliation requirements
+
+| # | Requirement | Status |
+|---|---|---|
+| A1 | Every Node-written `fin_txn` row is attributable to a writer | **NOT AVAILABLE, and NOT an activation blocker.** Verified 2026-09-23: `fin_txn` carries 32 fields and **none** identifies the writer. Timestamps are **not** a substitute — `persistLegs` upserts with `$set`, so `created_at` is rewritten on every reprojection; a Python reprojection after activation looks Node-era and the reverse is equally possible. Deferred as forensic/audit hardening (see below). |
+| A2 | The activation, each source type enablement, and any reversion are recorded with timestamp and operator | **NOT DONE** |
+| A3 | Parity evidence retained per source type | Method exists (slice 2c harnesses); retention **NOT DEFINED** |
+| A4 | Day-book and ledger reports reconcile before and after activation | **NOT DONE** |
+
+**A1 is a real gap, deliberately accepted for now.** Rollback does not depend on it, because the
+recovery set is determined by parity and by source existence, not by which process wrote a row — so
+reprojection still needs no per-row attribution. **But it cannot be applied blindly to an entire
+scope.** Per §5.3 step 4, the `source_id`s being reprojected must first be confirmed to have an
+authoritative source document; orphaned, source-less `source_id`s are excluded, because reprojecting
+them deletes their legs without recreating them. Within that restriction, reversion plus a Python
+reprojection of the source-backed `source_id`s repairs the affected rows without needing to tell
+individual rows apart. What it costs is *forensics* — "which rows did Node write?" cannot be
+answered.
+
+**Decision 2026-09-23: the writer marker is NOT a Gate 9h activation blocker.** It is recorded as
+future hardening. The smallest design, if it is ever wanted, is one optional field
+`written_by: 'python' | 'node'` set in `persistLegs` / `_persist_legs`: additive, no index, no
+read-path change, and its absence on historical rows would itself mean "pre-Gate-9h". **Not
+implemented, and out of scope for this gate.**
+
+---
+
+## 10. Failure handling and abort criteria
+
+**Abort the gate — return to Python-only writing — if any of these is true:**
+
+1. Any §8.3 stop condition fires.
+2. The boundary proof (S4) fails.
+3. The backup restore (R1) cannot be demonstrated.
+4. U2 cannot be answered.
+5. The `fin_accounts` question (§3) is unresolved at activation time.
+6. A business user reports any figure that does not match expectation.
+
+**Abort is the default response to ambiguity.** A partially understood failure is an abort, not an
+investigation with the writer left running.
+
+---
+
+## 11. Reversion path back to Python-only writing
+
+Reversion is deliberately cheap, and that is the main safety property of this design.
+
+| Step | Action | Effect |
+|---|---|---|
+| 1 | Unset `TRUKVIA_FIN_NODE_SOURCE_TYPES` (or remove the affected type) | `node_bridge_ready()` returns false; Python projects locally again, immediately |
+| 2 | Optionally unset `TRUKVIA_FIN_NODE_URL` | Belt and braces |
+| 3 | Restart the Python process if the env is file-based | Picks up the change |
+| 4 | Reproject the affected sources through Python | Ledger is rewritten by the reference implementation |
+| 5 | Optionally revoke the Node write role | Restores the Gate 9g database-level guarantee |
+
+**Step 1 alone stops all Node writes.** It needs no code change and no deployment.
+
+Step 5 is what actually restores Gate 9g's position; until it is done, the read-only guarantee is
+weakened even if no writes are occurring.
+
+---
+
+## 12. Operator/platform actions versus code actions
+
+| Action | Type | Status |
+|---|---|---|
+| Create `nodeLedgerWriter` role | **PLATFORM** | NOT DONE |
+| Provision the credential into Node's env | **PLATFORM** | NOT DONE |
+| Provision a production deployment target for `apps/api` — Finance-writer deployment artifact (§6 step 5a) | **PLATFORM** | **NOT DONE / OUTSTANDING.** **Repository artifacts: READY** — `apps-api.conf`, `run-apps-api.sh` and `apps-api.production.env.example` are committed. **Actual production deployment target: NOT DONE.** **Live platform capability: VERIFIED — READ-ONLY** (2026-09-23): supervisord runs the pod, `conf.d/*.conf` is included by glob, `conf.d` is writable, port 8003 is free and `/app/apps/api` is present. **The check created nothing**, and the three `apps-api` templates are **not present in the pod**. Without the target there is no process environment for step 5b to provision |
+| Provision `TRUKVIA_FIN_WRITER_ALLOWED_DB` — Finance-writer runtime authorisation (§6 step 5b) | **PLATFORM** | **NOT DONE.** The mechanism exists and is tested (§4 B); **the platform value has not been provisioned.** When it is provisioned, the value is **never recorded here**. Without it the writer refuses to boot in production, so step 6 cannot pass |
+| Verify production `DB_NAME` (U2) | **PLATFORM** | **ANSWERED 2026-09-23 — YES** (§4), and **E1 is SATISFIED** for that confirmation. The verification is done; **U2 itself remains BLOCKED / FAIL-CLOSED** — a `yes` does **not** unblock the writer. Nothing was changed: the database was not renamed and no production authorisation was granted |
+| Backup + tested restore | **PLATFORM** | **RESTORE TESTED 2026-09-23** (§5.8) — checksum matched, `mongorestore` exit 0 into a fresh disposable database. The **activation-instant backup itself is still NOT TAKEN**, because no activation has occurred |
+| Recovery-path rehearsal (reprojection) | **CODE / workstream** | **DONE 2026-09-23** on a disposable clone — byte-exact recovery, and three procedure corrections (§5.7). Does **not** satisfy the restore requirement above |
+| Set / unset reverse-bridge env | **PLATFORM** | NOT DONE |
+| Restart Node / Python | **PLATFORM** | NOT DONE |
+| Parity verification per source type | **CODE / workstream** | method exists, not run against production data |
+| Boundary proof S3/S4 against the real role | **CODE / workstream** | **Rehearsed locally 2026-09-23** on a disposable `mongod --auth` carrying exactly the §3 privileges: S3 succeeded, and S4 was refused with **code 13** for every business collection listed in §3. **Still outstanding against the production role**, which does not exist yet |
+| Safety proof S4b (refused creation writes no ledger row) | **CODE / workstream** | **DONE** — `scripts/fin-account-seed-safety.ts`, 16/16, commit `10b0e82`. It is a **misconfiguration test** (§7): the correctly configured role is granted `insert` on `fin_accounts` and is not refused, so there is nothing to re-run against it. |
+| Resolve the `fin_accounts` question | **CODE / workstream** | **DONE 2026-09-23** — Node requires `insert`; see §3 |
+| Decide the write-pause mechanism (§5.5) | **GATE OWNER** | **DECIDED 2026-09-23 — Option B, declared quiet window.** Coordination only, no enforcement; never exercised |
+| Decide whether a writer marker is required (A1) | **GATE OWNER** | NOT DECIDED |
+
+**No code change is required to activate the writer.** The bridge is already implemented and
+certified; activation is entirely environment and permission. That is a deliberate property — and it
+is also why the controls in this document, rather than the code, are what make it safe.
+
+---
+
+## 13. Evidence required to declare Gate 9h GREEN
+
+Gate 9h may be declared GREEN only when **all** of the following exist as recorded evidence:
+
+| # | Evidence |
+|---|---|
+| E1 | U2 answered (yes/no only), recorded — **SATISFIED 2026-09-23** (§4): answered **yes**, recorded without the value. This satisfies E1 as written; it does **not** unblock U2, which stays BLOCKED / fail-closed |
+| E2 | `fin_accounts` question resolved and recorded — **SATISFIED 2026-09-23** (§3, §12): the question is answered and recorded, and the answer is that Node **requires `insert` on `fin_accounts`**. Granting that production role/permission is **E3**, which remains outstanding |
+| E3 | `nodeLedgerWriter` role created, with the boundary proof (S3 succeeds, S4 refused with code 13) |
+| E3a | Finance-writer production deployment target (§6 step 5a) — **REQUIRED, NOT YET SATISFIED**. Once it exists, the evidence to be recorded is: that a production deployment target for `apps/api` **was provisioned**, and that it carries `NODE_ENV=production`, `NEST_MONGO_URL`, `NEST_MONGO_DB`, `TRUKVIA_FIN_WRITER_ALLOWED_DB`, `PG_URL` and `TRUKVIA_INTERNAL_TOKEN` in its process environment. Two of its sub-requirements are now **SATISFIED, locally**, verified 2026-09-23: a **reproducible build from the tracked lockfile** (`npm run build` exit 0, `package-lock.json` unchanged), and a **corrected, verified start path** — the exact compiled entrypoint is `dist/src/main.js`, the start command was corrected to `node dist/src/main.js`, and a **bounded local** `npm start` started the application successfully and then terminated cleanly. **That is local evidence only and does not make E3a satisfied**, which still requires the production deployment target, the production runtime provisioning above, and a production readiness check. A third sub-requirement is also now **SATISFIED, locally**: `GET /health/live` and `GET /health/ready` **exist** on `apps/api`, readiness returns 503 when the database does not answer, and that behaviour was **verified locally** (§6). A fourth is satisfied on the repository side only: the **three deployment templates exist and are committed** (`apps-api.conf`, `run-apps-api.sh`, `apps-api.production.env.example`). A fifth is satisfied as a **read-only live platform capability check** (2026-09-23): the **supervisord mechanism is confirmed live**, the **`conf.d/*.conf` include behaviour is confirmed**, **port 8003 availability is confirmed** and the **`/app/apps/api` source directory is confirmed** — while **no deployment target was created** and the **three `apps-api` templates are not installed or present in the current pod**. **What is still missing is the thing E3a is actually about**: the **actual production deployment target does not exist**, and the **durable install path from a committed template to a registered program is still unknown**. **Production readiness has NOT been verified** either, since no production Finance-writer process exists to check. E3a overall therefore stays **REQUIRED / NOT YET SATISFIED**. What is recorded is the **fact of provisioning and the names of the variables — never their values**, and never a service name, deployment identifier or platform secret. This evidence will **not** imply that the writer was started, which is E6 / step 6, and will **not** imply that any production write occurred |
+| E3b | Finance-writer runtime authorisation (§6 step 5b) — **REQUIRED, NOT YET SATISFIED**, because step 5b has not been executed. Once it is, the evidence to be recorded is: that `TRUKVIA_FIN_WRITER_ALLOWED_DB` **was provisioned** on the platform, and that the existing guard **accepted** it as an **exact whole-string** match against the configured database name. What is recorded is the **fact of provisioning and of the guard's acceptance — never the value**: the production database name must not be written here, in the runbook, in a commit message or in any log. This evidence will **not** imply that the writer was started, which is E6 / step 6, and will **not** imply that any production write occurred |
+| E4 | Backup taken **and its restore demonstrated** on a throwaway database — **restore demonstrated 2026-09-23** (§5.8): checksum matched, `mongorestore` exit 0, 960,150 documents, 0 failures. **Still outstanding on the first half**: no backup has been taken at an activation instant. The §5.10 rehearsal created an activation-time backup **of a disposable clone**, which does not satisfy this |
+| E5 | Activation timestamp and fingerprints (R2, R3) recorded |
+| E6 | Pre-write smoke checks S1–S8 green |
+| E7 | First-write criteria C1–C6 green for the first source type, **including the business-user check** — and the write reached Node through **`POST /internal/fin/reproject` only** (§8.1), over loopback with the internal token, with no vendor/bill/payment/day-closure CRUD endpoint involved |
+| E8 | The same for every subsequently enabled source type |
+| E9 | Reversion (§11 step 1) demonstrated at least once, deliberately, and shown to stop Node writes |
+| E10 | Day-book / ledger reconciliation before and after, matching |
+| E11 | Write-pause mechanism (§5.5) chosen and documented — **policy recorded 2026-09-23 (Option B)**, but **still outstanding as evidence**: no quiet window has ever been declared or exercised, and the policy provides coordination, not enforcement |
+| E12 | Named operator assigned for rollback (R5) — **assigned 2026-09-23** to the gate owner/operator (§5.1 R5) |
+
+**E9 is not optional.** A reversion path that has never been exercised is an assumption, not a
+control.
+
+---
+
+## 14. This document authorises nothing
+
+Preparing this draft does **not**:
+
+- authorise activating the Node writer;
+- authorise creating or changing any database role or credential;
+- authorise enabling reverse delegation for any source type;
+- authorise any deployment, restart or production change;
+- reopen, amend or supersede Gate 9g (`6685637`), which remains in force and BLOCKED;
+- constitute evidence that anything in §13 has been done.
+
+**Every table in this document reports its true state.** A small number of items are recorded as
+evidence and nothing more; every other status is NOT DONE, NOT VERIFIED, BLOCKED, UNKNOWN or
+UNRESOLVED. Those items are R4, verified during the §5.7 rehearsal; the reprojection recovery path
+itself, rehearsed on a disposable clone on 2026-09-23; R1, whose restore was demonstrated the same
+day into a fresh disposable database (§5.8); and §5.3 step 5, restore → reproject, rehearsed end to
+end that day on a disposable clone (§5.10). **None of them is activation evidence**, and all of them
+were performed on disposable local state. No production system was contacted, no writer was started,
+and U4 remains PARTIAL.
+
+Opening Gate 9h requires an explicit, recorded decision by the gate owner to allow Node business
+writes at all — a policy decision that this document exists to inform, not to make. **That decision
+was recorded on 2026-09-23 (§6 step 1): YES, proceed with the controlled sequence.** It authorises
+the **sequence**, not any step within it; every item §13 lists remains outstanding, and nothing above
+in this section has been authorised by it.
+
+---
+
+## 15. Readiness state
+
+**DRAFT — NOT SUBMITTED, NOT AUTHORISED FOR ACTIVATION.** The gate owner recorded step 1 on
+2026-09-23 (§6): proceed with the controlled sequence. That authorises the **sequence** and nothing
+inside it — no role, no credential, no `TRUKVIA_FIN_WRITER_ALLOWED_DB`, no writer start or restart,
+no reverse delegation, no production access — and **step 8, the activation-time backup, has not been
+executed**. Partially rehearsed: the U4 recovery path on a disposable clone (§5.7), and the R1 backup
+restore into a fresh disposable database (§5.8). Everything else remains unrehearsed.
+
+**`apps/api` deployment blockers, found by the 2026-09-23 readiness and architecture preflights.**
+These are **repository facts**, not new decisions, and none of them changes any evidence already
+recorded above:
+
+1. **Health endpoints — CLOSED, locally.** `apps/api` now implements `GET /health/live` and
+   `GET /health/ready`, reusing the existing `MONGO` provider — no second Mongo client, no
+   writer-authorisation bypass, the loopback binding unchanged and no new public routing.
+   Focused health tests (8/8), the full `apps/api` suite (591/591), typecheck, `npm run build`
+   and a **bounded local** live/ready check all passed. **This is local evidence only;
+   production readiness has not been verified**, because no production Finance-writer process
+   exists to check.
+2. **Build and start path — CLOSED, locally.** Verified on 2026-09-23: `npm run build` exits 0
+   and produces `dist/src/main.js`; the `apps/api` start script, which pointed at a path the
+   build does not produce, was corrected to `node dist/src/main.js`; and a **bounded local**
+   `npm start` reached "Nest application successfully started" with all routes mapped, then
+   terminated cleanly. `package-lock.json` was unchanged, so the build is reproducible from the
+   tracked lockfile. **This was a local verification only — nothing was built, started or
+   deployed in production**, and no CI job runs the build yet.
+3. **No production deployment target for `apps/api`** — §6 step 5a. **Repository deployment
+   artifacts are READY**: `apps-api.conf`, `run-apps-api.sh` and
+   `apps-api.production.env.example` are committed and follow the `backend-node` supervisord
+   pattern. **Live platform capability is VERIFIED** by a read-only check on 2026-09-23:
+   supervisord runs the pod, `supervisord.conf` includes `conf.d/*.conf`, `conf.d` is writable,
+   port 8003 is free and `/app/apps/api` is present. **The actual `apps/api` production
+   deployment target is OUTSTANDING / NOT CREATED**, and the **current pod does not contain the
+   three `apps-api` deployment templates yet**. **This is not a platform failure** — the
+   capability is there; the action has not been taken, and the durable path from a committed
+   template to a registered program is still an open question for the platform.
+4. **U2 and E3 remain unresolved** — no database has been authorised for Finance writes and the
+   production `nodeLedgerWriter` role does not exist.
+
+**Not a blocker: `PG_URL` fail-closed protection — general production-hardening recommendation.**
+A read-only preflight on 2026-09-23 reclassified this. The **Gate 9h surface does not touch
+PostgreSQL**: `POST /internal/fin/reproject` and everything it calls are Mongo-only, and there is
+no boot-time PostgreSQL connection, so the writer **boots, answers its readiness check and
+reprojects with no PostgreSQL connectivity at all** — observed locally, where nothing was
+listening on the PostgreSQL port and the process started and answered 200 regardless. The
+PG-backed routes are the vendor and day-closure CRUD routes, which are **outside Gate 9h** (§8.1).
+A fail-closed `PG_URL` guard may be added later as general production hardening; on current
+repository evidence it is **not required for Gate 9h activation**, and it has not been
+implemented. See §6 step 5a for what such a guard would involve.
+
+**Blocker status after the 2026-09-23 investigation:**
+
+| ID | Status |
+|---|---|
+| **U2** | **BLOCKED / FAIL-CLOSED.** **Answered 2026-09-23: YES** — the operator reported, yes/no only, that the production `DB_NAME` contains `prod` (§4). The value is never printed. The question is therefore resolved and the **blocker is not**: a `yes` means the writer stays refused until a separately authorised change is made. Nothing was changed — the database was not renamed, no environment variable was set, no guard was modified, and the production writer was never started. |
+| **U3** | **RESOLVED (code) / OPEN (permission).** The silent-failure hazard is fixed and proven 16/16. Node still **requires** `insert` on `fin_accounts` (§3); granting it remains an operator action, not yet done. |
+| **U4** | **PARTIAL — still OPEN and MANDATORY, not GREEN.** Rehearsed 2026-09-23 on a disposable clone (§5.7): the **recovery path is proven** — byte-exact fingerprint recovery, §5.6 checks 1–4 passed, R4 **VERIFIED** 370/370, parity detected all four injected corruptions. **R1 is now VERIFIED** (§5.8, 2026-09-23): the artifact's SHA-256 matched and `mongorestore` restored it into a fresh disposable database with exit code 0, 960,150 documents and 0 failures. But the gate stays PARTIAL because (a) R1 proves the **restore mechanism only** — no activation-instant backup has been taken, and the assigned operator's production access is untested. The §5.3 step 5 restore-then-reproject path **is** now rehearsed end to end (§5.10, byte-exact), but on disposable state only; (b) the recovery procedure needed **three corrections** — parity-based identification (a deleted leg is invisible to a timestamp scan), the source-existence scope restriction (**185 `source_id`s vs 151 source documents; 34 orphans = 68 legs = ₹25,500** would be destroyed by a blind reprojection), and the non-optional detector set (row counts can be fully masked by delete + ghost-insert). The first two were exercised together in the §5.9 rehearsal, which nonetheless ended PARTIAL; the third is recorded but not separately re-rehearsed; (c) the §5.5 policy is now decided (Option B, 2026-09-23) but has never been exercised. Outstanding items are itemised as **U4-a … U4-d** in §5.7. The earlier concern about rows written under a different `ref_source_key` was **not** exercised in this rehearsal and remains untested; backup must still cover **`fin_accounts`**. |
+| **U5** | **POLICY DECIDED — execution still OPEN and MANDATORY.** Write-pause mechanism chosen 2026-09-23 (§5.5): **Option B, the declared quiet window**, with R5 assigned to the gate owner/operator. Option A was rejected on evidence — day closure is **not** a data-entry lock and no canonical write path enforces it. Option B is **coordination, not enforcement**, and no window has ever been declared or exercised, so **E11 is not satisfied**. Separately, and unchanged from 2026-09-23: reverting the env is sufficient **without any code change**, but `os.environ` is per-process, so a `.env` edit needs a **process restart** — it is not instant like `.node-routing-kill`, and an in-flight write can still complete. That is the §11 Node-writer control, which is distinct from this policy. |
+| **U6** | **DEFERRED — not an activation blocker.** No writer attribution exists and timestamps cannot substitute (§9). Recorded as future hardening. |
+
+**Required before this can become a real gate:** §13 E1–E12, including E3a and E3b, in full.

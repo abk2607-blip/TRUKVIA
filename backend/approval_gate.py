@@ -114,38 +114,58 @@ class ApprovalGateMiddleware(BaseHTTPMiddleware):
     """
 
     async def dispatch(self, request: Request, call_next):
+        # The gate's own decision is computed under its own guard (see
+        # `_gate_decision`), so a mis-firing gate still degrades to
+        # passthrough exactly as before. `call_next` is deliberately
+        # OUTSIDE that guard: an exception raised by the downstream
+        # application must propagate to the ASGI error handler and become
+        # a clean 500. Catching it here and calling `call_next` a second
+        # time cannot work — the request body is already consumed, so the
+        # retried task never sends a response and the connection hangs
+        # until the client itself times out.
+        blocked = await self._gate_decision(request)
+        if blocked is not None:
+            return blocked
+        return await call_next(request)
+
+    async def _gate_decision(self, request: Request):
+        """Return a 409 envelope to short-circuit, or None to pass through.
+
+        Never raises: any fault inside the gate's own resolution logic is
+        logged and downgraded to passthrough, exactly as before.
+        """
         try:
             method = request.method.upper()
             path = request.url.path or ""
 
             # Fast passthrough: never intercept the approval router itself.
             if path.startswith("/api/approvals"):
-                return await call_next(request)
+                return None
 
             if method != "POST":
-                return await call_next(request)
+                return None
 
             entity_kind, party_id = _match_gated_route(method, path)
             if entity_kind is None:
-                return await call_next(request)
+                return None
 
             # Skip if no session — let downstream auth dependency return 401.
             user = await _resolve_user_from_bearer(request)
             if not user:
-                return await call_next(request)
+                return None
 
             cid = await _resolve_company_id(request, user)
             if not cid:
-                return await call_next(request)
+                return None
 
             company = await db.companies.find_one({"id": cid, "user_id": user["user_id"]}, {"_id": 0})
             if not company:
-                return await call_next(request)
+                return None
 
             toggle_key = approval_toggle_key(entity_kind)
             if not company.get(toggle_key, False):
                 # Legacy tenant (toggle OFF/missing) — preserve current posting.
-                return await call_next(request)
+                return None
 
             # Gate active — block with a machine-readable envelope. The
             # frontend interceptor re-routes to POST /api/approvals with the
@@ -164,4 +184,4 @@ class ApprovalGateMiddleware(BaseHTTPMiddleware):
         except Exception as e:
             # Never break the request pipeline if the gate mis-fires.
             logger.warning(f"ApprovalGateMiddleware fault (passthrough): {e}")
-            return await call_next(request)
+            return None
