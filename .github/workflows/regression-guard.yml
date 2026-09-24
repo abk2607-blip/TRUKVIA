@@ -159,9 +159,22 @@ jobs:
         run: |
           bash backend/scripts/run_regression.sh
 
+      # predeploy_check.sh stage 1 re-runs run_regression.sh, which sets no
+      # environment of its own - it reads whatever the caller exports. This
+      # step declared only BACKEND_URL, so the same suite that passes above
+      # failed here: tests doing os.environ["MONGO_URL"] raised KeyError,
+      # c[os.environ.get("DB_NAME")] became client[None], and the ones that
+      # default REACT_APP_BACKEND_URL to a hosted preview URL aimed off-box.
+      # Step-level env does not carry between steps, so the values from the
+      # regression-guard step are repeated verbatim here. All five point at
+      # this runner: localhost and the throwaway regression_ci database.
       - name: Run pre-deploy smoke (Trip + Halting E2E)
         env:
           BACKEND_URL: http://localhost:8001
+          BACKEND_URL_INTERNAL: http://localhost:8001
+          REACT_APP_BACKEND_URL: http://localhost:8001
+          MONGO_URL: mongodb://localhost:27017
+          DB_NAME: regression_ci
         run: |
           bash backend/scripts/predeploy_check.sh
 
